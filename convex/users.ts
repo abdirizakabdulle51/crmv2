@@ -67,6 +67,42 @@ export const getById = internalQuery({
   },
 });
 
+export const updateOwnName = mutation({
+  args: { name: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError({
+        code: "UNAUTHENTICATED",
+        message: "User not logged in",
+      });
+    }
+
+    const name = args.name.trim();
+    if (!name) {
+      throw new ConvexError({
+        code: "INVALID_NAME",
+        message: "Full name is required",
+      });
+    }
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "User not found",
+      });
+    }
+
+    await ctx.db.patch(user._id, { name });
+  },
+});
+
 export const listAll = query({
   args: {},
   handler: async (ctx) => {

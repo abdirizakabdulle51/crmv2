@@ -42,12 +42,17 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         if (typeof email !== "string") {
           throw new Error("Email is required");
         }
+        const name =
+          typeof params.name === "string" ? params.name.trim() : undefined;
 
         if (params.flow === "signUp") {
           throw new Error("Self sign-up is disabled");
         }
 
-        return { email: normalizeEmail(email) };
+        return {
+          email: normalizeEmail(email),
+          ...(name ? { name } : {}),
+        };
       },
     }),
   ],
@@ -205,6 +210,7 @@ export const resetTeamMemberPassword = action({
 
 export const bootstrapFirstUser = action({
   args: {
+    name: v.string(),
     email: v.string(),
     password: v.string(),
   },
@@ -218,7 +224,14 @@ export const bootstrapFirstUser = action({
     }
 
     const email = normalizeEmail(args.email);
+    const name = args.name.trim();
     const password = args.password.trim();
+    if (!name) {
+      throw new ConvexError({
+        code: "INVALID_NAME",
+        message: "Full name is required",
+      });
+    }
     if (password.length < 8) {
       throw new ConvexError({
         code: "INVALID_PASSWORD",
@@ -230,6 +243,7 @@ export const bootstrapFirstUser = action({
       provider: "password",
       account: { id: email, secret: password },
       profile: {
+        name,
         email,
         role: "ceo",
         mustChangePassword: false,
@@ -319,8 +333,9 @@ export const disableTeamMember = mutation({
         .query("users")
         .withIndex("by_role", (q) => q.eq("role", "ceo"))
         .collect();
-      const activeCeoCount = ceos.filter((ceo) => ceo.isDisabled !== true)
-        .length;
+      const activeCeoCount = ceos.filter(
+        (ceo) => ceo.isDisabled !== true,
+      ).length;
 
       if (activeCeoCount <= 1) {
         throw new ConvexError({
@@ -443,8 +458,9 @@ export const deleteTeamMember = mutation({
         .query("users")
         .withIndex("by_role", (q) => q.eq("role", "ceo"))
         .collect();
-      const activeCeoCount = ceos.filter((ceo) => ceo.isDisabled !== true)
-        .length;
+      const activeCeoCount = ceos.filter(
+        (ceo) => ceo.isDisabled !== true,
+      ).length;
 
       if (activeCeoCount <= 1) {
         throw new ConvexError({
@@ -516,7 +532,7 @@ export const syncCurrentUser = mutation({
 
     await ctx.db.patch(authUserId, {
       tokenIdentifier: identity.tokenIdentifier,
-      name: identity.name ?? user.name,
+      name: user.name ?? identity.name,
       email: identity.email ?? user.email,
       role: user.role ?? (existingCeo ? undefined : "ceo"),
     });

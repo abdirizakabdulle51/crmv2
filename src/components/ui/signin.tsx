@@ -22,9 +22,10 @@ export function SignInForm() {
     try {
       const formData = new FormData(event.currentTarget);
       if (isBootstrapMode) {
+        const name = String(formData.get("name") ?? "");
         const email = String(formData.get("email") ?? "");
         const password = String(formData.get("password") ?? "");
-        await bootstrapFirstUser({ email, password });
+        await bootstrapFirstUser({ name, email, password });
       }
       formData.set("flow", "signIn");
       await signIn("password", formData);
@@ -41,6 +42,18 @@ export function SignInForm() {
 
   return (
     <form className="space-y-4 text-left" onSubmit={handleSubmit}>
+      {isBootstrapMode && (
+        <div className="space-y-2">
+          <Label htmlFor="name">Full Name</Label>
+          <Input
+            id="name"
+            name="name"
+            type="text"
+            autoComplete="name"
+            required
+          />
+        </div>
+      )}
       <div className="space-y-2">
         <Label htmlFor="email">Email</Label>
         <Input

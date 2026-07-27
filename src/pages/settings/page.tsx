@@ -3,7 +3,12 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 import { useCrm } from "@/lib/crm-context.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
@@ -16,15 +21,24 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog.tsx";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Globe, Factory, ShieldAlert } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Globe,
+  Factory,
+  ShieldAlert,
+} from "lucide-react";
 import ServiceCatalogSection from "./_components/service-catalog-section.tsx";
 
 export default function SettingsPage() {
-  const { isAdmin } = useCrm();
-  const countries = useQuery(api.countries.list, {});
-  const sectors = useQuery(api.sectors.list, {});
+  const { currentUser, isAdmin } = useCrm();
+  const countries = useQuery(api.countries.list, isAdmin ? {} : "skip");
+  const sectors = useQuery(api.sectors.list, isAdmin ? {} : "skip");
+  const adminCountries = countries ?? [];
+  const adminSectors = sectors ?? [];
 
-  if (!countries || !sectors) {
+  if (!currentUser || (isAdmin && (!countries || !sectors))) {
     return (
       <div className="p-6 md:p-8 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -35,37 +49,86 @@ export default function SettingsPage() {
     );
   }
 
-  if (!isAdmin) {
-    return (
-      <div className="p-6 md:p-8">
-        <div className="flex flex-col items-center justify-center py-16 gap-4">
-          <ShieldAlert className="h-12 w-12 text-muted-foreground" />
-          <h2 className="text-xl font-semibold">Access Restricted</h2>
-          <p className="text-muted-foreground text-center max-w-md">
-            Only CEO and Head of Business can manage settings. Contact your
-            administrator if you need changes.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="p-6 md:p-8 space-y-8">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground mt-1">
-          Manage countries, regions, industry sectors, and service catalog
+          Manage your profile and CRM configuration
         </p>
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-2">
-        <CountriesSection countries={countries} />
-        <SectorsSection sectors={sectors} />
-      </div>
+      <ProfileSection currentName={currentUser.name || ""} />
 
-      <ServiceCatalogSection />
+      {isAdmin ? (
+        <>
+          <div className="grid gap-8 lg:grid-cols-2">
+            <CountriesSection countries={adminCountries} />
+            <SectorsSection sectors={adminSectors} />
+          </div>
+
+          <ServiceCatalogSection />
+        </>
+      ) : (
+        <div className="flex flex-col items-center justify-center py-12 gap-4 rounded-lg border">
+          <ShieldAlert className="h-10 w-10 text-muted-foreground" />
+          <h2 className="text-lg font-semibold">Admin Settings Restricted</h2>
+          <p className="text-muted-foreground text-center max-w-md">
+            Only CEO and Head of Business can manage countries, sectors, and
+            service catalog.
+          </p>
+        </div>
+      )}
     </div>
+  );
+}
+
+function ProfileSection({ currentName }: { currentName: string }) {
+  const [name, setName] = useState(currentName);
+  const [isSaving, setIsSaving] = useState(false);
+  const updateOwnName = useMutation(api.users.updateOwnName);
+
+  const handleSave = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      toast.error("Full name is required");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await updateOwnName({ name: trimmedName });
+      toast.success("Profile updated");
+    } catch (error) {
+      toast.error("Failed to update profile", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Profile</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 max-w-md">
+        <div className="space-y-2">
+          <Label htmlFor="profile-name">Full Name</Label>
+          <Input
+            id="profile-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            autoComplete="name"
+          />
+        </div>
+        <Button onClick={handleSave} disabled={isSaving}>
+          Save Profile
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -88,7 +151,11 @@ function CountriesSection({ countries }: { countries: Country[] }) {
     }
     try {
       if (editingId) {
-        await updateCountry({ id: editingId, name: name.trim(), region: region.trim() });
+        await updateCountry({
+          id: editingId,
+          name: name.trim(),
+          region: region.trim(),
+        });
         toast.success("Country updated");
       } else {
         await createCountry({ name: name.trim(), region: region.trim() });
@@ -187,7 +254,9 @@ function CountriesSection({ countries }: { countries: Country[] }) {
               >
                 <div>
                   <div className="font-medium text-sm">{c.name}</div>
-                  <div className="text-xs text-muted-foreground">{c.region}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {c.region}
+                  </div>
                 </div>
                 <div className="flex gap-1">
                   <Button
