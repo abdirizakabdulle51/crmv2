@@ -1,0 +1,214 @@
+import { ConvexError, v } from "convex/values";
+import { mutation, query } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel.d.ts";
+
+async function getCurrentUserOrThrow(
+  ctx: QueryCtx | MutationCtx,
+): Promise<Doc<"users">> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new ConvexError({
+      code: "UNAUTHENTICATED",
+      message: "User not logged in",
+    });
+  }
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_token", (q) =>
+      q.eq("tokenIdentifier", identity.tokenIdentifier),
+    )
+    .unique();
+  if (!user) {
+    throw new ConvexError({
+      code: "NOT_FOUND",
+      message: "User profile not found",
+    });
+  }
+  return user;
+}
+
+function assertCanTouchCompany(
+  currentUser: Doc<"users">,
+  company: Doc<"companies">,
+) {
+  if (
+    currentUser.role === "ceo" ||
+    currentUser.role === "head_of_business"
+  ) {
+    return;
+  }
+
+  if (
+    currentUser.role === "country_gm" &&
+    currentUser.countryId &&
+    company.countryId === currentUser.countryId
+  ) {
+    return;
+  }
+
+  if (
+    currentUser.role === "account_manager" &&
+    company.accountManagerId === currentUser._id
+  ) {
+    return;
+  }
+
+  throw new ConvexError({
+    code: "FORBIDDEN",
+    message: "You do not have permission to modify this company",
+  });
+}
+
+export const list = query({
+  args: {},
+  handler: async (ctx) => {
+    const currentUser = await getCurrentUserOrThrow(ctx);
+
+    let companies: Doc<"companies">[];
+
+    // Role-based visibility
+    if (
+      currentUser.role === "ceo" ||
+      currentUser.role === "head_of_business"
+    ) {
+      // See all companies
+      companies = await ctx.db.query("companies").collect();
+    } else if (currentUser.role === "country_gm" && currentUser.countryId) {
+      // See companies in their country
+      companies = await ctx.db
+        .query("companies")
+        .withIndex("by_country", (q) =>
+          q.eq("countryId", currentUser.countryId!),
+        )
+        .collect();
+    } else {
+      // Account managers see only their own companies
+      companies = await ctx.db
+        .query("companies")
+        .withIndex("by_account_manager", (q) =>
+          q.eq("accountManagerId", currentUser._id),
+        )
+        .collect();
+    }
+
+    return companies;
+  },
+});
+
+export const getById = query({
+  args: { id: v.id("companies") },
+  handler: async (ctx, args) => {
+    await getCurrentUserOrThrow(ctx);
+    const company = await ctx.db.get(args.id);
+    if (!company) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Company not found",
+      });
+    }
+    return company;
+  },
+});
+
+export const create = mutation({
+  args: {
+    name: v.string(),
+    sectorId: v.id("sectors"),
+    countryId: v.id("countries"),
+    accountManagerId: v.id("users"),
+    contractStatus: v.union(
+      v.literal("active"),
+      v.literal("pending"),
+      v.literal("expired"),
+      v.literal("terminated"),
+    ),
+    paymentStatus: v.optional(
+      v.union(
+        v.literal("current"),
+        v.literal("overdue"),
+        v.literal("delinquent"),
+      ),
+    ),
+    notes: v.optional(v.string()),
+    website: v.optional(v.string()),
+    contactName: v.optional(v.string()),
+    contactEmail: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    const accountManagerId =
+      currentUser.role === "account_manager"
+        ? currentUser._id
+        : args.accountManagerId;
+
+    return await ctx.db.insert("companies", {
+      name: args.name,
+      sectorId: args.sectorId,
+      countryId: args.countryId,
+      accountManagerId,
+      contractStatus: args.contractStatus,
+      paymentStatus: args.paymentStatus,
+      notes: args.notes,
+      website: args.website,
+      contactName: args.contactName,
+      contactEmail: args.contactEmail,
+    });
+  },
+});
+
+export const update = mutation({
+  args: {
+    id: v.id("companies"),
+    name: v.string(),
+    sectorId: v.id("sectors"),
+    countryId: v.id("countries"),
+    accountManagerId: v.id("users"),
+    contractStatus: v.union(
+      v.literal("active"),
+      v.literal("pending"),
+      v.literal("expired"),
+      v.literal("terminated"),
+    ),
+    paymentStatus: v.optional(
+      v.union(
+        v.literal("current"),
+        v.literal("overdue"),
+        v.literal("delinquent"),
+      ),
+    ),
+    notes: v.optional(v.string()),
+    website: v.optional(v.string()),
+    contactName: v.optional(v.string()),
+    contactEmail: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    const company = await ctx.db.get(args.id);
+    if (!company) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Company not found",
+      });
+    }
+    assertCanTouchCompany(currentUser, company);
+    const { id, ...fields } = args;
+    await ctx.db.patch(id, fields);
+  },
+});
+
+export const remove = mutation({
+  args: { id: v.id("companies") },
+  handler: async (ctx, args) => {
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    const company = await ctx.db.get(args.id);
+    if (!company) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Company not found",
+      });
+    }
+    assertCanTouchCompany(currentUser, company);
+    await ctx.db.delete(args.id);
+  },
+});
