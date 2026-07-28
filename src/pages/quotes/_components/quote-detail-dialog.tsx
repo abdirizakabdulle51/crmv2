@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog.tsx";
 import { toast } from "sonner";
 import { Printer, Trash2, Send, CheckCircle } from "lucide-react";
+import { formatCurrency } from "../_lib/format.ts";
 
 type Quote = Doc<"quotes">;
 
@@ -101,21 +102,25 @@ export default function QuoteDetailDialog({
             </tr>
           </thead>
           <tbody>
-            ${quote.lineItems.map((li) => `
+            ${quote.lineItems
+              .map(
+                (li) => `
               <tr>
                 <td>${li.itemName}</td>
                 <td>${li.serviceCategory}</td>
                 <td>${li.billingUnit}</td>
                 <td class="text-right">${li.quantity}</td>
-                <td class="text-right">$${li.monthlyUnitPrice.toFixed(2)}</td>
-                <td class="text-right">$${li.monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                <td class="text-right">$${li.yearlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                <td class="text-right">${formatCurrency(li.monthlyUnitPrice)}</td>
+                <td class="text-right">${formatCurrency(li.monthlyTotal)}</td>
+                <td class="text-right">${formatCurrency(li.yearlyTotal)}</td>
               </tr>
-            `).join("")}
+            `,
+              )
+              .join("")}
             <tr class="totals">
               <td colspan="5" class="text-right">Grand Total</td>
-              <td class="text-right">$${quote.monthlyGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-              <td class="text-right">$${quote.yearlyGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+              <td class="text-right">${formatCurrency(quote.monthlyGrandTotal)}</td>
+              <td class="text-right">${formatCurrency(quote.yearlyGrandTotal)}</td>
             </tr>
           </tbody>
         </table>
@@ -133,9 +138,17 @@ export default function QuoteDetailDialog({
       case "draft":
         return <Badge variant="secondary">Draft</Badge>;
       case "sent":
-        return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">Sent</Badge>;
+        return (
+          <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+            Sent
+          </Badge>
+        );
       case "accepted":
-        return <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">Accepted</Badge>;
+        return (
+          <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+            Accepted
+          </Badge>
+        );
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
@@ -182,23 +195,35 @@ export default function QuoteDetailDialog({
                 {quote.lineItems.map((li, idx) => (
                   <tr key={idx} className="border-b last:border-0">
                     <td className="p-2 font-medium">{li.itemName}</td>
-                    <td className="p-2 text-muted-foreground">{li.serviceCategory}</td>
-                    <td className="p-2 text-muted-foreground">{li.billingUnit}</td>
+                    <td className="p-2 text-muted-foreground">
+                      {li.serviceCategory}
+                    </td>
+                    <td className="p-2 text-muted-foreground">
+                      {li.billingUnit}
+                    </td>
                     <td className="p-2 text-right">{li.quantity}</td>
-                    <td className="p-2 text-right">${li.monthlyUnitPrice.toFixed(2)}</td>
-                    <td className="p-2 text-right">${li.monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="p-2 text-right">${li.yearlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="p-2 text-right">
+                      {formatCurrency(li.monthlyUnitPrice)}
+                    </td>
+                    <td className="p-2 text-right">
+                      {formatCurrency(li.monthlyTotal)}
+                    </td>
+                    <td className="p-2 text-right">
+                      {formatCurrency(li.yearlyTotal)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot className="border-t bg-muted/20">
                 <tr>
-                  <td colSpan={5} className="p-2 font-semibold text-right">Grand Total</td>
-                  <td className="p-2 text-right font-bold">
-                    ${quote.monthlyGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <td colSpan={5} className="p-2 font-semibold text-right">
+                    Grand Total
                   </td>
                   <td className="p-2 text-right font-bold">
-                    ${quote.yearlyGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    {formatCurrency(quote.monthlyGrandTotal)}
+                  </td>
+                  <td className="p-2 text-right font-bold">
+                    {formatCurrency(quote.yearlyGrandTotal)}
                   </td>
                 </tr>
               </tfoot>
@@ -215,7 +240,12 @@ export default function QuoteDetailDialog({
 
         {/* Actions */}
         <div className="flex flex-wrap gap-2 pt-2 border-t">
-          <Button variant="secondary" size="sm" onClick={handlePrint} className="cursor-pointer">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handlePrint}
+            className="cursor-pointer"
+          >
             <Printer className="h-4 w-4 mr-1" /> Print / Export
           </Button>
 

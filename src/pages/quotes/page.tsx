@@ -30,6 +30,7 @@ import { Plus, FileText, Eye, Sparkles } from "lucide-react";
 import QuoteCreateDialog from "./_components/quote-create-dialog.tsx";
 import QuoteDetailDialog from "./_components/quote-detail-dialog.tsx";
 import QuoteGenerateFromUsageDialog from "./_components/quote-generate-from-usage-dialog.tsx";
+import { formatCurrency } from "./_lib/format.ts";
 
 type Quote = Doc<"quotes">;
 
@@ -247,16 +248,10 @@ export default function QuotesPage() {
                             {quote.lineItems.length}
                           </td>
                           <td className="p-3 text-right">
-                            $
-                            {quote.monthlyGrandTotal.toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                            })}
+                            {formatCurrency(quote.monthlyGrandTotal)}
                           </td>
                           <td className="p-3 text-right">
-                            $
-                            {quote.yearlyGrandTotal.toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                            })}
+                            {formatCurrency(quote.yearlyGrandTotal)}
                           </td>
                           <td className="p-3">{statusBadge(quote.status)}</td>
                           <td className="p-3 text-right">
