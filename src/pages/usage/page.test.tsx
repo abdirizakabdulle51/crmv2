@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import UsagePage from "./page.tsx";
 
@@ -92,6 +93,32 @@ vi.mock("sonner", () => ({
   },
 }));
 
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <div data-testid="location">{location.pathname + location.search}</div>
+  );
+}
+
+function renderUsagePage() {
+  return render(
+    <MemoryRouter initialEntries={["/usage"]}>
+      <Routes>
+        <Route
+          path="/usage"
+          element={
+            <>
+              <UsagePage />
+              <LocationProbe />
+            </>
+          }
+        />
+        <Route path="/usage/auto-fill" element={<LocationProbe />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
 function company(id: string, name: string): Doc<"companies"> {
   return {
     _id: id as Id<"companies">,
@@ -132,7 +159,7 @@ describe("UsagePage company filter indicators", () => {
       usage("usage-3", waafi._id, "2026-06"),
     ];
 
-    render(<UsagePage />);
+    renderUsagePage();
 
     const [companySelect, monthSelect] = screen.getAllByRole("combobox");
     await user.click(monthSelect);
@@ -148,31 +175,13 @@ describe("UsagePage company filter indicators", () => {
     expect(within(emptyOption).queryByText(/entries/)).not.toBeInTheDocument();
   });
 
-  it("keeps the bulk preview actions reachable with a 15-row ManageOne preview", async () => {
+  it("navigates to the page-based Auto-fill from ManageOne flow", async () => {
     const user = userEvent.setup();
     const aicc = company("company-1", "AICC");
     mocks.companies = [aicc];
     mocks.consumption = [];
-    mocks.bulkPreview = {
-      rows: Array.from({ length: 15 }, (_, index) => ({
-        serviceType: index < 8 ? "ECS" : "EVS",
-        catalogItemId: `catalog-${index}` as Id<"serviceCatalog">,
-        catalogItemName: `Catalog Item ${index + 1}`,
-        quantity: index + 1,
-        amount: (index + 1) * 10,
-        alreadyLogged: false,
-      })),
-      needsManualEntry: [
-        {
-          serviceType: "ECS",
-          label: "custom-flavor",
-          reason:
-            "ECS custom-flavor detected but has no catalog match - add manually.",
-        },
-      ],
-    };
 
-    render(<UsagePage />);
+    renderUsagePage();
 
     const [companySelect] = screen.getAllByRole("combobox");
     await user.click(companySelect);
@@ -181,18 +190,8 @@ describe("UsagePage company filter indicators", () => {
       screen.getByRole("button", { name: /Auto-fill from ManageOne/i }),
     );
 
-    const dialog = screen
-      .getByRole("dialog", { name: "Auto-fill from ManageOne" })
-      .closest("[data-slot='dialog-content']");
-    const rowList = screen.getByTestId("bulk-preview-line-items");
-
-    expect(dialog).toHaveClass("max-h-[85vh]", "flex", "overflow-hidden");
-    expect(rowList).toHaveClass("overflow-y-auto", "flex-1", "min-h-0");
-    expect(screen.getAllByText(/Catalog Item \d+/)).toHaveLength(15);
-    expect(screen.getByText(/custom-flavor detected/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Create 15 Entries" }),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/usage/auto-fill?company=company-1&month=",
+    );
   });
 });

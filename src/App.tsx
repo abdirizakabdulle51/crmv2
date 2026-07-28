@@ -11,6 +11,7 @@ import TargetsPage from "./pages/targets/page.tsx";
 import ActivitiesPage from "./pages/activities/page.tsx";
 import PerformancePage from "./pages/performance/page.tsx";
 import UsagePage from "./pages/usage/page.tsx";
+import UsageAutoFillPage from "./pages/usage/auto-fill-page.tsx";
 import AtRiskPage from "./pages/at-risk/page.tsx";
 import QuotesPage from "./pages/quotes/page.tsx";
 import RecommendationsPage from "./pages/recommendations/page.tsx";
@@ -37,12 +38,16 @@ export default function App() {
             <Route path="/targets" element={<TargetsPage />} />
             <Route path="/performance" element={<PerformancePage />} />
             <Route path="/usage" element={<UsagePage />} />
+            <Route path="/usage/auto-fill" element={<UsageAutoFillPage />} />
             <Route path="/at-risk" element={<AtRiskPage />} />
             <Route path="/quotes" element={<QuotesPage />} />
             <Route path="/recommendations" element={<RecommendationsPage />} />
             <Route path="/coach" element={<CoachPage />} />
             <Route path="/activities" element={<ActivitiesPage />} />
-            <Route path="/manageone-tenants" element={<ManageOneTenantsPage />} />
+            <Route
+              path="/manageone-tenants"
+              element={<ManageOneTenantsPage />}
+            />
             <Route path="/team" element={<TeamPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
