@@ -2,7 +2,12 @@ import { useState, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id, Doc } from "@/convex/_generated/dataModel.d.ts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
@@ -14,7 +19,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.tsx";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Upload, Download, Package } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  Pencil,
+  Trash2,
+  Upload,
+  Download,
+  Package,
+} from "lucide-react";
 import Papa from "papaparse";
 
 type CatalogItem = Doc<"serviceCatalog">;
@@ -29,6 +43,9 @@ export default function ServiceCatalogSection() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<CatalogItem | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<
+    Record<string, boolean>
+  >({});
 
   // Form state
   const [serviceCategory, setServiceCategory] = useState("");
@@ -116,6 +133,13 @@ export default function ServiceCatalogSection() {
     grouped.set(item.serviceCategory, arr);
   }
 
+  const toggleCategory = (category: string) => {
+    setExpandedCategories((current) => ({
+      ...current,
+      [category]: !current[category],
+    }));
+  };
+
   return (
     <>
       <Card>
@@ -125,11 +149,21 @@ export default function ServiceCatalogSection() {
             <CardTitle>Service Catalog</CardTitle>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setImportOpen(true)}
+            >
               <Upload className="h-4 w-4 mr-1" />
               Import
             </Button>
-            <Button size="sm" onClick={() => { resetForm(); setDialogOpen(true); }}>
+            <Button
+              size="sm"
+              onClick={() => {
+                resetForm();
+                setDialogOpen(true);
+              }}
+            >
               <Plus className="h-4 w-4 mr-1" />
               Add
             </Button>
@@ -142,81 +176,166 @@ export default function ServiceCatalogSection() {
             </p>
           ) : (
             <div className="space-y-4">
-              {[...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([category, items]) => (
-                <div key={category} className="space-y-1">
-                  <h4 className="text-xs font-semibold uppercase text-muted-foreground tracking-wide">
-                    {category}
-                  </h4>
-                  {items.map((item) => (
-                    <div key={item._id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm">{item.itemName}</span>
-                          <Badge variant="secondary" className="text-xs">{item.billingUnit}</Badge>
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          ${item.monthlyPrice}/mo
-                          {item.yearlyPrice != null && ` · $${item.yearlyPrice}/yr`}
-                          {item.hourlyPrice != null && ` · $${item.hourlyPrice}/hr`}
-                          {item.specs && ` · ${item.specs}`}
-                        </div>
-                      </div>
-                      <div className="flex gap-1 ml-2">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(item)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDelete(item._id)}>
-                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                        </Button>
-                      </div>
+              {[...grouped.entries()]
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([category, items]) => {
+                  const isExpanded = expandedCategories[category] === true;
+
+                  return (
+                    <div key={category} className="space-y-1">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted/50"
+                        onClick={() => toggleCategory(category)}
+                      >
+                        <span className="flex items-center gap-2">
+                          {isExpanded ? (
+                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          )}
+                          <span className="text-xs font-semibold uppercase text-muted-foreground tracking-wide">
+                            {category}
+                          </span>
+                        </span>
+                        <Badge variant="secondary" className="text-xs">
+                          {items.length}
+                        </Badge>
+                      </button>
+                      {isExpanded &&
+                        items.map((item) => (
+                          <div
+                            key={item._id}
+                            className="flex items-center justify-between rounded-md border px-3 py-2"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-sm">
+                                  {item.itemName}
+                                </span>
+                                <Badge variant="secondary" className="text-xs">
+                                  {item.billingUnit}
+                                </Badge>
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-0.5">
+                                ${item.monthlyPrice}/mo
+                                {item.yearlyPrice != null &&
+                                  ` · $${item.yearlyPrice}/yr`}
+                                {item.hourlyPrice != null &&
+                                  ` · $${item.hourlyPrice}/hr`}
+                                {item.specs && ` · ${item.specs}`}
+                              </div>
+                            </div>
+                            <div className="flex gap-1 ml-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEdit(item)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDelete(item._id)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
                     </div>
-                  ))}
-                </div>
-              ))}
+                  );
+                })}
             </div>
           )}
         </CardContent>
       </Card>
 
       {/* Add/Edit Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(v) => { setDialogOpen(v); if (!v) resetForm(); }}>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(v) => {
+          setDialogOpen(v);
+          if (!v) resetForm();
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{editingItem ? "Edit Catalog Item" : "Add Catalog Item"}</DialogTitle>
+            <DialogTitle>
+              {editingItem ? "Edit Catalog Item" : "Add Catalog Item"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Service Category *</Label>
-                <Input value={serviceCategory} onChange={(e) => setServiceCategory(e.target.value)} placeholder="e.g. Compute" />
+                <Input
+                  value={serviceCategory}
+                  onChange={(e) => setServiceCategory(e.target.value)}
+                  placeholder="e.g. Compute"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Item Name *</Label>
-                <Input value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="e.g. ECS s6.large" />
+                <Input
+                  value={itemName}
+                  onChange={(e) => setItemName(e.target.value)}
+                  placeholder="e.g. ECS s6.large"
+                />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Billing Unit *</Label>
-                <Input value={billingUnit} onChange={(e) => setBillingUnit(e.target.value)} placeholder="e.g. instance, GB" />
+                <Input
+                  value={billingUnit}
+                  onChange={(e) => setBillingUnit(e.target.value)}
+                  placeholder="e.g. instance, GB"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Specs</Label>
-                <Input value={specs} onChange={(e) => setSpecs(e.target.value)} placeholder="e.g. 4vCPU 8GB" />
+                <Input
+                  value={specs}
+                  onChange={(e) => setSpecs(e.target.value)}
+                  placeholder="e.g. 4vCPU 8GB"
+                />
               </div>
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-2">
                 <Label>Monthly Price *</Label>
-                <Input type="number" min="0" step="0.01" value={monthlyPrice} onChange={(e) => setMonthlyPrice(e.target.value)} placeholder="0.00" />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={monthlyPrice}
+                  onChange={(e) => setMonthlyPrice(e.target.value)}
+                  placeholder="0.00"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Yearly Price</Label>
-                <Input type="number" min="0" step="0.01" value={yearlyPrice} onChange={(e) => setYearlyPrice(e.target.value)} placeholder="0.00" />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={yearlyPrice}
+                  onChange={(e) => setYearlyPrice(e.target.value)}
+                  placeholder="0.00"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Hourly Price</Label>
-                <Input type="number" min="0" step="0.01" value={hourlyPrice} onChange={(e) => setHourlyPrice(e.target.value)} placeholder="0.00" />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={hourlyPrice}
+                  onChange={(e) => setHourlyPrice(e.target.value)}
+                  placeholder="0.00"
+                />
               </div>
             </div>
             <Button className="w-full" onClick={handleSave}>
@@ -227,7 +346,11 @@ export default function ServiceCatalogSection() {
       </Dialog>
 
       {/* Import Dialog */}
-      <CatalogImportDialog open={importOpen} onOpenChange={setImportOpen} bulkCreate={bulkCreate} />
+      <CatalogImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        bulkCreate={bulkCreate}
+      />
     </>
   );
 }
@@ -260,7 +383,17 @@ function CatalogImportDialog({
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  bulkCreate: (args: { items: Array<{ serviceCategory: string; itemName: string; specs?: string; billingUnit: string; monthlyPrice: number; yearlyPrice?: number; hourlyPrice?: number }> }) => Promise<{ inserted: number }>;
+  bulkCreate: (args: {
+    items: Array<{
+      serviceCategory: string;
+      itemName: string;
+      specs?: string;
+      billingUnit: string;
+      monthlyPrice: number;
+      yearlyPrice?: number;
+      hourlyPrice?: number;
+    }>;
+  }) => Promise<{ inserted: number }>;
 }) {
   const [rows, setRows] = useState<ValidatedCatalogRow[]>([]);
   const [importing, setImporting] = useState(false);
@@ -342,9 +475,25 @@ function CatalogImportDialog({
 
   const downloadTemplate = () => {
     const csv = Papa.unparse({
-      fields: ["service_category", "item_name", "specs", "billing_unit", "monthly_price", "yearly_price", "hourly_price"],
+      fields: [
+        "service_category",
+        "item_name",
+        "specs",
+        "billing_unit",
+        "monthly_price",
+        "yearly_price",
+        "hourly_price",
+      ],
       data: [
-        ["Compute", "ECS s6.large", "4vCPU 8GB", "instance", "120.00", "1200.00", "0.17"],
+        [
+          "Compute",
+          "ECS s6.large",
+          "4vCPU 8GB",
+          "instance",
+          "120.00",
+          "1200.00",
+          "0.17",
+        ],
         ["Storage", "OBS Standard", "Object storage", "GB", "0.012", "", ""],
       ],
     });
@@ -370,15 +519,28 @@ function CatalogImportDialog({
               Download Template
             </Button>
             <p className="text-xs text-muted-foreground">
-              Columns: service_category, item_name, specs, billing_unit, monthly_price, yearly_price, hourly_price
+              Columns: service_category, item_name, specs, billing_unit,
+              monthly_price, yearly_price, hourly_price
             </p>
           </div>
 
           <div className="border-2 border-dashed rounded-lg p-6 text-center">
             <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-sm text-muted-foreground mb-2">Choose a CSV file</p>
-            <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} className="hidden" />
-            <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()}>
+            <p className="text-sm text-muted-foreground mb-2">
+              Choose a CSV file
+            </p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv"
+              onChange={handleFile}
+              className="hidden"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => fileRef.current?.click()}
+            >
               Select File
             </Button>
           </div>
@@ -386,9 +548,13 @@ function CatalogImportDialog({
           {rows.length > 0 && (
             <div className="space-y-3">
               <div className="flex gap-2 text-xs">
-                <span className="text-emerald-600">{validRows.length} valid</span>
+                <span className="text-emerald-600">
+                  {validRows.length} valid
+                </span>
                 {rows.length - validRows.length > 0 && (
-                  <span className="text-destructive">{rows.length - validRows.length} errors</span>
+                  <span className="text-destructive">
+                    {rows.length - validRows.length} errors
+                  </span>
                 )}
               </div>
               <div className="overflow-x-auto max-h-48 overflow-y-auto border rounded-md">
@@ -404,23 +570,40 @@ function CatalogImportDialog({
                   </thead>
                   <tbody>
                     {rows.slice(0, 30).map((row, i) => (
-                      <tr key={i} className={row.errors.length > 0 ? "bg-red-50 dark:bg-red-900/10" : ""}>
+                      <tr
+                        key={i}
+                        className={
+                          row.errors.length > 0
+                            ? "bg-red-50 dark:bg-red-900/10"
+                            : ""
+                        }
+                      >
                         <td className="p-2">{row.serviceCategory}</td>
                         <td className="p-2">{row.itemName}</td>
                         <td className="p-2">{row.billingUnit}</td>
                         <td className="p-2 text-right">${row.monthlyPrice}</td>
                         <td className="p-2">
                           {row.errors.length > 0 ? (
-                            <span className="text-destructive">{row.errors.join("; ")}</span>
-                          ) : <span className="text-emerald-600">OK</span>}
+                            <span className="text-destructive">
+                              {row.errors.join("; ")}
+                            </span>
+                          ) : (
+                            <span className="text-emerald-600">OK</span>
+                          )}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              <Button className="w-full" disabled={validRows.length === 0 || importing} onClick={handleImport}>
-                {importing ? "Importing..." : `Import ${validRows.length} Items`}
+              <Button
+                className="w-full"
+                disabled={validRows.length === 0 || importing}
+                onClick={handleImport}
+              >
+                {importing
+                  ? "Importing..."
+                  : `Import ${validRows.length} Items`}
               </Button>
             </div>
           )}
