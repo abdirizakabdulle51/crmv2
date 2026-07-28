@@ -43,9 +43,9 @@ export default function ServiceCatalogSection() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<CatalogItem | null>(null);
-  const [expandedCategories, setExpandedCategories] = useState<
-    Record<string, boolean>
-  >({});
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // Form state
   const [serviceCategory, setServiceCategory] = useState("");
@@ -134,10 +134,15 @@ export default function ServiceCatalogSection() {
   }
 
   const toggleCategory = (category: string) => {
-    setExpandedCategories((current) => ({
-      ...current,
-      [category]: !current[category],
-    }));
+    setExpandedCategories((current) => {
+      const next = new Set(current);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
   };
 
   return (
@@ -179,12 +184,13 @@ export default function ServiceCatalogSection() {
               {[...grouped.entries()]
                 .sort((a, b) => a[0].localeCompare(b[0]))
                 .map(([category, items]) => {
-                  const isExpanded = expandedCategories[category] === true;
+                  const isExpanded = expandedCategories.has(category);
 
                   return (
                     <div key={category} className="space-y-1">
                       <button
                         type="button"
+                        aria-expanded={isExpanded}
                         className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted/50"
                         onClick={() => toggleCategory(category)}
                       >
