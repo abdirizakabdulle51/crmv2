@@ -47,6 +47,16 @@ export const bulkUpsert = internalMutation({
         ecsUsed: v.optional(v.number()),
         evsUsed: v.optional(v.number()),
         projectCount: v.optional(v.number()),
+        resources: v.optional(
+          v.array(
+            v.object({
+              serviceId: v.string(),
+              resource: v.string(),
+              used: v.number(),
+              total: v.optional(v.number()),
+            }),
+          ),
+        ),
       }),
     ),
   },

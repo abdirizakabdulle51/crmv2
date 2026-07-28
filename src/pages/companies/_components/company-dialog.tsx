@@ -43,6 +43,75 @@ function formatManageOneDate(value: number) {
 
 type ContractStatus = "active" | "pending" | "expired" | "terminated";
 type PaymentStatus = "current" | "overdue" | "delinquent";
+type ManageOneTenant = Doc<"manageOneTenants">;
+type ManageOneResource = NonNullable<ManageOneTenant["resources"]>[number];
+
+const KEY_RESOURCE_LABELS: Record<string, string> = {
+  publicIp: "EIP",
+  vpn: "VPN",
+  loadbalancer: "Load Balancers",
+  waf: "WAF",
+  csbs: "Backup",
+  backup: "Backup",
+};
+
+function formatResourceValue(resource: ManageOneResource) {
+  const used = formatManageOneNumber(resource.used);
+  if (resource.total == null) {
+    return used;
+  }
+  return `${used} / ${formatManageOneNumber(resource.total)}`;
+}
+
+function getKeyResources(tenant: ManageOneTenant) {
+  return (tenant.resources ?? [])
+    .filter((resource) => resource.used > 0)
+    .map((resource) => ({
+      label: KEY_RESOURCE_LABELS[resource.resource],
+      value: formatResourceValue(resource),
+      resource,
+    }))
+    .filter((item) => item.label);
+}
+
+function ManageOneTenantStats({ tenant }: { tenant: ManageOneTenant }) {
+  const keyResources = getKeyResources(tenant);
+
+  return (
+    <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+      <div>
+        <div className="text-muted-foreground">ECS</div>
+        <div className="font-medium">
+          {formatManageOneNumber(tenant.ecsUsed)}
+        </div>
+      </div>
+      <div>
+        <div className="text-muted-foreground">EVS</div>
+        <div className="font-medium">
+          {formatManageOneNumber(tenant.evsUsed)}
+        </div>
+      </div>
+      <div>
+        <div className="text-muted-foreground">Projects</div>
+        <div className="font-medium">
+          {formatManageOneNumber(tenant.projectCount)}
+        </div>
+      </div>
+      <div>
+        <div className="text-muted-foreground">Last synced</div>
+        <div className="font-medium">
+          {formatManageOneDate(tenant.lastSyncedAt)}
+        </div>
+      </div>
+      {keyResources.map(({ label, value, resource }) => (
+        <div key={`${resource.serviceId}-${resource.resource}`}>
+          <div className="text-muted-foreground">{label}</div>
+          <div className="font-medium">{value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 type CompanyDialogProps = {
   open: boolean;
@@ -348,34 +417,7 @@ export default function CompanyDialog({
               </CardHeader>
               <CardContent>
                 {manageOneTenants.length === 1 ? (
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <div className="text-muted-foreground">ECS used</div>
-                      <div className="font-medium">
-                        {formatManageOneNumber(manageOneTenants[0].ecsUsed)}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">EVS used</div>
-                      <div className="font-medium">
-                        {formatManageOneNumber(manageOneTenants[0].evsUsed)}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Projects</div>
-                      <div className="font-medium">
-                        {formatManageOneNumber(
-                          manageOneTenants[0].projectCount,
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Last synced</div>
-                      <div className="font-medium">
-                        {formatManageOneDate(manageOneTenants[0].lastSyncedAt)}
-                      </div>
-                    </div>
-                  </div>
+                  <ManageOneTenantStats tenant={manageOneTenants[0]} />
                 ) : (
                   <div className="space-y-3 text-sm">
                     {manageOneTenants.map((tenant) => (
@@ -384,24 +426,7 @@ export default function CompanyDialog({
                         className="rounded-md border px-3 py-2"
                       >
                         <div className="font-medium">{tenant.name}</div>
-                        <div className="mt-2 grid grid-cols-3 gap-3">
-                          <div>
-                            <div className="text-muted-foreground">ECS</div>
-                            <div>{formatManageOneNumber(tenant.ecsUsed)}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">EVS</div>
-                            <div>{formatManageOneNumber(tenant.evsUsed)}</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">
-                              Projects
-                            </div>
-                            <div>
-                              {formatManageOneNumber(tenant.projectCount)}
-                            </div>
-                          </div>
-                        </div>
+                        <ManageOneTenantStats tenant={tenant} />
                       </div>
                     ))}
                   </div>

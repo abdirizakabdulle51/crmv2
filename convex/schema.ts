@@ -93,12 +93,7 @@ export default defineSchema({
   salesTargets: defineTable({
     accountManagerId: v.optional(v.id("users")),
     year: v.number(),
-    quarter: v.union(
-      v.literal(1),
-      v.literal(2),
-      v.literal(3),
-      v.literal(4),
-    ),
+    quarter: v.union(v.literal(1), v.literal(2), v.literal(3), v.literal(4)),
     target: v.number(),
   }).index("by_am_year_quarter", ["accountManagerId", "year", "quarter"]),
 
@@ -115,6 +110,16 @@ export default defineSchema({
     ecsUsed: v.optional(v.number()),
     evsUsed: v.optional(v.number()),
     projectCount: v.optional(v.number()),
+    resources: v.optional(
+      v.array(
+        v.object({
+          serviceId: v.string(),
+          resource: v.string(),
+          used: v.number(),
+          total: v.optional(v.number()),
+        }),
+      ),
+    ),
     lastSyncedAt: v.number(),
     linkedCompanyId: v.optional(v.id("companies")),
   })

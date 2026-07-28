@@ -20,6 +20,14 @@ type ManageOneTenantInput = {
   ecsUsed?: number;
   evsUsed?: number;
   projectCount?: number;
+  resources?: ManageOneResourceInput[];
+};
+
+type ManageOneResourceInput = {
+  serviceId: string;
+  resource: string;
+  used: number;
+  total?: number;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -82,6 +90,49 @@ function optionalBoolean(
   return value;
 }
 
+function optionalResources(
+  tenant: Record<string, unknown>,
+): ManageOneResourceInput[] | undefined {
+  const value = tenant.resources;
+  if (value == null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("resources must be an array");
+  }
+
+  return value.map((resourceValue) => {
+    if (!isRecord(resourceValue)) {
+      throw new Error("Each resource must be an object");
+    }
+
+    const serviceId = resourceValue.serviceId;
+    const resource = resourceValue.resource;
+    const used = resourceValue.used;
+    const total = resourceValue.total;
+
+    if (typeof serviceId !== "string") {
+      throw new Error("resources.serviceId must be a string");
+    }
+    if (typeof resource !== "string") {
+      throw new Error("resources.resource must be a string");
+    }
+    if (typeof used !== "number") {
+      throw new Error("resources.used must be a number");
+    }
+    if (total != null && typeof total !== "number") {
+      throw new Error("resources.total must be a number");
+    }
+
+    return {
+      serviceId,
+      resource,
+      used,
+      ...(typeof total === "number" && total !== -1 ? { total } : {}),
+    };
+  });
+}
+
 function normalizeTenant(value: unknown): ManageOneTenantInput {
   if (!isRecord(value)) {
     throw new Error("Each tenant must be an object");
@@ -119,6 +170,9 @@ function normalizeTenant(value: unknown): ManageOneTenantInput {
       : {}),
     ...(optionalNumber(value, "projectCount") !== undefined
       ? { projectCount: optionalNumber(value, "projectCount") }
+      : {}),
+    ...(optionalResources(value) !== undefined
+      ? { resources: optionalResources(value) }
       : {}),
   };
 }
