@@ -34,6 +34,23 @@ vi.mock("@/convex/_generated/api.js", () => ({
 const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
   consumption: [] as Doc<"consumption">[],
+  bulkPreview: undefined as
+    | {
+        rows: Array<{
+          serviceType: string;
+          catalogItemId: Id<"serviceCatalog">;
+          catalogItemName: string;
+          quantity: number;
+          amount: number;
+          alreadyLogged: boolean;
+        }>;
+        needsManualEntry: Array<{
+          serviceType: string;
+          label: string;
+          reason: string;
+        }>;
+      }
+    | undefined,
 }));
 
 vi.mock("convex/react", () => ({
@@ -44,6 +61,9 @@ vi.mock("convex/react", () => ({
     }
     if (query === "consumption.list") {
       return mocks.consumption;
+    }
+    if (query === "manageOneTenants.getBulkUsagePreview") {
+      return mocks.bulkPreview;
     }
     return undefined;
   },
@@ -126,5 +146,53 @@ describe("UsagePage company filter indicators", () => {
     expect(within(hormuudOption).getByText("✓ 2 entries")).toBeInTheDocument();
     expect(within(waafiOption).queryByText(/entries/)).not.toBeInTheDocument();
     expect(within(emptyOption).queryByText(/entries/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the bulk preview actions reachable with a 15-row ManageOne preview", async () => {
+    const user = userEvent.setup();
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.consumption = [];
+    mocks.bulkPreview = {
+      rows: Array.from({ length: 15 }, (_, index) => ({
+        serviceType: index < 8 ? "ECS" : "EVS",
+        catalogItemId: `catalog-${index}` as Id<"serviceCatalog">,
+        catalogItemName: `Catalog Item ${index + 1}`,
+        quantity: index + 1,
+        amount: (index + 1) * 10,
+        alreadyLogged: false,
+      })),
+      needsManualEntry: [
+        {
+          serviceType: "ECS",
+          label: "custom-flavor",
+          reason:
+            "ECS custom-flavor detected but has no catalog match - add manually.",
+        },
+      ],
+    };
+
+    render(<UsagePage />);
+
+    const [companySelect] = screen.getAllByRole("combobox");
+    await user.click(companySelect);
+    await user.click(screen.getByRole("option", { name: "AICC" }));
+    await user.click(
+      screen.getByRole("button", { name: /Auto-fill from ManageOne/i }),
+    );
+
+    const dialog = screen
+      .getByRole("dialog", { name: "Auto-fill from ManageOne" })
+      .closest("[data-slot='dialog-content']");
+    const rowList = screen.getByTestId("bulk-preview-line-items");
+
+    expect(dialog).toHaveClass("max-h-[85vh]", "flex", "overflow-hidden");
+    expect(rowList).toHaveClass("overflow-y-auto", "flex-1", "min-h-0");
+    expect(screen.getAllByText(/Catalog Item \d+/)).toHaveLength(15);
+    expect(screen.getByText(/custom-flavor detected/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Create 15 Entries" }),
+    ).toBeInTheDocument();
   });
 });

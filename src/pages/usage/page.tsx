@@ -385,21 +385,24 @@ export default function UsagePage() {
       <UsageImportDialog open={importOpen} onOpenChange={setImportOpen} />
 
       <Dialog open={bulkPreviewOpen} onOpenChange={setBulkPreviewOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Auto-fill from ManageOne</DialogTitle>
           </DialogHeader>
           {!bulkPreview ? (
-            <div className="space-y-3">
+            <div className="min-h-0 flex-1 space-y-3">
               <Skeleton className="h-8 w-full" />
               <Skeleton className="h-32 w-full" />
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="rounded-md border">
+            <div className="flex min-h-0 flex-1 flex-col gap-4">
+              <div
+                className="min-h-0 flex-1 overflow-y-auto rounded-md border"
+                data-testid="bulk-preview-line-items"
+              >
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b bg-muted/30">
+                    <tr className="sticky top-0 border-b bg-muted/30">
                       <th className="w-10 p-3"></th>
                       <th className="text-left p-3 font-medium">Service</th>
                       <th className="text-left p-3 font-medium">
@@ -506,7 +509,7 @@ export default function UsagePage() {
               )}
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button
               variant="outline"
               onClick={() => setBulkPreviewOpen(false)}
