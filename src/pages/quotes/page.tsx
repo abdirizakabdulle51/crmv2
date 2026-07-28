@@ -290,6 +290,12 @@ export default function QuotesPage() {
         open={generateOpen}
         onOpenChange={setGenerateOpen}
         companies={companies}
+        onViewExistingQuote={(quoteId) => {
+          const quote = quotes.find((item) => item._id === quoteId);
+          if (quote) {
+            setViewQuote(quote);
+          }
+        }}
       />
 
       {viewQuote && (

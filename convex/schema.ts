@@ -209,6 +209,7 @@ export default defineSchema({
     monthlyGrandTotal: v.number(),
     yearlyGrandTotal: v.number(),
     notes: v.optional(v.string()),
+    sourceMonth: v.optional(v.string()),
   })
     .index("by_company", ["companyId"])
     .index("by_status", ["status"])

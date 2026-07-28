@@ -117,6 +117,12 @@ export const buildQuotePreviewFromUsage = query({
         q.eq("companyId", args.companyId).eq("month", args.month),
       )
       .collect();
+    const existingQuote = (
+      await ctx.db
+        .query("quotes")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect()
+    ).find((quote) => quote.sourceMonth === args.month);
     const lineItems = [];
     const warnings = [];
 
@@ -174,6 +180,13 @@ export const buildQuotePreviewFromUsage = query({
         (sum, item) => sum + item.yearlyTotal,
         0,
       ),
+      existingQuote: existingQuote
+        ? {
+            id: existingQuote._id,
+            date: existingQuote.date,
+            status: existingQuote.status,
+          }
+        : null,
     };
   },
 });
@@ -186,6 +199,7 @@ export const create = mutation({
     monthlyGrandTotal: v.number(),
     yearlyGrandTotal: v.number(),
     notes: v.optional(v.string()),
+    sourceMonth: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -201,6 +215,7 @@ export const create = mutation({
       monthlyGrandTotal: args.monthlyGrandTotal,
       yearlyGrandTotal: args.yearlyGrandTotal,
       notes: args.notes,
+      sourceMonth: args.sourceMonth,
     });
   },
 });

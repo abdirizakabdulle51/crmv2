@@ -125,4 +125,89 @@ describe("buildQuotePreviewFromUsage", () => {
     expect(preview.monthlyGrandTotal).toBe(13.2);
     expect(preview.yearlyGrandTotal).toBe(146.39999999999998);
   });
+
+  it("surfaces existing generated quote warning for the same company and source month only", async () => {
+    const t = convexTest({ schema, modules });
+    const seed = await t.run(async (ctx) => {
+      const countryId = await ctx.db.insert("countries", {
+        name: "Somalia",
+        region: "East Africa",
+      });
+      const sectorId = await ctx.db.insert("sectors", { name: "Banking" });
+      const userId = await ctx.db.insert("users", {
+        tokenIdentifier: "ceo-token",
+        name: "CEO",
+        role: "ceo",
+      });
+      const companyId = await ctx.db.insert("companies", {
+        name: "AICC",
+        sectorId,
+        countryId,
+        accountManagerId: userId,
+        contractStatus: "active",
+      });
+      const catalogItemId = await ctx.db.insert("serviceCatalog", {
+        serviceCategory: "EIP",
+        itemName: "EIP - Active",
+        billingUnit: "per IP",
+        monthlyPrice: 3,
+      });
+      await ctx.db.insert("consumption", {
+        companyId,
+        month: "2026-07",
+        serviceType: "EIP",
+        amount: 6,
+        quantity: 2,
+        catalogItemId,
+      });
+      const quoteId = await ctx.db.insert("quotes", {
+        companyId,
+        createdBy: userId,
+        date: "2026-07-28",
+        status: "draft",
+        sourceMonth: "2026-07",
+        lineItems: [
+          {
+            catalogItemId,
+            itemName: "EIP - Active",
+            serviceCategory: "EIP",
+            billingUnit: "per IP",
+            quantity: 2,
+            monthlyUnitPrice: 3,
+            monthlyTotal: 6,
+            yearlyTotal: 72,
+          },
+        ],
+        monthlyGrandTotal: 6,
+        yearlyGrandTotal: 72,
+      });
+
+      return { companyId, quoteId };
+    });
+
+    const authed = t.withIdentity({ tokenIdentifier: "ceo-token" });
+    const sameMonthPreview = await authed.query(
+      api.quotes.buildQuotePreviewFromUsage,
+      {
+        companyId: seed.companyId,
+        month: "2026-07",
+      },
+    );
+    const differentMonthPreview = await authed.query(
+      api.quotes.buildQuotePreviewFromUsage,
+      {
+        companyId: seed.companyId,
+        month: "2026-08",
+      },
+    );
+
+    expect(sameMonthPreview.existingQuote).toEqual({
+      id: seed.quoteId,
+      date: "2026-07-28",
+      status: "draft",
+    });
+    expect(sameMonthPreview.lineItems).toHaveLength(1);
+    expect(differentMonthPreview.existingQuote).toBeNull();
+    expect(differentMonthPreview.lineItems).toHaveLength(0);
+  });
 });

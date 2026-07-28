@@ -4,6 +4,7 @@ import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
+import { Checkbox } from "@/components/ui/checkbox.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import {
@@ -28,17 +29,20 @@ type QuoteGenerateFromUsageDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   companies: Doc<"companies">[];
+  onViewExistingQuote?: (quoteId: Id<"quotes">) => void;
 };
 
 export default function QuoteGenerateFromUsageDialog({
   open,
   onOpenChange,
   companies,
+  onViewExistingQuote,
 }: QuoteGenerateFromUsageDialogProps) {
   const createQuote = useMutation(api.quotes.create);
   const [companyId, setCompanyId] = useState("");
   const [month, setMonth] = useState(getCurrentMonth());
   const [creating, setCreating] = useState(false);
+  const [allowDuplicate, setAllowDuplicate] = useState(false);
   const preview = useQuery(
     api.quotes.buildQuotePreviewFromUsage,
     open && companyId && month
@@ -50,10 +54,17 @@ export default function QuoteGenerateFromUsageDialog({
     setCompanyId("");
     setMonth(getCurrentMonth());
     setCreating(false);
+    setAllowDuplicate(false);
   };
 
   const handleCreate = async () => {
     if (!preview || !companyId || preview.lineItems.length === 0) {
+      return;
+    }
+    if (preview.existingQuote && !allowDuplicate) {
+      toast.error(
+        "Confirm that you want to create another quote for this month",
+      );
       return;
     }
     setCreating(true);
@@ -64,6 +75,7 @@ export default function QuoteGenerateFromUsageDialog({
         monthlyGrandTotal: preview.monthlyGrandTotal,
         yearlyGrandTotal: preview.yearlyGrandTotal,
         notes: `Generated from Usage Tracking for ${month}`,
+        sourceMonth: month,
       });
       toast.success("Draft quote created");
       reset();
@@ -93,7 +105,13 @@ export default function QuoteGenerateFromUsageDialog({
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
             <div className="min-w-0 space-y-2">
               <Label>Company *</Label>
-              <Select value={companyId} onValueChange={setCompanyId}>
+              <Select
+                value={companyId}
+                onValueChange={(value) => {
+                  setCompanyId(value);
+                  setAllowDuplicate(false);
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select company" />
                 </SelectTrigger>
@@ -111,7 +129,10 @@ export default function QuoteGenerateFromUsageDialog({
               <Input
                 type="month"
                 value={month}
-                onChange={(event) => setMonth(event.target.value)}
+                onChange={(event) => {
+                  setMonth(event.target.value);
+                  setAllowDuplicate(false);
+                }}
               />
             </div>
           </div>
@@ -125,6 +146,44 @@ export default function QuoteGenerateFromUsageDialog({
 
           {preview && (
             <div className="space-y-4">
+              {preview.existingQuote && (
+                <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+                  <div className="font-medium text-amber-700 dark:text-amber-300">
+                    A quote already exists for this company and month.
+                  </div>
+                  <p className="mt-1 text-muted-foreground">
+                    Created {preview.existingQuote.date}, status:{" "}
+                    {preview.existingQuote.status}.
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    {onViewExistingQuote && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          onViewExistingQuote(
+                            preview.existingQuote!.id as Id<"quotes">,
+                          );
+                          onOpenChange(false);
+                        }}
+                      >
+                        View Existing Quote
+                      </Button>
+                    )}
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={allowDuplicate}
+                        onCheckedChange={(checked) =>
+                          setAllowDuplicate(checked === true)
+                        }
+                      />
+                      Create another quote anyway
+                    </label>
+                  </div>
+                </div>
+              )}
+
               {preview.lineItems.length === 0 ? (
                 <div className="rounded-md border p-6 text-center text-sm text-muted-foreground">
                   {preview.warnings.length === 0
@@ -246,9 +305,16 @@ export default function QuoteGenerateFromUsageDialog({
           </Button>
           <Button
             onClick={handleCreate}
-            disabled={!preview || preview.lineItems.length === 0 || creating}
+            disabled={
+              !preview ||
+              preview.lineItems.length === 0 ||
+              creating ||
+              (!!preview.existingQuote && !allowDuplicate)
+            }
           >
-            Create Draft Quote
+            {preview?.existingQuote
+              ? "Create Another Draft Quote"
+              : "Create Draft Quote"}
           </Button>
         </DialogFooter>
       </DialogContent>
