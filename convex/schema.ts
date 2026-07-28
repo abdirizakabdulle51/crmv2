@@ -185,6 +185,29 @@ export default defineSchema({
     .index("by_category", ["serviceCategory"])
     .index("by_name", ["itemName"]),
 
+  aiRecommendations: defineTable({
+    companyId: v.id("companies"),
+    narrative: v.string(),
+    topPriority: v.optional(v.string()),
+    ruleSnapshot: v.array(
+      v.object({
+        companyId: v.id("companies"),
+        companyName: v.string(),
+        rule: v.string(),
+        triggerReason: v.string(),
+        recommendedService: v.string(),
+        estimatedValue: v.string(),
+        priority: v.union(
+          v.literal("high"),
+          v.literal("medium"),
+          v.literal("low"),
+        ),
+      }),
+    ),
+    generatedAt: v.number(),
+    model: v.string(),
+  }).index("by_company", ["companyId"]),
+
   quotes: defineTable({
     companyId: v.id("companies"),
     createdBy: v.id("users"),

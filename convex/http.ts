@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { auth } from "./auth";
 import { internal } from "./_generated/api";
 import { httpAction } from "./_generated/server";
+import type { Id } from "./_generated/dataModel.d.ts";
 
 const http = httpRouter();
 
@@ -43,6 +44,14 @@ type ManageOneEvsVolumeTypeInput = {
   volumeType: string;
   totalGb: number;
   count: number;
+};
+
+type AiRecommendationSyncInput = {
+  companyId: string;
+  narrative: string;
+  topPriority?: string;
+  model: string;
+  generatedAt: number;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -279,14 +288,53 @@ function normalizeTenant(value: unknown): ManageOneTenantInput {
   };
 }
 
+function hasValidSyncSecret(request: Request, envKey: string) {
+  const expectedSecret = process.env[envKey];
+  const providedSecret = request.headers.get("X-Sync-Secret");
+  return !!expectedSecret && providedSecret === expectedSecret;
+}
+
+function normalizeAiRecommendation(value: unknown): AiRecommendationSyncInput {
+  if (!isRecord(value)) {
+    throw new Error("Each AI recommendation must be an object");
+  }
+
+  const companyId = value.companyId;
+  const narrative = value.narrative;
+  const topPriority = value.topPriority;
+  const model = value.model;
+  const generatedAt = value.generatedAt;
+
+  if (typeof companyId !== "string") {
+    throw new Error("companyId is required");
+  }
+  if (typeof narrative !== "string") {
+    throw new Error("narrative is required");
+  }
+  if (topPriority != null && typeof topPriority !== "string") {
+    throw new Error("topPriority must be a string");
+  }
+  if (typeof model !== "string") {
+    throw new Error("model is required");
+  }
+  if (typeof generatedAt !== "number") {
+    throw new Error("generatedAt is required");
+  }
+
+  return {
+    companyId,
+    narrative,
+    ...(topPriority != null ? { topPriority } : {}),
+    model,
+    generatedAt,
+  };
+}
+
 http.route({
   path: "/manageone/sync",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    const expectedSecret = process.env.MANAGEONE_SYNC_SECRET;
-    const providedSecret = request.headers.get("X-Sync-Secret");
-
-    if (!expectedSecret || providedSecret !== expectedSecret) {
+    if (!hasValidSyncSecret(request, "MANAGEONE_SYNC_SECRET")) {
       return Response.json(
         { success: false, error: "Unauthorized" },
         { status: 401 },
@@ -309,6 +357,83 @@ http.route({
         {
           tenants,
         },
+      );
+
+      return Response.json({ success: true, count });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/ai-recs/context",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "AI_RECS_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    const context = await ctx.runQuery(
+      internal.recommendations.listContextForSync,
+      {},
+    );
+
+    return Response.json({ success: true, companies: context });
+  }),
+});
+
+http.route({
+  path: "/ai-recs/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "AI_RECS_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json();
+      if (!Array.isArray(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an array" },
+          { status: 400 },
+        );
+      }
+
+      const context = await ctx.runQuery(
+        internal.recommendations.listContextForSync,
+        {},
+      );
+      const rulesByCompany = new Map(
+        context.map((companyContext) => [
+          companyContext.companyId,
+          companyContext.recommendations,
+        ]),
+      );
+      const items = body.map(normalizeAiRecommendation).map((item) => {
+        const companyId = item.companyId as Id<"companies">;
+        return {
+          ...item,
+          companyId,
+          ruleSnapshot: rulesByCompany.get(companyId) ?? [],
+        };
+      });
+
+      const count = await ctx.runMutation(
+        internal.aiRecommendations.bulkUpsert,
+        { items },
       );
 
       return Response.json({ success: true, count });

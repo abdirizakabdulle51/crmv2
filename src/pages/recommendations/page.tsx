@@ -34,10 +34,8 @@ import {
   DollarSign,
 } from "lucide-react";
 import { useState } from "react";
-import {
-  generateRecommendations,
-  type Recommendation,
-} from "./_lib/recommendation-engine.ts";
+import type { Doc } from "@/convex/_generated/dataModel.d.ts";
+import type { Recommendation } from "./_lib/recommendation-engine.ts";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
 
@@ -82,9 +80,8 @@ function PriorityBadge({ priority }: { priority: Recommendation["priority"] }) {
 
 export default function RecommendationsPage() {
   const companies = useQuery(api.companies.list, {});
-  const consumption = useQuery(api.consumption.list, {});
-  const sectors = useQuery(api.sectors.list, {});
-  const catalog = useQuery(api.serviceCatalog.list, {});
+  const recommendations = useQuery(api.recommendations.listComputed, {});
+  const aiRecommendations = useQuery(api.aiRecommendations.listVisible, {});
 
   const [companyFilter, setCompanyFilter] = useState("all");
   const [ruleFilter, setRuleFilter] = useState("all");
@@ -92,7 +89,7 @@ export default function RecommendationsPage() {
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
 
-  if (!companies || !consumption || !sectors || !catalog) {
+  if (!companies || !recommendations || !aiRecommendations) {
     return (
       <div className="p-6 md:p-8 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -106,11 +103,8 @@ export default function RecommendationsPage() {
     );
   }
 
-  const recommendations = generateRecommendations(
-    companies,
-    consumption,
-    sectors,
-    catalog,
+  const aiByCompany = new Map(
+    aiRecommendations.map((row) => [row.companyId, row]),
   );
 
   // Apply filters
@@ -125,6 +119,18 @@ export default function RecommendationsPage() {
   const pageStart = filtered.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
   const pageEnd = Math.min(safePage * pageSize, filtered.length);
   const paginatedRecommendations = filtered.slice(pageStart - 1, pageEnd);
+  const seenAiCompanies = new Set<Recommendation["companyId"]>();
+  const recommendationRows = paginatedRecommendations.flatMap((rec, idx) => {
+    const aiRow = aiByCompany.get(rec.companyId);
+    const shouldShowAi = aiRow && !seenAiCompanies.has(rec.companyId);
+    seenAiCompanies.add(rec.companyId);
+    return [
+      ...(shouldShowAi
+        ? [{ type: "ai" as const, row: aiRow as Doc<"aiRecommendations"> }]
+        : []),
+      { type: "recommendation" as const, rec, idx },
+    ];
+  });
 
   // Summary stats
   const highCount = recommendations.filter((r) => r.priority === "high").length;
@@ -322,51 +328,81 @@ export default function RecommendationsPage() {
               </Button>
             </div>
           </div>
-          {paginatedRecommendations.map((rec, idx) => (
-            <Card key={`${rec.companyId}-${rec.rule}-${idx}`}>
-              <CardContent className="p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                  <div className="flex items-center gap-3 shrink-0">
-                    <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary/10 text-primary">
-                      {RULE_ICONS[rec.rule] || (
-                        <Lightbulb className="h-4 w-4" />
-                      )}
+          {recommendationRows.map((row) =>
+            row.type === "ai" ? (
+              <Card
+                key={`ai-${row.row.companyId}`}
+                className="border-primary/30 bg-primary/5"
+              >
+                <CardContent className="p-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge className="bg-primary text-primary-foreground">
+                        AI-generated
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        Generated{" "}
+                        {new Date(row.row.generatedAt).toLocaleDateString()}
+                        {row.row.model ? ` with ${row.row.model}` : ""}
+                      </span>
+                      {row.row.topPriority ? (
+                        <Badge variant="outline">
+                          Top priority: {row.row.topPriority}
+                        </Badge>
+                      ) : null}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm">
-                          {rec.companyName}
-                        </span>
-                        <PriorityBadge priority={rec.priority} />
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        {RULE_LABELS[rec.rule] || rec.rule}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex-1 min-w-0 sm:ml-4">
-                    <p className="text-sm text-foreground">
-                      {rec.triggerReason}
+                    <p className="text-sm leading-6 text-foreground">
+                      {row.row.narrative}
                     </p>
-                    <div className="flex flex-wrap gap-3 mt-1.5 text-xs">
-                      <span className="text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          Recommend:
-                        </span>{" "}
-                        {rec.recommendedService}
-                      </span>
-                      <span className="text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          Est. value:
-                        </span>{" "}
-                        {rec.estimatedValue}
-                      </span>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card key={`${row.rec.companyId}-${row.rec.rule}-${row.idx}`}>
+                <CardContent className="p-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary/10 text-primary">
+                        {RULE_ICONS[row.rec.rule] || (
+                          <Lightbulb className="h-4 w-4" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-sm">
+                            {row.rec.companyName}
+                          </span>
+                          <PriorityBadge priority={row.rec.priority} />
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {RULE_LABELS[row.rec.rule] || row.rec.rule}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0 sm:ml-4">
+                      <p className="text-sm text-foreground">
+                        {row.rec.triggerReason}
+                      </p>
+                      <div className="flex flex-wrap gap-3 mt-1.5 text-xs">
+                        <span className="text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            Recommend:
+                          </span>{" "}
+                          {row.rec.recommendedService}
+                        </span>
+                        <span className="text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            Est. value:
+                          </span>{" "}
+                          {row.rec.estimatedValue}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            ),
+          )}
           <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
             <span>
               Showing {pageStart}-{pageEnd} of {filtered.length}

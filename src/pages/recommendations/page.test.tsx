@@ -21,32 +21,25 @@ Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
 vi.mock("@/convex/_generated/api.js", () => ({
   api: {
     companies: { list: "companies.list" },
-    consumption: { list: "consumption.list" },
-    sectors: { list: "sectors.list" },
-    serviceCatalog: { list: "serviceCatalog.list" },
+    recommendations: { listComputed: "recommendations.listComputed" },
+    aiRecommendations: { listVisible: "aiRecommendations.listVisible" },
   },
 }));
 
 const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
-  consumption: [] as Doc<"consumption">[],
-  sectors: [] as Doc<"sectors">[],
-  catalog: [] as Doc<"serviceCatalog">[],
   recommendations: [] as Recommendation[],
+  aiRecommendations: [] as Doc<"aiRecommendations">[],
 }));
 
 vi.mock("convex/react", () => ({
   useQuery: (query: string) => {
     if (query === "companies.list") return mocks.companies;
-    if (query === "consumption.list") return mocks.consumption;
-    if (query === "sectors.list") return mocks.sectors;
-    if (query === "serviceCatalog.list") return mocks.catalog;
+    if (query === "recommendations.listComputed") return mocks.recommendations;
+    if (query === "aiRecommendations.listVisible")
+      return mocks.aiRecommendations;
     return undefined;
   },
-}));
-
-vi.mock("./_lib/recommendation-engine.ts", () => ({
-  generateRecommendations: () => mocks.recommendations,
 }));
 
 function company(id: string, name: string): Doc<"companies"> {
@@ -80,9 +73,6 @@ function seedRecommendations() {
       `Company ${String(index + 1).padStart(2, "0")}`,
     ),
   );
-  mocks.consumption = [];
-  mocks.sectors = [];
-  mocks.catalog = [];
   mocks.recommendations = [
     ...Array.from({ length: 55 }, (_, index) =>
       recommendation(index + 1, "medium"),
@@ -91,6 +81,7 @@ function seedRecommendations() {
       recommendation(index + 56, "low"),
     ),
   ];
+  mocks.aiRecommendations = [];
 }
 
 describe("RecommendationsPage pagination", () => {
@@ -133,5 +124,33 @@ describe("RecommendationsPage pagination", () => {
 
     expect(screen.getAllByText("Showing 1-5 of 5")).toHaveLength(2);
     expect(screen.getByText("Company 56")).toBeInTheDocument();
+  });
+
+  it("shows stored AI narrative above the company's first visible rule", () => {
+    seedRecommendations();
+    mocks.recommendations = [recommendation(1, "high")];
+    mocks.aiRecommendations = [
+      {
+        _id: "ai-1" as Id<"aiRecommendations">,
+        _creationTime: 1,
+        companyId: "company-1" as Id<"companies">,
+        narrative:
+          "Company 01 should prioritize backup and secure connectivity.",
+        topPriority: "backup",
+        ruleSnapshot: [recommendation(1, "high")],
+        generatedAt: Date.UTC(2026, 6, 29),
+        model: "gpt-test",
+      },
+    ];
+
+    render(<RecommendationsPage />);
+
+    expect(screen.getByText("AI-generated")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Company 01 should prioritize backup and secure connectivity.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Recommendation 1")).toBeInTheDocument();
   });
 });

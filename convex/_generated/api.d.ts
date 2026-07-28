@@ -9,6 +9,7 @@
  */
 
 import type * as activities from "../activities.js";
+import type * as aiRecommendations from "../aiRecommendations.js";
 import type * as auth from "../auth.js";
 import type * as authorization from "../authorization.js";
 import type * as companies from "../companies.js";
@@ -20,6 +21,7 @@ import type * as leads from "../leads.js";
 import type * as leadsImport from "../leadsImport.js";
 import type * as manageOneTenants from "../manageOneTenants.js";
 import type * as quotes from "../quotes.js";
+import type * as recommendations from "../recommendations.js";
 import type * as salesTargets from "../salesTargets.js";
 import type * as sectors from "../sectors.js";
 import type * as serviceCatalog from "../serviceCatalog.js";
@@ -34,6 +36,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   activities: typeof activities;
+  aiRecommendations: typeof aiRecommendations;
   auth: typeof auth;
   authorization: typeof authorization;
   companies: typeof companies;
@@ -45,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   leadsImport: typeof leadsImport;
   manageOneTenants: typeof manageOneTenants;
   quotes: typeof quotes;
+  recommendations: typeof recommendations;
   salesTargets: typeof salesTargets;
   sectors: typeof sectors;
   serviceCatalog: typeof serviceCatalog;
