@@ -26,6 +26,8 @@ import { useCrm } from "@/lib/crm-context.tsx";
 import { toast } from "sonner";
 import { Cloud, ShieldAlert } from "lucide-react";
 
+const PAGE_SIZE_OPTIONS = [25, 50, 100];
+
 function formatNumber(value: number | undefined) {
   return value == null ? "-" : value.toLocaleString();
 }
@@ -58,6 +60,8 @@ export default function ManageOneTenantsPage() {
   const [submittingTenantId, setSubmittingTenantId] = useState<string | null>(
     null,
   );
+  const [pageSize, setPageSize] = useState(50);
+  const [currentPage, setCurrentPage] = useState(1);
 
   if (!isAdmin) {
     return (
@@ -86,6 +90,12 @@ export default function ManageOneTenantsPage() {
   const sortedTenants = [...tenants].sort((a, b) =>
     a.name.localeCompare(b.name),
   );
+  const pageCount = Math.max(1, Math.ceil(sortedTenants.length / pageSize));
+  const safePage = Math.min(currentPage, pageCount);
+  const pageStart =
+    sortedTenants.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const pageEnd = Math.min(safePage * pageSize, sortedTenants.length);
+  const paginatedTenants = sortedTenants.slice(pageStart - 1, pageEnd);
   const accountManagers = users.filter(
     (user) =>
       user.isDisabled !== true &&
@@ -149,9 +159,7 @@ export default function ManageOneTenantsPage() {
   return (
     <div className="p-6 md:p-8 space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">
-          ManageOne Tenants
-        </h1>
+        <h1 className="text-2xl font-bold tracking-tight">ManageOne Tenants</h1>
         <p className="text-muted-foreground mt-1">
           {sortedTenants.length}{" "}
           {sortedTenants.length === 1 ? "tenant" : "tenants"} synced from
@@ -170,6 +178,32 @@ export default function ManageOneTenantsPage() {
       ) : (
         <Card>
           <CardContent className="p-0">
+            <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm text-muted-foreground">
+                Showing {pageStart}-{pageEnd} of {sortedTenants.length}
+              </span>
+              <Select
+                value={String(pageSize)}
+                onValueChange={(value) => {
+                  setPageSize(Number(value));
+                  setCurrentPage(1);
+                }}
+              >
+                <SelectTrigger
+                  className="w-[150px]"
+                  aria-label="ManageOne tenants per page"
+                >
+                  <SelectValue placeholder="Per page" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <SelectItem key={size} value={String(size)}>
+                      {size} per page
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -187,7 +221,7 @@ export default function ManageOneTenantsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedTenants.map((tenant) => (
+                  {paginatedTenants.map((tenant) => (
                     <tr key={tenant._id} className="border-b last:border-0">
                       <td className="p-3">
                         <div className="font-medium">{tenant.name}</div>
@@ -274,6 +308,36 @@ export default function ManageOneTenantsPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="flex flex-col gap-3 border-t p-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Showing {pageStart}-{pageEnd} of {sortedTenants.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={safePage === 1}
+                  onClick={() =>
+                    setCurrentPage((page) => Math.max(1, page - 1))
+                  }
+                >
+                  Previous
+                </Button>
+                <span>
+                  Page {safePage} of {pageCount}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={safePage === pageCount}
+                  onClick={() =>
+                    setCurrentPage((page) => Math.min(pageCount, page + 1))
+                  }
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
