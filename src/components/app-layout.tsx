@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
+import { ThemeToggle } from "@/components/theme-toggle.tsx";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -94,6 +95,7 @@ export default function AppLayout() {
                   {getRoleLabel(currentUser.role)}
                 </div>
               </div>
+              <ThemeToggle />
               <button
                 onClick={() => signout()}
                 className="shrink-0 p-1.5 rounded-md text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors cursor-pointer"

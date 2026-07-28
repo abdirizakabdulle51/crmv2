@@ -31,11 +31,11 @@
       crossorigin
     />
 
-    <!-- Detect dark mode preference and set the class before next-themes loads. This avoids a flash of unstyled content (FOUC) when the page loads. -->
+    <!-- Set the saved theme before next-themes loads. Defaults to light to avoid a flash of dark mode for first-time visitors. -->
     <script>
       try {
-        let theme = localStorage.getItem("theme");
-        if (theme === "system" || !theme) {
+        let theme = localStorage.getItem("theme") || "light";
+        if (theme === "system") {
           let prefersDark = window.matchMedia(
             "(prefers-color-scheme: dark)",
           ).matches;
