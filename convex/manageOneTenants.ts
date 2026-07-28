@@ -10,6 +10,15 @@ export type UsageHint = {
   quantity: number;
   pricing: UsageHintPricing;
   suggestedCatalogItemId?: Id<"serviceCatalog">;
+  lineItems?: UsageHintLineItem[];
+};
+
+export type UsageHintLineItem = {
+  label: string;
+  quantity: number;
+  pricing: UsageHintPricing;
+  suggestedCatalogItemId?: Id<"serviceCatalog">;
+  needsManualPricing?: boolean;
 };
 
 type UsageHintResource = {
@@ -20,6 +29,12 @@ type UsageHintResource = {
 
 type UsageHintTenant = {
   resources?: UsageHintResource[];
+  ecsFlavors?: {
+    flavorName: string;
+    vcpus: number;
+    ramMb: number;
+    count: number;
+  }[];
 };
 
 type UsageHintCatalogItem = {
@@ -157,8 +172,29 @@ export function buildUsageHintsForCompany(
   catalog: UsageHintCatalogItem[],
 ): UsageHint[] {
   const totals = new Map<string, UsageHint>();
+  const ecsLineItems: UsageHintLineItem[] = [];
+  const ecsCatalog = catalog.filter((item) => item.serviceCategory === "ECS");
 
   for (const tenant of tenants) {
+    for (const flavor of tenant.ecsFlavors ?? []) {
+      if (flavor.count <= 0) {
+        continue;
+      }
+
+      const catalogItem = ecsCatalog.find(
+        (item) =>
+          item.itemName.toLowerCase() === flavor.flavorName.toLowerCase(),
+      );
+
+      ecsLineItems.push({
+        label: flavor.flavorName,
+        quantity: flavor.count,
+        pricing: catalogItem ? "auto" : "manual",
+        ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
+        ...(!catalogItem ? { needsManualPricing: true } : {}),
+      });
+    }
+
     for (const resource of tenant.resources ?? []) {
       if (resource.used <= 0) {
         continue;
@@ -187,14 +223,14 @@ export function buildUsageHintsForCompany(
     }
   }
 
-  return [...totals.values()].map((hint) => {
+  const hints = [...totals.values()].map((hint) => {
     if (hint.pricing !== "auto") {
       return hint;
     }
 
     const catalogItem = findCatalogItemForHint(hint, catalog);
     if (!catalogItem) {
-      return { ...hint, pricing: "manual" };
+      return { ...hint, pricing: "manual" as const };
     }
 
     return {
@@ -202,6 +238,27 @@ export function buildUsageHintsForCompany(
       suggestedCatalogItemId: catalogItem._id,
     };
   });
+
+  if (ecsLineItems.length > 0) {
+    const existingEcsHintIndex = hints.findIndex(
+      (hint) => hint.serviceCategory === "ECS",
+    );
+    const ecsHint = {
+      serviceCategory: "ECS",
+      quantity: ecsLineItems.reduce((sum, item) => sum + item.quantity, 0),
+      pricing: ecsLineItems.every((item) => item.pricing === "auto")
+        ? ("auto" as const)
+        : ("manual" as const),
+      lineItems: ecsLineItems,
+    };
+    if (existingEcsHintIndex >= 0) {
+      hints[existingEcsHintIndex] = ecsHint;
+    } else {
+      hints.unshift(ecsHint);
+    }
+  }
+
+  return hints;
 }
 
 async function getCurrentUserOrThrow(
@@ -255,6 +312,16 @@ export const bulkUpsert = internalMutation({
               resource: v.string(),
               used: v.number(),
               total: v.optional(v.number()),
+            }),
+          ),
+        ),
+        ecsFlavors: v.optional(
+          v.array(
+            v.object({
+              flavorName: v.string(),
+              vcpus: v.number(),
+              ramMb: v.number(),
+              count: v.number(),
             }),
           ),
         ),

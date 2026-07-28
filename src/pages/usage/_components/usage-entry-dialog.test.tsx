@@ -24,6 +24,13 @@ const mocks = vi.hoisted(() => ({
     quantity: number;
     pricing: "auto" | "manual";
     suggestedCatalogItemId?: Id<"serviceCatalog">;
+    lineItems?: Array<{
+      label: string;
+      quantity: number;
+      pricing: "auto" | "manual";
+      suggestedCatalogItemId?: Id<"serviceCatalog">;
+      needsManualPricing?: boolean;
+    }>;
   }>,
   createConsumption: vi.fn(),
 }));
@@ -129,5 +136,55 @@ describe("UsageEntryDialog smart service filtering", () => {
     expect(
       screen.queryByRole("option", { name: "WAF" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders ECS flavor rows with auto-priced and manual-pricing states", async () => {
+    const user = userEvent.setup();
+    mocks.catalog = [
+      catalogItem("ecs-c6", "ECS", "C6_12xlarge.4"),
+      catalogItem("ecs-s6", "ECS", "S6_large.2"),
+      catalogItem("waf-1", "WAF", "WAF Basic"),
+    ];
+    mocks.hints = [
+      {
+        serviceCategory: "ECS",
+        quantity: 3,
+        pricing: "manual",
+        lineItems: [
+          {
+            label: "c6_12XLARGE.4",
+            quantity: 2,
+            pricing: "auto",
+            suggestedCatalogItemId: "ecs-c6" as Id<"serviceCatalog">,
+          },
+          {
+            label: "tenant-custom",
+            quantity: 1,
+            pricing: "manual",
+            needsManualPricing: true,
+          },
+        ],
+      },
+    ];
+
+    render(
+      <UsageEntryDialog
+        open
+        onOpenChange={vi.fn()}
+        companies={[company("company-1", "AICC")]}
+      />,
+    );
+
+    const [companySelect, serviceTypeSelect] = screen.getAllByRole("combobox");
+    await user.click(companySelect);
+    await user.click(screen.getByRole("option", { name: "AICC" }));
+    await user.click(serviceTypeSelect);
+    await user.click(screen.getByRole("option", { name: "ECS" }));
+
+    expect(screen.getByText("c6_12XLARGE.4")).toBeInTheDocument();
+    expect(screen.getByText("tenant-custom")).toBeInTheDocument();
+    expect(screen.getAllByText("From ManageOne")).toHaveLength(2);
+    expect(screen.getByText("Needs manual pricing")).toBeInTheDocument();
+    expect(screen.queryByText("WAF Basic")).not.toBeInTheDocument();
   });
 });

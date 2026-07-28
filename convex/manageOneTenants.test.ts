@@ -123,4 +123,111 @@ describe("buildUsageHintsForCompany", () => {
     expect(hints.map((hint) => hint.serviceCategory)).not.toContain("NAT");
     expect(hints.map((hint) => hint.serviceCategory)).not.toContain("LTS");
   });
+
+  it("turns ECS flavor breakdowns into matched auto lines and unmatched manual lines", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [
+            { serviceId: "ecs", resource: "instances", used: 6 },
+            { serviceId: "waf", resource: "instance", used: 1 },
+          ],
+          ecsFlavors: [
+            { flavorName: "C6_12xlarge.4", vcpus: 48, ramMb: 196608, count: 2 },
+            { flavorName: "s6_large.2", vcpus: 2, ramMb: 4096, count: 3 },
+            {
+              flavorName: "tenant-custom-aicc",
+              vcpus: 8,
+              ramMb: 32768,
+              count: 1,
+            },
+          ],
+        },
+        {
+          resources: [{ serviceId: "ecs", resource: "instances", used: 3 }],
+          ecsFlavors: [
+            { flavorName: "c6_12XLARGE.4", vcpus: 48, ramMb: 196608, count: 1 },
+            {
+              flavorName: "safariocs-custom",
+              vcpus: 16,
+              ramMb: 65536,
+              count: 2,
+            },
+            { flavorName: "WAF Basic", vcpus: 0, ramMb: 0, count: 0 },
+          ],
+        },
+      ],
+      [
+        catalogItem("ecs-c6", "ECS", "C6_12xlarge.4"),
+        catalogItem("ecs-s6", "ECS", "S6_large.2"),
+        catalogItem("waf-basic", "WAF", "WAF Basic"),
+      ],
+    );
+
+    const ecsHint = hints.find((hint) => hint.serviceCategory === "ECS");
+    const wafHint = hints.find((hint) => hint.serviceCategory === "WAF");
+
+    expect(ecsHint).toEqual({
+      serviceCategory: "ECS",
+      quantity: 9,
+      pricing: "manual",
+      lineItems: [
+        {
+          label: "C6_12xlarge.4",
+          quantity: 2,
+          pricing: "auto",
+          suggestedCatalogItemId: "ecs-c6",
+        },
+        {
+          label: "s6_large.2",
+          quantity: 3,
+          pricing: "auto",
+          suggestedCatalogItemId: "ecs-s6",
+        },
+        {
+          label: "tenant-custom-aicc",
+          quantity: 1,
+          pricing: "manual",
+          needsManualPricing: true,
+        },
+        {
+          label: "c6_12XLARGE.4",
+          quantity: 1,
+          pricing: "auto",
+          suggestedCatalogItemId: "ecs-c6",
+        },
+        {
+          label: "safariocs-custom",
+          quantity: 2,
+          pricing: "manual",
+          needsManualPricing: true,
+        },
+      ],
+    });
+    expect(wafHint).toEqual({
+      serviceCategory: "WAF",
+      quantity: 1,
+      pricing: "manual",
+    });
+  });
+
+  it("keeps aggregate ECS manual behavior when no flavor breakdown exists", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [{ serviceId: "ecs", resource: "instances", used: 4 }],
+        },
+      ],
+      [catalogItem("ecs-c6", "ECS", "C6_12xlarge.4")],
+    );
+
+    expect(hints).toContainEqual({
+      serviceCategory: "ECS",
+      quantity: 4,
+      pricing: "manual",
+    });
+    expect(
+      hints.find((hint) => hint.serviceCategory === "ECS")?.lineItems,
+    ).toBeUndefined();
+  });
 });

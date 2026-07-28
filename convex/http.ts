@@ -21,6 +21,7 @@ type ManageOneTenantInput = {
   evsUsed?: number;
   projectCount?: number;
   resources?: ManageOneResourceInput[];
+  ecsFlavors?: ManageOneEcsFlavorInput[];
 };
 
 type ManageOneResourceInput = {
@@ -28,6 +29,13 @@ type ManageOneResourceInput = {
   resource: string;
   used: number;
   total?: number;
+};
+
+type ManageOneEcsFlavorInput = {
+  flavorName: string;
+  vcpus: number;
+  ramMb: number;
+  count: number;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -133,6 +141,49 @@ function optionalResources(
   });
 }
 
+function optionalEcsFlavors(
+  tenant: Record<string, unknown>,
+): ManageOneEcsFlavorInput[] | undefined {
+  const value = tenant.ecsFlavors;
+  if (value == null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("ecsFlavors must be an array");
+  }
+
+  return value.map((flavorValue) => {
+    if (!isRecord(flavorValue)) {
+      throw new Error("Each ecsFlavor must be an object");
+    }
+
+    const flavorName = flavorValue.flavorName;
+    const vcpus = flavorValue.vcpus;
+    const ramMb = flavorValue.ramMb;
+    const count = flavorValue.count;
+
+    if (typeof flavorName !== "string") {
+      throw new Error("ecsFlavors.flavorName must be a string");
+    }
+    if (typeof vcpus !== "number") {
+      throw new Error("ecsFlavors.vcpus must be a number");
+    }
+    if (typeof ramMb !== "number") {
+      throw new Error("ecsFlavors.ramMb must be a number");
+    }
+    if (typeof count !== "number") {
+      throw new Error("ecsFlavors.count must be a number");
+    }
+
+    return {
+      flavorName,
+      vcpus,
+      ramMb,
+      count,
+    };
+  });
+}
+
 function normalizeTenant(value: unknown): ManageOneTenantInput {
   if (!isRecord(value)) {
     throw new Error("Each tenant must be an object");
@@ -173,6 +224,9 @@ function normalizeTenant(value: unknown): ManageOneTenantInput {
       : {}),
     ...(optionalResources(value) !== undefined
       ? { resources: optionalResources(value) }
+      : {}),
+    ...(optionalEcsFlavors(value) !== undefined
+      ? { ecsFlavors: optionalEcsFlavors(value) }
       : {}),
   };
 }

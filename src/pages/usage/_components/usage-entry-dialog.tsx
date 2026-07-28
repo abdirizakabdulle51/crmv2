@@ -29,6 +29,28 @@ type UsageHint = {
   quantity: number;
   pricing: "auto" | "manual";
   suggestedCatalogItemId?: Id<"serviceCatalog">;
+  lineItems?: UsageHintLineItem[];
+};
+
+type UsageHintLineItem = {
+  label: string;
+  quantity: number;
+  pricing: "auto" | "manual";
+  suggestedCatalogItemId?: Id<"serviceCatalog">;
+  needsManualPricing?: boolean;
+};
+
+type PendingUsageLineItem = {
+  clientId: string;
+  serviceType: string;
+  label?: string;
+  catalogItemId: string;
+  quantity: string;
+  amount: string;
+  calculatedAmount: number | null;
+  isManualOverride: boolean;
+  fromManageOne: boolean;
+  needsManualPricing: boolean;
 };
 
 type UsageEntryDialogProps = {
@@ -54,12 +76,20 @@ export default function UsageEntryDialog({
   const [isManualOverride, setIsManualOverride] = useState(false);
   const [calculatedAmount, setCalculatedAmount] = useState<number | null>(null);
   const [autoFilledFromManageOne, setAutoFilledFromManageOne] = useState(false);
+  const [pendingLineItems, setPendingLineItems] = useState<
+    PendingUsageLineItem[]
+  >([]);
   const usageHintsResult = useQuery(
     api.manageOneTenants.getUsageHintsForCompany,
     companyId ? { companyId: companyId as Id<"companies"> } : "skip",
   );
 
   const usageHints = usageHintsResult?.hints ?? [];
+  const selectedHint = usageHints.find(
+    (item) => item.serviceCategory === serviceType,
+  );
+  const selectedHasFlavorLineItems =
+    serviceType === "ECS" && !!selectedHint?.lineItems?.length;
   const availableServiceTypes = companyId
     ? [
         ...SERVICE_TYPES.filter(
@@ -98,6 +128,9 @@ export default function UsageEntryDialog({
   const selectedCatalogItem = catalog?.find(
     (item) => item._id === catalogItemId,
   );
+
+  const getCatalogItem = (id: string) =>
+    catalog?.find((item) => item._id === id);
 
   // Auto-calculate amount when quantity or catalog item changes
   const recalculate = useCallback(() => {
@@ -154,6 +187,7 @@ export default function UsageEntryDialog({
     setIsManualOverride(false);
     setCalculatedAmount(null);
     setAutoFilledFromManageOne(false);
+    setPendingLineItems([]);
   };
 
   const handleServiceTypeChange = (value: string) => {
@@ -166,8 +200,40 @@ export default function UsageEntryDialog({
     setIsManualOverride(false);
     setCalculatedAmount(null);
     setAutoFilledFromManageOne(false);
+    setPendingLineItems([]);
 
     if (!hint) {
+      return;
+    }
+
+    if (value === "ECS" && hint.lineItems?.length) {
+      setPendingLineItems(
+        hint.lineItems.map((lineItem, index) => {
+          const item = lineItem.suggestedCatalogItemId
+            ? catalog?.find(
+                (catalogItem) =>
+                  catalogItem._id === lineItem.suggestedCatalogItemId,
+              )
+            : undefined;
+          const amount =
+            item && lineItem.quantity > 0
+              ? (lineItem.quantity * item.monthlyPrice).toFixed(2)
+              : "";
+
+          return {
+            clientId: `${lineItem.label}-${index}`,
+            serviceType: value,
+            label: lineItem.label,
+            catalogItemId: lineItem.suggestedCatalogItemId ?? "",
+            quantity: String(lineItem.quantity),
+            amount,
+            calculatedAmount: amount ? Number(amount) : null,
+            isManualOverride: false,
+            fromManageOne: lineItem.pricing === "auto",
+            needsManualPricing: lineItem.needsManualPricing === true,
+          };
+        }),
+      );
       return;
     }
 
@@ -191,6 +257,53 @@ export default function UsageEntryDialog({
       toast.error("Please select a service type");
       return;
     }
+    if (selectedHasFlavorLineItems) {
+      const invalidLine = pendingLineItems.find((lineItem) => {
+        const numAmount = parseFloat(lineItem.amount);
+        const numQuantity = parseFloat(lineItem.quantity);
+        return (
+          !lineItem.catalogItemId ||
+          isNaN(numQuantity) ||
+          numQuantity <= 0 ||
+          isNaN(numAmount) ||
+          numAmount < 0
+        );
+      });
+
+      if (invalidLine) {
+        toast.error(
+          "Each ECS flavor needs a catalog item, quantity, and amount",
+        );
+        return;
+      }
+
+      try {
+        for (const lineItem of pendingLineItems) {
+          await createConsumption({
+            companyId: companyId as Id<"companies">,
+            month,
+            serviceType,
+            amount: parseFloat(lineItem.amount),
+            quantity: parseFloat(lineItem.quantity),
+            catalogItemId: lineItem.catalogItemId as Id<"serviceCatalog">,
+            isManualOverride: lineItem.isManualOverride,
+          });
+        }
+        toast.success("Usage entries added");
+        setAmount("");
+        setQuantity("");
+        setServiceType("");
+        setCatalogItemId("");
+        setIsManualOverride(false);
+        setCalculatedAmount(null);
+        setAutoFilledFromManageOne(false);
+        setPendingLineItems([]);
+      } catch {
+        toast.error("Failed to add entries");
+      }
+      return;
+    }
+
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount) || numAmount < 0) {
       toast.error("Please enter a valid amount");
@@ -220,9 +333,81 @@ export default function UsageEntryDialog({
       setIsManualOverride(false);
       setCalculatedAmount(null);
       setAutoFilledFromManageOne(false);
+      setPendingLineItems([]);
     } catch {
       toast.error("Failed to add entry");
     }
+  };
+
+  const updatePendingLineItem = (
+    clientId: string,
+    patch: Partial<PendingUsageLineItem>,
+  ) => {
+    setPendingLineItems((items) =>
+      items.map((item) =>
+        item.clientId === clientId ? { ...item, ...patch } : item,
+      ),
+    );
+  };
+
+  const handlePendingCatalogItemChange = (clientId: string, value: string) => {
+    const lineItem = pendingLineItems.find(
+      (item) => item.clientId === clientId,
+    );
+    const catalogItem = catalog?.find((item) => item._id === value);
+    const qty = lineItem ? parseFloat(lineItem.quantity) : NaN;
+    const calculated =
+      catalogItem && !isNaN(qty) && qty > 0
+        ? qty * catalogItem.monthlyPrice
+        : null;
+
+    updatePendingLineItem(clientId, {
+      catalogItemId: value,
+      amount: calculated != null ? calculated.toFixed(2) : "",
+      calculatedAmount: calculated,
+      isManualOverride: lineItem?.fromManageOne === true,
+      fromManageOne: false,
+      needsManualPricing: false,
+    });
+  };
+
+  const handlePendingQuantityChange = (clientId: string, value: string) => {
+    const lineItem = pendingLineItems.find(
+      (item) => item.clientId === clientId,
+    );
+    const catalogItem = lineItem
+      ? getCatalogItem(lineItem.catalogItemId)
+      : undefined;
+    const qty = parseFloat(value);
+    const calculated =
+      catalogItem && !isNaN(qty) && qty > 0
+        ? qty * catalogItem.monthlyPrice
+        : null;
+
+    updatePendingLineItem(clientId, {
+      quantity: value,
+      amount:
+        calculated != null && !lineItem?.isManualOverride
+          ? calculated.toFixed(2)
+          : (lineItem?.amount ?? ""),
+      calculatedAmount: calculated,
+      isManualOverride: lineItem?.fromManageOne === true,
+      fromManageOne: false,
+    });
+  };
+
+  const handlePendingAmountChange = (clientId: string, value: string) => {
+    const lineItem = pendingLineItems.find(
+      (item) => item.clientId === clientId,
+    );
+    updatePendingLineItem(clientId, {
+      amount: value,
+      isManualOverride:
+        lineItem?.fromManageOne === true ||
+        (lineItem?.calculatedAmount != null &&
+          Math.abs(parseFloat(value) - lineItem.calculatedAmount) > 0.001),
+      fromManageOne: false,
+    });
   };
 
   return (
@@ -278,111 +463,221 @@ export default function UsageEntryDialog({
             </div>
           </div>
 
-          {/* Catalog item selector */}
-          <div className="space-y-2">
-            <Label>
-              Catalog Item{" "}
-              <span className="text-muted-foreground text-xs">(optional)</span>
-            </Label>
-            <Select
-              value={catalogItemId}
-              onValueChange={handleCatalogItemChange}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select catalog item for auto-pricing" />
-              </SelectTrigger>
-              <SelectContent>
-                {filteredCatalogItems.map((item) => (
-                  <SelectItem key={item._id} value={item._id}>
-                    {item.itemName} — ${item.monthlyPrice}/{item.billingUnit}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {selectedCatalogItem && (
-              <p className="text-xs text-muted-foreground">
-                {selectedCatalogItem.serviceCategory} ·{" "}
-                {selectedCatalogItem.billingUnit} · $
-                {selectedCatalogItem.monthlyPrice}/mo
-                {selectedCatalogItem.specs && ` · ${selectedCatalogItem.specs}`}
-              </p>
-            )}
-          </div>
-
-          {/* Quantity + Amount */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>
-                Quantity
-                {selectedCatalogItem && (
-                  <span className="text-muted-foreground text-xs ml-1">
-                    ({selectedCatalogItem.billingUnit})
-                  </span>
-                )}
-              </Label>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={quantity}
-                onChange={(e) => {
-                  setQuantity(e.target.value);
-                  setIsManualOverride(autoFilledFromManageOne);
-                  setAutoFilledFromManageOne(false);
-                }}
-                placeholder={
-                  selectedCatalogItem
-                    ? `# of ${selectedCatalogItem.billingUnit}s`
-                    : "0"
-                }
-              />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Label>Amount (USD) *</Label>
-                {catalogItemId && calculatedAmount !== null && (
-                  <Badge
-                    variant={
-                      isManualOverride
-                        ? "destructive"
-                        : autoFilledFromManageOne
-                          ? "outline"
-                          : "secondary"
-                    }
-                    className="text-[10px] px-1.5 py-0"
+          {selectedHasFlavorLineItems ? (
+            <div className="space-y-3 rounded-md border p-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label>ECS Flavor Usage</Label>
+                <Badge variant="outline" className="text-[10px]">
+                  From ManageOne
+                </Badge>
+              </div>
+              {pendingLineItems.map((lineItem) => {
+                const lineCatalogItem = getCatalogItem(lineItem.catalogItemId);
+                return (
+                  <div
+                    key={lineItem.clientId}
+                    className="space-y-2 rounded-md border bg-background/40 p-3"
                   >
-                    {isManualOverride
-                      ? "manually adjusted"
-                      : autoFilledFromManageOne
-                        ? "From ManageOne"
-                        : "calculated"}
-                  </Badge>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium">
+                        {lineItem.label}
+                      </span>
+                      {lineItem.fromManageOne && (
+                        <Badge variant="outline" className="text-[10px]">
+                          From ManageOne
+                        </Badge>
+                      )}
+                      {lineItem.needsManualPricing && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          Needs manual pricing
+                        </Badge>
+                      )}
+                      {lineItem.isManualOverride && (
+                        <Badge variant="destructive" className="text-[10px]">
+                          Manually adjusted
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-[1fr_96px_112px]">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Catalog Item</Label>
+                        <Select
+                          value={lineItem.catalogItemId}
+                          onValueChange={(value) =>
+                            handlePendingCatalogItemChange(
+                              lineItem.clientId,
+                              value,
+                            )
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select ECS SKU" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {filteredCatalogItems.map((item) => (
+                              <SelectItem key={item._id} value={item._id}>
+                                {item.itemName} - ${item.monthlyPrice}/
+                                {item.billingUnit}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {lineCatalogItem && (
+                          <p className="text-xs text-muted-foreground">
+                            {lineCatalogItem.billingUnit} - $
+                            {lineCatalogItem.monthlyPrice}/mo
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Quantity</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={lineItem.quantity}
+                          onChange={(event) =>
+                            handlePendingQuantityChange(
+                              lineItem.clientId,
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Amount</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={lineItem.amount}
+                          onChange={(event) =>
+                            handlePendingAmountChange(
+                              lineItem.clientId,
+                              event.target.value,
+                            )
+                          }
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <>
+              {/* Catalog item selector */}
+              <div className="space-y-2">
+                <Label>
+                  Catalog Item{" "}
+                  <span className="text-muted-foreground text-xs">
+                    (optional)
+                  </span>
+                </Label>
+                <Select
+                  value={catalogItemId}
+                  onValueChange={handleCatalogItemChange}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select catalog item for auto-pricing" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {filteredCatalogItems.map((item) => (
+                      <SelectItem key={item._id} value={item._id}>
+                        {item.itemName} — ${item.monthlyPrice}/
+                        {item.billingUnit}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedCatalogItem && (
+                  <p className="text-xs text-muted-foreground">
+                    {selectedCatalogItem.serviceCategory} ·{" "}
+                    {selectedCatalogItem.billingUnit} · $
+                    {selectedCatalogItem.monthlyPrice}/mo
+                    {selectedCatalogItem.specs &&
+                      ` · ${selectedCatalogItem.specs}`}
+                  </p>
                 )}
               </div>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={amount}
-                onChange={(e) => handleAmountChange(e.target.value)}
-                placeholder="0.00"
-              />
-              {catalogItemId &&
-                calculatedAmount !== null &&
-                isManualOverride && (
-                  <button
-                    type="button"
-                    className="text-xs text-primary cursor-pointer hover:underline"
-                    onClick={() => {
-                      setAmount(calculatedAmount.toFixed(2));
-                      setIsManualOverride(false);
+
+              {/* Quantity + Amount */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>
+                    Quantity
+                    {selectedCatalogItem && (
+                      <span className="text-muted-foreground text-xs ml-1">
+                        ({selectedCatalogItem.billingUnit})
+                      </span>
+                    )}
+                  </Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={quantity}
+                    onChange={(e) => {
+                      setQuantity(e.target.value);
+                      setIsManualOverride(autoFilledFromManageOne);
+                      setAutoFilledFromManageOne(false);
                     }}
-                  >
-                    Reset to calculated (${calculatedAmount.toFixed(2)})
-                  </button>
-                )}
-            </div>
-          </div>
+                    placeholder={
+                      selectedCatalogItem
+                        ? `# of ${selectedCatalogItem.billingUnit}s`
+                        : "0"
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Label>Amount (USD) *</Label>
+                    {catalogItemId && calculatedAmount !== null && (
+                      <Badge
+                        variant={
+                          isManualOverride
+                            ? "destructive"
+                            : autoFilledFromManageOne
+                              ? "outline"
+                              : "secondary"
+                        }
+                        className="text-[10px] px-1.5 py-0"
+                      >
+                        {isManualOverride
+                          ? "manually adjusted"
+                          : autoFilledFromManageOne
+                            ? "From ManageOne"
+                            : "calculated"}
+                      </Badge>
+                    )}
+                  </div>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={amount}
+                    onChange={(e) => handleAmountChange(e.target.value)}
+                    placeholder="0.00"
+                  />
+                  {catalogItemId &&
+                    calculatedAmount !== null &&
+                    isManualOverride && (
+                      <button
+                        type="button"
+                        className="text-xs text-primary cursor-pointer hover:underline"
+                        onClick={() => {
+                          setAmount(calculatedAmount.toFixed(2));
+                          setIsManualOverride(false);
+                        }}
+                      >
+                        Reset to calculated (${calculatedAmount.toFixed(2)})
+                      </button>
+                    )}
+                </div>
+              </div>
+            </>
+          )}
 
           <Button className="w-full" onClick={handleSave}>
             Add Entry

@@ -120,6 +120,16 @@ export default defineSchema({
         }),
       ),
     ),
+    ecsFlavors: v.optional(
+      v.array(
+        v.object({
+          flavorName: v.string(),
+          vcpus: v.number(),
+          ramMb: v.number(),
+          count: v.number(),
+        }),
+      ),
+    ),
     lastSyncedAt: v.number(),
     linkedCompanyId: v.optional(v.id("companies")),
   })
