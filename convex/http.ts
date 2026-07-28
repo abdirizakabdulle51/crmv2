@@ -22,6 +22,7 @@ type ManageOneTenantInput = {
   projectCount?: number;
   resources?: ManageOneResourceInput[];
   ecsFlavors?: ManageOneEcsFlavorInput[];
+  evsVolumeTypes?: ManageOneEvsVolumeTypeInput[];
 };
 
 type ManageOneResourceInput = {
@@ -35,6 +36,12 @@ type ManageOneEcsFlavorInput = {
   flavorName: string;
   vcpus: number;
   ramMb: number;
+  count: number;
+};
+
+type ManageOneEvsVolumeTypeInput = {
+  volumeType: string;
+  totalGb: number;
   count: number;
 };
 
@@ -184,6 +191,44 @@ function optionalEcsFlavors(
   });
 }
 
+function optionalEvsVolumeTypes(
+  tenant: Record<string, unknown>,
+): ManageOneEvsVolumeTypeInput[] | undefined {
+  const value = tenant.evsVolumeTypes;
+  if (value == null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("evsVolumeTypes must be an array");
+  }
+
+  return value.map((volumeValue) => {
+    if (!isRecord(volumeValue)) {
+      throw new Error("Each evsVolumeType must be an object");
+    }
+
+    const volumeType = volumeValue.volumeType;
+    const totalGb = volumeValue.totalGb;
+    const count = volumeValue.count;
+
+    if (typeof volumeType !== "string") {
+      throw new Error("evsVolumeTypes.volumeType must be a string");
+    }
+    if (typeof totalGb !== "number") {
+      throw new Error("evsVolumeTypes.totalGb must be a number");
+    }
+    if (typeof count !== "number") {
+      throw new Error("evsVolumeTypes.count must be a number");
+    }
+
+    return {
+      volumeType,
+      totalGb,
+      count,
+    };
+  });
+}
+
 function normalizeTenant(value: unknown): ManageOneTenantInput {
   if (!isRecord(value)) {
     throw new Error("Each tenant must be an object");
@@ -227,6 +272,9 @@ function normalizeTenant(value: unknown): ManageOneTenantInput {
       : {}),
     ...(optionalEcsFlavors(value) !== undefined
       ? { ecsFlavors: optionalEcsFlavors(value) }
+      : {}),
+    ...(optionalEvsVolumeTypes(value) !== undefined
+      ? { evsVolumeTypes: optionalEvsVolumeTypes(value) }
       : {}),
   };
 }

@@ -71,6 +71,7 @@ function catalogItem(
   id: string,
   serviceCategory: string,
   itemName: string,
+  monthlyPrice = 10,
 ): Doc<"serviceCatalog"> {
   return {
     _id: id as Id<"serviceCatalog">,
@@ -78,7 +79,7 @@ function catalogItem(
     serviceCategory,
     itemName,
     billingUnit: "unit",
-    monthlyPrice: 10,
+    monthlyPrice,
   };
 }
 
@@ -186,5 +187,58 @@ describe("UsageEntryDialog smart service filtering", () => {
     expect(screen.getAllByText("From ManageOne")).toHaveLength(2);
     expect(screen.getByText("Needs manual pricing")).toBeInTheDocument();
     expect(screen.queryByText("WAF Basic")).not.toBeInTheDocument();
+  });
+
+  it("renders EVS volume type rows with auto-priced and manual-pricing states", async () => {
+    const user = userEvent.setup();
+    mocks.catalog = [
+      catalogItem("evs-ssd", "EVS", "SSD (Block Storage / NVMe)", 0.072),
+      catalogItem("evs-sata", "EVS", "SATA (Object / Cold Storage)", 0.011),
+      catalogItem("ecs-c6", "ECS", "C6_12xlarge.4"),
+    ];
+    mocks.hints = [
+      {
+        serviceCategory: "EVS",
+        quantity: 48300,
+        pricing: "manual",
+        lineItems: [
+          {
+            label: "SSD",
+            quantity: 48200,
+            pricing: "auto",
+            suggestedCatalogItemId: "evs-ssd" as Id<"serviceCatalog">,
+          },
+          {
+            label: "UltraHighIO",
+            quantity: 100,
+            pricing: "manual",
+            needsManualPricing: true,
+          },
+        ],
+      },
+    ];
+
+    render(
+      <UsageEntryDialog
+        open
+        onOpenChange={vi.fn()}
+        companies={[company("company-1", "AICC")]}
+      />,
+    );
+
+    const [companySelect, serviceTypeSelect] = screen.getAllByRole("combobox");
+    await user.click(companySelect);
+    await user.click(screen.getByRole("option", { name: "AICC" }));
+    await user.click(serviceTypeSelect);
+    await user.click(screen.getByRole("option", { name: "EVS" }));
+
+    expect(screen.getByText("EVS Volume Type Usage")).toBeInTheDocument();
+    expect(screen.getByText("SSD")).toBeInTheDocument();
+    expect(screen.getByText("UltraHighIO")).toBeInTheDocument();
+    expect(screen.getAllByText("From ManageOne")).toHaveLength(2);
+    expect(screen.getByText("Needs manual pricing")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("48200")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("3470.40")).toBeInTheDocument();
+    expect(screen.queryByText("C6_12xlarge.4")).not.toBeInTheDocument();
   });
 });

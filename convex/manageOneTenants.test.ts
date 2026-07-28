@@ -2,11 +2,17 @@ import { describe, expect, it } from "vitest";
 import type { Id } from "./_generated/dataModel.d.ts";
 import { buildUsageHintsForCompany } from "./manageOneTenants";
 
-function catalogItem(id: string, serviceCategory: string, itemName: string) {
+function catalogItem(
+  id: string,
+  serviceCategory: string,
+  itemName: string,
+  billingUnit?: string,
+) {
   return {
     _id: id as Id<"serviceCatalog">,
     serviceCategory,
     itemName,
+    ...(billingUnit ? { billingUnit } : {}),
   };
 }
 
@@ -228,6 +234,77 @@ describe("buildUsageHintsForCompany", () => {
     });
     expect(
       hints.find((hint) => hint.serviceCategory === "ECS")?.lineItems,
+    ).toBeUndefined();
+  });
+
+  it("turns EVS volume type breakdowns into per-GB auto lines and unmatched manual lines", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [{ serviceId: "evs", resource: "gigabytes", used: 48300 }],
+          evsVolumeTypes: [
+            { volumeType: "SSD", totalGb: 48200, count: 388 },
+            { volumeType: "sata", totalGb: 100, count: 2 },
+            { volumeType: "UltraHighIO", totalGb: 50, count: 1 },
+          ],
+        },
+      ],
+      [
+        catalogItem("evs-ssd", "EVS", "SSD (Block Storage / NVMe)", "per GB"),
+        catalogItem(
+          "evs-sata",
+          "EVS",
+          "SATA (Object / Cold Storage)",
+          "per GB",
+        ),
+        catalogItem("evs-ssd-hour", "EVS", "SSD Hourly", "per hour"),
+      ],
+    );
+
+    expect(hints.find((hint) => hint.serviceCategory === "EVS")).toEqual({
+      serviceCategory: "EVS",
+      quantity: 48350,
+      pricing: "manual",
+      lineItems: [
+        {
+          label: "SSD",
+          quantity: 48200,
+          pricing: "auto",
+          suggestedCatalogItemId: "evs-ssd",
+        },
+        {
+          label: "sata",
+          quantity: 100,
+          pricing: "auto",
+          suggestedCatalogItemId: "evs-sata",
+        },
+        {
+          label: "UltraHighIO",
+          quantity: 50,
+          pricing: "manual",
+          needsManualPricing: true,
+        },
+      ],
+    });
+  });
+
+  it("keeps aggregate EVS manual behavior when no volume type breakdown exists", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [{ serviceId: "evs", resource: "gigabytes", used: 500 }],
+        },
+      ],
+      [catalogItem("evs-ssd", "EVS", "SSD (Block Storage / NVMe)", "per GB")],
+    );
+
+    expect(hints).toContainEqual({
+      serviceCategory: "EVS",
+      quantity: 500,
+      pricing: "manual",
+    });
+    expect(
+      hints.find((hint) => hint.serviceCategory === "EVS")?.lineItems,
     ).toBeUndefined();
   });
 });

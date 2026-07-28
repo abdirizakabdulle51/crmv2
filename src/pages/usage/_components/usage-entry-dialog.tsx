@@ -88,8 +88,9 @@ export default function UsageEntryDialog({
   const selectedHint = usageHints.find(
     (item) => item.serviceCategory === serviceType,
   );
-  const selectedHasFlavorLineItems =
-    serviceType === "ECS" && !!selectedHint?.lineItems?.length;
+  const selectedHasBreakdownLineItems =
+    (serviceType === "ECS" || serviceType === "EVS") &&
+    !!selectedHint?.lineItems?.length;
   const availableServiceTypes = companyId
     ? [
         ...SERVICE_TYPES.filter(
@@ -206,7 +207,7 @@ export default function UsageEntryDialog({
       return;
     }
 
-    if (value === "ECS" && hint.lineItems?.length) {
+    if ((value === "ECS" || value === "EVS") && hint.lineItems?.length) {
       setPendingLineItems(
         hint.lineItems.map((lineItem, index) => {
           const item = lineItem.suggestedCatalogItemId
@@ -257,7 +258,7 @@ export default function UsageEntryDialog({
       toast.error("Please select a service type");
       return;
     }
-    if (selectedHasFlavorLineItems) {
+    if (selectedHasBreakdownLineItems) {
       const invalidLine = pendingLineItems.find((lineItem) => {
         const numAmount = parseFloat(lineItem.amount);
         const numQuantity = parseFloat(lineItem.quantity);
@@ -272,7 +273,7 @@ export default function UsageEntryDialog({
 
       if (invalidLine) {
         toast.error(
-          "Each ECS flavor needs a catalog item, quantity, and amount",
+          `Each ${serviceType} line needs a catalog item, quantity, and amount`,
         );
         return;
       }
@@ -463,10 +464,14 @@ export default function UsageEntryDialog({
             </div>
           </div>
 
-          {selectedHasFlavorLineItems ? (
+          {selectedHasBreakdownLineItems ? (
             <div className="space-y-3 rounded-md border p-3">
               <div className="flex items-center justify-between gap-2">
-                <Label>ECS Flavor Usage</Label>
+                <Label>
+                  {serviceType === "EVS"
+                    ? "EVS Volume Type Usage"
+                    : "ECS Flavor Usage"}
+                </Label>
                 <Badge variant="outline" className="text-[10px]">
                   From ManageOne
                 </Badge>
@@ -511,7 +516,9 @@ export default function UsageEntryDialog({
                           }
                         >
                           <SelectTrigger>
-                            <SelectValue placeholder="Select ECS SKU" />
+                            <SelectValue
+                              placeholder={`Select ${serviceType} SKU`}
+                            />
                           </SelectTrigger>
                           <SelectContent>
                             {filteredCatalogItems.map((item) => (

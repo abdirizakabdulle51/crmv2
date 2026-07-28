@@ -35,12 +35,18 @@ type UsageHintTenant = {
     ramMb: number;
     count: number;
   }[];
+  evsVolumeTypes?: {
+    volumeType: string;
+    totalGb: number;
+    count: number;
+  }[];
 };
 
 type UsageHintCatalogItem = {
   _id: Id<"serviceCatalog">;
   serviceCategory: string;
   itemName: string;
+  billingUnit?: string;
 };
 
 type HintRule = {
@@ -167,13 +173,19 @@ function findCatalogItemForHint(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+function normalizeCatalogMatch(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 export function buildUsageHintsForCompany(
   tenants: UsageHintTenant[],
   catalog: UsageHintCatalogItem[],
 ): UsageHint[] {
   const totals = new Map<string, UsageHint>();
   const ecsLineItems: UsageHintLineItem[] = [];
+  const evsLineItems: UsageHintLineItem[] = [];
   const ecsCatalog = catalog.filter((item) => item.serviceCategory === "ECS");
+  const evsCatalog = catalog.filter((item) => item.serviceCategory === "EVS");
 
   for (const tenant of tenants) {
     for (const flavor of tenant.ecsFlavors ?? []) {
@@ -189,6 +201,29 @@ export function buildUsageHintsForCompany(
       ecsLineItems.push({
         label: flavor.flavorName,
         quantity: flavor.count,
+        pricing: catalogItem ? "auto" : "manual",
+        ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
+        ...(!catalogItem ? { needsManualPricing: true } : {}),
+      });
+    }
+
+    for (const volumeType of tenant.evsVolumeTypes ?? []) {
+      if (volumeType.totalGb <= 0) {
+        continue;
+      }
+
+      const normalizedVolumeType = normalizeCatalogMatch(volumeType.volumeType);
+      const catalogMatches = evsCatalog.filter(
+        (item) =>
+          normalizeCatalogMatch(item.itemName).includes(normalizedVolumeType) &&
+          item.billingUnit?.toLowerCase().includes("gb"),
+      );
+      const catalogItem =
+        catalogMatches.length === 1 ? catalogMatches[0] : undefined;
+
+      evsLineItems.push({
+        label: volumeType.volumeType,
+        quantity: volumeType.totalGb,
         pricing: catalogItem ? "auto" : "manual",
         ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
         ...(!catalogItem ? { needsManualPricing: true } : {}),
@@ -258,6 +293,25 @@ export function buildUsageHintsForCompany(
     }
   }
 
+  if (evsLineItems.length > 0) {
+    const existingEvsHintIndex = hints.findIndex(
+      (hint) => hint.serviceCategory === "EVS",
+    );
+    const evsHint = {
+      serviceCategory: "EVS",
+      quantity: evsLineItems.reduce((sum, item) => sum + item.quantity, 0),
+      pricing: evsLineItems.every((item) => item.pricing === "auto")
+        ? ("auto" as const)
+        : ("manual" as const),
+      lineItems: evsLineItems,
+    };
+    if (existingEvsHintIndex >= 0) {
+      hints[existingEvsHintIndex] = evsHint;
+    } else {
+      hints.unshift(evsHint);
+    }
+  }
+
   return hints;
 }
 
@@ -321,6 +375,15 @@ export const bulkUpsert = internalMutation({
               flavorName: v.string(),
               vcpus: v.number(),
               ramMb: v.number(),
+              count: v.number(),
+            }),
+          ),
+        ),
+        evsVolumeTypes: v.optional(
+          v.array(
+            v.object({
+              volumeType: v.string(),
+              totalGb: v.number(),
               count: v.number(),
             }),
           ),

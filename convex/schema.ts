@@ -130,6 +130,15 @@ export default defineSchema({
         }),
       ),
     ),
+    evsVolumeTypes: v.optional(
+      v.array(
+        v.object({
+          volumeType: v.string(),
+          totalGb: v.number(),
+          count: v.number(),
+        }),
+      ),
+    ),
     lastSyncedAt: v.number(),
     linkedCompanyId: v.optional(v.id("companies")),
   })
