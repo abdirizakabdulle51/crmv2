@@ -22,6 +22,15 @@ import { Badge } from "@/components/ui/badge.tsx";
 import { toast } from "sonner";
 import { SERVICE_TYPES, getCurrentMonth } from "../_lib/constants.ts";
 
+const ALWAYS_MANUAL_SERVICE_TYPES = ["ECS-CCE", "NAT", "LTS"];
+
+type UsageHint = {
+  serviceCategory: string;
+  quantity: number;
+  pricing: "auto" | "manual";
+  suggestedCatalogItemId?: Id<"serviceCatalog">;
+};
+
 type UsageEntryDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -44,14 +53,51 @@ export default function UsageEntryDialog({
   const [amount, setAmount] = useState("");
   const [isManualOverride, setIsManualOverride] = useState(false);
   const [calculatedAmount, setCalculatedAmount] = useState<number | null>(null);
+  const [autoFilledFromManageOne, setAutoFilledFromManageOne] = useState(false);
+  const usageHintsResult = useQuery(
+    api.manageOneTenants.getUsageHintsForCompany,
+    companyId ? { companyId: companyId as Id<"companies"> } : "skip",
+  );
+
+  const usageHints = usageHintsResult?.hints ?? [];
+  const availableServiceTypes = companyId
+    ? [
+        ...SERVICE_TYPES.filter(
+          (service) =>
+            usageHints.some((hint) => hint.serviceCategory === service) ||
+            ALWAYS_MANUAL_SERVICE_TYPES.includes(service),
+        ),
+        ...usageHints
+          .map((hint) => hint.serviceCategory)
+          .filter((service) => !SERVICE_TYPES.includes(service as never)),
+      ]
+    : SERVICE_TYPES;
 
   // Get catalog items filtered by the selected service type
-  const filteredCatalogItems = catalog?.filter(
-    (item) => !serviceType || item.serviceCategory.toLowerCase().includes(serviceType.toLowerCase()) || item.itemName.toLowerCase().includes(serviceType.toLowerCase())
-  ) || [];
+  const filteredCatalogItems =
+    catalog?.filter((item) => {
+      if (!serviceType) {
+        return true;
+      }
+      if (serviceType === "EIP (bandwidth)") {
+        return (
+          item.serviceCategory === "EIP" &&
+          item.itemName.toLowerCase().includes("bandwidth")
+        );
+      }
+      if (serviceType === "EIP") {
+        return (
+          item.serviceCategory === "EIP" &&
+          !item.itemName.toLowerCase().includes("bandwidth")
+        );
+      }
+      return item.serviceCategory === serviceType;
+    }) || [];
 
   // Selected catalog item
-  const selectedCatalogItem = catalog?.find((item) => item._id === catalogItemId);
+  const selectedCatalogItem = catalog?.find(
+    (item) => item._id === catalogItemId,
+  );
 
   // Auto-calculate amount when quantity or catalog item changes
   const recalculate = useCallback(() => {
@@ -76,6 +122,12 @@ export default function UsageEntryDialog({
   // Detect manual override when user changes amount
   const handleAmountChange = (value: string) => {
     setAmount(value);
+    if (autoFilledFromManageOne) {
+      setIsManualOverride(true);
+      setAutoFilledFromManageOne(false);
+      return;
+    }
+    setAutoFilledFromManageOne(false);
     if (calculatedAmount !== null) {
       const numVal = parseFloat(value);
       if (!isNaN(numVal) && Math.abs(numVal - calculatedAmount) > 0.001) {
@@ -89,7 +141,41 @@ export default function UsageEntryDialog({
   // When catalog item changes, reset override state
   const handleCatalogItemChange = (value: string) => {
     setCatalogItemId(value);
+    setIsManualOverride(autoFilledFromManageOne);
+    setAutoFilledFromManageOne(false);
+  };
+
+  const handleCompanyChange = (value: string) => {
+    setCompanyId(value);
+    setServiceType("");
+    setCatalogItemId("");
+    setQuantity("");
+    setAmount("");
     setIsManualOverride(false);
+    setCalculatedAmount(null);
+    setAutoFilledFromManageOne(false);
+  };
+
+  const handleServiceTypeChange = (value: string) => {
+    const hint = usageHints.find((item) => item.serviceCategory === value);
+
+    setServiceType(value);
+    setCatalogItemId("");
+    setQuantity("");
+    setAmount("");
+    setIsManualOverride(false);
+    setCalculatedAmount(null);
+    setAutoFilledFromManageOne(false);
+
+    if (!hint) {
+      return;
+    }
+
+    setQuantity(String(hint.quantity));
+    if (hint.pricing === "auto" && hint.suggestedCatalogItemId) {
+      setCatalogItemId(hint.suggestedCatalogItemId);
+      setAutoFilledFromManageOne(true);
+    }
   };
 
   const handleSave = async () => {
@@ -120,7 +206,9 @@ export default function UsageEntryDialog({
         serviceType,
         amount: numAmount,
         quantity: numQuantity && !isNaN(numQuantity) ? numQuantity : undefined,
-        catalogItemId: catalogItemId ? (catalogItemId as Id<"serviceCatalog">) : undefined,
+        catalogItemId: catalogItemId
+          ? (catalogItemId as Id<"serviceCatalog">)
+          : undefined,
         isManualOverride: catalogItemId ? isManualOverride : undefined,
       });
       toast.success("Usage entry added");
@@ -131,6 +219,7 @@ export default function UsageEntryDialog({
       setCatalogItemId("");
       setIsManualOverride(false);
       setCalculatedAmount(null);
+      setAutoFilledFromManageOne(false);
     } catch {
       toast.error("Failed to add entry");
     }
@@ -146,7 +235,7 @@ export default function UsageEntryDialog({
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>Company *</Label>
-            <Select value={companyId} onValueChange={setCompanyId}>
+            <Select value={companyId} onValueChange={handleCompanyChange}>
               <SelectTrigger>
                 <SelectValue placeholder="Select company" />
               </SelectTrigger>
@@ -171,17 +260,15 @@ export default function UsageEntryDialog({
             </div>
             <div className="space-y-2">
               <Label>Service Type *</Label>
-              <Select value={serviceType} onValueChange={(val) => {
-                setServiceType(val);
-                setCatalogItemId("");
-                setIsManualOverride(false);
-                setCalculatedAmount(null);
-              }}>
+              <Select
+                value={serviceType}
+                onValueChange={handleServiceTypeChange}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select service" />
                 </SelectTrigger>
                 <SelectContent>
-                  {SERVICE_TYPES.map((s) => (
+                  {availableServiceTypes.map((s) => (
                     <SelectItem key={s} value={s}>
                       {s}
                     </SelectItem>
@@ -193,13 +280,19 @@ export default function UsageEntryDialog({
 
           {/* Catalog item selector */}
           <div className="space-y-2">
-            <Label>Catalog Item <span className="text-muted-foreground text-xs">(optional)</span></Label>
-            <Select value={catalogItemId} onValueChange={handleCatalogItemChange}>
+            <Label>
+              Catalog Item{" "}
+              <span className="text-muted-foreground text-xs">(optional)</span>
+            </Label>
+            <Select
+              value={catalogItemId}
+              onValueChange={handleCatalogItemChange}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select catalog item for auto-pricing" />
               </SelectTrigger>
               <SelectContent>
-                {(catalog || []).map((item) => (
+                {filteredCatalogItems.map((item) => (
                   <SelectItem key={item._id} value={item._id}>
                     {item.itemName} — ${item.monthlyPrice}/{item.billingUnit}
                   </SelectItem>
@@ -208,7 +301,9 @@ export default function UsageEntryDialog({
             </Select>
             {selectedCatalogItem && (
               <p className="text-xs text-muted-foreground">
-                {selectedCatalogItem.serviceCategory} · {selectedCatalogItem.billingUnit} · ${selectedCatalogItem.monthlyPrice}/mo
+                {selectedCatalogItem.serviceCategory} ·{" "}
+                {selectedCatalogItem.billingUnit} · $
+                {selectedCatalogItem.monthlyPrice}/mo
                 {selectedCatalogItem.specs && ` · ${selectedCatalogItem.specs}`}
               </p>
             )}
@@ -220,7 +315,9 @@ export default function UsageEntryDialog({
               <Label>
                 Quantity
                 {selectedCatalogItem && (
-                  <span className="text-muted-foreground text-xs ml-1">({selectedCatalogItem.billingUnit})</span>
+                  <span className="text-muted-foreground text-xs ml-1">
+                    ({selectedCatalogItem.billingUnit})
+                  </span>
                 )}
               </Label>
               <Input
@@ -230,9 +327,14 @@ export default function UsageEntryDialog({
                 value={quantity}
                 onChange={(e) => {
                   setQuantity(e.target.value);
-                  setIsManualOverride(false);
+                  setIsManualOverride(autoFilledFromManageOne);
+                  setAutoFilledFromManageOne(false);
                 }}
-                placeholder={selectedCatalogItem ? `# of ${selectedCatalogItem.billingUnit}s` : "0"}
+                placeholder={
+                  selectedCatalogItem
+                    ? `# of ${selectedCatalogItem.billingUnit}s`
+                    : "0"
+                }
               />
             </div>
             <div className="space-y-2">
@@ -240,10 +342,20 @@ export default function UsageEntryDialog({
                 <Label>Amount (USD) *</Label>
                 {catalogItemId && calculatedAmount !== null && (
                   <Badge
-                    variant={isManualOverride ? "destructive" : "secondary"}
+                    variant={
+                      isManualOverride
+                        ? "destructive"
+                        : autoFilledFromManageOne
+                          ? "outline"
+                          : "secondary"
+                    }
                     className="text-[10px] px-1.5 py-0"
                   >
-                    {isManualOverride ? "manually adjusted" : "calculated"}
+                    {isManualOverride
+                      ? "manually adjusted"
+                      : autoFilledFromManageOne
+                        ? "From ManageOne"
+                        : "calculated"}
                   </Badge>
                 )}
               </div>
@@ -255,18 +367,20 @@ export default function UsageEntryDialog({
                 onChange={(e) => handleAmountChange(e.target.value)}
                 placeholder="0.00"
               />
-              {catalogItemId && calculatedAmount !== null && isManualOverride && (
-                <button
-                  type="button"
-                  className="text-xs text-primary cursor-pointer hover:underline"
-                  onClick={() => {
-                    setAmount(calculatedAmount.toFixed(2));
-                    setIsManualOverride(false);
-                  }}
-                >
-                  Reset to calculated (${calculatedAmount.toFixed(2)})
-                </button>
-              )}
+              {catalogItemId &&
+                calculatedAmount !== null &&
+                isManualOverride && (
+                  <button
+                    type="button"
+                    className="text-xs text-primary cursor-pointer hover:underline"
+                    onClick={() => {
+                      setAmount(calculatedAmount.toFixed(2));
+                      setIsManualOverride(false);
+                    }}
+                  >
+                    Reset to calculated (${calculatedAmount.toFixed(2)})
+                  </button>
+                )}
             </div>
           </div>
 

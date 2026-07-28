@@ -1,7 +1,208 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel.d.ts";
+import type { Doc, Id } from "./_generated/dataModel.d.ts";
+
+type UsageHintPricing = "auto" | "manual";
+
+export type UsageHint = {
+  serviceCategory: string;
+  quantity: number;
+  pricing: UsageHintPricing;
+  suggestedCatalogItemId?: Id<"serviceCatalog">;
+};
+
+type UsageHintResource = {
+  serviceId: string;
+  resource: string;
+  used: number;
+};
+
+type UsageHintTenant = {
+  resources?: UsageHintResource[];
+};
+
+type UsageHintCatalogItem = {
+  _id: Id<"serviceCatalog">;
+  serviceCategory: string;
+  itemName: string;
+};
+
+type HintRule = {
+  serviceId: string;
+  resource: string;
+  serviceCategory: string;
+  pricing: UsageHintPricing;
+};
+
+const USAGE_HINT_RULES: HintRule[] = [
+  {
+    serviceId: "ecs",
+    resource: "instances",
+    serviceCategory: "ECS",
+    pricing: "manual",
+  },
+  {
+    serviceId: "bms",
+    resource: "instances",
+    serviceCategory: "BMS",
+    pricing: "auto",
+  },
+  {
+    serviceId: "evs",
+    resource: "gigabytes",
+    serviceCategory: "EVS",
+    pricing: "manual",
+  },
+  {
+    serviceId: "sfs",
+    resource: "gigabytes",
+    serviceCategory: "SFS",
+    pricing: "auto",
+  },
+  {
+    serviceId: "obsv3",
+    resource: "capacity",
+    serviceCategory: "OBS",
+    pricing: "manual",
+  },
+  {
+    serviceId: "csbs",
+    resource: "backup_capacity",
+    serviceCategory: "CSBS",
+    pricing: "auto",
+  },
+  {
+    serviceId: "vbs",
+    resource: "volume_backup_capacity",
+    serviceCategory: "VBS",
+    pricing: "auto",
+  },
+  {
+    serviceId: "vpc",
+    resource: "publicIp",
+    serviceCategory: "EIP",
+    pricing: "auto",
+  },
+  {
+    serviceId: "vpc",
+    resource: "bandwidth_size",
+    serviceCategory: "EIP (bandwidth)",
+    pricing: "auto",
+  },
+  {
+    serviceId: "vpc",
+    resource: "loadbalancer",
+    serviceCategory: "ELB",
+    pricing: "auto",
+  },
+  {
+    serviceId: "vpc",
+    resource: "vpn",
+    serviceCategory: "VPN",
+    pricing: "auto",
+  },
+  {
+    serviceId: "vpc",
+    resource: "endpoint_service",
+    serviceCategory: "VPCEP",
+    pricing: "auto",
+  },
+  {
+    serviceId: "waf",
+    resource: "instance",
+    serviceCategory: "WAF",
+    pricing: "manual",
+  },
+];
+
+function findCatalogItemForHint(
+  hint: Pick<UsageHint, "serviceCategory" | "quantity">,
+  catalog: UsageHintCatalogItem[],
+) {
+  if (hint.serviceCategory === "EIP") {
+    return catalog.find(
+      (item) =>
+        item.serviceCategory === "EIP" && item.itemName === "EIP - Active",
+    );
+  }
+
+  if (hint.serviceCategory === "EIP (bandwidth)") {
+    const quantity = hint.quantity;
+    const itemName =
+      quantity >= 1 && quantity <= 5
+        ? "EIP Bandwidth - 1 - 5 Mbps"
+        : quantity >= 6 && quantity <= 50
+          ? "EIP Bandwidth - 6 - 50 Mbps"
+          : quantity >= 51 && quantity <= 200
+            ? "EIP Bandwidth - 51 - 200 Mbps"
+            : null;
+
+    return itemName
+      ? catalog.find(
+          (item) =>
+            item.serviceCategory === "EIP" && item.itemName === itemName,
+        )
+      : undefined;
+  }
+
+  const matches = catalog.filter(
+    (item) => item.serviceCategory === hint.serviceCategory,
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+export function buildUsageHintsForCompany(
+  tenants: UsageHintTenant[],
+  catalog: UsageHintCatalogItem[],
+): UsageHint[] {
+  const totals = new Map<string, UsageHint>();
+
+  for (const tenant of tenants) {
+    for (const resource of tenant.resources ?? []) {
+      if (resource.used <= 0) {
+        continue;
+      }
+
+      const rule = USAGE_HINT_RULES.find(
+        (candidate) =>
+          candidate.serviceId === resource.serviceId &&
+          candidate.resource === resource.resource,
+      );
+
+      if (!rule) {
+        continue;
+      }
+
+      const existing = totals.get(rule.serviceCategory);
+      if (existing) {
+        existing.quantity += resource.used;
+      } else {
+        totals.set(rule.serviceCategory, {
+          serviceCategory: rule.serviceCategory,
+          quantity: resource.used,
+          pricing: rule.pricing,
+        });
+      }
+    }
+  }
+
+  return [...totals.values()].map((hint) => {
+    if (hint.pricing !== "auto") {
+      return hint;
+    }
+
+    const catalogItem = findCatalogItemForHint(hint, catalog);
+    if (!catalogItem) {
+      return { ...hint, pricing: "manual" };
+    }
+
+    return {
+      ...hint,
+      suggestedCatalogItemId: catalogItem._id,
+    };
+  });
+}
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -217,5 +418,24 @@ export const getByCompanyId = query({
         q.eq("linkedCompanyId", args.companyId),
       )
       .collect();
+  },
+});
+
+export const getUsageHintsForCompany = query({
+  args: { companyId: v.id("companies") },
+  handler: async (ctx, args) => {
+    await getCurrentUserOrThrow(ctx);
+
+    const tenants = await ctx.db
+      .query("manageOneTenants")
+      .withIndex("by_linked_company", (q) =>
+        q.eq("linkedCompanyId", args.companyId),
+      )
+      .collect();
+    const catalog = await ctx.db.query("serviceCatalog").collect();
+
+    return {
+      hints: buildUsageHintsForCompany(tenants, catalog),
+    };
   },
 });

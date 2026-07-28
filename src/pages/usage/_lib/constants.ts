@@ -10,7 +10,7 @@ export const SERVICE_TYPES = [
   "VBS",
   "EIP",
   "ELB",
-  "NAT Gateway",
+  "NAT",
   "VPN",
   "VPN Gateway",
   "VPCEP",
