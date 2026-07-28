@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/empty.tsx";
 import { Plus, FileText, Eye, Sparkles } from "lucide-react";
 import QuoteCreateDialog from "./_components/quote-create-dialog.tsx";
-import { formatCurrency } from "./_lib/format.ts";
+import { formatCurrency } from "@/lib/format.ts";
 
 type Quote = Doc<"quotes">;
 

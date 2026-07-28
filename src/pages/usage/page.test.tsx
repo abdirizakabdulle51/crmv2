@@ -209,6 +209,7 @@ describe("UsagePage pagination", () => {
         aicc._id,
         "2026-07",
         `Service ${String(index + 1).padStart(2, "0")}`,
+        index === 0 ? 718.8476 : 10,
       ),
     );
 
@@ -216,6 +217,8 @@ describe("UsagePage pagination", () => {
 
     expect(screen.getAllByText("Showing 1-50 of 60 entries")).toHaveLength(2);
     expect(screen.getByText("Service 01")).toBeInTheDocument();
+    expect(screen.getByText("$718.85")).toBeInTheDocument();
+    expect(screen.queryByText("$718.848")).not.toBeInTheDocument();
     expect(screen.queryByText("Service 51")).not.toBeInTheDocument();
 
     await user.click(

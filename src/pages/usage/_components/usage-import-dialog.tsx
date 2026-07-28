@@ -13,7 +13,12 @@ import { Badge } from "@/components/ui/badge.tsx";
 import { toast } from "sonner";
 import { Upload, Download, AlertTriangle, CheckCircle2 } from "lucide-react";
 import Papa from "papaparse";
-import { SERVICE_TYPES, matchServiceType, isValidMonth } from "../_lib/constants.ts";
+import {
+  SERVICE_TYPES,
+  matchServiceType,
+  isValidMonth,
+} from "../_lib/constants.ts";
+import { formatCurrency } from "@/lib/format.ts";
 
 type ImportRow = {
   company: string;
@@ -68,7 +73,10 @@ export default function UsageImportDialog({
     });
   };
 
-  const validateRow = (row: ImportRow, companiesList: Doc<"companies">[]): ValidatedRow => {
+  const validateRow = (
+    row: ImportRow,
+    companiesList: Doc<"companies">[],
+  ): ValidatedRow => {
     const errors: string[] = [];
 
     // Match company
@@ -200,12 +208,18 @@ export default function UsageImportDialog({
           {rows.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center gap-3">
-                <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                <Badge
+                  variant="secondary"
+                  className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
+                >
                   <CheckCircle2 className="h-3 w-3 mr-1" />
                   {validRows.length} valid
                 </Badge>
                 {errorRows.length > 0 && (
-                  <Badge variant="secondary" className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                  <Badge
+                    variant="secondary"
+                    className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+                  >
                     <AlertTriangle className="h-3 w-3 mr-1" />
                     {errorRows.length} errors
                   </Badge>
@@ -225,14 +239,25 @@ export default function UsageImportDialog({
                   </thead>
                   <tbody>
                     {rows.slice(0, 50).map((row, i) => (
-                      <tr key={i} className={row.errors.length > 0 ? "bg-red-50 dark:bg-red-900/10" : ""}>
+                      <tr
+                        key={i}
+                        className={
+                          row.errors.length > 0
+                            ? "bg-red-50 dark:bg-red-900/10"
+                            : ""
+                        }
+                      >
                         <td className="p-2">{row.companyName}</td>
                         <td className="p-2">{row.month}</td>
                         <td className="p-2">{row.serviceType}</td>
-                        <td className="p-2 text-right">${row.amount.toLocaleString()}</td>
+                        <td className="p-2 text-right">
+                          {formatCurrency(row.amount)}
+                        </td>
                         <td className="p-2">
                           {row.errors.length > 0 ? (
-                            <span className="text-destructive">{row.errors.join("; ")}</span>
+                            <span className="text-destructive">
+                              {row.errors.join("; ")}
+                            </span>
                           ) : (
                             <span className="text-emerald-600">OK</span>
                           )}
@@ -253,7 +278,9 @@ export default function UsageImportDialog({
                 disabled={validRows.length === 0 || importing}
                 onClick={handleImport}
               >
-                {importing ? "Importing..." : `Import ${validRows.length} Entries`}
+                {importing
+                  ? "Importing..."
+                  : `Import ${validRows.length} Entries`}
               </Button>
             </div>
           )}

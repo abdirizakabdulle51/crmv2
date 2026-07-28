@@ -21,6 +21,7 @@ import {
 import { Badge } from "@/components/ui/badge.tsx";
 import { toast } from "sonner";
 import { SERVICE_TYPES, getCurrentMonth } from "../_lib/constants.ts";
+import { formatCurrency } from "@/lib/format.ts";
 
 const ALWAYS_MANUAL_SERVICE_TYPES = ["ECS-CCE", "NAT", "LTS"];
 
@@ -523,7 +524,8 @@ export default function UsageEntryDialog({
                           <SelectContent>
                             {filteredCatalogItems.map((item) => (
                               <SelectItem key={item._id} value={item._id}>
-                                {item.itemName} - ${item.monthlyPrice}/
+                                {item.itemName} -{" "}
+                                {formatCurrency(item.monthlyPrice)}/
                                 {item.billingUnit}
                               </SelectItem>
                             ))}
@@ -531,8 +533,8 @@ export default function UsageEntryDialog({
                         </Select>
                         {lineCatalogItem && (
                           <p className="text-xs text-muted-foreground">
-                            {lineCatalogItem.billingUnit} - $
-                            {lineCatalogItem.monthlyPrice}/mo
+                            {lineCatalogItem.billingUnit} -{" "}
+                            {formatCurrency(lineCatalogItem.monthlyPrice)}/mo
                           </p>
                         )}
                       </div>
@@ -592,7 +594,7 @@ export default function UsageEntryDialog({
                   <SelectContent>
                     {filteredCatalogItems.map((item) => (
                       <SelectItem key={item._id} value={item._id}>
-                        {item.itemName} — ${item.monthlyPrice}/
+                        {item.itemName} — {formatCurrency(item.monthlyPrice)}/
                         {item.billingUnit}
                       </SelectItem>
                     ))}
@@ -601,8 +603,8 @@ export default function UsageEntryDialog({
                 {selectedCatalogItem && (
                   <p className="text-xs text-muted-foreground">
                     {selectedCatalogItem.serviceCategory} ·{" "}
-                    {selectedCatalogItem.billingUnit} · $
-                    {selectedCatalogItem.monthlyPrice}/mo
+                    {selectedCatalogItem.billingUnit} ·{" "}
+                    {formatCurrency(selectedCatalogItem.monthlyPrice)}/mo
                     {selectedCatalogItem.specs &&
                       ` · ${selectedCatalogItem.specs}`}
                   </p>
@@ -678,7 +680,7 @@ export default function UsageEntryDialog({
                           setIsManualOverride(false);
                         }}
                       >
-                        Reset to calculated (${calculatedAmount.toFixed(2)})
+                        Reset to calculated ({formatCurrency(calculatedAmount)})
                       </button>
                     )}
                 </div>

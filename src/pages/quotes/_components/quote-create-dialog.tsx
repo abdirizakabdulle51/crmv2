@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select.tsx";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
+import { formatCurrency } from "@/lib/format.ts";
 
 type CatalogItem = Doc<"serviceCatalog">;
 
@@ -264,16 +265,10 @@ export default function QuoteCreateDialog({
                       </td>
                       <td className="p-2 text-right">{li.quantity}</td>
                       <td className="p-2 text-right">
-                        $
-                        {li.monthlyTotal.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                        })}
+                        {formatCurrency(li.monthlyTotal)}
                       </td>
                       <td className="p-2 text-right">
-                        $
-                        {li.yearlyTotal.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                        })}
+                        {formatCurrency(li.yearlyTotal)}
                       </td>
                       <td className="p-2">
                         <Button
@@ -294,16 +289,10 @@ export default function QuoteCreateDialog({
                       Grand Total
                     </td>
                     <td className="p-2 text-right font-bold">
-                      $
-                      {monthlyGrandTotal.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                      })}
+                      {formatCurrency(monthlyGrandTotal)}
                     </td>
                     <td className="p-2 text-right font-bold">
-                      $
-                      {yearlyGrandTotal.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                      })}
+                      {formatCurrency(yearlyGrandTotal)}
                     </td>
                     <td></td>
                   </tr>

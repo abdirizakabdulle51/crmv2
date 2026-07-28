@@ -33,6 +33,7 @@ import UsageEntryDialog from "./_components/usage-entry-dialog.tsx";
 import UsageImportDialog from "./_components/usage-import-dialog.tsx";
 import ConfirmDeleteDialog from "@/components/confirm-delete-dialog.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
+import { formatCurrency } from "@/lib/format.ts";
 import { toast } from "sonner";
 import { getCurrentMonth } from "./_lib/constants.ts";
 
@@ -160,10 +161,7 @@ export default function UsagePage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              $
-              {totalAmount.toLocaleString(undefined, {
-                maximumFractionDigits: 0,
-              })}
+              {formatCurrency(totalAmount)}
             </div>
           </CardContent>
         </Card>
@@ -333,10 +331,7 @@ export default function UsagePage() {
                             : "—"}
                         </td>
                         <td className="p-3 text-right">
-                          $
-                          {entry.amount.toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                          })}
+                          {formatCurrency(entry.amount)}
                         </td>
                         <td className="p-3">
                           {entry.catalogItemId ? (

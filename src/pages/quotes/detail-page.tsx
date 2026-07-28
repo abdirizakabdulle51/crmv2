@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { ArrowLeft, CheckCircle, Printer, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { formatCurrency } from "./_lib/format.ts";
+import { formatCurrency } from "@/lib/format.ts";
 
 type Quote = Doc<"quotes">;
 

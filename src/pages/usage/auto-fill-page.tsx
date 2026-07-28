@@ -20,6 +20,7 @@ import {
 import { ArrowLeft, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { getCurrentMonth } from "./_lib/constants.ts";
+import { formatCurrency } from "@/lib/format.ts";
 
 type BulkPreviewRow = {
   serviceType: string;
@@ -266,11 +267,7 @@ export default function UsageAutoFillPage() {
                               {row.quantity.toLocaleString()}
                             </td>
                             <td className="p-3 text-right">
-                              $
-                              {row.amount.toLocaleString(undefined, {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}
+                              {formatCurrency(row.amount)}
                             </td>
                             <td className="p-3">
                               {row.alreadyLogged ? (

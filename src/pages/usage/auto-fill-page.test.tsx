@@ -171,7 +171,7 @@ describe("UsageAutoFillPage", () => {
           catalogItemId: "catalog-1" as Id<"serviceCatalog">,
           catalogItemName: "EIP - Active",
           quantity: 2,
-          amount: 6,
+          amount: 718.8476,
           alreadyLogged: false,
         },
         {
@@ -209,7 +209,7 @@ describe("UsageAutoFillPage", () => {
             serviceType: "EIP",
             catalogItemId: "catalog-1",
             quantity: 2,
-            amount: 6,
+            amount: 718.8476,
           },
           {
             serviceType: "VPN",
@@ -223,5 +223,28 @@ describe("UsageAutoFillPage", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/usage?company=company-1&month=2026-07",
     );
+  });
+
+  it("formats preview row amounts to exactly two decimals", () => {
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.bulkPreview = {
+      rows: [
+        {
+          serviceType: "EIP",
+          catalogItemId: "catalog-1" as Id<"serviceCatalog">,
+          catalogItemName: "EIP - Active",
+          quantity: 2,
+          amount: 718.8476,
+          alreadyLogged: false,
+        },
+      ],
+      needsManualEntry: [],
+    };
+
+    renderAutoFillPage();
+
+    expect(screen.getByText("$718.85")).toBeInTheDocument();
+    expect(screen.queryByText("$718.848")).not.toBeInTheDocument();
   });
 });
