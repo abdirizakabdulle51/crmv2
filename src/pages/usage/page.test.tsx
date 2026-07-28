@@ -135,14 +135,16 @@ function usage(
   id: string,
   companyId: Id<"companies">,
   month: string,
+  serviceType = "EIP",
+  amount = 10,
 ): Doc<"consumption"> {
   return {
     _id: id as Id<"consumption">,
     _creationTime: 1,
     companyId,
     month,
-    serviceType: "EIP",
-    amount: 10,
+    serviceType,
+    amount,
   };
 }
 
@@ -193,5 +195,90 @@ describe("UsagePage company filter indicators", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/usage/auto-fill?company=company-1&month=",
     );
+  });
+});
+
+describe("UsagePage pagination", () => {
+  it("changes page size and navigates usage entry pages", async () => {
+    const user = userEvent.setup();
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.consumption = Array.from({ length: 60 }, (_, index) =>
+      usage(
+        `usage-${index + 1}`,
+        aicc._id,
+        "2026-07",
+        `Service ${String(index + 1).padStart(2, "0")}`,
+      ),
+    );
+
+    renderUsagePage();
+
+    expect(screen.getAllByText("Showing 1-50 of 60 entries")).toHaveLength(2);
+    expect(screen.getByText("Service 01")).toBeInTheDocument();
+    expect(screen.queryByText("Service 51")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("combobox", { name: "Usage entries per page" }),
+    );
+    await user.click(screen.getByRole("option", { name: "25 per page" }));
+
+    expect(screen.getAllByText("Showing 1-25 of 60 entries")).toHaveLength(2);
+    expect(screen.queryByText("Service 26")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(screen.getAllByText("Showing 26-50 of 60 entries")).toHaveLength(2);
+    expect(screen.queryByText("Service 01")).not.toBeInTheDocument();
+    expect(screen.getByText("Service 26")).toBeInTheDocument();
+  });
+
+  it("resets to page 1 when company or month filters change", async () => {
+    const user = userEvent.setup();
+    const aicc = company("company-1", "AICC");
+    const waafi = company("company-2", "WAAFI");
+    mocks.companies = [aicc, waafi];
+    mocks.consumption = [
+      ...Array.from({ length: 55 }, (_, index) =>
+        usage(
+          `aicc-${index + 1}`,
+          aicc._id,
+          "2026-07",
+          `AICC Service ${String(index + 1).padStart(2, "0")}`,
+        ),
+      ),
+      ...Array.from({ length: 3 }, (_, index) =>
+        usage(
+          `waafi-${index + 1}`,
+          waafi._id,
+          "2026-07",
+          `WAAFI Service ${index + 1}`,
+        ),
+      ),
+      usage("aicc-old", aicc._id, "2026-06", "AICC Old Service"),
+    ];
+
+    renderUsagePage();
+
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getAllByText("Showing 51-59 of 59 entries")).toHaveLength(2);
+
+    const [companySelect, monthSelect] = screen.getAllByRole("combobox");
+    await user.click(companySelect);
+    await user.click(screen.getByRole("option", { name: /WAAFI/i }));
+
+    expect(screen.getAllByText("Showing 1-3 of 3 entries")).toHaveLength(2);
+    expect(screen.getByText("WAAFI Service 1")).toBeInTheDocument();
+
+    await user.click(companySelect);
+    await user.click(screen.getByRole("option", { name: "All Companies" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getAllByText("Showing 51-59 of 59 entries")).toHaveLength(2);
+
+    await user.click(monthSelect);
+    await user.click(screen.getByRole("option", { name: "2026-06" }));
+
+    expect(screen.getAllByText("Showing 1-1 of 1 entries")).toHaveLength(2);
+    expect(screen.getByText("AICC Old Service")).toBeInTheDocument();
   });
 });

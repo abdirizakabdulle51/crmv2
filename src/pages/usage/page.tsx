@@ -36,6 +36,8 @@ import { useCrm } from "@/lib/crm-context.tsx";
 import { toast } from "sonner";
 import { getCurrentMonth } from "./_lib/constants.ts";
 
+const PAGE_SIZE_OPTIONS = [25, 50, 100];
+
 export default function UsagePage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -55,6 +57,8 @@ export default function UsagePage() {
   const [bulkMonth, setBulkMonth] = useState(
     searchParams.get("month") ?? getCurrentMonth(),
   );
+  const [pageSize, setPageSize] = useState(50);
+  const [currentPage, setCurrentPage] = useState(1);
   const [deleteId, setDeleteId] = useState<Id<"consumption"> | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -83,6 +87,15 @@ export default function UsagePage() {
     if (monthFilter !== "all" && c.month !== monthFilter) return false;
     return true;
   });
+  const sortedFiltered = [...filtered].sort((a, b) =>
+    b.month.localeCompare(a.month),
+  );
+  const pageCount = Math.max(1, Math.ceil(sortedFiltered.length / pageSize));
+  const safePage = Math.min(currentPage, pageCount);
+  const pageStart =
+    sortedFiltered.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const pageEnd = Math.min(safePage * pageSize, sortedFiltered.length);
+  const paginatedEntries = sortedFiltered.slice(pageStart - 1, pageEnd);
 
   // Group by company for summary
   const companyMap = new Map(companies.map((c) => [c._id, c]));
@@ -168,7 +181,13 @@ export default function UsagePage() {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <Select value={companyFilter} onValueChange={setCompanyFilter}>
+        <Select
+          value={companyFilter}
+          onValueChange={(value) => {
+            setCompanyFilter(value);
+            setCurrentPage(1);
+          }}
+        >
           <SelectTrigger className="w-[200px]">
             <SelectValue placeholder="All Companies" />
           </SelectTrigger>
@@ -188,7 +207,13 @@ export default function UsagePage() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={monthFilter} onValueChange={setMonthFilter}>
+        <Select
+          value={monthFilter}
+          onValueChange={(value) => {
+            setMonthFilter(value);
+            setCurrentPage(1);
+          }}
+        >
           <SelectTrigger className="w-[160px]">
             <SelectValue placeholder="All Months" />
           </SelectTrigger>
@@ -197,6 +222,27 @@ export default function UsagePage() {
             {allMonths.map((m) => (
               <SelectItem key={m} value={m}>
                 {m}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={String(pageSize)}
+          onValueChange={(value) => {
+            setPageSize(Number(value));
+            setCurrentPage(1);
+          }}
+        >
+          <SelectTrigger
+            className="w-[150px]"
+            aria-label="Usage entries per page"
+          >
+            <SelectValue placeholder="Per page" />
+          </SelectTrigger>
+          <SelectContent>
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <SelectItem key={size} value={String(size)}>
+                {size} per page
               </SelectItem>
             ))}
           </SelectContent>
@@ -249,6 +295,9 @@ export default function UsagePage() {
       ) : (
         <Card>
           <CardContent className="p-0">
+            <div className="border-b p-3 text-sm text-muted-foreground">
+              Showing {pageStart}-{pageEnd} of {sortedFiltered.length} entries
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -263,78 +312,100 @@ export default function UsagePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered
-                    .sort((a, b) => b.month.localeCompare(a.month))
-                    .slice(0, 100)
-                    .map((entry) => {
-                      const company = companyMap.get(entry.companyId);
-                      return (
-                        <tr key={entry._id} className="border-b last:border-0">
-                          <td className="p-3 font-medium">
-                            {company?.name || "Unknown"}
-                          </td>
-                          <td className="p-3 text-muted-foreground">
-                            {entry.month}
-                          </td>
-                          <td className="p-3">
-                            <Badge variant="secondary" className="text-xs">
-                              {entry.serviceType}
+                  {paginatedEntries.map((entry) => {
+                    const company = companyMap.get(entry.companyId);
+                    return (
+                      <tr key={entry._id} className="border-b last:border-0">
+                        <td className="p-3 font-medium">
+                          {company?.name || "Unknown"}
+                        </td>
+                        <td className="p-3 text-muted-foreground">
+                          {entry.month}
+                        </td>
+                        <td className="p-3">
+                          <Badge variant="secondary" className="text-xs">
+                            {entry.serviceType}
+                          </Badge>
+                        </td>
+                        <td className="p-3 text-right text-muted-foreground">
+                          {entry.quantity != null
+                            ? entry.quantity.toLocaleString()
+                            : "—"}
+                        </td>
+                        <td className="p-3 text-right">
+                          $
+                          {entry.amount.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                          })}
+                        </td>
+                        <td className="p-3">
+                          {entry.catalogItemId ? (
+                            <Badge
+                              variant={
+                                entry.isManualOverride
+                                  ? "destructive"
+                                  : "secondary"
+                              }
+                              className="text-[10px]"
+                            >
+                              {entry.isManualOverride
+                                ? "adjusted"
+                                : "calculated"}
                             </Badge>
-                          </td>
-                          <td className="p-3 text-right text-muted-foreground">
-                            {entry.quantity != null
-                              ? entry.quantity.toLocaleString()
-                              : "—"}
-                          </td>
-                          <td className="p-3 text-right">
-                            $
-                            {entry.amount.toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                            })}
-                          </td>
-                          <td className="p-3">
-                            {entry.catalogItemId ? (
-                              <Badge
-                                variant={
-                                  entry.isManualOverride
-                                    ? "destructive"
-                                    : "secondary"
-                                }
-                                className="text-[10px]"
-                              >
-                                {entry.isManualOverride
-                                  ? "adjusted"
-                                  : "calculated"}
-                              </Badge>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">
-                                manual
-                              </span>
-                            )}
-                          </td>
-                          {isAdmin && (
-                            <td className="p-3">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="cursor-pointer"
-                                onClick={() => setDeleteId(entry._id)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                              </Button>
-                            </td>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              manual
+                            </span>
                           )}
-                        </tr>
-                      );
-                    })}
+                        </td>
+                        {isAdmin && (
+                          <td className="p-3">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="cursor-pointer"
+                              onClick={() => setDeleteId(entry._id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-            {filtered.length > 100 && (
-              <p className="text-xs text-muted-foreground p-3 border-t">
-                Showing first 100 of {filtered.length} entries
-              </p>
-            )}
+            <div className="flex flex-col gap-3 border-t p-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Showing {pageStart}-{pageEnd} of {sortedFiltered.length} entries
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={safePage === 1}
+                  onClick={() =>
+                    setCurrentPage((page) => Math.max(1, page - 1))
+                  }
+                >
+                  Previous
+                </Button>
+                <span>
+                  Page {safePage} of {pageCount}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={safePage === pageCount}
+                  onClick={() =>
+                    setCurrentPage((page) => Math.min(pageCount, page + 1))
+                  }
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
