@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import QuotesPage from "./page.tsx";
 
@@ -9,8 +10,6 @@ vi.mock("@/convex/_generated/api.js", () => ({
     companies: { list: "companies.list" },
     quotes: {
       list: "quotes.list",
-      updateStatus: "quotes.updateStatus",
-      remove: "quotes.remove",
     },
   },
 }));
@@ -34,10 +33,6 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("./_components/quote-create-dialog.tsx", () => ({
-  default: () => null,
-}));
-
-vi.mock("./_components/quote-detail-dialog.tsx", () => ({
   default: () => null,
 }));
 
@@ -67,21 +62,62 @@ function quote(companyId: Id<"companies">): Doc<"quotes"> {
   };
 }
 
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname}</div>;
+}
+
+function renderQuotesPage() {
+  return render(
+    <MemoryRouter initialEntries={["/quotes"]}>
+      <Routes>
+        <Route
+          path="/quotes"
+          element={
+            <>
+              <QuotesPage />
+              <LocationProbe />
+            </>
+          }
+        />
+        <Route
+          path="/quotes/:id"
+          element={
+            <>
+              <div>Quote Detail</div>
+              <LocationProbe />
+            </>
+          }
+        />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
 describe("QuotesPage", () => {
   it("formats quote list currency values to exactly two decimals", () => {
     const aicc = company("company-1", "AICC");
     mocks.companies = [aicc];
     mocks.quotes = [quote(aicc._id)];
 
-    render(
-      <MemoryRouter>
-        <QuotesPage />
-      </MemoryRouter>,
-    );
+    renderQuotesPage();
 
     expect(screen.getByText("$24,189.85")).toBeInTheDocument();
     expect(screen.getByText("$54,473.09")).toBeInTheDocument();
     expect(screen.queryByText("$24,189.848")).not.toBeInTheDocument();
     expect(screen.queryByText("$54,473.093")).not.toBeInTheDocument();
+  });
+
+  it("navigates to the quote detail page from the eye action", async () => {
+    const user = userEvent.setup();
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.quotes = [quote(aicc._id)];
+
+    renderQuotesPage();
+
+    await user.click(screen.getByRole("button", { name: "View quote" }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/quotes/quote-1");
   });
 });

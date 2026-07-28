@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
-import type { Id, Doc } from "@/convex/_generated/dataModel.d.ts";
+import type { Doc } from "@/convex/_generated/dataModel.d.ts";
 import {
   Card,
   CardContent,
@@ -29,7 +29,6 @@ import {
 } from "@/components/ui/empty.tsx";
 import { Plus, FileText, Eye, Sparkles } from "lucide-react";
 import QuoteCreateDialog from "./_components/quote-create-dialog.tsx";
-import QuoteDetailDialog from "./_components/quote-detail-dialog.tsx";
 import { formatCurrency } from "./_lib/format.ts";
 
 type Quote = Doc<"quotes">;
@@ -38,11 +37,8 @@ export default function QuotesPage() {
   const navigate = useNavigate();
   const companies = useQuery(api.companies.list, {});
   const quotes = useQuery(api.quotes.list, {});
-  const updateStatus = useMutation(api.quotes.updateStatus);
-  const removeQuote = useMutation(api.quotes.remove);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [viewQuote, setViewQuote] = useState<Quote | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [companyFilter, setCompanyFilter] = useState("all");
 
@@ -262,7 +258,8 @@ export default function QuotesPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => setViewQuote(quote)}
+                                aria-label="View quote"
+                                onClick={() => navigate(`/quotes/${quote._id}`)}
                                 className="cursor-pointer"
                               >
                                 <Eye className="h-3.5 w-3.5" />
@@ -284,25 +281,6 @@ export default function QuotesPage() {
         onOpenChange={setCreateOpen}
         companies={companies}
       />
-
-      {viewQuote && (
-        <QuoteDetailDialog
-          quote={viewQuote}
-          companyName={companyMap.get(viewQuote.companyId)?.name || "Unknown"}
-          open={!!viewQuote}
-          onOpenChange={(v) => {
-            if (!v) setViewQuote(null);
-          }}
-          onStatusChange={async (status) => {
-            await updateStatus({ id: viewQuote._id, status });
-            setViewQuote(null);
-          }}
-          onDelete={async () => {
-            await removeQuote({ id: viewQuote._id });
-            setViewQuote(null);
-          }}
-        />
-      )}
     </div>
   );
 }
