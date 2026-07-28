@@ -135,6 +135,16 @@ export default function UsagePage() {
   const totalEntries = filtered.length;
   const totalAmount = filtered.reduce((s, c) => s + c.amount, 0);
   const uniqueCompanies = new Set(filtered.map((c) => c.companyId)).size;
+  const usageCountByCompany = new Map<string, number>();
+  for (const entry of consumption) {
+    if (monthFilter !== "all" && entry.month !== monthFilter) {
+      continue;
+    }
+    usageCountByCompany.set(
+      entry.companyId,
+      (usageCountByCompany.get(entry.companyId) ?? 0) + 1,
+    );
+  }
   const checkedPreviewRows =
     bulkPreview?.rows.filter((row) => checkedRows.has(rowKey(row))) ?? [];
 
@@ -208,7 +218,14 @@ export default function UsagePage() {
             <SelectItem value="all">All Companies</SelectItem>
             {companies.map((c) => (
               <SelectItem key={c._id} value={c._id}>
-                {c.name}
+                <span className="flex w-full items-center justify-between gap-3">
+                  <span>{c.name}</span>
+                  {(usageCountByCompany.get(c._id) ?? 0) > 0 && (
+                    <Badge variant="outline" className="text-[10px]">
+                      ✓ {usageCountByCompany.get(c._id)} entries
+                    </Badge>
+                  )}
+                </span>
               </SelectItem>
             ))}
           </SelectContent>
