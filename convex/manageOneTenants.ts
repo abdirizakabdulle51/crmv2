@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
+import { assertCanManageUsage } from "./authorization";
 
 type UsageHintPricing = "auto" | "manual";
 
@@ -47,6 +48,22 @@ type UsageHintCatalogItem = {
   serviceCategory: string;
   itemName: string;
   billingUnit?: string;
+  monthlyPrice?: number;
+};
+
+export type BulkUsagePreviewRow = {
+  serviceType: string;
+  catalogItemId: Id<"serviceCatalog">;
+  catalogItemName: string;
+  quantity: number;
+  amount: number;
+  alreadyLogged: boolean;
+};
+
+export type BulkUsageManualItem = {
+  serviceType: string;
+  label: string;
+  reason: string;
 };
 
 type HintRule = {
@@ -315,6 +332,82 @@ export function buildUsageHintsForCompany(
   return hints;
 }
 
+export function buildBulkUsagePreview(
+  hints: UsageHint[],
+  catalog: UsageHintCatalogItem[],
+  existingEntries: Array<{
+    serviceType: string;
+    catalogItemId?: Id<"serviceCatalog">;
+  }>,
+): { rows: BulkUsagePreviewRow[]; needsManualEntry: BulkUsageManualItem[] } {
+  const existingKeys = new Set(
+    existingEntries
+      .filter((entry) => entry.catalogItemId)
+      .map((entry) => `${entry.serviceType}:${entry.catalogItemId}`),
+  );
+  const rows: BulkUsagePreviewRow[] = [];
+  const needsManualEntry: BulkUsageManualItem[] = [];
+
+  for (const hint of hints) {
+    const lineItems =
+      hint.lineItems ??
+      (hint.pricing === "auto" && hint.suggestedCatalogItemId
+        ? [
+            {
+              label: hint.serviceCategory,
+              quantity: hint.quantity,
+              pricing: hint.pricing,
+              suggestedCatalogItemId: hint.suggestedCatalogItemId,
+            },
+          ]
+        : []);
+
+    if (!lineItems.length && hint.pricing === "manual") {
+      needsManualEntry.push({
+        serviceType: hint.serviceCategory,
+        label: hint.serviceCategory,
+        reason: `${hint.serviceCategory} detected but has no confident catalog match - add manually.`,
+      });
+    }
+
+    for (const lineItem of lineItems) {
+      if (lineItem.pricing !== "auto" || !lineItem.suggestedCatalogItemId) {
+        needsManualEntry.push({
+          serviceType: hint.serviceCategory,
+          label: lineItem.label,
+          reason: `${hint.serviceCategory} ${lineItem.label} detected but has no catalog match - add manually.`,
+        });
+        continue;
+      }
+
+      const catalogItem = catalog.find(
+        (item) => item._id === lineItem.suggestedCatalogItemId,
+      );
+      if (!catalogItem || catalogItem.monthlyPrice == null) {
+        needsManualEntry.push({
+          serviceType: hint.serviceCategory,
+          label: lineItem.label,
+          reason: `${hint.serviceCategory} ${lineItem.label} detected but catalog pricing is unavailable - add manually.`,
+        });
+        continue;
+      }
+
+      rows.push({
+        serviceType: hint.serviceCategory,
+        catalogItemId: catalogItem._id,
+        catalogItemName: catalogItem.itemName,
+        quantity: lineItem.quantity,
+        amount: lineItem.quantity * catalogItem.monthlyPrice,
+        alreadyLogged: existingKeys.has(
+          `${hint.serviceCategory}:${catalogItem._id}`,
+        ),
+      });
+    }
+  }
+
+  return { rows, needsManualEntry };
+}
+
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
 ): Promise<Doc<"users">> {
@@ -567,5 +660,30 @@ export const getUsageHintsForCompany = query({
     return {
       hints: buildUsageHintsForCompany(tenants, catalog),
     };
+  },
+});
+
+export const getBulkUsagePreview = query({
+  args: { companyId: v.id("companies"), month: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    await assertCanManageUsage(ctx, user, args.companyId);
+
+    const tenants = await ctx.db
+      .query("manageOneTenants")
+      .withIndex("by_linked_company", (q) =>
+        q.eq("linkedCompanyId", args.companyId),
+      )
+      .collect();
+    const catalog = await ctx.db.query("serviceCatalog").collect();
+    const existingEntries = await ctx.db
+      .query("consumption")
+      .withIndex("by_company_month", (q) =>
+        q.eq("companyId", args.companyId).eq("month", args.month),
+      )
+      .collect();
+    const hints = buildUsageHintsForCompany(tenants, catalog);
+
+    return buildBulkUsagePreview(hints, catalog, existingEntries);
   },
 });

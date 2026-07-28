@@ -102,6 +102,42 @@ export const create = mutation({
   },
 });
 
+/** Bulk create ManageOne-derived usage entries */
+export const bulkCreateFromManageOne = mutation({
+  args: {
+    companyId: v.id("companies"),
+    month: v.string(),
+    rows: v.array(
+      v.object({
+        serviceType: v.string(),
+        catalogItemId: v.id("serviceCatalog"),
+        quantity: v.number(),
+        amount: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    await assertCanManageUsage(ctx, currentUser, args.companyId);
+
+    let inserted = 0;
+    for (const row of args.rows) {
+      await ctx.db.insert("consumption", {
+        companyId: args.companyId,
+        month: args.month,
+        serviceType: row.serviceType,
+        amount: row.amount,
+        quantity: row.quantity,
+        catalogItemId: row.catalogItemId,
+        isManualOverride: false,
+      });
+      inserted++;
+    }
+
+    return { inserted };
+  },
+});
+
 /** Bulk create consumption entries (for CSV import) */
 export const bulkCreate = mutation({
   args: {

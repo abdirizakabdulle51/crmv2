@@ -1,11 +1,25 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import { Checkbox } from "@/components/ui/checkbox.tsx";
+import { Input } from "@/components/ui/input.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog.tsx";
 import {
   Select,
   SelectContent,
@@ -21,25 +35,67 @@ import {
   EmptyDescription,
   EmptyContent,
 } from "@/components/ui/empty.tsx";
-import { Plus, Upload, BarChart3, Trash2 } from "lucide-react";
+import { Plus, Upload, BarChart3, Trash2, Sparkles } from "lucide-react";
 import UsageEntryDialog from "./_components/usage-entry-dialog.tsx";
 import UsageImportDialog from "./_components/usage-import-dialog.tsx";
 import ConfirmDeleteDialog from "@/components/confirm-delete-dialog.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 import { toast } from "sonner";
+import { getCurrentMonth } from "./_lib/constants.ts";
+
+type BulkPreviewRow = {
+  serviceType: string;
+  catalogItemId: Id<"serviceCatalog">;
+  catalogItemName: string;
+  quantity: number;
+  amount: number;
+  alreadyLogged: boolean;
+};
 
 export default function UsagePage() {
   const companies = useQuery(api.companies.list, {});
   const consumption = useQuery(api.consumption.list, {});
   const removeEntry = useMutation(api.consumption.remove);
+  const bulkCreateFromManageOne = useMutation(
+    api.consumption.bulkCreateFromManageOne,
+  );
   const { isAdmin } = useCrm();
 
   const [entryOpen, setEntryOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [bulkPreviewOpen, setBulkPreviewOpen] = useState(false);
   const [companyFilter, setCompanyFilter] = useState("all");
   const [monthFilter, setMonthFilter] = useState("all");
+  const [bulkMonth, setBulkMonth] = useState(getCurrentMonth());
+  const [checkedRows, setCheckedRows] = useState<Set<string>>(new Set());
+  const [bulkCreating, setBulkCreating] = useState(false);
   const [deleteId, setDeleteId] = useState<Id<"consumption"> | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const bulkPreview = useQuery(
+    api.manageOneTenants.getBulkUsagePreview,
+    bulkPreviewOpen && companyFilter !== "all" && bulkMonth
+      ? {
+          companyId: companyFilter as Id<"companies">,
+          month: bulkMonth,
+        }
+      : "skip",
+  );
+
+  const rowKey = (row: BulkPreviewRow) =>
+    `${row.serviceType}:${row.catalogItemId}`;
+
+  useEffect(() => {
+    if (!bulkPreview) {
+      return;
+    }
+    setCheckedRows(
+      new Set(
+        bulkPreview.rows
+          .filter((row) => !row.alreadyLogged)
+          .map((row) => rowKey(row)),
+      ),
+    );
+  }, [bulkPreview]);
 
   if (!companies || !consumption) {
     return (
@@ -56,7 +112,9 @@ export default function UsagePage() {
   }
 
   // Get unique months from data
-  const allMonths = [...new Set(consumption.map((c) => c.month))].sort().reverse();
+  const allMonths = [...new Set(consumption.map((c) => c.month))]
+    .sort()
+    .reverse();
 
   // Filter consumption
   const filtered = consumption.filter((c) => {
@@ -77,6 +135,8 @@ export default function UsagePage() {
   const totalEntries = filtered.length;
   const totalAmount = filtered.reduce((s, c) => s + c.amount, 0);
   const uniqueCompanies = new Set(filtered.map((c) => c.companyId)).size;
+  const checkedPreviewRows =
+    bulkPreview?.rows.filter((row) => checkedRows.has(rowKey(row))) ?? [];
 
   return (
     <div className="p-6 md:p-8 space-y-6">
@@ -103,7 +163,9 @@ export default function UsagePage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Total Entries</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">
+              Total Entries
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{totalEntries}</div>
@@ -111,17 +173,24 @@ export default function UsagePage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Total Consumption</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">
+              Total Consumption
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              ${totalAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              $
+              {totalAmount.toLocaleString(undefined, {
+                maximumFractionDigits: 0,
+              })}
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Tenants with Data</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">
+              Tenants with Data
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{uniqueCompanies}</div>
@@ -157,6 +226,20 @@ export default function UsagePage() {
             ))}
           </SelectContent>
         </Select>
+        <Input
+          type="month"
+          value={bulkMonth}
+          onChange={(event) => setBulkMonth(event.target.value)}
+          className="w-[160px]"
+        />
+        <Button
+          variant="outline"
+          disabled={companyFilter === "all" || !bulkMonth}
+          onClick={() => setBulkPreviewOpen(true)}
+        >
+          <Sparkles className="h-4 w-4 mr-2" />
+          Auto-fill from ManageOne
+        </Button>
       </div>
 
       {/* Data table */}
@@ -208,29 +291,46 @@ export default function UsagePage() {
                       const company = companyMap.get(entry.companyId);
                       return (
                         <tr key={entry._id} className="border-b last:border-0">
-                          <td className="p-3 font-medium">{company?.name || "Unknown"}</td>
-                          <td className="p-3 text-muted-foreground">{entry.month}</td>
+                          <td className="p-3 font-medium">
+                            {company?.name || "Unknown"}
+                          </td>
+                          <td className="p-3 text-muted-foreground">
+                            {entry.month}
+                          </td>
                           <td className="p-3">
                             <Badge variant="secondary" className="text-xs">
                               {entry.serviceType}
                             </Badge>
                           </td>
                           <td className="p-3 text-right text-muted-foreground">
-                            {entry.quantity != null ? entry.quantity.toLocaleString() : "—"}
+                            {entry.quantity != null
+                              ? entry.quantity.toLocaleString()
+                              : "—"}
                           </td>
                           <td className="p-3 text-right">
-                            ${entry.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            $
+                            {entry.amount.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                            })}
                           </td>
                           <td className="p-3">
                             {entry.catalogItemId ? (
                               <Badge
-                                variant={entry.isManualOverride ? "destructive" : "secondary"}
+                                variant={
+                                  entry.isManualOverride
+                                    ? "destructive"
+                                    : "secondary"
+                                }
                                 className="text-[10px]"
                               >
-                                {entry.isManualOverride ? "adjusted" : "calculated"}
+                                {entry.isManualOverride
+                                  ? "adjusted"
+                                  : "calculated"}
                               </Badge>
                             ) : (
-                              <span className="text-xs text-muted-foreground">manual</span>
+                              <span className="text-xs text-muted-foreground">
+                                manual
+                              </span>
                             )}
                           </td>
                           {isAdmin && (
@@ -265,14 +365,181 @@ export default function UsagePage() {
         onOpenChange={setEntryOpen}
         companies={companies}
       />
-      <UsageImportDialog
-        open={importOpen}
-        onOpenChange={setImportOpen}
-      />
+      <UsageImportDialog open={importOpen} onOpenChange={setImportOpen} />
+
+      <Dialog open={bulkPreviewOpen} onOpenChange={setBulkPreviewOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Auto-fill from ManageOne</DialogTitle>
+          </DialogHeader>
+          {!bulkPreview ? (
+            <div className="space-y-3">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-md border">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="w-10 p-3"></th>
+                      <th className="text-left p-3 font-medium">Service</th>
+                      <th className="text-left p-3 font-medium">
+                        Catalog Item
+                      </th>
+                      <th className="text-right p-3 font-medium">Qty</th>
+                      <th className="text-right p-3 font-medium">Amount</th>
+                      <th className="text-left p-3 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkPreview.rows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="p-6 text-center text-muted-foreground"
+                        >
+                          No auto-priceable ManageOne usage was detected.
+                        </td>
+                      </tr>
+                    ) : (
+                      bulkPreview.rows.map((row) => {
+                        const key = rowKey(row);
+                        return (
+                          <tr
+                            key={key}
+                            className={
+                              row.alreadyLogged
+                                ? "border-b opacity-60"
+                                : "border-b"
+                            }
+                          >
+                            <td className="p-3">
+                              <Checkbox
+                                checked={checkedRows.has(key)}
+                                disabled={row.alreadyLogged}
+                                onCheckedChange={(checked) => {
+                                  setCheckedRows((current) => {
+                                    const next = new Set(current);
+                                    if (checked) {
+                                      next.add(key);
+                                    } else {
+                                      next.delete(key);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </td>
+                            <td className="p-3">
+                              <Badge variant="secondary" className="text-xs">
+                                {row.serviceType}
+                              </Badge>
+                            </td>
+                            <td className="p-3">{row.catalogItemName}</td>
+                            <td className="p-3 text-right">
+                              {row.quantity.toLocaleString()}
+                            </td>
+                            <td className="p-3 text-right">
+                              $
+                              {row.amount.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="p-3">
+                              {row.alreadyLogged ? (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px]"
+                                >
+                                  Already logged this month
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px]"
+                                >
+                                  From ManageOne
+                                </Badge>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {bulkPreview.needsManualEntry.length > 0 && (
+                <div className="rounded-md border p-3">
+                  <h3 className="text-sm font-medium mb-2">
+                    Needs manual entry
+                  </h3>
+                  <ul className="space-y-1 text-sm text-muted-foreground">
+                    {bulkPreview.needsManualEntry.map((item, index) => (
+                      <li key={`${item.serviceType}-${item.label}-${index}`}>
+                        {item.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBulkPreviewOpen(false)}
+              disabled={bulkCreating}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                !bulkPreview ||
+                checkedPreviewRows.length === 0 ||
+                companyFilter === "all" ||
+                bulkCreating
+              }
+              onClick={async () => {
+                if (!bulkPreview || companyFilter === "all") {
+                  return;
+                }
+                setBulkCreating(true);
+                try {
+                  const result = await bulkCreateFromManageOne({
+                    companyId: companyFilter as Id<"companies">,
+                    month: bulkMonth,
+                    rows: checkedPreviewRows.map((row) => ({
+                      serviceType: row.serviceType,
+                      catalogItemId: row.catalogItemId,
+                      quantity: row.quantity,
+                      amount: row.amount,
+                    })),
+                  });
+                  toast.success(`Created ${result.inserted} usage entries`);
+                  setBulkPreviewOpen(false);
+                } catch {
+                  toast.error("Failed to auto-fill usage");
+                } finally {
+                  setBulkCreating(false);
+                }
+              }}
+            >
+              Create {checkedPreviewRows.length} Entries
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDeleteDialog
         open={!!deleteId}
-        onOpenChange={(v) => { if (!v) setDeleteId(null); }}
+        onOpenChange={(v) => {
+          if (!v) setDeleteId(null);
+        }}
         onConfirm={async () => {
           if (!deleteId) return;
           setDeleting(true);

@@ -1,18 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { Id } from "./_generated/dataModel.d.ts";
-import { buildUsageHintsForCompany } from "./manageOneTenants";
+import {
+  buildBulkUsagePreview,
+  buildUsageHintsForCompany,
+} from "./manageOneTenants";
 
 function catalogItem(
   id: string,
   serviceCategory: string,
   itemName: string,
   billingUnit?: string,
+  monthlyPrice?: number,
 ) {
   return {
     _id: id as Id<"serviceCatalog">,
     serviceCategory,
     itemName,
     ...(billingUnit ? { billingUnit } : {}),
+    ...(monthlyPrice != null ? { monthlyPrice } : {}),
   };
 }
 
@@ -306,5 +311,104 @@ describe("buildUsageHintsForCompany", () => {
     expect(
       hints.find((hint) => hint.serviceCategory === "EVS")?.lineItems,
     ).toBeUndefined();
+  });
+
+  it("builds bulk auto-fill preview rows, manual notes, and duplicate flags", () => {
+    const catalog = [
+      catalogItem("eip-active", "EIP", "EIP - Active", "per IP", 3),
+      catalogItem("elb", "ELB", "ELB - Shared", "per instance", 12),
+      catalogItem("ecs-c6", "ECS", "C6_12xlarge.4", "per instance", 922),
+      catalogItem(
+        "evs-ssd",
+        "EVS",
+        "SSD (Block Storage / NVMe)",
+        "per GB",
+        0.072,
+      ),
+    ];
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [
+            { serviceId: "vpc", resource: "publicIp", used: 2 },
+            { serviceId: "vpc", resource: "loadbalancer", used: 1 },
+          ],
+          ecsFlavors: [
+            { flavorName: "C6_12xlarge.4", vcpus: 48, ramMb: 196608, count: 2 },
+            {
+              flavorName: "tenant-custom",
+              vcpus: 8,
+              ramMb: 32768,
+              count: 1,
+            },
+          ],
+          evsVolumeTypes: [
+            { volumeType: "SSD", totalGb: 100, count: 4 },
+            { volumeType: "UltraHighIO", totalGb: 50, count: 1 },
+          ],
+        },
+      ],
+      catalog,
+    );
+
+    const preview = buildBulkUsagePreview(hints, catalog, [
+      {
+        serviceType: "EIP",
+        catalogItemId: "eip-active" as Id<"serviceCatalog">,
+      },
+    ]);
+
+    expect(preview.rows).toEqual(
+      expect.arrayContaining([
+        {
+          serviceType: "EIP",
+          catalogItemId: "eip-active",
+          catalogItemName: "EIP - Active",
+          quantity: 2,
+          amount: 6,
+          alreadyLogged: true,
+        },
+        {
+          serviceType: "ELB",
+          catalogItemId: "elb",
+          catalogItemName: "ELB - Shared",
+          quantity: 1,
+          amount: 12,
+          alreadyLogged: false,
+        },
+        {
+          serviceType: "ECS",
+          catalogItemId: "ecs-c6",
+          catalogItemName: "C6_12xlarge.4",
+          quantity: 2,
+          amount: 1844,
+          alreadyLogged: false,
+        },
+        {
+          serviceType: "EVS",
+          catalogItemId: "evs-ssd",
+          catalogItemName: "SSD (Block Storage / NVMe)",
+          quantity: 100,
+          amount: 7.199999999999999,
+          alreadyLogged: false,
+        },
+      ]),
+    );
+    expect(preview.needsManualEntry).toEqual(
+      expect.arrayContaining([
+        {
+          serviceType: "ECS",
+          label: "tenant-custom",
+          reason:
+            "ECS tenant-custom detected but has no catalog match - add manually.",
+        },
+        {
+          serviceType: "EVS",
+          label: "UltraHighIO",
+          reason:
+            "EVS UltraHighIO detected but has no catalog match - add manually.",
+        },
+      ]),
+    );
   });
 });

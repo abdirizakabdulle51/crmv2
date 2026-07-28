@@ -360,6 +360,69 @@ describe("role scoping", () => {
     await asUser(t, s.hob).mutation(api.salesTargets.remove, { id: s.targetB });
   });
 
+  it("enforces ManageOne bulk usage create scope", async () => {
+    const t = convexTest({ schema, modules });
+    const s = await seed(t);
+    const catalogItemId = await t.run(async (ctx) => {
+      return await ctx.db.insert("serviceCatalog", {
+        serviceCategory: "EIP",
+        itemName: "EIP - Active",
+        billingUnit: "per IP",
+        monthlyPrice: 3,
+      });
+    });
+
+    const result = await asUser(t, s.amA).mutation(
+      api.consumption.bulkCreateFromManageOne,
+      {
+        companyId: s.companyA,
+        month: "2026-09",
+        rows: [
+          {
+            serviceType: "EIP",
+            catalogItemId,
+            quantity: 2,
+            amount: 6,
+          },
+        ],
+      },
+    );
+    expect(result.inserted).toBe(1);
+    const insertedRows = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("consumption")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", s.companyA).eq("month", "2026-09"),
+        )
+        .collect();
+    });
+    expect(insertedRows).toHaveLength(1);
+    expect(insertedRows[0]).toMatchObject({
+      companyId: s.companyA,
+      month: "2026-09",
+      serviceType: "EIP",
+      catalogItemId,
+      quantity: 2,
+      amount: 6,
+      isManualOverride: false,
+    });
+
+    await expect(
+      asUser(t, s.amA).mutation(api.consumption.bulkCreateFromManageOne, {
+        companyId: s.companyB,
+        month: "2026-09",
+        rows: [
+          {
+            serviceType: "EIP",
+            catalogItemId,
+            quantity: 2,
+            amount: 6,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
   it("enforces consumption listByCompany and GM target removal scope", async () => {
     const t = convexTest({ schema, modules });
     const s = await seed(t);
