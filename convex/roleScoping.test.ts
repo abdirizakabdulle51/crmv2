@@ -23,6 +23,8 @@ type Seed = {
   activityB: Id<"activities">;
   usageA: Id<"consumption">;
   usageB: Id<"consumption">;
+  quoteA: Id<"quotes">;
+  quoteB: Id<"quotes">;
   targetA: Id<"salesTargets">;
   targetB: Id<"salesTargets">;
 };
@@ -136,6 +138,39 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       serviceType: "ECS",
       amount: 10,
     });
+    const quoteLineItem = {
+      catalogItemId: await ctx.db.insert("serviceCatalog", {
+        serviceCategory: "EIP",
+        itemName: "EIP - Active",
+        billingUnit: "per IP",
+        monthlyPrice: 3,
+      }),
+      itemName: "EIP - Active",
+      serviceCategory: "EIP",
+      billingUnit: "per IP",
+      quantity: 1,
+      monthlyUnitPrice: 3,
+      monthlyTotal: 3,
+      yearlyTotal: 36,
+    };
+    const quoteA = await ctx.db.insert("quotes", {
+      companyId: companyA,
+      createdBy: amBId,
+      date: "2026-07-28",
+      status: "draft",
+      lineItems: [quoteLineItem],
+      monthlyGrandTotal: 3,
+      yearlyGrandTotal: 36,
+    });
+    const quoteB = await ctx.db.insert("quotes", {
+      companyId: companyB,
+      createdBy: amAId,
+      date: "2026-07-28",
+      status: "draft",
+      lineItems: [quoteLineItem],
+      monthlyGrandTotal: 3,
+      yearlyGrandTotal: 36,
+    });
     const targetA = await ctx.db.insert("salesTargets", {
       accountManagerId: amAId,
       year: 2026,
@@ -167,6 +202,8 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       activityB,
       usageA,
       usageB,
+      quoteA,
+      quoteB,
       targetA,
       targetB,
     };
@@ -419,6 +456,57 @@ describe("role scoping", () => {
             amount: 6,
           },
         ],
+      }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
+  it("enforces quote company scope for list, view, status updates, and delete", async () => {
+    const t = convexTest({ schema, modules });
+    const s = await seed(t);
+
+    const amQuotes = await asUser(t, s.amA).query(api.quotes.list, {});
+    expect(amQuotes.map((quote) => quote._id)).toContain(s.quoteA);
+    expect(amQuotes.map((quote) => quote._id)).not.toContain(s.quoteB);
+    await asUser(t, s.amA).query(api.quotes.getById, { id: s.quoteA });
+    await expect(
+      asUser(t, s.amA).query(api.quotes.getById, { id: s.quoteB }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+    await asUser(t, s.gmA).mutation(api.quotes.updateStatus, {
+      id: s.quoteA,
+      status: "sent",
+    });
+    await expect(
+      asUser(t, s.gmA).mutation(api.quotes.updateStatus, {
+        id: s.quoteB,
+        status: "sent",
+      }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+    await asUser(t, s.gmA).mutation(api.quotes.updateStatus, {
+      id: s.quoteA,
+      status: "draft",
+    });
+    const adminQuotes = await asUser(t, s.hob).query(api.quotes.list, {});
+    expect(adminQuotes.map((quote) => quote._id)).toEqual(
+      expect.arrayContaining([s.quoteA, s.quoteB]),
+    );
+    await asUser(t, s.amA).mutation(api.quotes.remove, { id: s.quoteA });
+    await expect(
+      asUser(t, s.amA).mutation(api.quotes.remove, { id: s.quoteB }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
+  it("denies out-of-scope quote preview from usage", async () => {
+    const t = convexTest({ schema, modules });
+    const s = await seed(t);
+
+    await asUser(t, s.amA).query(api.quotes.buildQuotePreviewFromUsage, {
+      companyId: s.companyA,
+      month: "2026-07",
+    });
+    await expect(
+      asUser(t, s.amA).query(api.quotes.buildQuotePreviewFromUsage, {
+        companyId: s.companyB,
+        month: "2026-07",
       }),
     ).rejects.toThrow(/permission|FORBIDDEN/i);
   });

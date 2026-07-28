@@ -2,7 +2,12 @@ import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id, Doc } from "@/convex/_generated/dataModel.d.ts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
@@ -21,9 +26,10 @@ import {
   EmptyDescription,
   EmptyContent,
 } from "@/components/ui/empty.tsx";
-import { Plus, FileText, Eye } from "lucide-react";
+import { Plus, FileText, Eye, Sparkles } from "lucide-react";
 import QuoteCreateDialog from "./_components/quote-create-dialog.tsx";
 import QuoteDetailDialog from "./_components/quote-detail-dialog.tsx";
+import QuoteGenerateFromUsageDialog from "./_components/quote-generate-from-usage-dialog.tsx";
 
 type Quote = Doc<"quotes">;
 
@@ -34,6 +40,7 @@ export default function QuotesPage() {
   const removeQuote = useMutation(api.quotes.remove);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
   const [viewQuote, setViewQuote] = useState<Quote | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [companyFilter, setCompanyFilter] = useState("all");
@@ -72,9 +79,17 @@ export default function QuotesPage() {
       case "draft":
         return <Badge variant="secondary">Draft</Badge>;
       case "sent":
-        return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">Sent</Badge>;
+        return (
+          <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+            Sent
+          </Badge>
+        );
       case "accepted":
-        return <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">Accepted</Badge>;
+        return (
+          <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+            Accepted
+          </Badge>
+        );
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
@@ -89,17 +104,25 @@ export default function QuotesPage() {
             Generate and manage service quotes for companies
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create Quote
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setGenerateOpen(true)}>
+            <Sparkles className="h-4 w-4 mr-2" />
+            Generate from Usage
+          </Button>
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Create Quote
+          </Button>
+        </div>
       </div>
 
       {/* Summary cards */}
       <div className="grid gap-4 sm:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Total</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">
+              Total
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{totalQuotes}</div>
@@ -107,7 +130,9 @@ export default function QuotesPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Draft</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">
+              Draft
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{draftCount}</div>
@@ -115,7 +140,9 @@ export default function QuotesPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Sent</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">
+              Sent
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">{sentCount}</div>
@@ -123,10 +150,14 @@ export default function QuotesPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Accepted</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">
+              Accepted
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-emerald-600">{acceptedCount}</div>
+            <div className="text-2xl font-bold text-emerald-600">
+              {acceptedCount}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -140,7 +171,9 @@ export default function QuotesPage() {
           <SelectContent>
             <SelectItem value="all">All Companies</SelectItem>
             {companies.map((c) => (
-              <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
+              <SelectItem key={c._id} value={c._id}>
+                {c.name}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -161,7 +194,9 @@ export default function QuotesPage() {
       {filtered.length === 0 ? (
         <Empty>
           <EmptyHeader>
-            <EmptyMedia variant="icon"><FileText /></EmptyMedia>
+            <EmptyMedia variant="icon">
+              <FileText />
+            </EmptyMedia>
             <EmptyTitle>
               {quotes.length === 0 ? "No quotes yet" : "No matching quotes"}
             </EmptyTitle>
@@ -202,14 +237,26 @@ export default function QuotesPage() {
                       const company = companyMap.get(quote.companyId);
                       return (
                         <tr key={quote._id} className="border-b last:border-0">
-                          <td className="p-3 font-medium">{company?.name || "Unknown"}</td>
-                          <td className="p-3 text-muted-foreground">{quote.date}</td>
-                          <td className="p-3 text-muted-foreground">{quote.lineItems.length}</td>
-                          <td className="p-3 text-right">
-                            ${quote.monthlyGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          <td className="p-3 font-medium">
+                            {company?.name || "Unknown"}
+                          </td>
+                          <td className="p-3 text-muted-foreground">
+                            {quote.date}
+                          </td>
+                          <td className="p-3 text-muted-foreground">
+                            {quote.lineItems.length}
                           </td>
                           <td className="p-3 text-right">
-                            ${quote.yearlyGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            $
+                            {quote.monthlyGrandTotal.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                            })}
+                          </td>
+                          <td className="p-3 text-right">
+                            $
+                            {quote.yearlyGrandTotal.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                            })}
                           </td>
                           <td className="p-3">{statusBadge(quote.status)}</td>
                           <td className="p-3 text-right">
@@ -239,13 +286,20 @@ export default function QuotesPage() {
         onOpenChange={setCreateOpen}
         companies={companies}
       />
+      <QuoteGenerateFromUsageDialog
+        open={generateOpen}
+        onOpenChange={setGenerateOpen}
+        companies={companies}
+      />
 
       {viewQuote && (
         <QuoteDetailDialog
           quote={viewQuote}
           companyName={companyMap.get(viewQuote.companyId)?.name || "Unknown"}
           open={!!viewQuote}
-          onOpenChange={(v) => { if (!v) setViewQuote(null); }}
+          onOpenChange={(v) => {
+            if (!v) setViewQuote(null);
+          }}
           onStatusChange={async (status) => {
             await updateStatus({ id: viewQuote._id, status });
             setViewQuote(null);

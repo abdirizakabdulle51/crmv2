@@ -95,8 +95,14 @@ export default function QuoteCreateDialog({
     setLineItems(lineItems.filter((_, i) => i !== index));
   };
 
-  const monthlyGrandTotal = lineItems.reduce((sum, li) => sum + li.monthlyTotal, 0);
-  const yearlyGrandTotal = lineItems.reduce((sum, li) => sum + li.yearlyTotal, 0);
+  const monthlyGrandTotal = lineItems.reduce(
+    (sum, li) => sum + li.monthlyTotal,
+    0,
+  );
+  const yearlyGrandTotal = lineItems.reduce(
+    (sum, li) => sum + li.yearlyTotal,
+    0,
+  );
 
   const handleCreate = async () => {
     if (!companyId) {
@@ -141,7 +147,13 @@ export default function QuoteCreateDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) resetForm(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        onOpenChange(v);
+        if (!v) resetForm();
+      }}
+    >
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create Quote</DialogTitle>
@@ -157,7 +169,9 @@ export default function QuoteCreateDialog({
               </SelectTrigger>
               <SelectContent>
                 {companies.map((c) => (
-                  <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
+                  <SelectItem key={c._id} value={c._id}>
+                    {c.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -166,23 +180,35 @@ export default function QuoteCreateDialog({
           {/* Add line item */}
           <div className="border rounded-lg p-4 space-y-3 bg-muted/20">
             <h4 className="text-sm font-medium">Add Line Item</h4>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="sm:col-span-2 space-y-2">
+            <div
+              className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_180px]"
+              data-testid="quote-line-item-grid"
+            >
+              <div className="min-w-0 space-y-2">
                 <Label className="text-xs">Catalog Item</Label>
-                <Select value={selectedCatalogId} onValueChange={setSelectedCatalogId}>
-                  <SelectTrigger>
+                <Select
+                  value={selectedCatalogId}
+                  onValueChange={setSelectedCatalogId}
+                >
+                  <SelectTrigger className="min-w-0">
                     <SelectValue placeholder="Select from catalog" />
                   </SelectTrigger>
                   <SelectContent>
                     {[...catalogByCategory.entries()]
                       .sort((a, b) => a[0].localeCompare(b[0]))
-                      .map(([category, items]) => (
+                      .map(([category, items]) =>
                         items.map((item) => (
                           <SelectItem key={item._id} value={item._id}>
-                            [{category}] {item.itemName} — ${item.monthlyPrice}/{item.billingUnit}
+                            <span
+                              className="block max-w-[min(70vw,520px)] truncate"
+                              data-testid="quote-catalog-option-label"
+                            >
+                              [{category}] {item.itemName} — $
+                              {item.monthlyPrice}/{item.billingUnit}
+                            </span>
                           </SelectItem>
-                        ))
-                      ))}
+                        )),
+                      )}
                   </SelectContent>
                 </Select>
               </div>
@@ -197,7 +223,12 @@ export default function QuoteCreateDialog({
                     onChange={(e) => setQuantity(e.target.value)}
                     placeholder="0"
                   />
-                  <Button type="button" onClick={addLineItem} size="sm" className="shrink-0">
+                  <Button
+                    type="button"
+                    onClick={addLineItem}
+                    size="sm"
+                    className="shrink-0"
+                  >
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
@@ -224,14 +255,33 @@ export default function QuoteCreateDialog({
                     <tr key={idx} className="border-b last:border-0">
                       <td className="p-2">
                         <div className="font-medium">{li.itemName}</div>
-                        <div className="text-xs text-muted-foreground">{li.serviceCategory}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {li.serviceCategory}
+                        </div>
                       </td>
-                      <td className="p-2 text-muted-foreground">{li.billingUnit}</td>
+                      <td className="p-2 text-muted-foreground">
+                        {li.billingUnit}
+                      </td>
                       <td className="p-2 text-right">{li.quantity}</td>
-                      <td className="p-2 text-right">${li.monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="p-2 text-right">${li.yearlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="p-2 text-right">
+                        $
+                        {li.monthlyTotal.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                        })}
+                      </td>
+                      <td className="p-2 text-right">
+                        $
+                        {li.yearlyTotal.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                        })}
+                      </td>
                       <td className="p-2">
-                        <Button variant="ghost" size="sm" onClick={() => removeLineItem(idx)} className="cursor-pointer">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeLineItem(idx)}
+                          className="cursor-pointer"
+                        >
                           <Trash2 className="h-3.5 w-3.5 text-destructive" />
                         </Button>
                       </td>
@@ -240,12 +290,20 @@ export default function QuoteCreateDialog({
                 </tbody>
                 <tfoot className="border-t bg-muted/20">
                   <tr>
-                    <td colSpan={3} className="p-2 font-semibold text-right">Grand Total</td>
-                    <td className="p-2 text-right font-bold">
-                      ${monthlyGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <td colSpan={3} className="p-2 font-semibold text-right">
+                      Grand Total
                     </td>
                     <td className="p-2 text-right font-bold">
-                      ${yearlyGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      $
+                      {monthlyGrandTotal.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="p-2 text-right font-bold">
+                      $
+                      {yearlyGrandTotal.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}
                     </td>
                     <td></td>
                   </tr>
@@ -256,7 +314,10 @@ export default function QuoteCreateDialog({
 
           {/* Notes */}
           <div className="space-y-2">
-            <Label>Notes <span className="text-xs text-muted-foreground">(optional)</span></Label>
+            <Label>
+              Notes{" "}
+              <span className="text-xs text-muted-foreground">(optional)</span>
+            </Label>
             <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -266,8 +327,17 @@ export default function QuoteCreateDialog({
           </div>
 
           {/* Create button */}
-          <Button className="w-full" onClick={handleCreate} disabled={lineItems.length === 0}>
-            Create Quote ({lineItems.length} item{lineItems.length !== 1 ? "s" : ""} · ${monthlyGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}/mo)
+          <Button
+            className="w-full"
+            onClick={handleCreate}
+            disabled={lineItems.length === 0}
+          >
+            Create Quote ({lineItems.length} item
+            {lineItems.length !== 1 ? "s" : ""} · $
+            {monthlyGrandTotal.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+            })}
+            /mo)
           </Button>
         </div>
       </DialogContent>
