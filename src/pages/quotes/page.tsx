@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id, Doc } from "@/convex/_generated/dataModel.d.ts";
@@ -29,19 +30,18 @@ import {
 import { Plus, FileText, Eye, Sparkles } from "lucide-react";
 import QuoteCreateDialog from "./_components/quote-create-dialog.tsx";
 import QuoteDetailDialog from "./_components/quote-detail-dialog.tsx";
-import QuoteGenerateFromUsageDialog from "./_components/quote-generate-from-usage-dialog.tsx";
 import { formatCurrency } from "./_lib/format.ts";
 
 type Quote = Doc<"quotes">;
 
 export default function QuotesPage() {
+  const navigate = useNavigate();
   const companies = useQuery(api.companies.list, {});
   const quotes = useQuery(api.quotes.list, {});
   const updateStatus = useMutation(api.quotes.updateStatus);
   const removeQuote = useMutation(api.quotes.remove);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [generateOpen, setGenerateOpen] = useState(false);
   const [viewQuote, setViewQuote] = useState<Quote | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [companyFilter, setCompanyFilter] = useState("all");
@@ -106,7 +106,10 @@ export default function QuotesPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setGenerateOpen(true)}>
+          <Button
+            variant="outline"
+            onClick={() => navigate("/quotes/generate")}
+          >
             <Sparkles className="h-4 w-4 mr-2" />
             Generate from Usage
           </Button>
@@ -280,17 +283,6 @@ export default function QuotesPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         companies={companies}
-      />
-      <QuoteGenerateFromUsageDialog
-        open={generateOpen}
-        onOpenChange={setGenerateOpen}
-        companies={companies}
-        onViewExistingQuote={(quoteId) => {
-          const quote = quotes.find((item) => item._id === quoteId);
-          if (quote) {
-            setViewQuote(quote);
-          }
-        }}
       />
 
       {viewQuote && (

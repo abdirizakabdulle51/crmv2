@@ -14,6 +14,7 @@ import UsagePage from "./pages/usage/page.tsx";
 import UsageAutoFillPage from "./pages/usage/auto-fill-page.tsx";
 import AtRiskPage from "./pages/at-risk/page.tsx";
 import QuotesPage from "./pages/quotes/page.tsx";
+import QuoteGenerateFromUsagePage from "./pages/quotes/generate-page.tsx";
 import RecommendationsPage from "./pages/recommendations/page.tsx";
 import CoachPage from "./pages/coach/page.tsx";
 import ManageOneTenantsPage from "./pages/manageone-tenants/page.tsx";
@@ -41,6 +42,10 @@ export default function App() {
             <Route path="/usage/auto-fill" element={<UsageAutoFillPage />} />
             <Route path="/at-risk" element={<AtRiskPage />} />
             <Route path="/quotes" element={<QuotesPage />} />
+            <Route
+              path="/quotes/generate"
+              element={<QuoteGenerateFromUsagePage />}
+            />
             <Route path="/recommendations" element={<RecommendationsPage />} />
             <Route path="/coach" element={<CoachPage />} />
             <Route path="/activities" element={<ActivitiesPage />} />

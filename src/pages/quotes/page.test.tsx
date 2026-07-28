@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import QuotesPage from "./page.tsx";
 
@@ -40,10 +41,6 @@ vi.mock("./_components/quote-detail-dialog.tsx", () => ({
   default: () => null,
 }));
 
-vi.mock("./_components/quote-generate-from-usage-dialog.tsx", () => ({
-  default: () => null,
-}));
-
 function company(id: string, name: string): Doc<"companies"> {
   return {
     _id: id as Id<"companies">,
@@ -76,7 +73,11 @@ describe("QuotesPage", () => {
     mocks.companies = [aicc];
     mocks.quotes = [quote(aicc._id)];
 
-    render(<QuotesPage />);
+    render(
+      <MemoryRouter>
+        <QuotesPage />
+      </MemoryRouter>,
+    );
 
     expect(screen.getByText("$24,189.85")).toBeInTheDocument();
     expect(screen.getByText("$54,473.09")).toBeInTheDocument();
