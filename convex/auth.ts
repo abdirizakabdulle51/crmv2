@@ -14,6 +14,12 @@ import {
   query,
 } from "./_generated/server";
 import { api, internal } from "./_generated/api";
+import {
+  assertCanManageUser,
+  canManageUser,
+  isCeoOrHob,
+} from "./authorization";
+import type { Doc, Id } from "./_generated/dataModel.d.ts";
 
 const roleValidator = v.union(
   v.literal("account_manager"),
@@ -143,8 +149,31 @@ export const createTeamMember = action({
     role: roleValidator,
     countryId: v.optional(v.id("countries")),
   },
-  handler: async (ctx, args) => {
-    await ctx.runQuery(internal.auth.requireAdmin, {});
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    userId: Id<"users">;
+    temporaryPassword: string;
+  }> => {
+    const currentUser: Doc<"users"> = await ctx.runQuery(
+      internal.users.getTeamManager,
+      {},
+    );
+    if (!isCeoOrHob(currentUser)) {
+      if (
+        currentUser.role !== "country_gm" ||
+        args.role !== "account_manager" ||
+        !currentUser.countryId ||
+        args.countryId !== currentUser.countryId
+      ) {
+        throw new ConvexError({
+          code: "FORBIDDEN",
+          message:
+            "Country GMs can only create Account Managers in their own country",
+        });
+      }
+    }
 
     const email = normalizeEmail(args.email);
     const password = args.password?.trim() || generateTemporaryPassword();
@@ -156,7 +185,13 @@ export const createTeamMember = action({
       });
     }
 
-    const profile = {
+    const profile: {
+      name: string;
+      email: string;
+      role: "account_manager" | "country_gm" | "head_of_business" | "ceo";
+      mustChangePassword: boolean;
+      countryId?: Id<"countries">;
+    } = {
       name: args.name.trim(),
       email,
       role: args.role,
@@ -164,7 +199,7 @@ export const createTeamMember = action({
       ...(args.countryId ? { countryId: args.countryId } : {}),
     };
 
-    const { user } = await createAccount(ctx, {
+    const { user }: { user: Doc<"users"> } = await createAccount(ctx, {
       provider: "password",
       account: { id: email, secret: password },
       profile,
@@ -182,12 +217,24 @@ export const createTeamMember = action({
 export const resetTeamMemberPassword = action({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
-    await ctx.runQuery(internal.auth.requireAdmin, {});
+    const currentUser = await ctx.runQuery(internal.users.getTeamManager, {});
 
     const user = await ctx.runQuery(internal.users.getById, {
       userId: args.userId,
     });
-    if (!user?.email) {
+    if (!user) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "User not found",
+      });
+    }
+    if (!canManageUser(currentUser, user, "manage")) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "You do not have permission to reset this user's password",
+      });
+    }
+    if (!user.email) {
       throw new ConvexError({
         code: "NOT_FOUND",
         message: "User email not found",
@@ -312,11 +359,13 @@ export const disableTeamMember = mutation({
 
     if (
       !currentUser ||
-      (currentUser.role !== "ceo" && currentUser.role !== "head_of_business")
+      (currentUser.role !== "ceo" &&
+        currentUser.role !== "head_of_business" &&
+        currentUser.role !== "country_gm")
     ) {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can disable team members",
+        message: "You do not have permission to disable team members",
       });
     }
 
@@ -327,6 +376,7 @@ export const disableTeamMember = mutation({
         message: "User not found",
       });
     }
+    assertCanManageUser(currentUser, user);
 
     if (user.role === "ceo" && user.isDisabled !== true) {
       const ceos = await ctx.db
@@ -369,11 +419,13 @@ export const reenableTeamMember = mutation({
 
     if (
       !currentUser ||
-      (currentUser.role !== "ceo" && currentUser.role !== "head_of_business")
+      (currentUser.role !== "ceo" &&
+        currentUser.role !== "head_of_business" &&
+        currentUser.role !== "country_gm")
     ) {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can re-enable team members",
+        message: "You do not have permission to re-enable team members",
       });
     }
 
@@ -384,6 +436,7 @@ export const reenableTeamMember = mutation({
         message: "User not found",
       });
     }
+    assertCanManageUser(currentUser, user);
 
     await ctx.db.patch(args.userId, { isDisabled: false });
   },
@@ -409,11 +462,13 @@ export const deleteTeamMember = mutation({
 
     if (
       !currentUser ||
-      (currentUser.role !== "ceo" && currentUser.role !== "head_of_business")
+      (currentUser.role !== "ceo" &&
+        currentUser.role !== "head_of_business" &&
+        currentUser.role !== "country_gm")
     ) {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can delete team members",
+        message: "You do not have permission to delete team members",
       });
     }
 
@@ -424,6 +479,7 @@ export const deleteTeamMember = mutation({
         message: "User not found",
       });
     }
+    assertCanManageUser(currentUser, user);
 
     const [companies, leads, targets] = await Promise.all([
       ctx.db

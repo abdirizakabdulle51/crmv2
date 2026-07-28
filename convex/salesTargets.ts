@@ -1,9 +1,12 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { QueryCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
+import { assertCanManageTarget, isCeoOrHob } from "./authorization";
 
-async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
+async function getCurrentUserOrThrow(
+  ctx: QueryCtx | MutationCtx,
+): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) {
     throw new ConvexError({
@@ -35,19 +38,14 @@ async function getVisibleTargets(
     (target) => target.year === year,
   );
 
-  if (
-    currentUser.role === "ceo" ||
-    currentUser.role === "head_of_business"
-  ) {
+  if (isCeoOrHob(currentUser)) {
     return yearTargets;
   }
 
   if (currentUser.role === "country_gm" && currentUser.countryId) {
     const countryUsers = await ctx.db
       .query("users")
-      .withIndex("by_country", (q) =>
-        q.eq("countryId", currentUser.countryId!),
-      )
+      .withIndex("by_country", (q) => q.eq("countryId", currentUser.countryId!))
       .collect();
     const visibleUserIds = new Set([
       currentUser._id,
@@ -85,26 +83,12 @@ export const upsert = mutation({
   args: {
     accountManagerId: v.id("users"),
     year: v.number(),
-    quarter: v.union(
-      v.literal(1),
-      v.literal(2),
-      v.literal(3),
-      v.literal(4),
-    ),
+    quarter: v.union(v.literal(1), v.literal(2), v.literal(3), v.literal(4)),
     target: v.number(),
   },
   handler: async (ctx, args) => {
     const currentUser = await getCurrentUserOrThrow(ctx);
-    // Only admins can set targets
-    if (
-      currentUser.role !== "ceo" &&
-      currentUser.role !== "head_of_business"
-    ) {
-      throw new ConvexError({
-        code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can set sales targets",
-      });
-    }
+    await assertCanManageTarget(ctx, currentUser, args.accountManagerId);
 
     // Check if target exists for this AM/year/quarter
     const existing = await ctx.db
@@ -135,15 +119,14 @@ export const remove = mutation({
   args: { id: v.id("salesTargets") },
   handler: async (ctx, args) => {
     const currentUser = await getCurrentUserOrThrow(ctx);
-    if (
-      currentUser.role !== "ceo" &&
-      currentUser.role !== "head_of_business"
-    ) {
+    const target = await ctx.db.get(args.id);
+    if (!target) {
       throw new ConvexError({
-        code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can remove targets",
+        code: "NOT_FOUND",
+        message: "Target not found",
       });
     }
+    await assertCanManageTarget(ctx, currentUser, target.accountManagerId);
     await ctx.db.delete(args.id);
   },
 });

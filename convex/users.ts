@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalQuery, mutation, query } from "./_generated/server";
+import { canManageUser, isCeoOrHob } from "./authorization";
 
 export const updateCurrentUser = mutation({
   args: {},
@@ -67,6 +68,40 @@ export const getById = internalQuery({
   },
 });
 
+export const getTeamManager = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError({
+        code: "UNAUTHENTICATED",
+        message: "User not logged in",
+      });
+    }
+
+    const currentUser = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+
+    if (
+      !currentUser ||
+      (currentUser.role !== "ceo" &&
+        currentUser.role !== "head_of_business" &&
+        currentUser.role !== "country_gm")
+    ) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "You do not have permission to manage team members",
+      });
+    }
+
+    return currentUser;
+  },
+});
+
 export const updateOwnName = mutation({
   args: { name: v.string() },
   handler: async (ctx, args) => {
@@ -113,7 +148,20 @@ export const listAll = query({
         message: "User not logged in",
       });
     }
-    return await ctx.db.query("users").collect();
+    const currentUser = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!currentUser) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "User profile not found",
+      });
+    }
+    const users = await ctx.db.query("users").collect();
+    return users.filter((user) => canManageUser(currentUser, user, "view"));
   },
 });
 
@@ -135,20 +183,39 @@ export const updateRole = mutation({
         message: "User not logged in",
       });
     }
-    // Only CEO or Head of Business can change roles
     const currentUser = await ctx.db
       .query("users")
       .withIndex("by_token", (q) =>
         q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
       .unique();
+    if (!currentUser) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "User profile not found",
+      });
+    }
+    const targetUser = await ctx.db.get(args.userId);
+    if (!targetUser) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "User not found",
+      });
+    }
+    if (isCeoOrHob(currentUser)) {
+      await ctx.db.patch(args.userId, { role: args.role });
+      return;
+    }
     if (
-      !currentUser ||
-      (currentUser.role !== "ceo" && currentUser.role !== "head_of_business")
+      currentUser.role !== "country_gm" ||
+      args.userId === currentUser._id ||
+      args.role !== "account_manager" ||
+      !canManageUser(currentUser, targetUser, "manage")
     ) {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can assign roles",
+        message:
+          "Country GMs can only keep Account Managers in their own country",
       });
     }
     await ctx.db.patch(args.userId, { role: args.role });
@@ -174,13 +241,34 @@ export const assignCountry = mutation({
         q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
       .unique();
+    if (!currentUser) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "User profile not found",
+      });
+    }
+    const targetUser = await ctx.db.get(args.userId);
+    if (!targetUser) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "User not found",
+      });
+    }
+    if (isCeoOrHob(currentUser)) {
+      await ctx.db.patch(args.userId, { countryId: args.countryId });
+      return;
+    }
     if (
-      !currentUser ||
-      (currentUser.role !== "ceo" && currentUser.role !== "head_of_business")
+      currentUser.role !== "country_gm" ||
+      args.userId === currentUser._id ||
+      !currentUser.countryId ||
+      args.countryId !== currentUser.countryId ||
+      !canManageUser(currentUser, targetUser, "manage")
     ) {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can assign countries",
+        message:
+          "Country GMs can only manage Account Managers in their own country",
       });
     }
     await ctx.db.patch(args.userId, { countryId: args.countryId });

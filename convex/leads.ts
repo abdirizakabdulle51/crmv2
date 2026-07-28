@@ -2,6 +2,11 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
+import {
+  assertAccountManagerIsInActorScope,
+  assertCanManageLead,
+  canViewCompany,
+} from "./authorization";
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -28,38 +33,6 @@ async function getCurrentUserOrThrow(
   return user;
 }
 
-async function assertCanTouchLead(
-  ctx: QueryCtx | MutationCtx,
-  currentUser: Doc<"users">,
-  lead: Doc<"leads">,
-) {
-  if (
-    currentUser.role === "ceo" ||
-    currentUser.role === "head_of_business"
-  ) {
-    return;
-  }
-
-  if (currentUser.role === "country_gm" && currentUser.countryId) {
-    const company = await ctx.db.get(lead.companyId);
-    if (company?.countryId === currentUser.countryId) {
-      return;
-    }
-  }
-
-  if (
-    currentUser.role === "account_manager" &&
-    lead.accountManagerId === currentUser._id
-  ) {
-    return;
-  }
-
-  throw new ConvexError({
-    code: "FORBIDDEN",
-    message: "You do not have permission to modify this lead",
-  });
-}
-
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -68,10 +41,7 @@ export const list = query({
     let leads: Doc<"leads">[];
 
     // Role-based visibility
-    if (
-      currentUser.role === "ceo" ||
-      currentUser.role === "head_of_business"
-    ) {
+    if (currentUser.role === "ceo" || currentUser.role === "head_of_business") {
       leads = await ctx.db.query("leads").collect();
     } else if (currentUser.role === "country_gm" && currentUser.countryId) {
       // Get all companies in this country, then filter leads
@@ -119,10 +89,29 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const currentUser = await getCurrentUserOrThrow(ctx);
+    const company = await ctx.db.get(args.companyId);
+    if (!company) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Company not found",
+      });
+    }
+    if (!canViewCompany(currentUser, company)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "You do not have permission to create a lead for this company",
+      });
+    }
     const accountManagerId =
       currentUser.role === "account_manager"
         ? currentUser._id
         : args.accountManagerId;
+    await assertAccountManagerIsInActorScope(
+      ctx,
+      currentUser,
+      accountManagerId,
+      company.countryId,
+    );
 
     return await ctx.db.insert("leads", {
       title: args.title,
@@ -163,9 +152,32 @@ export const update = mutation({
     if (!lead) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Lead not found" });
     }
-    await assertCanTouchLead(ctx, currentUser, lead);
+    await assertCanManageLead(ctx, currentUser, lead);
+    const company = await ctx.db.get(args.companyId);
+    if (!company) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Company not found",
+      });
+    }
+    if (!canViewCompany(currentUser, company)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "You do not have permission to move this lead to that company",
+      });
+    }
+    const accountManagerId =
+      currentUser.role === "account_manager"
+        ? currentUser._id
+        : args.accountManagerId;
+    await assertAccountManagerIsInActorScope(
+      ctx,
+      currentUser,
+      accountManagerId,
+      company.countryId,
+    );
     const { id, ...fields } = args;
-    await ctx.db.patch(id, fields);
+    await ctx.db.patch(id, { ...fields, accountManagerId });
   },
 });
 
@@ -188,7 +200,7 @@ export const updateStage = mutation({
     if (!lead) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Lead not found" });
     }
-    await assertCanTouchLead(ctx, currentUser, lead);
+    await assertCanManageLead(ctx, currentUser, lead);
     await ctx.db.patch(args.id, { stage: args.stage });
   },
 });
@@ -201,7 +213,7 @@ export const remove = mutation({
     if (!lead) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Lead not found" });
     }
-    await assertCanTouchLead(ctx, currentUser, lead);
+    await assertCanManageLead(ctx, currentUser, lead);
     await ctx.db.delete(args.id);
   },
 });

@@ -10,6 +10,7 @@
 
 import type * as activities from "../activities.js";
 import type * as auth from "../auth.js";
+import type * as authorization from "../authorization.js";
 import type * as companies from "../companies.js";
 import type * as companiesImport from "../companiesImport.js";
 import type * as consumption from "../consumption.js";
@@ -34,6 +35,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   activities: typeof activities;
   auth: typeof auth;
+  authorization: typeof authorization;
   companies: typeof companies;
   companiesImport: typeof companiesImport;
   consumption: typeof consumption;

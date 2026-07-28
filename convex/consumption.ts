@@ -1,9 +1,12 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { QueryCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
+import { assertCanManageUsage } from "./authorization";
 
-async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
+async function getCurrentUserOrThrow(
+  ctx: QueryCtx | MutationCtx,
+): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) {
     throw new ConvexError({
@@ -39,12 +42,16 @@ export const list = query({
     } else if (currentUser.role === "country_gm" && currentUser.countryId) {
       companies = await ctx.db
         .query("companies")
-        .withIndex("by_country", (q) => q.eq("countryId", currentUser.countryId!))
+        .withIndex("by_country", (q) =>
+          q.eq("countryId", currentUser.countryId!),
+        )
         .collect();
     } else {
       companies = await ctx.db
         .query("companies")
-        .withIndex("by_account_manager", (q) => q.eq("accountManagerId", currentUser._id))
+        .withIndex("by_account_manager", (q) =>
+          q.eq("accountManagerId", currentUser._id),
+        )
         .collect();
     }
 
@@ -60,7 +67,8 @@ export const list = query({
 export const listByCompany = query({
   args: { companyId: v.id("companies") },
   handler: async (ctx, args) => {
-    await getCurrentUserOrThrow(ctx);
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    await assertCanManageUsage(ctx, currentUser, args.companyId);
     return await ctx.db
       .query("consumption")
       .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
@@ -80,7 +88,8 @@ export const create = mutation({
     isManualOverride: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    await getCurrentUserOrThrow(ctx);
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    await assertCanManageUsage(ctx, currentUser, args.companyId);
     return await ctx.db.insert("consumption", {
       companyId: args.companyId,
       month: args.month,
@@ -129,7 +138,15 @@ export const bulkCreate = mutation({
 export const remove = mutation({
   args: { id: v.id("consumption") },
   handler: async (ctx, args) => {
-    await getCurrentUserOrThrow(ctx);
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    const entry = await ctx.db.get(args.id);
+    if (!entry) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Usage entry not found",
+      });
+    }
+    await assertCanManageUsage(ctx, currentUser, entry.companyId);
     await ctx.db.delete(args.id);
   },
 });

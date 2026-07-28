@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
+import { assertCanManageLead, isCeoOrHob } from "./authorization";
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -33,31 +34,11 @@ async function assertCanRemoveActivity(
   currentUser: Doc<"users">,
   activity: Doc<"activities">,
 ) {
-  if (
-    currentUser.role === "ceo" ||
-    currentUser.role === "head_of_business"
-  ) {
-    return;
+  const lead = await ctx.db.get(activity.leadId);
+  if (!lead) {
+    throw new ConvexError({ code: "NOT_FOUND", message: "Lead not found" });
   }
-
-  if (
-    currentUser.role === "account_manager" &&
-    activity.accountManagerId === currentUser._id
-  ) {
-    return;
-  }
-
-  if (currentUser.role === "country_gm" && currentUser.countryId) {
-    const activityOwner = await ctx.db.get(activity.accountManagerId);
-    if (activityOwner?.countryId === currentUser.countryId) {
-      return;
-    }
-  }
-
-  throw new ConvexError({
-    code: "FORBIDDEN",
-    message: "You do not have permission to remove this activity",
-  });
+  await assertCanManageLead(ctx, currentUser, lead);
 }
 
 export const list = query({
@@ -65,14 +46,8 @@ export const list = query({
   handler: async (ctx) => {
     const currentUser = await getCurrentUserOrThrow(ctx);
 
-    if (
-      currentUser.role === "ceo" ||
-      currentUser.role === "head_of_business"
-    ) {
-      return await ctx.db
-        .query("activities")
-        .order("desc")
-        .take(200);
+    if (isCeoOrHob(currentUser)) {
+      return await ctx.db.query("activities").order("desc").take(200);
     } else if (currentUser.role === "country_gm" && currentUser.countryId) {
       // Get users in same country
       const countryUsers = await ctx.db
@@ -102,7 +77,12 @@ export const list = query({
 export const listByLead = query({
   args: { leadId: v.id("leads") },
   handler: async (ctx, args) => {
-    await getCurrentUserOrThrow(ctx);
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    const lead = await ctx.db.get(args.leadId);
+    if (!lead) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Lead not found" });
+    }
+    await assertCanManageLead(ctx, currentUser, lead);
     return await ctx.db
       .query("activities")
       .withIndex("by_lead", (q) => q.eq("leadId", args.leadId))
@@ -130,6 +110,7 @@ export const create = mutation({
     if (!lead) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Lead not found" });
     }
+    await assertCanManageLead(ctx, currentUser, lead);
 
     const accountManagerId =
       currentUser.role === "account_manager"

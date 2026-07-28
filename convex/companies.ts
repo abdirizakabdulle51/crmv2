@@ -2,6 +2,12 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
+import {
+  assertAccountManagerIsInActorScope,
+  assertCanManageCompany,
+  canViewCompany,
+  isCeoOrHob,
+} from "./authorization";
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -28,38 +34,6 @@ async function getCurrentUserOrThrow(
   return user;
 }
 
-function assertCanTouchCompany(
-  currentUser: Doc<"users">,
-  company: Doc<"companies">,
-) {
-  if (
-    currentUser.role === "ceo" ||
-    currentUser.role === "head_of_business"
-  ) {
-    return;
-  }
-
-  if (
-    currentUser.role === "country_gm" &&
-    currentUser.countryId &&
-    company.countryId === currentUser.countryId
-  ) {
-    return;
-  }
-
-  if (
-    currentUser.role === "account_manager" &&
-    company.accountManagerId === currentUser._id
-  ) {
-    return;
-  }
-
-  throw new ConvexError({
-    code: "FORBIDDEN",
-    message: "You do not have permission to modify this company",
-  });
-}
-
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -68,10 +42,7 @@ export const list = query({
     let companies: Doc<"companies">[];
 
     // Role-based visibility
-    if (
-      currentUser.role === "ceo" ||
-      currentUser.role === "head_of_business"
-    ) {
+    if (currentUser.role === "ceo" || currentUser.role === "head_of_business") {
       // See all companies
       companies = await ctx.db.query("companies").collect();
     } else if (currentUser.role === "country_gm" && currentUser.countryId) {
@@ -99,12 +70,18 @@ export const list = query({
 export const getById = query({
   args: { id: v.id("companies") },
   handler: async (ctx, args) => {
-    await getCurrentUserOrThrow(ctx);
+    const currentUser = await getCurrentUserOrThrow(ctx);
     const company = await ctx.db.get(args.id);
     if (!company) {
       throw new ConvexError({
         code: "NOT_FOUND",
         message: "Company not found",
+      });
+    }
+    if (!canViewCompany(currentUser, company)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "You do not have permission to view this company",
       });
     }
     return company;
@@ -137,10 +114,26 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const currentUser = await getCurrentUserOrThrow(ctx);
+    if (
+      currentUser.role === "country_gm" &&
+      (!currentUser.countryId || args.countryId !== currentUser.countryId)
+    ) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Country GMs can only create companies in their country",
+      });
+    }
+
     const accountManagerId =
       currentUser.role === "account_manager"
         ? currentUser._id
         : args.accountManagerId;
+    await assertAccountManagerIsInActorScope(
+      ctx,
+      currentUser,
+      accountManagerId,
+      args.countryId,
+    );
 
     return await ctx.db.insert("companies", {
       name: args.name,
@@ -191,9 +184,32 @@ export const update = mutation({
         message: "Company not found",
       });
     }
-    assertCanTouchCompany(currentUser, company);
+    assertCanManageCompany(currentUser, company);
+    if (
+      currentUser.role === "country_gm" &&
+      (!currentUser.countryId || args.countryId !== currentUser.countryId)
+    ) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Country GMs can only keep companies in their country",
+      });
+    }
+    const accountManagerId =
+      currentUser.role === "account_manager"
+        ? currentUser._id
+        : args.accountManagerId;
+    await assertAccountManagerIsInActorScope(
+      ctx,
+      currentUser,
+      accountManagerId,
+      args.countryId,
+    );
     const { id, ...fields } = args;
-    await ctx.db.patch(id, fields);
+    await ctx.db.patch(id, {
+      ...fields,
+      accountManagerId,
+      countryId: isCeoOrHob(currentUser) ? fields.countryId : company.countryId,
+    });
   },
 });
 
@@ -208,7 +224,7 @@ export const remove = mutation({
         message: "Company not found",
       });
     }
-    assertCanTouchCompany(currentUser, company);
+    assertCanManageCompany(currentUser, company);
     await ctx.db.delete(args.id);
   },
 });
