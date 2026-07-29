@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { useQuery, useMutation } from "convex/react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
-import type { Id, Doc } from "@/convex/_generated/dataModel.d.ts";
+import type { Doc } from "@/convex/_generated/dataModel.d.ts";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -37,14 +37,17 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  active: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
-  pending: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  active:
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  pending:
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
   expired: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400",
   terminated: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
 };
 
 export default function CompaniesPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const companies = useQuery(api.companies.list, {});
   const countries = useQuery(api.countries.list, {});
   const sectors = useQuery(api.sectors.list, {});
@@ -56,7 +59,6 @@ export default function CompaniesPage() {
   const [countryFilter, setCountryFilter] = useState<string>("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [editingCompany, setEditingCompany] = useState<Company | null>(null);
 
   if (!companies || !countries || !sectors || !users) {
     return (
@@ -81,19 +83,18 @@ export default function CompaniesPage() {
       const matchesContact = c.contactName?.toLowerCase().includes(term);
       if (!matchesName && !matchesContact) return false;
     }
-    if (statusFilter !== "all" && c.contractStatus !== statusFilter) return false;
+    if (statusFilter !== "all" && c.contractStatus !== statusFilter)
+      return false;
     if (sectorFilter !== "all" && c.sectorId !== sectorFilter) return false;
     if (countryFilter !== "all" && c.countryId !== countryFilter) return false;
     return true;
   });
 
   const handleEdit = (company: Company) => {
-    setEditingCompany(company);
-    setDialogOpen(true);
+    navigate(`/companies/${company._id}`);
   };
 
   const handleCreate = () => {
-    setEditingCompany(null);
     setDialogOpen(true);
   };
 
@@ -245,7 +246,7 @@ export default function CompaniesPage() {
       <CompanyDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        company={editingCompany}
+        company={null}
         countries={countries}
         sectors={sectors}
         users={users}

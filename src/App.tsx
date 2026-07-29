@@ -6,6 +6,7 @@ import DashboardPage from "./pages/dashboard/page.tsx";
 import TeamPage from "./pages/team/page.tsx";
 import SettingsPage from "./pages/settings/page.tsx";
 import CompaniesPage from "./pages/companies/page.tsx";
+import CompanyDetailPage from "./pages/companies/detail-page.tsx";
 import PipelinePage from "./pages/pipeline/page.tsx";
 import TargetsPage from "./pages/targets/page.tsx";
 import ActivitiesPage from "./pages/activities/page.tsx";
@@ -37,6 +38,7 @@ export default function App() {
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/companies" element={<CompaniesPage />} />
+            <Route path="/companies/:id" element={<CompanyDetailPage />} />
             <Route path="/pipeline" element={<PipelinePage />} />
             <Route path="/targets" element={<TargetsPage />} />
             <Route path="/performance" element={<PerformancePage />} />

@@ -122,14 +122,23 @@ type CompanyDialogProps = {
   users: Doc<"users">[];
 };
 
-export default function CompanyDialog({
-  open,
-  onOpenChange,
+type CompanyFormProps = {
+  company: Doc<"companies"> | null;
+  countries: Doc<"countries">[];
+  sectors: Doc<"sectors">[];
+  users: Doc<"users">[];
+  onFinished: () => void;
+  isActive?: boolean;
+};
+
+export function CompanyForm({
   company,
   countries,
   sectors,
   users,
-}: CompanyDialogProps) {
+  onFinished,
+  isActive = true,
+}: CompanyFormProps) {
   const createCompany = useMutation(api.companies.create);
   const updateCompany = useMutation(api.companies.update);
   const removeCompany = useMutation(api.companies.remove);
@@ -168,13 +177,13 @@ export default function CompanyDialog({
     } else {
       resetForm();
     }
-  }, [company, open]);
+  }, [company, isActive]);
 
   useEffect(() => {
-    if (!company && open && currentUser?.role === "account_manager") {
+    if (!company && isActive && currentUser?.role === "account_manager") {
       setAccountManagerId(currentUser._id);
     }
-  }, [company, currentUser?._id, currentUser?.role, open]);
+  }, [company, currentUser?._id, currentUser?.role, isActive]);
 
   const resetForm = () => {
     setName("");
@@ -233,7 +242,7 @@ export default function CompanyDialog({
         await createCompany(data);
         toast.success("Company created");
       }
-      onOpenChange(false);
+      onFinished();
     } catch {
       toast.error("Failed to save company");
     }
@@ -246,7 +255,7 @@ export default function CompanyDialog({
       await removeCompany({ id: company._id });
       toast.success("Company deleted");
       setConfirmOpen(false);
-      onOpenChange(false);
+      onFinished();
     } catch {
       toast.error("Failed to delete company");
     } finally {
@@ -265,193 +274,187 @@ export default function CompanyDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{company ? "Edit Company" : "Add Company"}</DialogTitle>
-        </DialogHeader>
+    <>
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label>Company Name *</Label>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Acme Corporation"
+          />
+        </div>
 
-        <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label>Company Name *</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Acme Corporation"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Sector *</Label>
-              <Select value={sectorId} onValueChange={setSectorId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select sector" />
-                </SelectTrigger>
-                <SelectContent>
-                  {sectors.map((s) => (
-                    <SelectItem key={s._id} value={s._id}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Country *</Label>
-              <Select value={countryId} onValueChange={setCountryId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select country" />
-                </SelectTrigger>
-                <SelectContent>
-                  {countries.map((c) => (
-                    <SelectItem key={c._id} value={c._id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Account Manager *</Label>
-              <Select
-                value={accountManagerId}
-                onValueChange={setAccountManagerId}
-                disabled={currentUser?.role === "account_manager"}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Assign AM" />
-                </SelectTrigger>
-                <SelectContent>
-                  {accountManagers.map((u) => (
-                    <SelectItem key={u._id} value={u._id}>
-                      {u.name || u.email || "Unnamed"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Contract Status *</Label>
-              <Select
-                value={contractStatus}
-                onValueChange={(v) => setContractStatus(v as ContractStatus)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="expired">Expired</SelectItem>
-                  <SelectItem value="terminated">Terminated</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Payment Status</Label>
-            <Select
-              value={paymentStatus}
-              onValueChange={(v) => setPaymentStatus(v as PaymentStatus)}
-            >
+            <Label>Sector *</Label>
+            <Select value={sectorId} onValueChange={setSectorId}>
               <SelectTrigger>
-                <SelectValue />
+                <SelectValue placeholder="Select sector" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="current">Current</SelectItem>
-                <SelectItem value="overdue">Overdue</SelectItem>
-                <SelectItem value="delinquent">Delinquent</SelectItem>
+                {sectors.map((s) => (
+                  <SelectItem key={s._id} value={s._id}>
+                    {s.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
           <div className="space-y-2">
-            <Label>Website</Label>
-            <Input
-              value={website}
-              onChange={(e) => setWebsite(e.target.value)}
-              placeholder="https://example.com"
-            />
+            <Label>Country *</Label>
+            <Select value={countryId} onValueChange={setCountryId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select country" />
+              </SelectTrigger>
+              <SelectContent>
+                {countries.map((c) => (
+                  <SelectItem key={c._id} value={c._id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
+        </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Contact Name</Label>
-              <Input
-                value={contactName}
-                onChange={(e) => setContactName(e.target.value)}
-                placeholder="John Smith"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Contact Email</Label>
-              <Input
-                value={contactEmail}
-                onChange={(e) => setContactEmail(e.target.value)}
-                placeholder="john@example.com"
-              />
-            </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Account Manager *</Label>
+            <Select
+              value={accountManagerId}
+              onValueChange={setAccountManagerId}
+              disabled={currentUser?.role === "account_manager"}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Assign AM" />
+              </SelectTrigger>
+              <SelectContent>
+                {accountManagers.map((u) => (
+                  <SelectItem key={u._id} value={u._id}>
+                    {u.name || u.email || "Unnamed"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-2">
-            <Label>Notes</Label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Internal notes about this company..."
-              rows={3}
-            />
-          </div>
-
-          {company && manageOneTenants && manageOneTenants.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">ManageOne Usage</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {manageOneTenants.length === 1 ? (
-                  <ManageOneTenantStats tenant={manageOneTenants[0]} />
-                ) : (
-                  <div className="space-y-3 text-sm">
-                    {manageOneTenants.map((tenant) => (
-                      <div
-                        key={tenant._id}
-                        className="rounded-md border px-3 py-2"
-                      >
-                        <div className="font-medium">{tenant.name}</div>
-                        <ManageOneTenantStats tenant={tenant} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          <div className="flex gap-2 pt-2">
-            <Button className="flex-1" onClick={handleSave}>
-              {company ? "Update Company" : "Create Company"}
-            </Button>
-            {company && isAdmin && (
-              <Button
-                variant="destructive"
-                size="icon"
-                onClick={() => setConfirmOpen(true)}
-                className="cursor-pointer"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            )}
+            <Label>Contract Status *</Label>
+            <Select
+              value={contractStatus}
+              onValueChange={(v) => setContractStatus(v as ContractStatus)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="expired">Expired</SelectItem>
+                <SelectItem value="terminated">Terminated</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
-      </DialogContent>
+
+        <div className="space-y-2">
+          <Label>Payment Status</Label>
+          <Select
+            value={paymentStatus}
+            onValueChange={(v) => setPaymentStatus(v as PaymentStatus)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="current">Current</SelectItem>
+              <SelectItem value="overdue">Overdue</SelectItem>
+              <SelectItem value="delinquent">Delinquent</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Website</Label>
+          <Input
+            value={website}
+            onChange={(e) => setWebsite(e.target.value)}
+            placeholder="https://example.com"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Contact Name</Label>
+            <Input
+              value={contactName}
+              onChange={(e) => setContactName(e.target.value)}
+              placeholder="John Smith"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Contact Email</Label>
+            <Input
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
+              placeholder="john@example.com"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Notes</Label>
+          <Textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Internal notes about this company..."
+            rows={3}
+          />
+        </div>
+
+        {company && manageOneTenants && manageOneTenants.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">ManageOne Usage</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {manageOneTenants.length === 1 ? (
+                <ManageOneTenantStats tenant={manageOneTenants[0]} />
+              ) : (
+                <div className="space-y-3 text-sm">
+                  {manageOneTenants.map((tenant) => (
+                    <div
+                      key={tenant._id}
+                      className="rounded-md border px-3 py-2"
+                    >
+                      <div className="font-medium">{tenant.name}</div>
+                      <ManageOneTenantStats tenant={tenant} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <Button className="flex-1" onClick={handleSave}>
+            {company ? "Update Company" : "Create Company"}
+          </Button>
+          {company && isAdmin && (
+            <Button
+              variant="destructive"
+              size="icon"
+              onClick={() => setConfirmOpen(true)}
+              className="cursor-pointer"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
 
       <ConfirmDeleteDialog
         open={confirmOpen}
@@ -461,6 +464,34 @@ export default function CompanyDialog({
         description="This action is irreversible. The company and all associated records will be permanently removed."
         loading={deleting}
       />
+    </>
+  );
+}
+
+export default function CompanyDialog({
+  open,
+  onOpenChange,
+  company,
+  countries,
+  sectors,
+  users,
+}: CompanyDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{company ? "Edit Company" : "Add Company"}</DialogTitle>
+        </DialogHeader>
+
+        <CompanyForm
+          company={company}
+          countries={countries}
+          sectors={sectors}
+          users={users}
+          isActive={open}
+          onFinished={() => onOpenChange(false)}
+        />
+      </DialogContent>
     </Dialog>
   );
 }
