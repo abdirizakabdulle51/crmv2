@@ -9,7 +9,15 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Activity, Pause, Play, Plus, ShieldAlert, Wifi } from "lucide-react";
+import {
+  Activity,
+  Pause,
+  Play,
+  Plus,
+  ShieldAlert,
+  Trash2,
+  Wifi,
+} from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -103,6 +111,7 @@ export default function CloudHealthPage() {
   );
   const createTarget = useMutation(api.pingTargets.create);
   const setActive = useMutation(api.pingTargets.setActive);
+  const removeTarget = useMutation(api.pingTargets.remove);
 
   const [name, setName] = useState("");
   const [ip, setIp] = useState("");
@@ -201,6 +210,32 @@ export default function CloudHealthPage() {
       toast.success(active ? "Ping target resumed" : "Ping target paused");
     } catch (error) {
       toast.error("Failed to update ping target", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    }
+  };
+
+  const handleDeleteTarget = async (targetId: Id<"pingTargets">) => {
+    const confirmed = window.confirm(
+      "Delete this ping target and all of its ping history? This cannot be undone.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const result = await removeTarget({ targetId });
+      if (selectedTargetId === targetId) {
+        setSelectedTargetId(null);
+      }
+      toast.success("Ping target deleted", {
+        description: `${result.deletedResults} history row${
+          result.deletedResults === 1 ? "" : "s"
+        } removed`,
+      });
+    } catch (error) {
+      toast.error("Failed to delete ping target", {
         description:
           error instanceof Error ? error.message : "Please try again",
       });
@@ -328,23 +363,34 @@ export default function CloudHealthPage() {
                       </div>
                     </div>
                     {canManage ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          handleSetActive(
-                            status.target._id,
-                            !status.target.active,
-                          )
-                        }
-                      >
-                        {status.target.active ? (
-                          <Pause className="mr-2 h-4 w-4" />
-                        ) : (
-                          <Play className="mr-2 h-4 w-4" />
-                        )}
-                        {status.target.active ? "Pause" : "Resume"}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            handleSetActive(
+                              status.target._id,
+                              !status.target.active,
+                            )
+                          }
+                        >
+                          {status.target.active ? (
+                            <Pause className="mr-2 h-4 w-4" />
+                          ) : (
+                            <Play className="mr-2 h-4 w-4" />
+                          )}
+                          {status.target.active ? "Pause" : "Resume"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => handleDeleteTarget(status.target._id)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </Button>
+                      </div>
                     ) : null}
                   </div>
                 </div>

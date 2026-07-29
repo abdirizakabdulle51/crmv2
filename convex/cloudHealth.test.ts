@@ -188,4 +188,50 @@ describe("Cloud Health", () => {
     expect(history).toHaveLength(1);
     expect(history[0].success).toBe(false);
   });
+
+  it("hard-deletes ping targets and their appended result history for admins only", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+    const targetId = await asUser(t, users.ceo).mutation(
+      api.pingTargets.create,
+      {
+        name: "test - delete me",
+        ip: "203.0.113.10",
+      },
+    );
+    const now = Date.now();
+
+    await t.mutation(internal.pingResults.bulkUpsert, {
+      results: Array.from({ length: 25 }, (_, index) => ({
+        targetId,
+        success: index % 5 !== 0,
+        latencyMs: 10 + index,
+        checkedAt: now + index,
+      })),
+    });
+
+    await expect(
+      asUser(t, users.gm).mutation(api.pingTargets.remove, { targetId }),
+    ).rejects.toThrow(/manage ping targets/);
+
+    const result = await asUser(t, users.hob).mutation(api.pingTargets.remove, {
+      targetId,
+    });
+    expect(result).toEqual({ deletedResults: 25 });
+
+    const targets = await asUser(t, users.ceo).query(api.pingTargets.list, {});
+    expect(targets).toHaveLength(0);
+
+    const statuses = await asUser(t, users.ceo).query(
+      api.pingResults.latestStatusByTarget,
+      {},
+    );
+    expect(statuses).toHaveLength(0);
+
+    const history = await asUser(t, users.ceo).query(
+      api.pingResults.recentHistory,
+      { targetId, limit: 100 },
+    );
+    expect(history).toHaveLength(0);
+  });
 });

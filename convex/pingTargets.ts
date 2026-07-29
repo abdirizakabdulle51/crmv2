@@ -101,6 +101,37 @@ export const setActive = mutation({
   },
 });
 
+export const remove = mutation({
+  args: {
+    targetId: v.id("pingTargets"),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManagePingTargets(user);
+
+    const target = await ctx.db.get(args.targetId);
+    if (!target) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Ping target not found",
+      });
+    }
+
+    const results = await ctx.db
+      .query("pingResults")
+      .withIndex("by_target_checked_at", (q) => q.eq("targetId", args.targetId))
+      .collect();
+
+    for (const result of results) {
+      await ctx.db.delete(result._id);
+    }
+
+    await ctx.db.delete(args.targetId);
+
+    return { deletedResults: results.length };
+  },
+});
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
