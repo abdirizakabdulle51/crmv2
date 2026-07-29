@@ -48,7 +48,6 @@ function assertCanViewTenantUsageHistory(user: Doc<"users">) {
 }
 
 const usageHistoryItem = {
-  linkedCompanyId: v.id("companies"),
   tenantName: v.string(),
   ecsInstances: v.number(),
   ecsCores: v.number(),
@@ -65,17 +64,49 @@ const usageHistoryItem = {
 
 export const bulkInsert = internalMutation({
   args: {
-    rows: v.array(v.object(usageHistoryItem)),
+    rows: v.array(
+      v.object({
+        vdcId: v.string(),
+        domainId: v.string(),
+        managerEmail: v.string(),
+        ...usageHistoryItem,
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     let inserted = 0;
+    let skippedNoLinkedCompany = 0;
 
     for (const row of args.rows) {
-      await ctx.db.insert("tenantUsageHistory", row);
+      const tenant = await ctx.db
+        .query("manageOneTenants")
+        .filter((q) => q.eq(q.field("domainId"), row.domainId))
+        .first();
+
+      if (!tenant?.linkedCompanyId) {
+        skippedNoLinkedCompany++;
+        continue;
+      }
+
+      await ctx.db.insert("tenantUsageHistory", {
+        linkedCompanyId: tenant.linkedCompanyId,
+        tenantName: row.tenantName,
+        ecsInstances: row.ecsInstances,
+        ecsCores: row.ecsCores,
+        ecsRamGb: row.ecsRamGb,
+        rdsInstances: row.rdsInstances,
+        cceClusters: row.cceClusters,
+        evsGb: row.evsGb,
+        obsGb: row.obsGb,
+        sfsGb: row.sfsGb,
+        publicIps: row.publicIps,
+        wafInstances: row.wafInstances,
+        syncedAt: row.syncedAt,
+      });
       inserted++;
     }
 
-    return inserted;
+    return { inserted, skippedNoLinkedCompany };
   },
 });
 

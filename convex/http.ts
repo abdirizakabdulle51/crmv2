@@ -80,8 +80,10 @@ type PingResultInput = {
 };
 
 type TenantUsageHistoryInput = {
-  linkedCompanyId: string;
+  vdcId: string;
+  domainId: string;
   tenantName: string;
+  managerEmail: string;
   ecsInstances: number;
   ecsCores: number;
   ecsRamGb: number;
@@ -510,8 +512,10 @@ function normalizeTenantUsageHistory(value: unknown): TenantUsageHistoryInput {
   }
 
   return {
-    linkedCompanyId: requireUnknownString(value, "linkedCompanyId"),
+    vdcId: requireUnknownString(value, "vdcId"),
+    domainId: requireUnknownString(value, "domainId"),
     tenantName: requireUnknownString(value, "tenantName"),
+    managerEmail: requireUnknownString(value, "managerEmail"),
     ecsInstances: requireUnknownNumber(value, "ecsInstances"),
     ecsCores: requireUnknownNumber(value, "ecsCores"),
     ecsRamGb: requireUnknownNumber(value, "ecsRamGb"),
@@ -763,16 +767,18 @@ http.route({
         );
       }
 
-      const rows = body.map(normalizeTenantUsageHistory).map((row) => ({
-        ...row,
-        linkedCompanyId: row.linkedCompanyId as Id<"companies">,
-      }));
-      const count = await ctx.runMutation(
+      const rows = body.map(normalizeTenantUsageHistory);
+      const summary = await ctx.runMutation(
         internal.tenantUsageHistory.bulkInsert,
         { rows },
       );
 
-      return Response.json({ success: true, count });
+      return Response.json({
+        success: true,
+        count: summary.inserted,
+        inserted: summary.inserted,
+        skippedNoLinkedCompany: summary.skippedNoLinkedCompany,
+      });
     } catch (error) {
       return Response.json(
         {
