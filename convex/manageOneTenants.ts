@@ -181,17 +181,18 @@ function findCatalogItemForHint(
     const quantity = hint.quantity;
     const itemName =
       quantity >= 1 && quantity <= 5
-        ? "EIP Bandwidth - 1 - 5 Mbps"
+        ? "1 - 5 Mbps"
         : quantity >= 6 && quantity <= 50
-          ? "EIP Bandwidth - 6 - 50 Mbps"
+          ? "6 - 50 Mbps"
           : quantity >= 51 && quantity <= 200
-            ? "EIP Bandwidth - 51 - 200 Mbps"
+            ? "51 - 200 Mbps"
             : null;
 
     return itemName
       ? catalog.find(
           (item) =>
-            item.serviceCategory === "EIP" && item.itemName === itemName,
+            item.serviceCategory === "EIP Bandwidth" &&
+            item.itemName === itemName,
         )
       : undefined;
   }

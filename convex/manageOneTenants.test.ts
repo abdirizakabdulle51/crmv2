@@ -69,9 +69,9 @@ describe("buildUsageHintsForCompany", () => {
         ),
         catalogItem("eip-active", "EIP", "EIP - Active"),
         catalogItem("eip-idle", "EIP", "EIP - Idle"),
-        catalogItem("eip-bw-1", "EIP", "EIP Bandwidth - 1 - 5 Mbps"),
-        catalogItem("eip-bw-2", "EIP", "EIP Bandwidth - 6 - 50 Mbps"),
-        catalogItem("eip-bw-3", "EIP", "EIP Bandwidth - 51 - 200 Mbps"),
+        catalogItem("eip-bw-1", "EIP Bandwidth", "1 - 5 Mbps"),
+        catalogItem("eip-bw-2", "EIP Bandwidth", "6 - 50 Mbps"),
+        catalogItem("eip-bw-3", "EIP Bandwidth", "51 - 200 Mbps"),
         catalogItem("elb", "ELB", "ELB - Shared"),
         catalogItem("vpn", "VPN", "General VPN Connection"),
         catalogItem("vpcep", "VPCEP", "General VPC Endpoints"),
@@ -153,6 +153,68 @@ describe("buildUsageHintsForCompany", () => {
     );
     expect(hints.map((hint) => hint.serviceCategory)).not.toContain("NAT");
     expect(hints.map((hint) => hint.serviceCategory)).not.toContain("LTS");
+  });
+
+  it("maps raw EIP bandwidth Mbps values to real catalog tiers", () => {
+    const catalog = [
+      catalogItem("eip-bw-1", "EIP Bandwidth", "1 - 5 Mbps"),
+      catalogItem("eip-bw-2", "EIP Bandwidth", "6 - 50 Mbps"),
+      catalogItem("eip-bw-3", "EIP Bandwidth", "51 - 200 Mbps"),
+    ];
+
+    expect(
+      buildUsageHintsForCompany(
+        [
+          {
+            resources: [
+              { serviceId: "vpc", resource: "bandwidth_size", used: 5 },
+            ],
+          },
+        ],
+        catalog,
+      ),
+    ).toContainEqual({
+      serviceCategory: "EIP (bandwidth)",
+      quantity: 5,
+      pricing: "auto",
+      suggestedCatalogItemId: "eip-bw-1",
+    });
+
+    expect(
+      buildUsageHintsForCompany(
+        [
+          {
+            resources: [
+              { serviceId: "vpc", resource: "bandwidth_size", used: 6 },
+            ],
+          },
+        ],
+        catalog,
+      ),
+    ).toContainEqual({
+      serviceCategory: "EIP (bandwidth)",
+      quantity: 6,
+      pricing: "auto",
+      suggestedCatalogItemId: "eip-bw-2",
+    });
+
+    expect(
+      buildUsageHintsForCompany(
+        [
+          {
+            resources: [
+              { serviceId: "vpc", resource: "bandwidth_size", used: 200 },
+            ],
+          },
+        ],
+        catalog,
+      ),
+    ).toContainEqual({
+      serviceCategory: "EIP (bandwidth)",
+      quantity: 200,
+      pricing: "auto",
+      suggestedCatalogItemId: "eip-bw-3",
+    });
   });
 
   it("turns ECS flavor breakdowns into matched auto lines and unmatched manual lines", () => {
