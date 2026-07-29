@@ -58,24 +58,35 @@ async function seed(t: ReturnType<typeof convexTest>) {
       month: "2026-05",
       serviceType: "ECS",
       amount: 100,
+      quantity: 2,
     });
     await ctx.db.insert("consumption", {
       companyId: companyA,
       month: "2026-06",
       serviceType: "ECS",
       amount: 140,
+      quantity: 3,
     });
     await ctx.db.insert("consumption", {
       companyId: companyA,
       month: "2026-07",
       serviceType: "ECS",
       amount: 200,
+      quantity: 4,
+    });
+    await ctx.db.insert("consumption", {
+      companyId: companyA,
+      month: "2026-07",
+      serviceType: "EVS",
+      amount: 120,
+      quantity: 5000,
     });
     await ctx.db.insert("consumption", {
       companyId: companyB,
       month: "2026-07",
       serviceType: "EVS",
       amount: 50,
+      quantity: 1000,
     });
     await ctx.db.insert("serviceCatalog", {
       serviceCategory: "CSBS",
@@ -137,6 +148,10 @@ describe("recommendations", () => {
           priority: "high",
           triggerReason:
             "Uses ECS compute but has no backup service (CSBS/VBS)",
+          estimatedMonthlyValue: 100,
+          estimatedValue: "Estimated upsell: ~$100.00/month",
+          estimateBasis:
+            "5,000 GB protected storage (2026-07) x $0.020/GB/month",
         }),
         expect.objectContaining({
           rule: "payment_risk",
@@ -172,7 +187,7 @@ describe("recommendations", () => {
       companyName: "AICC",
       sectorName: "Banking",
       usageSummary: {
-        serviceTypes: ["ECS"],
+        serviceTypes: ["ECS", "EVS"],
       },
       manageOneTenants: [
         expect.objectContaining({

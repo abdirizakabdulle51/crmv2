@@ -197,6 +197,9 @@ export default defineSchema({
         triggerReason: v.string(),
         recommendedService: v.string(),
         estimatedValue: v.string(),
+        estimatedMonthlyValue: v.optional(v.number()),
+        estimateBasis: v.optional(v.string()),
+        estimateCatalogItemName: v.optional(v.string()),
         priority: v.union(
           v.literal("high"),
           v.literal("medium"),

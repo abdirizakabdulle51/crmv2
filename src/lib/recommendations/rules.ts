@@ -7,6 +7,9 @@ export type Recommendation<CompanyId = string> = {
   triggerReason: string;
   recommendedService: string;
   estimatedValue: string;
+  estimatedMonthlyValue?: number;
+  estimateBasis?: string;
+  estimateCatalogItemName?: string;
   priority: RecommendationPriority;
 };
 
@@ -22,6 +25,7 @@ type ConsumptionLike<CompanyId = string> = {
   serviceType: string;
   month: string;
   amount: number;
+  quantity?: number;
 };
 
 type SectorLike<SectorId = string> = {
@@ -39,6 +43,7 @@ type CatalogLike = {
 type CompanyUsageProfile<Company extends CompanyLike> = {
   company: Company;
   serviceTypes: Set<string>;
+  entries: ConsumptionLike<Company["_id"]>[];
   monthlyTotals: { month: string; total: number }[];
   trend: "growing" | "flat" | "declining";
   sectorName: string;
@@ -102,6 +107,7 @@ function buildCompanyProfiles<
     return {
       company,
       serviceTypes,
+      entries: companyEntries,
       monthlyTotals,
       trend: determineTrend(monthlyTotals),
       sectorName: sectorMap.get(company.sectorId) || "",
@@ -133,16 +139,99 @@ function findCatalogEstimate(
 
 const PER_GB_UNITS = ["gb", "tb", "gb/mo", "gb-month"];
 
-function formatEstimate(price: number, billingUnit: string): string {
-  const isPerGb = PER_GB_UNITS.some((unit) =>
-    billingUnit.toLowerCase().includes(unit),
-  );
-  if (isPerGb) {
+function isPerGbUnit(billingUnit: string) {
+  return PER_GB_UNITS.some((unit) => billingUnit.toLowerCase().includes(unit));
+}
+
+function formatCatalogRate(price: number, billingUnit: string): string {
+  if (isPerGbUnit(billingUnit)) {
     return `$${price.toFixed(3)}/${billingUnit}`;
   }
   return `$${price.toLocaleString(undefined, {
     minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   })}/mo per ${billingUnit}`;
+}
+
+function formatMonthlyOpportunity(value: number): string {
+  return `Estimated upsell: ~$${value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}/month`;
+}
+
+function latestQuantityForServices(
+  entries: ConsumptionLike[],
+  serviceTypes: string[],
+) {
+  const matching = entries.filter(
+    (entry) =>
+      serviceTypes.includes(entry.serviceType) &&
+      typeof entry.quantity === "number" &&
+      entry.quantity > 0,
+  );
+  if (matching.length === 0) {
+    return null;
+  }
+
+  const latestMonth = matching.reduce(
+    (latest, entry) => (entry.month > latest ? entry.month : latest),
+    matching[0].month,
+  );
+
+  const quantity = matching
+    .filter((entry) => entry.month === latestMonth)
+    .reduce((sum, entry) => sum + (entry.quantity ?? 0), 0);
+
+  return quantity > 0 ? { quantity, month: latestMonth } : null;
+}
+
+function buildEstimate(
+  estimate: { price: number; billingUnit: string; itemName: string } | null,
+  options?: {
+    quantity?: number;
+    basisLabel?: string;
+    month?: string;
+  },
+) {
+  if (!estimate) {
+    return { estimatedValue: "See catalog" };
+  }
+
+  if (options?.quantity != null) {
+    const estimatedMonthlyValue = estimate.price * options.quantity;
+    const basisLabel = options.basisLabel ?? "units";
+    const monthLabel = options.month ? ` (${options.month})` : "";
+    return {
+      estimatedValue: formatMonthlyOpportunity(estimatedMonthlyValue),
+      estimatedMonthlyValue,
+      estimateBasis: `${options.quantity.toLocaleString()} ${basisLabel}${monthLabel} x ${formatCatalogRate(
+        estimate.price,
+        estimate.billingUnit,
+      )}`,
+      estimateCatalogItemName: estimate.itemName,
+    };
+  }
+
+  if (isPerGbUnit(estimate.billingUnit)) {
+    return {
+      estimatedValue: `${formatCatalogRate(
+        estimate.price,
+        estimate.billingUnit,
+      )} (usage quantity unavailable)`,
+      estimateCatalogItemName: estimate.itemName,
+    };
+  }
+
+  return {
+    estimatedValue: formatMonthlyOpportunity(estimate.price),
+    estimatedMonthlyValue: estimate.price,
+    estimateBasis: `Flat catalog rate: ${formatCatalogRate(
+      estimate.price,
+      estimate.billingUnit,
+    )}`,
+    estimateCatalogItemName: estimate.itemName,
+  };
 }
 
 export function generateRecommendations<
@@ -159,7 +248,7 @@ export function generateRecommendations<
   const recommendations: Recommendation<CompanyId>[] = [];
 
   for (const profile of profiles) {
-    const { company, serviceTypes, trend, sectorName } = profile;
+    const { company, serviceTypes, entries, trend, sectorName } = profile;
 
     if (serviceTypes.size === 0) continue;
 
@@ -169,15 +258,23 @@ export function generateRecommendations<
       !serviceTypes.has("VBS")
     ) {
       const estimate = findCatalogEstimate(catalog, ["CSBS", "VBS", "backup"]);
+      const storageUsage = latestQuantityForServices(entries, ["EVS", "SFS"]);
       recommendations.push({
         companyId: company._id,
         companyName: company.name,
         rule: "backup",
         triggerReason: "Uses ECS compute but has no backup service (CSBS/VBS)",
         recommendedService: "CSBS or VBS (Cloud Backup)",
-        estimatedValue: estimate
-          ? formatEstimate(estimate.price, estimate.billingUnit)
-          : "See catalog",
+        ...buildEstimate(
+          estimate,
+          storageUsage
+            ? {
+                quantity: storageUsage.quantity,
+                basisLabel: "GB protected storage",
+                month: storageUsage.month,
+              }
+            : undefined,
+        ),
         priority: "high",
       });
     }
@@ -187,6 +284,7 @@ export function generateRecommendations<
       !serviceTypes.has("OBS")
     ) {
       const estimate = findCatalogEstimate(catalog, ["OBS", "object storage"]);
+      const storageUsage = latestQuantityForServices(entries, ["EVS", "SFS"]);
       recommendations.push({
         companyId: company._id,
         companyName: company.name,
@@ -194,9 +292,16 @@ export function generateRecommendations<
         triggerReason:
           "Uses block/file storage (EVS/SFS) but no object storage (OBS)",
         recommendedService: "OBS (Object Storage)",
-        estimatedValue: estimate
-          ? formatEstimate(estimate.price, estimate.billingUnit)
-          : "See catalog",
+        ...buildEstimate(
+          estimate,
+          storageUsage
+            ? {
+                quantity: storageUsage.quantity,
+                basisLabel: "GB storage footprint",
+                month: storageUsage.month,
+              }
+            : undefined,
+        ),
         priority: "medium",
       });
     }
@@ -210,9 +315,7 @@ export function generateRecommendations<
         triggerReason:
           "Uses container engine (ECS-CCE) but no log management (LTS)",
         recommendedService: "LTS (Log Tank Service)",
-        estimatedValue: estimate
-          ? formatEstimate(estimate.price, estimate.billingUnit)
-          : "See catalog",
+        ...buildEstimate(estimate),
         priority: "medium",
       });
     }
@@ -234,9 +337,7 @@ export function generateRecommendations<
         triggerReason:
           "Uses BMS/ECS compute but no VPN or VPN Gateway for secure connectivity",
         recommendedService: "VPN or VPN Gateway",
-        estimatedValue: estimate
-          ? formatEstimate(estimate.price, estimate.billingUnit)
-          : "See catalog",
+        ...buildEstimate(estimate),
         priority: "medium",
       });
     }
@@ -252,9 +353,7 @@ export function generateRecommendations<
         rule: "waf",
         triggerReason: "Usage is growing but no WAF protection in place",
         recommendedService: "WAF (Web Application Firewall)",
-        estimatedValue: estimate
-          ? formatEstimate(estimate.price, estimate.billingUnit)
-          : "See catalog",
+        ...buildEstimate(estimate),
         priority: "medium",
       });
     }
@@ -290,9 +389,7 @@ export function generateRecommendations<
         rule: "compliance",
         triggerReason: `Banking/fintech sector (${sectorName}) but no CBH for compliance audit`,
         recommendedService: "CBH (Cloud Bastion Host)",
-        estimatedValue: estimate
-          ? formatEstimate(estimate.price, estimate.billingUnit)
-          : "See catalog",
+        ...buildEstimate(estimate),
         priority: "high",
       });
     }

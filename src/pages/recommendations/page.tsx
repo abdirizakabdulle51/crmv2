@@ -396,6 +396,14 @@ export default function RecommendationsPage() {
                           </span>{" "}
                           {row.rec.estimatedValue}
                         </span>
+                        {row.rec.estimateBasis ? (
+                          <span className="text-muted-foreground">
+                            <span className="font-medium text-foreground">
+                              Basis:
+                            </span>{" "}
+                            {row.rec.estimateBasis}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   </div>
