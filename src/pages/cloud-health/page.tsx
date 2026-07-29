@@ -72,10 +72,12 @@ function RingGauge({
   label,
   percent,
   detail,
+  oversubscriptionRatio,
 }: {
   label: string;
   percent: number;
   detail: string;
+  oversubscriptionRatio?: number;
 }) {
   const color = statusColor(percent);
 
@@ -94,6 +96,11 @@ function RingGauge({
       <div className="min-w-0">
         <div className="font-medium">{label}</div>
         <div className="text-xs text-muted-foreground">{detail}</div>
+        {oversubscriptionRatio != null ? (
+          <div className="text-xs text-muted-foreground">
+            {formatNumber(oversubscriptionRatio, "%")} oversubscribed
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -279,16 +286,19 @@ export default function CloudHealthPage() {
                     label="CPU"
                     percent={region.cpuUsedPercent}
                     detail={`${formatNumber(region.cpuUsed)} / ${formatNumber(region.cpuTotal)} cores`}
+                    oversubscriptionRatio={region.cpuOversubscriptionRatio}
                   />
                   <RingGauge
                     label="Memory"
                     percent={region.memoryUsedPercent}
                     detail={`${formatNumber(region.memoryUsedGb, " GB")} / ${formatNumber(region.memoryTotalGb, " GB")}`}
+                    oversubscriptionRatio={region.memoryOversubscriptionRatio}
                   />
                   <RingGauge
                     label="Storage"
                     percent={region.storageUsedPercent}
                     detail={`${formatNumber(region.storageUsedGb, " GB")} / ${formatNumber(region.storageTotalGb, " GB")}`}
+                    oversubscriptionRatio={region.storageOversubscriptionRatio}
                   />
                 </CardContent>
               </Card>

@@ -60,12 +60,15 @@ type CloudCapacityRegionInput = {
   cpuUsed: number;
   cpuTotal: number;
   cpuOversubscriptionCapacity?: number;
+  cpuOversubscriptionRatio?: number;
   memoryUsedGb: number;
   memoryTotalGb: number;
   memoryOversubscriptionCapacityGb?: number;
+  memoryOversubscriptionRatio?: number;
   storageUsedGb: number;
   storageTotalGb: number;
   storageOversubscriptionCapacityGb?: number;
+  storageOversubscriptionRatio?: number;
 };
 
 type PingResultInput = {
@@ -409,6 +412,14 @@ function normalizeCloudCapacityRegion(
           ),
         }
       : {}),
+    ...(optionalUnknownNumber(value, "cpuOversubscriptionRatio") !== undefined
+      ? {
+          cpuOversubscriptionRatio: optionalUnknownNumber(
+            value,
+            "cpuOversubscriptionRatio",
+          ),
+        }
+      : {}),
     memoryUsedGb: requireUnknownNumber(value, "memoryUsedGb"),
     memoryTotalGb: requireUnknownNumber(value, "memoryTotalGb"),
     ...(optionalUnknownNumber(value, "memoryOversubscriptionCapacityGb") !==
@@ -420,6 +431,15 @@ function normalizeCloudCapacityRegion(
           ),
         }
       : {}),
+    ...(optionalUnknownNumber(value, "memoryOversubscriptionRatio") !==
+    undefined
+      ? {
+          memoryOversubscriptionRatio: optionalUnknownNumber(
+            value,
+            "memoryOversubscriptionRatio",
+          ),
+        }
+      : {}),
     storageUsedGb: requireUnknownNumber(value, "storageUsedGb"),
     storageTotalGb: requireUnknownNumber(value, "storageTotalGb"),
     ...(optionalUnknownNumber(value, "storageOversubscriptionCapacityGb") !==
@@ -428,6 +448,15 @@ function normalizeCloudCapacityRegion(
           storageOversubscriptionCapacityGb: optionalUnknownNumber(
             value,
             "storageOversubscriptionCapacityGb",
+          ),
+        }
+      : {}),
+    ...(optionalUnknownNumber(value, "storageOversubscriptionRatio") !==
+    undefined
+      ? {
+          storageOversubscriptionRatio: optionalUnknownNumber(
+            value,
+            "storageOversubscriptionRatio",
           ),
         }
       : {}),

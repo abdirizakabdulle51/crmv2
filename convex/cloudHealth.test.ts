@@ -60,10 +60,13 @@ describe("Cloud Health", () => {
           cpuUsed: 70,
           cpuTotal: 100,
           cpuOversubscriptionCapacity: 140,
+          cpuOversubscriptionRatio: 50,
           memoryUsedGb: 900,
           memoryTotalGb: 1000,
+          memoryOversubscriptionRatio: 65,
           storageUsedGb: 5000,
           storageTotalGb: 10000,
+          storageOversubscriptionRatio: 40,
         },
       ],
     });
@@ -74,10 +77,13 @@ describe("Cloud Health", () => {
           regionName: "Somalia Region Updated",
           cpuUsed: 75,
           cpuTotal: 100,
+          cpuOversubscriptionRatio: 53.4,
           memoryUsedGb: 950,
           memoryTotalGb: 1000,
+          memoryOversubscriptionRatio: 61.2,
           storageUsedGb: 6000,
           storageTotalGb: 10000,
+          storageOversubscriptionRatio: 72.8,
         },
       ],
     });
@@ -91,8 +97,11 @@ describe("Cloud Health", () => {
       regionId: "som-1",
       regionName: "Somalia Region Updated",
       cpuUsedPercent: 75,
+      cpuOversubscriptionRatio: 53.4,
       memoryUsedPercent: 95,
+      memoryOversubscriptionRatio: 61.2,
       storageUsedPercent: 60,
+      storageOversubscriptionRatio: 72.8,
     });
 
     await expect(
