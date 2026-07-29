@@ -15,6 +15,7 @@ import {
   Lightbulb,
   Zap,
   Cloud,
+  CloudSun,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -38,6 +39,12 @@ const NAV_ITEMS = [
     icon: Cloud,
     adminOnly: true,
   },
+  {
+    to: "/cloud-health",
+    label: "Cloud Health",
+    icon: CloudSun,
+    cloudHealthOnly: true,
+  },
   { to: "/team", label: "Team", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -50,6 +57,12 @@ export default function AppLayout() {
       !item.adminOnly ||
       currentUser?.role === "ceo" ||
       currentUser?.role === "head_of_business",
+  ).filter(
+    (item) =>
+      !item.cloudHealthOnly ||
+      currentUser?.role === "ceo" ||
+      currentUser?.role === "head_of_business" ||
+      currentUser?.role === "country_gm",
   );
 
   return (
@@ -121,9 +134,7 @@ export default function AppLayout() {
             to={item.to}
             className={({ isActive }) =>
               `flex flex-col items-center gap-0.5 text-xs ${
-                isActive
-                  ? "text-primary"
-                  : "text-muted-foreground"
+                isActive ? "text-primary" : "text-muted-foreground"
               }`
             }
           >

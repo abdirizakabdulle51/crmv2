@@ -145,6 +145,42 @@ export default defineSchema({
     .index("by_vdc_id", ["vdcId"])
     .index("by_linked_company", ["linkedCompanyId"]),
 
+  cloudCapacityRegions: defineTable({
+    regionId: v.string(),
+    regionName: v.string(),
+    cpuUsed: v.number(),
+    cpuTotal: v.number(),
+    cpuOversubscriptionCapacity: v.optional(v.number()),
+    memoryUsedGb: v.number(),
+    memoryTotalGb: v.number(),
+    memoryOversubscriptionCapacityGb: v.optional(v.number()),
+    storageUsedGb: v.number(),
+    storageTotalGb: v.number(),
+    storageOversubscriptionCapacityGb: v.optional(v.number()),
+    lastSyncedAt: v.number(),
+  }).index("by_region_id", ["regionId"]),
+
+  pingTargets: defineTable({
+    name: v.string(),
+    ip: v.string(),
+    active: v.boolean(),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_active", ["active"])
+    .index("by_ip", ["ip"]),
+
+  pingResults: defineTable({
+    targetId: v.id("pingTargets"),
+    success: v.boolean(),
+    latencyMs: v.optional(v.number()),
+    error: v.optional(v.string()),
+    checkedAt: v.number(),
+  })
+    .index("by_target_checked_at", ["targetId", "checkedAt"])
+    .index("by_checked_at", ["checkedAt"]),
+
   activities: defineTable({
     accountManagerId: v.id("users"),
     leadId: v.id("leads"),

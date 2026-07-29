@@ -54,6 +54,28 @@ type AiRecommendationSyncInput = {
   generatedAt: number;
 };
 
+type CloudCapacityRegionInput = {
+  regionId: string;
+  regionName: string;
+  cpuUsed: number;
+  cpuTotal: number;
+  cpuOversubscriptionCapacity?: number;
+  memoryUsedGb: number;
+  memoryTotalGb: number;
+  memoryOversubscriptionCapacityGb?: number;
+  storageUsedGb: number;
+  storageTotalGb: number;
+  storageOversubscriptionCapacityGb?: number;
+};
+
+type PingResultInput = {
+  targetId: string;
+  success: boolean;
+  latencyMs?: number;
+  error?: string;
+  checkedAt: number;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -330,6 +352,113 @@ function normalizeAiRecommendation(value: unknown): AiRecommendationSyncInput {
   };
 }
 
+function requireUnknownString(
+  record: Record<string, unknown>,
+  key: string,
+): string {
+  const value = record[key];
+  if (typeof value !== "string") {
+    throw new Error(`${key} is required`);
+  }
+  return value;
+}
+
+function requireUnknownNumber(
+  record: Record<string, unknown>,
+  key: string,
+): number {
+  const value = record[key];
+  if (typeof value !== "number") {
+    throw new Error(`${key} is required`);
+  }
+  return value;
+}
+
+function optionalUnknownNumber(
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = record[key];
+  if (value == null) {
+    return undefined;
+  }
+  if (typeof value !== "number") {
+    throw new Error(`${key} must be a number`);
+  }
+  return value;
+}
+
+function normalizeCloudCapacityRegion(
+  value: unknown,
+): CloudCapacityRegionInput {
+  if (!isRecord(value)) {
+    throw new Error("Each capacity region must be an object");
+  }
+
+  return {
+    regionId: requireUnknownString(value, "regionId"),
+    regionName: requireUnknownString(value, "regionName"),
+    cpuUsed: requireUnknownNumber(value, "cpuUsed"),
+    cpuTotal: requireUnknownNumber(value, "cpuTotal"),
+    ...(optionalUnknownNumber(value, "cpuOversubscriptionCapacity") !==
+    undefined
+      ? {
+          cpuOversubscriptionCapacity: optionalUnknownNumber(
+            value,
+            "cpuOversubscriptionCapacity",
+          ),
+        }
+      : {}),
+    memoryUsedGb: requireUnknownNumber(value, "memoryUsedGb"),
+    memoryTotalGb: requireUnknownNumber(value, "memoryTotalGb"),
+    ...(optionalUnknownNumber(value, "memoryOversubscriptionCapacityGb") !==
+    undefined
+      ? {
+          memoryOversubscriptionCapacityGb: optionalUnknownNumber(
+            value,
+            "memoryOversubscriptionCapacityGb",
+          ),
+        }
+      : {}),
+    storageUsedGb: requireUnknownNumber(value, "storageUsedGb"),
+    storageTotalGb: requireUnknownNumber(value, "storageTotalGb"),
+    ...(optionalUnknownNumber(value, "storageOversubscriptionCapacityGb") !==
+    undefined
+      ? {
+          storageOversubscriptionCapacityGb: optionalUnknownNumber(
+            value,
+            "storageOversubscriptionCapacityGb",
+          ),
+        }
+      : {}),
+  };
+}
+
+function normalizePingResult(value: unknown): PingResultInput {
+  if (!isRecord(value)) {
+    throw new Error("Each ping result must be an object");
+  }
+
+  const success = value.success;
+  const error = value.error;
+  if (typeof success !== "boolean") {
+    throw new Error("success is required");
+  }
+  if (error != null && typeof error !== "string") {
+    throw new Error("error must be a string");
+  }
+
+  return {
+    targetId: requireUnknownString(value, "targetId"),
+    success,
+    ...(optionalUnknownNumber(value, "latencyMs") !== undefined
+      ? { latencyMs: optionalUnknownNumber(value, "latencyMs") }
+      : {}),
+    ...(error != null ? { error } : {}),
+    checkedAt: requireUnknownNumber(value, "checkedAt"),
+  };
+}
+
 http.route({
   path: "/manageone/sync",
   method: "POST",
@@ -435,6 +564,104 @@ http.route({
         internal.aiRecommendations.bulkUpsert,
         { items },
       );
+
+      return Response.json({ success: true, count });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/cloud-capacity/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "CLOUD_HEALTH_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json();
+      if (!Array.isArray(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an array" },
+          { status: 400 },
+        );
+      }
+
+      const regions = body.map(normalizeCloudCapacityRegion);
+      const count = await ctx.runMutation(internal.cloudCapacity.bulkUpsert, {
+        regions,
+      });
+
+      return Response.json({ success: true, count });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/ping-targets/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "CLOUD_HEALTH_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    const targets = await ctx.runQuery(
+      internal.pingTargets.listActiveForSync,
+      {},
+    );
+    return Response.json({ success: true, targets });
+  }),
+});
+
+http.route({
+  path: "/ping-results/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "CLOUD_HEALTH_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json();
+      if (!Array.isArray(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an array" },
+          { status: 400 },
+        );
+      }
+
+      const results = body.map(normalizePingResult).map((result) => ({
+        ...result,
+        targetId: result.targetId as Id<"pingTargets">,
+      }));
+      const count = await ctx.runMutation(internal.pingResults.bulkUpsert, {
+        results,
+      });
 
       return Response.json({ success: true, count });
     } catch (error) {
