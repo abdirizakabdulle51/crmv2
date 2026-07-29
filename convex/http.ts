@@ -83,7 +83,7 @@ type TenantUsageHistoryInput = {
   vdcId: string;
   domainId: string;
   tenantName: string;
-  managerEmail: string;
+  managerEmail?: string | null;
   ecsInstances: number;
   ecsCores: number;
   ecsRamGb: number;
@@ -515,7 +515,14 @@ function normalizeTenantUsageHistory(value: unknown): TenantUsageHistoryInput {
     vdcId: requireUnknownString(value, "vdcId"),
     domainId: requireUnknownString(value, "domainId"),
     tenantName: requireUnknownString(value, "tenantName"),
-    managerEmail: requireUnknownString(value, "managerEmail"),
+    ...(value.managerEmail !== undefined
+      ? {
+          managerEmail:
+            value.managerEmail === null
+              ? null
+              : requireUnknownString(value, "managerEmail"),
+        }
+      : {}),
     ecsInstances: requireUnknownNumber(value, "ecsInstances"),
     ecsCores: requireUnknownNumber(value, "ecsCores"),
     ecsRamGb: requireUnknownNumber(value, "ecsRamGb"),

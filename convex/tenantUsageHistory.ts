@@ -68,7 +68,7 @@ export const bulkInsert = internalMutation({
       v.object({
         vdcId: v.string(),
         domainId: v.string(),
-        managerEmail: v.string(),
+        managerEmail: v.optional(v.union(v.string(), v.null())),
         ...usageHistoryItem,
       }),
     ),
