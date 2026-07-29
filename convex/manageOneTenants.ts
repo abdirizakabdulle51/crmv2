@@ -87,6 +87,18 @@ const USAGE_HINT_RULES: HintRule[] = [
     pricing: "auto",
   },
   {
+    serviceId: "rds",
+    resource: "instance",
+    serviceCategory: "RDS",
+    pricing: "auto",
+  },
+  {
+    serviceId: "cce",
+    resource: "hybrid.resource.type.cce.cluster",
+    serviceCategory: "ECS-CCE",
+    pricing: "auto",
+  },
+  {
     serviceId: "evs",
     resource: "gigabytes",
     serviceCategory: "EVS",
@@ -148,7 +160,7 @@ const USAGE_HINT_RULES: HintRule[] = [
   },
   {
     serviceId: "waf",
-    resource: "instance",
+    resource: "waf.instance",
     serviceCategory: "WAF",
     pricing: "manual",
   },

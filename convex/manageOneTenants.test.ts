@@ -29,12 +29,18 @@ describe("buildUsageHintsForCompany", () => {
           resources: [
             { serviceId: "ecs", resource: "instances", used: 3 },
             { serviceId: "bms", resource: "instances", used: 1 },
+            { serviceId: "rds", resource: "instance", used: 2 },
+            {
+              serviceId: "cce",
+              resource: "hybrid.resource.type.cce.cluster",
+              used: 1,
+            },
             { serviceId: "evs", resource: "gigabytes", used: 500 },
             { serviceId: "sfs", resource: "gigabytes", used: 25 },
             { serviceId: "csbs", resource: "backup_capacity", used: 100 },
             { serviceId: "vpc", resource: "publicIp", used: 2 },
             { serviceId: "vpc", resource: "bandwidth_size", used: 20 },
-            { serviceId: "waf", resource: "instance", used: 1 },
+            { serviceId: "waf", resource: "waf.instance", used: 1 },
           ],
         },
         {
@@ -52,6 +58,8 @@ describe("buildUsageHintsForCompany", () => {
       ],
       [
         catalogItem("bms", "BMS", "bms.physical.o2"),
+        catalogItem("rds", "RDS", "RDS - Instance"),
+        catalogItem("cce", "ECS-CCE", "CCE Cluster"),
         catalogItem("sfs", "SFS", "SFS_SATA"),
         catalogItem("csbs", "CSBS", "General CSBS Duplication (backup)"),
         catalogItem(
@@ -78,6 +86,18 @@ describe("buildUsageHintsForCompany", () => {
           quantity: 1,
           pricing: "auto",
           suggestedCatalogItemId: "bms",
+        },
+        {
+          serviceCategory: "RDS",
+          quantity: 2,
+          pricing: "auto",
+          suggestedCatalogItemId: "rds",
+        },
+        {
+          serviceCategory: "ECS-CCE",
+          quantity: 1,
+          pricing: "auto",
+          suggestedCatalogItemId: "cce",
         },
         { serviceCategory: "EVS", quantity: 500, pricing: "manual" },
         {
@@ -141,7 +161,7 @@ describe("buildUsageHintsForCompany", () => {
         {
           resources: [
             { serviceId: "ecs", resource: "instances", used: 6 },
-            { serviceId: "waf", resource: "instance", used: 1 },
+            { serviceId: "waf", resource: "waf.instance", used: 1 },
           ],
           ecsFlavors: [
             { flavorName: "C6_12xlarge.4", vcpus: 48, ramMb: 196608, count: 2 },
