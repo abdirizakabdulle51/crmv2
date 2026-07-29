@@ -79,6 +79,22 @@ type PingResultInput = {
   checkedAt: number;
 };
 
+type TenantUsageHistoryInput = {
+  linkedCompanyId: string;
+  tenantName: string;
+  ecsInstances: number;
+  ecsCores: number;
+  ecsRamGb: number;
+  rdsInstances: number;
+  cceClusters: number;
+  evsGb: number;
+  obsGb: number;
+  sfsGb: number;
+  publicIps: number;
+  wafInstances: number;
+  syncedAt: number;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -488,6 +504,28 @@ function normalizePingResult(value: unknown): PingResultInput {
   };
 }
 
+function normalizeTenantUsageHistory(value: unknown): TenantUsageHistoryInput {
+  if (!isRecord(value)) {
+    throw new Error("Each tenant usage history row must be an object");
+  }
+
+  return {
+    linkedCompanyId: requireUnknownString(value, "linkedCompanyId"),
+    tenantName: requireUnknownString(value, "tenantName"),
+    ecsInstances: requireUnknownNumber(value, "ecsInstances"),
+    ecsCores: requireUnknownNumber(value, "ecsCores"),
+    ecsRamGb: requireUnknownNumber(value, "ecsRamGb"),
+    rdsInstances: requireUnknownNumber(value, "rdsInstances"),
+    cceClusters: requireUnknownNumber(value, "cceClusters"),
+    evsGb: requireUnknownNumber(value, "evsGb"),
+    obsGb: requireUnknownNumber(value, "obsGb"),
+    sfsGb: requireUnknownNumber(value, "sfsGb"),
+    publicIps: requireUnknownNumber(value, "publicIps"),
+    wafInstances: requireUnknownNumber(value, "wafInstances"),
+    syncedAt: requireUnknownNumber(value, "syncedAt"),
+  };
+}
+
 http.route({
   path: "/manageone/sync",
   method: "POST",
@@ -691,6 +729,48 @@ http.route({
       const count = await ctx.runMutation(internal.pingResults.bulkUpsert, {
         results,
       });
+
+      return Response.json({ success: true, count });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/tenant-usage/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "TENANT_HISTORY_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json();
+      if (!Array.isArray(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an array" },
+          { status: 400 },
+        );
+      }
+
+      const rows = body.map(normalizeTenantUsageHistory).map((row) => ({
+        ...row,
+        linkedCompanyId: row.linkedCompanyId as Id<"companies">,
+      }));
+      const count = await ctx.runMutation(
+        internal.tenantUsageHistory.bulkInsert,
+        { rows },
+      );
 
       return Response.json({ success: true, count });
     } catch (error) {

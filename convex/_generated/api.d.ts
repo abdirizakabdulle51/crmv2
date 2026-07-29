@@ -29,6 +29,7 @@ import type * as salesTargets from "../salesTargets.js";
 import type * as sectors from "../sectors.js";
 import type * as serviceCatalog from "../serviceCatalog.js";
 import type * as snapshotImport from "../snapshotImport.js";
+import type * as tenantUsageHistory from "../tenantUsageHistory.js";
 import type * as users from "../users.js";
 
 import type {
@@ -59,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   sectors: typeof sectors;
   serviceCatalog: typeof serviceCatalog;
   snapshotImport: typeof snapshotImport;
+  tenantUsageHistory: typeof tenantUsageHistory;
   users: typeof users;
 }>;
 

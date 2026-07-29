@@ -163,6 +163,22 @@ export default defineSchema({
     lastSyncedAt: v.number(),
   }).index("by_region_id", ["regionId"]),
 
+  tenantUsageHistory: defineTable({
+    linkedCompanyId: v.id("companies"),
+    tenantName: v.string(),
+    ecsInstances: v.number(),
+    ecsCores: v.number(),
+    ecsRamGb: v.number(),
+    rdsInstances: v.number(),
+    cceClusters: v.number(),
+    evsGb: v.number(),
+    obsGb: v.number(),
+    sfsGb: v.number(),
+    publicIps: v.number(),
+    wafInstances: v.number(),
+    syncedAt: v.number(),
+  }).index("by_company_synced_at", ["linkedCompanyId", "syncedAt"]),
+
   pingTargets: defineTable({
     name: v.string(),
     ip: v.string(),
