@@ -90,7 +90,7 @@ export default function UsageEntryDialog({
     (item) => item.serviceCategory === serviceType,
   );
   const selectedHasBreakdownLineItems =
-    (serviceType === "ECS" || serviceType === "EVS") &&
+    (serviceType === "ECS" || serviceType === "EVS" || serviceType === "WAF") &&
     !!selectedHint?.lineItems?.length;
   const availableServiceTypes = companyId
     ? [
@@ -208,7 +208,10 @@ export default function UsageEntryDialog({
       return;
     }
 
-    if ((value === "ECS" || value === "EVS") && hint.lineItems?.length) {
+    if (
+      (value === "ECS" || value === "EVS" || value === "WAF") &&
+      hint.lineItems?.length
+    ) {
       setPendingLineItems(
         hint.lineItems.map((lineItem, index) => {
           const item = lineItem.suggestedCatalogItemId

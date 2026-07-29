@@ -333,6 +333,92 @@ describe("buildUsageHintsForCompany", () => {
     ).toBeUndefined();
   });
 
+  it("auto-prices WAF tier resources from ManageOne tier-specific keys", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [
+            { serviceId: "waf", resource: "waf.instance", used: 1 },
+            { serviceId: "waf", resource: "waf.instance.100", used: 1 },
+          ],
+        },
+        {
+          resources: [
+            { serviceId: "waf", resource: "waf.instance", used: 2 },
+            { serviceId: "waf", resource: "waf.instance.500", used: 2 },
+          ],
+        },
+      ],
+      [
+        catalogItem("waf-basic", "WAF", "Basic WAF", "flat/month", 15),
+        catalogItem(
+          "waf-enterprise",
+          "WAF",
+          "Enterprise WAF",
+          "flat/month",
+          150,
+        ),
+      ],
+    );
+
+    expect(hints.find((hint) => hint.serviceCategory === "WAF")).toEqual({
+      serviceCategory: "WAF",
+      quantity: 3,
+      pricing: "auto",
+      lineItems: [
+        {
+          label: "Basic WAF",
+          quantity: 1,
+          pricing: "auto",
+          suggestedCatalogItemId: "waf-basic",
+        },
+        {
+          label: "Enterprise WAF",
+          quantity: 2,
+          pricing: "auto",
+          suggestedCatalogItemId: "waf-enterprise",
+        },
+      ],
+    });
+  });
+
+  it("keeps WAF manual when one tenant reports conflicting tier keys", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [
+            { serviceId: "waf", resource: "waf.instance.100", used: 1 },
+            { serviceId: "waf", resource: "waf.instance.500", used: 1 },
+          ],
+        },
+      ],
+      [
+        catalogItem("waf-basic", "WAF", "Basic WAF", "flat/month", 15),
+        catalogItem(
+          "waf-enterprise",
+          "WAF",
+          "Enterprise WAF",
+          "flat/month",
+          150,
+        ),
+      ],
+    );
+
+    expect(hints.find((hint) => hint.serviceCategory === "WAF")).toEqual({
+      serviceCategory: "WAF",
+      quantity: 2,
+      pricing: "manual",
+      lineItems: [
+        {
+          label: "WAF tier conflict (100 and 500)",
+          quantity: 2,
+          pricing: "manual",
+          needsManualPricing: true,
+        },
+      ],
+    });
+  });
+
   it("builds bulk auto-fill preview rows, manual notes, and duplicate flags", () => {
     const catalog = [
       catalogItem("eip-active", "EIP", "EIP - Active", "per IP", 3),

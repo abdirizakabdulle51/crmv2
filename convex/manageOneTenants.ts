@@ -213,10 +213,64 @@ export function buildUsageHintsForCompany(
   const totals = new Map<string, UsageHint>();
   const ecsLineItems: UsageHintLineItem[] = [];
   const evsLineItems: UsageHintLineItem[] = [];
+  const wafLineItems: UsageHintLineItem[] = [];
   const ecsCatalog = catalog.filter((item) => item.serviceCategory === "ECS");
   const evsCatalog = catalog.filter((item) => item.serviceCategory === "EVS");
+  const basicWafCatalogItem = catalog.find(
+    (item) => item.serviceCategory === "WAF" && item.itemName === "Basic WAF",
+  );
+  const enterpriseWafCatalogItem = catalog.find(
+    (item) =>
+      item.serviceCategory === "WAF" && item.itemName === "Enterprise WAF",
+  );
 
   for (const tenant of tenants) {
+    const tenantResources = tenant.resources ?? [];
+    const wafBasicQuantity = tenantResources
+      .filter(
+        (resource) =>
+          resource.serviceId === "waf" &&
+          resource.resource === "waf.instance.100" &&
+          resource.used > 0,
+      )
+      .reduce((sum, resource) => sum + resource.used, 0);
+    const wafEnterpriseQuantity = tenantResources
+      .filter(
+        (resource) =>
+          resource.serviceId === "waf" &&
+          resource.resource === "waf.instance.500" &&
+          resource.used > 0,
+      )
+      .reduce((sum, resource) => sum + resource.used, 0);
+    const hasWafTierSignal = wafBasicQuantity > 0 || wafEnterpriseQuantity > 0;
+
+    if (wafBasicQuantity > 0 && wafEnterpriseQuantity > 0) {
+      wafLineItems.push({
+        label: "WAF tier conflict (100 and 500)",
+        quantity: wafBasicQuantity + wafEnterpriseQuantity,
+        pricing: "manual",
+        needsManualPricing: true,
+      });
+    } else if (wafBasicQuantity > 0) {
+      wafLineItems.push({
+        label: "Basic WAF",
+        quantity: wafBasicQuantity,
+        pricing: basicWafCatalogItem ? "auto" : "manual",
+        ...(basicWafCatalogItem
+          ? { suggestedCatalogItemId: basicWafCatalogItem._id }
+          : { needsManualPricing: true }),
+      });
+    } else if (wafEnterpriseQuantity > 0) {
+      wafLineItems.push({
+        label: "Enterprise WAF",
+        quantity: wafEnterpriseQuantity,
+        pricing: enterpriseWafCatalogItem ? "auto" : "manual",
+        ...(enterpriseWafCatalogItem
+          ? { suggestedCatalogItemId: enterpriseWafCatalogItem._id }
+          : { needsManualPricing: true }),
+      });
+    }
+
     for (const flavor of tenant.ecsFlavors ?? []) {
       if (flavor.count <= 0) {
         continue;
@@ -259,8 +313,16 @@ export function buildUsageHintsForCompany(
       });
     }
 
-    for (const resource of tenant.resources ?? []) {
+    for (const resource of tenantResources) {
       if (resource.used <= 0) {
+        continue;
+      }
+      if (
+        resource.serviceId === "waf" &&
+        (resource.resource === "waf.instance.100" ||
+          resource.resource === "waf.instance.500" ||
+          (resource.resource === "waf.instance" && hasWafTierSignal))
+      ) {
         continue;
       }
 
@@ -338,6 +400,25 @@ export function buildUsageHintsForCompany(
       hints[existingEvsHintIndex] = evsHint;
     } else {
       hints.unshift(evsHint);
+    }
+  }
+
+  if (wafLineItems.length > 0) {
+    const existingWafHintIndex = hints.findIndex(
+      (hint) => hint.serviceCategory === "WAF",
+    );
+    const wafHint = {
+      serviceCategory: "WAF",
+      quantity: wafLineItems.reduce((sum, item) => sum + item.quantity, 0),
+      pricing: wafLineItems.every((item) => item.pricing === "auto")
+        ? ("auto" as const)
+        : ("manual" as const),
+      lineItems: wafLineItems,
+    };
+    if (existingWafHintIndex >= 0) {
+      hints[existingWafHintIndex] = wafHint;
+    } else {
+      hints.push(wafHint);
     }
   }
 
