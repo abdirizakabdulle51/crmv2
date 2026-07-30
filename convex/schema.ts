@@ -221,6 +221,31 @@ export default defineSchema({
     .index("by_target_checked_at", ["targetId", "checkedAt"])
     .index("by_checked_at", ["checkedAt"]),
 
+  serviceHealthTargets: defineTable({
+    name: v.string(),
+    checkType: v.union(v.literal("http"), v.literal("tcp"), v.literal("dns")),
+    target: v.string(),
+    expectedStatusCode: v.optional(v.number()),
+    expectedResponseContains: v.optional(v.string()),
+    expectedIp: v.optional(v.string()),
+    active: v.boolean(),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_active", ["active"]),
+
+  serviceHealthResults: defineTable({
+    targetId: v.id("serviceHealthTargets"),
+    success: v.boolean(),
+    latencyMs: v.optional(v.number()),
+    statusCode: v.optional(v.number()),
+    resolvedValue: v.optional(v.string()),
+    error: v.optional(v.string()),
+    checkedAt: v.number(),
+  })
+    .index("by_target_checked_at", ["targetId", "checkedAt"])
+    .index("by_checked_at", ["checkedAt"]),
+
   activities: defineTable({
     accountManagerId: v.id("users"),
     leadId: v.id("leads"),

@@ -85,6 +85,16 @@ type PingResultInput = {
   checkedAt: number;
 };
 
+type ServiceHealthResultInput = {
+  targetId: string;
+  success: boolean;
+  latencyMs?: number;
+  statusCode?: number;
+  resolvedValue?: string;
+  error?: string;
+  checkedAt: number;
+};
+
 type TenantUsageHistoryInput = {
   vdcId: string;
   domainId: string;
@@ -537,6 +547,41 @@ function normalizePingResult(value: unknown): PingResultInput {
   };
 }
 
+function normalizeServiceHealthResult(
+  value: unknown,
+): ServiceHealthResultInput {
+  if (!isRecord(value)) {
+    throw new Error("Each service health result must be an object");
+  }
+
+  const success = value.success;
+  const resolvedValue = value.resolvedValue;
+  const error = value.error;
+  if (typeof success !== "boolean") {
+    throw new Error("success is required");
+  }
+  if (resolvedValue != null && typeof resolvedValue !== "string") {
+    throw new Error("resolvedValue must be a string");
+  }
+  if (error != null && typeof error !== "string") {
+    throw new Error("error must be a string");
+  }
+
+  return {
+    targetId: requireUnknownString(value, "targetId"),
+    success,
+    ...(optionalUnknownNumber(value, "latencyMs") !== undefined
+      ? { latencyMs: optionalUnknownNumber(value, "latencyMs") }
+      : {}),
+    ...(optionalUnknownNumber(value, "statusCode") !== undefined
+      ? { statusCode: optionalUnknownNumber(value, "statusCode") }
+      : {}),
+    ...(resolvedValue != null ? { resolvedValue } : {}),
+    ...(error != null ? { error } : {}),
+    checkedAt: requireUnknownNumber(value, "checkedAt"),
+  };
+}
+
 function normalizeTenantUsageHistory(value: unknown): TenantUsageHistoryInput {
   if (!isRecord(value)) {
     throw new Error("Each tenant usage history row must be an object");
@@ -853,6 +898,67 @@ http.route({
       const count = await ctx.runMutation(
         internal.cloudCapacitySnapshots.append,
         { snapshots },
+      );
+
+      return Response.json({ success: true, count });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/service-health-targets/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "CLOUD_HEALTH_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    const targets = await ctx.runQuery(
+      internal.serviceHealthTargets.listActiveForSync,
+      {},
+    );
+    return Response.json({ success: true, targets });
+  }),
+});
+
+http.route({
+  path: "/service-health-results/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "CLOUD_HEALTH_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json();
+      if (!Array.isArray(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an array" },
+          { status: 400 },
+        );
+      }
+
+      const results = body.map(normalizeServiceHealthResult).map((result) => ({
+        ...result,
+        targetId: result.targetId as Id<"serviceHealthTargets">,
+      }));
+      const count = await ctx.runMutation(
+        internal.serviceHealthResults.bulkInsert,
+        { results },
       );
 
       return Response.json({ success: true, count });

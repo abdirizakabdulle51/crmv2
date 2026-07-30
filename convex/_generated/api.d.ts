@@ -31,6 +31,8 @@ import type * as regionConsumers from "../regionConsumers.js";
 import type * as salesTargets from "../salesTargets.js";
 import type * as sectors from "../sectors.js";
 import type * as serviceCatalog from "../serviceCatalog.js";
+import type * as serviceHealthResults from "../serviceHealthResults.js";
+import type * as serviceHealthTargets from "../serviceHealthTargets.js";
 import type * as snapshotImport from "../snapshotImport.js";
 import type * as tenantUsageHistory from "../tenantUsageHistory.js";
 import type * as users from "../users.js";
@@ -65,6 +67,8 @@ declare const fullApi: ApiFromModules<{
   salesTargets: typeof salesTargets;
   sectors: typeof sectors;
   serviceCatalog: typeof serviceCatalog;
+  serviceHealthResults: typeof serviceHealthResults;
+  serviceHealthTargets: typeof serviceHealthTargets;
   snapshotImport: typeof snapshotImport;
   tenantUsageHistory: typeof tenantUsageHistory;
   users: typeof users;

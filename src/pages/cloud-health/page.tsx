@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import {
   Activity,
+  Globe2,
   Pause,
   Play,
   Plus,
@@ -32,6 +33,13 @@ import {
 } from "@/components/ui/card.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 import { toast } from "sonner";
@@ -42,6 +50,14 @@ function canViewCloudHealth(role: string | undefined) {
 
 function canManagePingTargets(role: string | undefined) {
   return role === "ceo" || role === "head_of_business";
+}
+
+type ServiceCheckType = "http" | "tcp" | "dns";
+
+function formatCheckType(checkType: ServiceCheckType) {
+  if (checkType === "http") return "HTTP";
+  if (checkType === "tcp") return "TCP";
+  return "DNS";
 }
 
 function statusColor(percent: number) {
@@ -132,11 +148,33 @@ export default function CloudHealthPage() {
   const createTarget = useMutation(api.pingTargets.create);
   const setActive = useMutation(api.pingTargets.setActive);
   const removeTarget = useMutation(api.pingTargets.remove);
+  const serviceTargets = useQuery(
+    api.serviceHealthTargets.list,
+    canView ? {} : "skip",
+  );
+  const serviceStatuses = useQuery(
+    api.serviceHealthResults.latestStatusByTarget,
+    canView ? {} : "skip",
+  );
+  const createServiceTarget = useMutation(api.serviceHealthTargets.create);
+  const setServiceTargetActive = useMutation(
+    api.serviceHealthTargets.setActive,
+  );
 
   const [name, setName] = useState("");
   const [ip, setIp] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [serviceName, setServiceName] = useState("");
+  const [serviceCheckType, setServiceCheckType] =
+    useState<ServiceCheckType>("http");
+  const [serviceTargetValue, setServiceTargetValue] = useState("");
+  const [expectedStatusCode, setExpectedStatusCode] = useState("");
+  const [expectedResponseContains, setExpectedResponseContains] = useState("");
+  const [expectedIp, setExpectedIp] = useState("");
+  const [serviceNotes, setServiceNotes] = useState("");
+  const [serviceSubmitting, setServiceSubmitting] = useState(false);
+  const [selectedServiceTargetId, setSelectedServiceTargetId] = useState("");
   const [hiddenLatencyTargetIds, setHiddenLatencyTargetIds] = useState<
     Set<string>
   >(new Set());
@@ -156,6 +194,45 @@ export default function CloudHealthPage() {
     [latencyHistory],
   );
   const latencyTargets = latencyHistory?.targets ?? [];
+  const serviceHistory = useQuery(
+    api.serviceHealthResults.recentHistory,
+    canView && selectedServiceTargetId
+      ? {
+          targetId: selectedServiceTargetId as Id<"serviceHealthTargets">,
+          limit: 100,
+        }
+      : "skip",
+  );
+  const serviceChartData = useMemo(
+    () =>
+      (serviceHistory ?? [])
+        .slice()
+        .reverse()
+        .map((result) => ({
+          ...result,
+          latency: result.success ? (result.latencyMs ?? null) : null,
+          time: new Intl.DateTimeFormat("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }).format(new Date(result.checkedAt)),
+        })),
+    [serviceHistory],
+  );
+
+  useEffect(() => {
+    if (!serviceTargets) {
+      return;
+    }
+
+    if (
+      selectedServiceTargetId &&
+      serviceTargets.some((target) => target._id === selectedServiceTargetId)
+    ) {
+      return;
+    }
+
+    setSelectedServiceTargetId(serviceTargets[0]?._id ?? "");
+  }, [selectedServiceTargetId, serviceTargets]);
 
   if (!canView) {
     return (
@@ -172,7 +249,13 @@ export default function CloudHealthPage() {
     );
   }
 
-  if (!capacity || !targets || !statuses) {
+  if (
+    !capacity ||
+    !targets ||
+    !statuses ||
+    !serviceTargets ||
+    !serviceStatuses
+  ) {
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-8 w-48" />
@@ -243,6 +326,77 @@ export default function CloudHealthPage() {
       });
     } catch (error) {
       toast.error("Failed to delete ping target", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    }
+  };
+
+  const handleCreateServiceTarget = async () => {
+    if (!serviceName.trim() || !serviceTargetValue.trim()) {
+      toast.error("Name and target are required");
+      return;
+    }
+
+    const parsedStatusCode = expectedStatusCode.trim()
+      ? Number(expectedStatusCode)
+      : undefined;
+    if (
+      serviceCheckType === "http" &&
+      parsedStatusCode !== undefined &&
+      (!Number.isFinite(parsedStatusCode) || parsedStatusCode <= 0)
+    ) {
+      toast.error("Expected status code must be a positive number");
+      return;
+    }
+
+    setServiceSubmitting(true);
+    try {
+      await createServiceTarget({
+        name: serviceName.trim(),
+        checkType: serviceCheckType,
+        target: serviceTargetValue.trim(),
+        ...(serviceCheckType === "http" && parsedStatusCode !== undefined
+          ? { expectedStatusCode: parsedStatusCode }
+          : {}),
+        ...(serviceCheckType === "http" && expectedResponseContains.trim()
+          ? { expectedResponseContains: expectedResponseContains.trim() }
+          : {}),
+        ...(serviceCheckType === "dns" && expectedIp.trim()
+          ? { expectedIp: expectedIp.trim() }
+          : {}),
+        notes: serviceNotes.trim() || undefined,
+      });
+      setServiceName("");
+      setServiceTargetValue("");
+      setExpectedStatusCode("");
+      setExpectedResponseContains("");
+      setExpectedIp("");
+      setServiceNotes("");
+      toast.success("Service health target added");
+    } catch (error) {
+      toast.error("Failed to add service health target", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setServiceSubmitting(false);
+    }
+  };
+
+  const handleSetServiceTargetActive = async (
+    targetId: Id<"serviceHealthTargets">,
+    active: boolean,
+  ) => {
+    try {
+      await setServiceTargetActive({ targetId, active });
+      toast.success(
+        active
+          ? "Service health target resumed"
+          : "Service health target paused",
+      );
+    } catch (error) {
+      toast.error("Failed to update service health target", {
         description:
           error instanceof Error ? error.message : "Please try again",
       });
@@ -535,6 +689,283 @@ export default function CloudHealthPage() {
                     {latencyTargets.length > 0
                       ? "No recent ping history yet."
                       : "No active ping targets to chart."}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Globe2 className="h-4 w-4 text-primary" />
+              Service &amp; DNS Health
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {serviceStatuses.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                No service health targets configured yet.
+              </div>
+            ) : (
+              serviceStatuses.map((status) => (
+                <div
+                  key={status.target._id}
+                  className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={`mt-1 h-3 w-3 rounded-full ${
+                        status.latest?.success ? "bg-emerald-500" : "bg-red-500"
+                      }`}
+                    />
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">
+                          {status.target.name}
+                        </span>
+                        <Badge variant="secondary">
+                          {formatCheckType(status.target.checkType)}
+                        </Badge>
+                        <Badge
+                          variant={
+                            status.target.active ? "default" : "secondary"
+                          }
+                        >
+                          {status.target.active ? "Active" : "Paused"}
+                        </Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {status.target.target} Â· Last checked{" "}
+                        {formatDateTime(status.latest?.checkedAt)}
+                      </div>
+                      {status.latest?.resolvedValue ? (
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {status.latest.resolvedValue}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm">
+                    <div>
+                      <div className="font-semibold">
+                        {status.latest?.success
+                          ? formatNumber(status.latest.latencyMs, " ms")
+                          : "Down"}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Latest latency
+                      </div>
+                    </div>
+                    <div>
+                      <div className="font-semibold">
+                        {status.uptime24hPercent == null
+                          ? "-"
+                          : `${status.uptime24hPercent}%`}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        24h uptime
+                      </div>
+                    </div>
+                    {canManage ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleSetServiceTargetActive(
+                            status.target._id,
+                            !status.target.active,
+                          )
+                        }
+                      >
+                        {status.target.active ? (
+                          <Pause className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Play className="mr-2 h-4 w-4" />
+                        )}
+                        {status.target.active ? "Pause" : "Resume"}
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="space-y-4">
+          {canManage ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Add Service Health Target
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="service-target-name">Name</Label>
+                  <Input
+                    id="service-target-name"
+                    value={serviceName}
+                    onChange={(event) => setServiceName(event.target.value)}
+                    placeholder="CRM API"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Check Type</Label>
+                  <Select
+                    value={serviceCheckType}
+                    onValueChange={(value) =>
+                      setServiceCheckType(value as ServiceCheckType)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="http">HTTP</SelectItem>
+                      <SelectItem value="tcp">TCP</SelectItem>
+                      <SelectItem value="dns">DNS</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="service-target-value">Target</Label>
+                  <Input
+                    id="service-target-value"
+                    value={serviceTargetValue}
+                    onChange={(event) =>
+                      setServiceTargetValue(event.target.value)
+                    }
+                    placeholder={
+                      serviceCheckType === "http"
+                        ? "https://crm-api.example.com"
+                        : serviceCheckType === "tcp"
+                          ? "crm-api.example.com:443"
+                          : "crm.example.com"
+                    }
+                  />
+                </div>
+                {serviceCheckType === "http" ? (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="expected-status-code">
+                        Expected Status Code
+                      </Label>
+                      <Input
+                        id="expected-status-code"
+                        type="number"
+                        value={expectedStatusCode}
+                        onChange={(event) =>
+                          setExpectedStatusCode(event.target.value)
+                        }
+                        placeholder="200"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="expected-response">
+                        Expected Response Contains
+                      </Label>
+                      <Input
+                        id="expected-response"
+                        value={expectedResponseContains}
+                        onChange={(event) =>
+                          setExpectedResponseContains(event.target.value)
+                        }
+                        placeholder="Optional"
+                      />
+                    </div>
+                  </>
+                ) : null}
+                {serviceCheckType === "dns" ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="expected-ip">Expected IP</Label>
+                    <Input
+                      id="expected-ip"
+                      value={expectedIp}
+                      onChange={(event) => setExpectedIp(event.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+                ) : null}
+                <div className="space-y-1.5">
+                  <Label htmlFor="service-notes">Notes</Label>
+                  <Input
+                    id="service-notes"
+                    value={serviceNotes}
+                    onChange={(event) => setServiceNotes(event.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+                <Button
+                  className="w-full"
+                  onClick={handleCreateServiceTarget}
+                  disabled={serviceSubmitting}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Service Target
+                </Button>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Service Latency Trend</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Select
+                value={selectedServiceTargetId}
+                onValueChange={setSelectedServiceTargetId}
+                disabled={serviceTargets.length === 0}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select service target" />
+                </SelectTrigger>
+                <SelectContent>
+                  {serviceTargets.map((target) => (
+                    <SelectItem key={target._id} value={target._id}>
+                      {target.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="h-64">
+                {selectedServiceTargetId && serviceChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={serviceChartData}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        className="opacity-30"
+                      />
+                      <XAxis dataKey="time" className="text-xs" />
+                      <YAxis className="text-xs" unit=" ms" />
+                      <Tooltip
+                        labelFormatter={(_, payload) =>
+                          payload?.[0]?.payload?.checkedAt
+                            ? formatDateTime(payload[0].payload.checkedAt)
+                            : ""
+                        }
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="latency"
+                        name="Latency"
+                        stroke="#0d9488"
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="grid h-full place-items-center rounded-lg border text-sm text-muted-foreground">
+                    {selectedServiceTargetId
+                      ? "No recent service health history yet."
+                      : "No service health target selected."}
                   </div>
                 )}
               </div>

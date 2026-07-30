@@ -327,6 +327,128 @@ describe("Cloud Health", () => {
     expect(history).toHaveLength(0);
   });
 
+  it("allows admins to manage service health targets and exposes active targets internally", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+
+    await expect(
+      asUser(t, users.gm).mutation(api.serviceHealthTargets.create, {
+        name: "GM Service",
+        checkType: "http",
+        target: "https://crm.example.com",
+      }),
+    ).rejects.toThrow(/manage service health targets/);
+
+    const targetId = await asUser(t, users.hob).mutation(
+      api.serviceHealthTargets.create,
+      {
+        name: "CRM API",
+        checkType: "http",
+        target: "https://crm-api.example.com/health",
+        expectedStatusCode: 200,
+        expectedResponseContains: "ok",
+        notes: "Synthetic HTTP check",
+      },
+    );
+    let activeTargets = await t.query(
+      internal.serviceHealthTargets.listActiveForSync,
+      {},
+    );
+    expect(activeTargets).toHaveLength(1);
+    expect(activeTargets[0]).toMatchObject({
+      _id: targetId,
+      name: "CRM API",
+      checkType: "http",
+      active: true,
+      expectedStatusCode: 200,
+    });
+
+    const listedTargets = await asUser(t, users.gm).query(
+      api.serviceHealthTargets.list,
+      {},
+    );
+    expect(listedTargets[0]).toMatchObject({
+      _id: targetId,
+      target: "https://crm-api.example.com/health",
+    });
+
+    await asUser(t, users.ceo).mutation(api.serviceHealthTargets.setActive, {
+      targetId,
+      active: false,
+    });
+    activeTargets = await t.query(
+      internal.serviceHealthTargets.listActiveForSync,
+      {},
+    );
+    expect(activeTargets).toHaveLength(0);
+  });
+
+  it("appends service health results and computes latest status plus 24h uptime", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+    const targetId = await asUser(t, users.ceo).mutation(
+      api.serviceHealthTargets.create,
+      {
+        name: "CRM DNS",
+        checkType: "dns",
+        target: "crm.example.com",
+        expectedIp: "203.0.113.10",
+      },
+    );
+    const now = Date.now();
+
+    const inserted = await t.mutation(
+      internal.serviceHealthResults.bulkInsert,
+      {
+        results: [
+          {
+            targetId,
+            success: true,
+            latencyMs: 20,
+            resolvedValue: "203.0.113.10",
+            checkedAt: now - 60_000,
+          },
+          {
+            targetId,
+            success: false,
+            statusCode: 503,
+            error: "unexpected DNS answer",
+            checkedAt: now,
+          },
+        ],
+      },
+    );
+    expect(inserted).toBe(2);
+
+    const statuses = await asUser(t, users.gm).query(
+      api.serviceHealthResults.latestStatusByTarget,
+      {},
+    );
+    expect(statuses[0]).toMatchObject({
+      latest: {
+        success: false,
+        statusCode: 503,
+        error: "unexpected DNS answer",
+      },
+      uptime24hPercent: 50,
+      samples24h: 2,
+    });
+
+    const history = await asUser(t, users.gm).query(
+      api.serviceHealthResults.recentHistory,
+      { targetId, limit: 1 },
+    );
+    expect(history).toHaveLength(1);
+    expect(history[0].success).toBe(false);
+
+    await expect(
+      asUser(t, users.am).query(
+        api.serviceHealthResults.latestStatusByTarget,
+        {},
+      ),
+    ).rejects.toThrow(/Cloud Health/);
+  });
+
   it("appends capacity snapshots and returns region history to allowed roles only", async () => {
     const t = convexTest(schema, modules);
     const users = await seedUsers(t);
