@@ -1,9 +1,23 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
-import type { Doc } from "@/convex/_generated/dataModel.d.ts";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
-import { Building2, Users, TrendingUp, Target } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  AlertTriangle,
+  Brain,
+  Building2,
+  Cloud,
+  DollarSign,
+  FileText,
+  Target,
+  TrendingUp,
+  Users,
+} from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import {
   Select,
   SelectContent,
@@ -11,7 +25,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select.tsx";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   BarChart,
   Bar,
@@ -44,86 +59,94 @@ function tooltipFormatter(value: unknown): string {
   return formatCurrency(Number(value));
 }
 
-function amLabelFormatter(label: unknown, amChartData: { name: string; fullName: string }[]): string {
+function amLabelFormatter(
+  label: unknown,
+  amChartData: { name: string; fullName: string }[],
+): string {
   const item = amChartData.find((d) => d.name === String(label));
   return item?.fullName || String(label);
 }
 
+function ClickableCard({
+  children,
+  onClick,
+  className = "",
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <Card
+      role="link"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+      className={`cursor-pointer transition-colors hover:border-primary/60 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
+    >
+      {children}
+    </Card>
+  );
+}
+
+function MetricCard({
+  title,
+  value,
+  subtitle,
+  icon,
+  onClick,
+}: {
+  title: string;
+  value: ReactNode;
+  subtitle: ReactNode;
+  icon: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <ClickableCard onClick={onClick}>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">
+          {title}
+        </CardTitle>
+        {icon}
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">{value}</div>
+        <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
+      </CardContent>
+    </ClickableCard>
+  );
+}
+
+function stageLabel(stage: string) {
+  return stage
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export default function DashboardPage() {
   const { currentUser } = useCrm();
-  const companies = useQuery(api.companies.list, {});
-  const users = useQuery(api.users.listAll, {});
-  const leads = useQuery(api.leads.list, {});
-  const countries = useQuery(api.countries.list, {});
+  const navigate = useNavigate();
   const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
-  const targets = useQuery(api.salesTargets.getByYear, { year: selectedYear });
+  const summary = useQuery(api.dashboard.summary, { year: selectedYear });
+  const isLoading = summary === undefined;
 
-  const activeCompanies = companies?.filter(
-    (c) => c.contractStatus === "active",
-  ).length;
-
-  const activeLeads = leads?.filter(
-    (l) => l.stage !== "won" && l.stage !== "lost",
-  ).length;
-
-  const wonLeads = leads?.filter((l) => l.stage === "won") || [];
-  const totalWonValue = wonLeads.reduce((s: number, l) => s + l.potentialValue, 0);
-
-  const isLoading = !companies || !users || !leads || !targets || !countries;
-
-  // Compute per-AM target vs achieved data
-  const accountManagers = users?.filter(
-    (u) =>
-      u.role === "account_manager" ||
-      u.role === "country_gm" ||
-      u.role === "head_of_business" ||
-      u.role === "ceo",
-  ) || [];
-
-  const amChartData = accountManagers.map((am) => {
-    const amTargets = targets?.filter((t: Doc<"salesTargets">) => t.accountManagerId === am._id) || [];
-    const totalTarget = amTargets.reduce((s: number, t: Doc<"salesTargets">) => s + t.target, 0);
-    const amWonLeads = wonLeads.filter((l) => l.accountManagerId === am._id);
-    const achieved = amWonLeads.reduce((s: number, l) => s + l.potentialValue, 0);
-    return {
-      name: am.name?.split(" ")[0] || "Unknown",
-      fullName: am.name || "Unknown",
-      target: totalTarget,
-      achieved,
-      percentage: totalTarget > 0 ? Math.round((achieved / totalTarget) * 100) : 0,
-    };
-  });
-
-  // Compute per-country data
-  const countryChartData = (countries || []).map((country) => {
-    const countryAms = accountManagers.filter((am) => am.countryId === country._id);
-    const amIds = new Set(countryAms.map((am) => am._id));
-
-    const countryTargets = targets?.filter(
-      (t: Doc<"salesTargets">) =>
-        t.accountManagerId !== undefined && amIds.has(t.accountManagerId),
-    ) || [];
-    const totalTarget = countryTargets.reduce((s: number, t: Doc<"salesTargets">) => s + t.target, 0);
-    const countryWon = wonLeads.filter(
-      (l) => l.accountManagerId !== undefined && amIds.has(l.accountManagerId),
-    );
-    const achieved = countryWon.reduce((s: number, l) => s + l.potentialValue, 0);
-
-    return {
-      name: country.name,
-      target: totalTarget,
-      achieved,
-      percentage: totalTarget > 0 ? Math.round((achieved / totalTarget) * 100) : 0,
-    };
-  }).filter((d) => d.target > 0 || d.achieved > 0);
-
-  // Company-wide totals
-  const companyWideTarget = targets?.reduce((s: number, t: Doc<"salesTargets">) => s + t.target, 0) || 0;
-  const companyWideAchieved = totalWonValue;
-  const companyWidePercentage =
-    companyWideTarget > 0
-      ? Math.round((companyWideAchieved / companyWideTarget) * 100)
-      : 0;
+  const amChartData = summary?.charts.accountManagers ?? [];
+  const countryChartData = summary?.charts.countries ?? [];
+  const companyWideTarget = summary?.targets.target ?? 0;
+  const companyWideAchieved = summary?.targets.achieved ?? 0;
+  const companyWidePercentage = summary?.targets.achievementPercent ?? 0;
+  const pipelineStageCounts = (summary?.pipeline.stageCounts ??
+    {}) as Record<string, number>;
+  const openPipelineStages = Object.entries(pipelineStageCounts).filter(
+    ([stage]) => stage !== "won" && stage !== "lost",
+  );
 
   return (
     <div className="p-6 md:p-8 space-y-8">
@@ -133,7 +156,7 @@ export default function DashboardPage() {
             Welcome back, {currentUser?.name || "User"}
           </h1>
           <p className="text-muted-foreground mt-1">
-            {getRoleLabel(currentUser?.role)} — HTGCLOUDS CRM Overview
+            {getRoleLabel(currentUser?.role)} - HTGCLOUDS CRM Overview
           </p>
         </div>
         <Select
@@ -153,77 +176,115 @@ export default function DashboardPage() {
         </Select>
       </div>
 
-      {/* Summary Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Companies
-            </CardTitle>
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {companies?.length ?? "—"}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {activeCompanies ?? 0} active contracts
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Active Leads
-            </CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{activeLeads ?? "—"}</div>
-            <p className="text-xs text-muted-foreground mt-1">In pipeline</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Won Deals
-            </CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{wonLeads.length}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {formatCurrency(totalWonValue)} total
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Target Achievement
-            </CardTitle>
-            <Target className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {companyWideTarget > 0 ? `${companyWidePercentage}%` : "—"}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {formatCurrency(companyWideAchieved)} / {formatCurrency(companyWideTarget)}
-            </p>
-          </CardContent>
-        </Card>
+        <MetricCard
+          title="Companies"
+          value={summary?.companies.total ?? "-"}
+          subtitle={`${summary?.companies.activeContracts ?? 0} active contracts`}
+          icon={<Building2 className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/companies")}
+        />
+        <MetricCard
+          title="Active Leads"
+          value={summary?.leads.active ?? "-"}
+          subtitle="In pipeline"
+          icon={<TrendingUp className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/pipeline")}
+        />
+        <MetricCard
+          title="Won Deals"
+          value={summary?.leads.won ?? "-"}
+          subtitle={`${formatCurrency(summary?.leads.wonValue ?? 0)} total`}
+          icon={<Users className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/pipeline")}
+        />
+        <MetricCard
+          title="Target Achievement"
+          value={companyWideTarget > 0 ? `${companyWidePercentage}%` : "-"}
+          subtitle={`${formatCurrency(companyWideAchieved)} / ${formatCurrency(companyWideTarget)}`}
+          icon={<Target className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/targets")}
+        />
       </div>
 
-      {/* Company-wide progress */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <MetricCard
+          title="Pipeline Value"
+          value={formatCurrency(summary?.pipeline.value ?? 0)}
+          subtitle={`${summary?.leads.active ?? 0} active leads across ${openPipelineStages.length} open stages`}
+          icon={<TrendingUp className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/pipeline")}
+        />
+        <MetricCard
+          title="Usage This Month"
+          value={formatCurrency(summary?.usage.total ?? 0)}
+          subtitle={`${summary?.usage.entries ?? 0} entries across ${summary?.usage.companiesWithUsage ?? 0} companies`}
+          icon={<DollarSign className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/usage")}
+        />
+        <MetricCard
+          title="Quotes"
+          value={summary?.quotes.total ?? "-"}
+          subtitle={`${summary?.quotes.draft ?? 0} draft, ${summary?.quotes.sent ?? 0} sent, ${summary?.quotes.accepted ?? 0} accepted`}
+          icon={<FileText className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/quotes")}
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <MetricCard
+          title="AI Opportunities"
+          value={summary?.aiRecommendations.openOpportunityCount ?? "-"}
+          subtitle={`${formatCurrency(summary?.aiRecommendations.estimatedMonthlyValue ?? 0)} estimated monthly value`}
+          icon={<Brain className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/recommendations")}
+        />
+        <MetricCard
+          title="At-Risk Companies"
+          value={summary?.atRisk.count ?? "-"}
+          subtitle="Strict 3-month usage decline"
+          icon={<AlertTriangle className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/at-risk")}
+        />
+        {summary?.cloudHealth && (
+          <MetricCard
+            title="Cloud Health"
+            value={`${summary.cloudHealth.upPingTargets}/${summary.cloudHealth.activePingTargets}`}
+            subtitle={`${summary.cloudHealth.healthyRegions}/${summary.cloudHealth.regions} healthy regions, ${summary.cloudHealth.downPingTargets} targets down`}
+            icon={<Cloud className="h-4 w-4 text-muted-foreground" />}
+            onClick={() => navigate("/cloud-health")}
+          />
+        )}
+      </div>
+
+      {Object.keys(pipelineStageCounts).length > 0 && (
+        <ClickableCard onClick={() => navigate("/pipeline")}>
+          <CardHeader>
+            <CardTitle className="text-base">Pipeline Stage Summary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+              {Object.entries(pipelineStageCounts).map(([stage, count]) => (
+                <div
+                  key={stage}
+                  className="rounded-md border bg-background/50 p-3"
+                >
+                  <p className="text-xs text-muted-foreground">
+                    {stageLabel(stage)}
+                  </p>
+                  <p className="mt-1 text-xl font-semibold">{count}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </ClickableCard>
+      )}
+
       {companyWideTarget > 0 && (
-        <Card>
+        <ClickableCard onClick={() => navigate("/targets")}>
           <CardHeader>
             <CardTitle className="text-base">
-              Company-Wide Target Progress — {selectedYear}
+              Company-Wide Target Progress - {selectedYear}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -249,57 +310,64 @@ export default function DashboardPage() {
               </p>
             </div>
           </CardContent>
-        </Card>
+        </ClickableCard>
       )}
 
-      {/* Per Account Manager Chart */}
-      {!isLoading && amChartData.length > 0 && amChartData.some((d) => d.target > 0) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              Target vs Achieved — Per Account Manager
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={amChartData.filter((d) => d.target > 0 || d.achieved > 0)}
-                  margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="name" className="text-xs" />
-                  <YAxis tickFormatter={formatCompact} className="text-xs" />
-                  <Tooltip
-                    formatter={tooltipFormatter}
-                    labelFormatter={(label) => amLabelFormatter(label, amChartData)}
-                  />
-                  <Legend />
-                  <Bar
-                    dataKey="target"
-                    name="Target"
-                    fill="oklch(0.7 0.1 260)"
-                    radius={[4, 4, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="achieved"
-                    name="Achieved"
-                    fill="oklch(0.6 0.2 260)"
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {!isLoading &&
+        amChartData.length > 0 &&
+        amChartData.some((d) => d.target > 0) && (
+          <ClickableCard onClick={() => navigate("/performance")}>
+            <CardHeader>
+              <CardTitle className="text-base">
+                Target vs Achieved - Per Account Manager
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={amChartData.filter(
+                      (d) => d.target > 0 || d.achieved > 0,
+                    )}
+                    margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      className="opacity-30"
+                    />
+                    <XAxis dataKey="name" className="text-xs" />
+                    <YAxis tickFormatter={formatCompact} className="text-xs" />
+                    <Tooltip
+                      formatter={tooltipFormatter}
+                      labelFormatter={(label) =>
+                        amLabelFormatter(label, amChartData)
+                      }
+                    />
+                    <Legend />
+                    <Bar
+                      dataKey="target"
+                      name="Target"
+                      fill="oklch(0.7 0.1 260)"
+                      radius={[4, 4, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="achieved"
+                      name="Achieved"
+                      fill="oklch(0.6 0.2 260)"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </ClickableCard>
+        )}
 
-      {/* Per Country Chart */}
       {!isLoading && countryChartData.length > 0 && (
-        <Card>
+        <ClickableCard onClick={() => navigate("/performance")}>
           <CardHeader>
             <CardTitle className="text-base">
-              Target vs Achieved — Per Country
+              Target vs Achieved - Per Country
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -330,15 +398,14 @@ export default function DashboardPage() {
               </ResponsiveContainer>
             </div>
           </CardContent>
-        </Card>
+        </ClickableCard>
       )}
 
-      {/* Per AM progress bars */}
       {!isLoading && amChartData.some((d) => d.target > 0) && (
-        <Card>
+        <ClickableCard onClick={() => navigate("/performance")}>
           <CardHeader>
             <CardTitle className="text-base">
-              Individual Progress — {selectedYear}
+              Individual Progress - {selectedYear}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -350,7 +417,7 @@ export default function DashboardPage() {
                   <div className="flex justify-between text-sm">
                     <span className="font-medium">{am.fullName}</span>
                     <span className="text-muted-foreground">
-                      {am.percentage}% — {formatCurrency(am.achieved)} /{" "}
+                      {am.percentage}% - {formatCurrency(am.achieved)} /{" "}
                       {formatCurrency(am.target)}
                     </span>
                   </div>
@@ -365,7 +432,7 @@ export default function DashboardPage() {
                 </div>
               ))}
           </CardContent>
-        </Card>
+        </ClickableCard>
       )}
     </div>
   );
