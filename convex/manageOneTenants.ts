@@ -543,6 +543,8 @@ export const bulkUpsert = internalMutation({
         managerName: v.optional(v.string()),
         managerPhone: v.optional(v.string()),
         managerEmail: v.optional(v.string()),
+        regionId: v.optional(v.string()),
+        regionName: v.optional(v.string()),
         ecsUsed: v.optional(v.number()),
         evsUsed: v.optional(v.number()),
         projectCount: v.optional(v.number()),

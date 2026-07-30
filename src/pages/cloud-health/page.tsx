@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useNavigate } from "react-router-dom";
 import {
   CartesianGrid,
   Legend,
@@ -78,16 +79,22 @@ function RingGauge({
   percent,
   detail,
   oversubscriptionRatio,
+  onClick,
 }: {
   label: string;
   percent: number;
   detail: string;
   oversubscriptionRatio?: number;
+  onClick?: () => void;
 }) {
   const color = statusColor(percent);
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border p-3">
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary/60 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
       <div
         className="grid h-20 w-20 shrink-0 place-items-center rounded-full"
         style={{
@@ -107,12 +114,13 @@ function RingGauge({
           </div>
         ) : null}
       </div>
-    </div>
+    </button>
   );
 }
 
 export default function CloudHealthPage() {
   const { currentUser } = useCrm();
+  const navigate = useNavigate();
   const canView = canViewCloudHealth(currentUser?.role);
   const canManage = canManagePingTargets(currentUser?.role);
   const capacity = useQuery(api.cloudCapacity.list, canView ? {} : "skip");
@@ -279,18 +287,33 @@ export default function CloudHealthPage() {
                     percent={region.cpuUsedPercent}
                     detail={`${formatNumber(region.cpuUsed)} / ${formatNumber(region.cpuTotal)} cores`}
                     oversubscriptionRatio={region.cpuOversubscriptionRatio}
+                    onClick={() =>
+                      navigate(
+                        `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
+                      )
+                    }
                   />
                   <RingGauge
                     label="Memory"
                     percent={region.memoryUsedPercent}
                     detail={`${formatNumber(region.memoryUsedGb, " GB")} / ${formatNumber(region.memoryTotalGb, " GB")}`}
                     oversubscriptionRatio={region.memoryOversubscriptionRatio}
+                    onClick={() =>
+                      navigate(
+                        `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
+                      )
+                    }
                   />
                   <RingGauge
                     label="Storage"
                     percent={region.storageUsedPercent}
                     detail={`${formatNumber(region.storageUsedGb, " GB")} / ${formatNumber(region.storageTotalGb, " GB")}`}
                     oversubscriptionRatio={region.storageOversubscriptionRatio}
+                    onClick={() =>
+                      navigate(
+                        `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
+                      )
+                    }
                   />
                 </CardContent>
               </Card>

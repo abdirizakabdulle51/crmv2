@@ -18,6 +18,8 @@ type ManageOneTenantInput = {
   managerName?: string;
   managerPhone?: string;
   managerEmail?: string;
+  regionId?: string;
+  regionName?: string;
   ecsUsed?: number;
   evsUsed?: number;
   projectCount?: number;
@@ -71,6 +73,10 @@ type CloudCapacityRegionInput = {
   storageOversubscriptionRatio?: number;
 };
 
+type CloudCapacitySnapshotInput = CloudCapacityRegionInput & {
+  snapshotAt: number;
+};
+
 type PingResultInput = {
   targetId: string;
   success: boolean;
@@ -113,7 +119,13 @@ function optionalString(
   tenant: Record<string, unknown>,
   key: keyof Pick<
     ManageOneTenantInput,
-    "domainId" | "upperVdcId" | "managerName" | "managerPhone" | "managerEmail"
+    | "domainId"
+    | "upperVdcId"
+    | "managerName"
+    | "managerPhone"
+    | "managerEmail"
+    | "regionId"
+    | "regionName"
   >,
 ) {
   const value = tenant[key];
@@ -310,6 +322,12 @@ function normalizeTenant(value: unknown): ManageOneTenantInput {
     ...(optionalString(value, "managerEmail") !== undefined
       ? { managerEmail: optionalString(value, "managerEmail") }
       : {}),
+    ...(optionalString(value, "regionId") !== undefined
+      ? { regionId: optionalString(value, "regionId") }
+      : {}),
+    ...(optionalString(value, "regionName") !== undefined
+      ? { regionName: optionalString(value, "regionName") }
+      : {}),
     ...(optionalNumber(value, "ecsUsed") !== undefined
       ? { ecsUsed: optionalNumber(value, "ecsUsed") }
       : {}),
@@ -478,6 +496,19 @@ function normalizeCloudCapacityRegion(
           ),
         }
       : {}),
+  };
+}
+
+function normalizeCloudCapacitySnapshot(
+  value: unknown,
+): CloudCapacitySnapshotInput {
+  if (!isRecord(value)) {
+    throw new Error("Each capacity snapshot must be an object");
+  }
+
+  return {
+    ...normalizeCloudCapacityRegion(value),
+    snapshotAt: requireUnknownNumber(value, "snapshotAt"),
   };
 }
 
@@ -786,6 +817,45 @@ http.route({
         inserted: summary.inserted,
         skippedNoLinkedCompany: summary.skippedNoLinkedCompany,
       });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/cloud-capacity/snapshot",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "CLOUD_HEALTH_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json();
+      if (!Array.isArray(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an array" },
+          { status: 400 },
+        );
+      }
+
+      const snapshots = body.map(normalizeCloudCapacitySnapshot);
+      const count = await ctx.runMutation(
+        internal.cloudCapacitySnapshots.append,
+        { snapshots },
+      );
+
+      return Response.json({ success: true, count });
     } catch (error) {
       return Response.json(
         {

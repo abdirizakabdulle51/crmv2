@@ -21,6 +21,7 @@ import RecommendationsPage from "./pages/recommendations/page.tsx";
 import CoachPage from "./pages/coach/page.tsx";
 import ManageOneTenantsPage from "./pages/manageone-tenants/page.tsx";
 import CloudHealthPage from "./pages/cloud-health/page.tsx";
+import CloudHealthRegionPage from "./pages/cloud-health/region-page.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 export default function App() {
@@ -59,6 +60,10 @@ export default function App() {
               element={<ManageOneTenantsPage />}
             />
             <Route path="/cloud-health" element={<CloudHealthPage />} />
+            <Route
+              path="/cloud-health/regions/:regionId"
+              element={<CloudHealthRegionPage />}
+            />
             <Route path="/team" element={<TeamPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>

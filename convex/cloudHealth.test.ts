@@ -326,4 +326,150 @@ describe("Cloud Health", () => {
     );
     expect(history).toHaveLength(0);
   });
+
+  it("appends capacity snapshots and returns region history to allowed roles only", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+
+    const firstSnapshot = Date.UTC(2026, 6, 29);
+    const secondSnapshot = Date.UTC(2026, 6, 30);
+    const inserted = await t.mutation(internal.cloudCapacitySnapshots.append, {
+      snapshots: [
+        {
+          regionId: "som-1",
+          regionName: "Somalia Region",
+          cpuUsed: 40,
+          cpuTotal: 100,
+          memoryUsedGb: 500,
+          memoryTotalGb: 1000,
+          storageUsedGb: 4000,
+          storageTotalGb: 10000,
+          snapshotAt: secondSnapshot,
+        },
+        {
+          regionId: "som-1",
+          regionName: "Somalia Region",
+          cpuUsed: 30,
+          cpuTotal: 100,
+          memoryUsedGb: 450,
+          memoryTotalGb: 1000,
+          storageUsedGb: 3500,
+          storageTotalGb: 10000,
+          snapshotAt: firstSnapshot,
+        },
+      ],
+    });
+    expect(inserted).toBe(2);
+
+    const history = await asUser(t, users.gm).query(
+      api.cloudCapacitySnapshots.historyForRegion,
+      { regionId: "som-1" },
+    );
+    expect(history.map((snapshot) => snapshot.snapshotAt)).toEqual([
+      firstSnapshot,
+      secondSnapshot,
+    ]);
+
+    await expect(
+      asUser(t, users.am).query(api.cloudCapacitySnapshots.historyForRegion, {
+        regionId: "som-1",
+      }),
+    ).rejects.toThrow(/Cloud Health/);
+  });
+
+  it("stores tenant regions and ranks top regional consumers from tenant flavor and storage fields", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+
+    await t.run(async (ctx) => {
+      const country = await ctx.db.insert("countries", {
+        name: "Kenya",
+        region: "East Africa",
+      });
+      const sector = await ctx.db.insert("sectors", { name: "Telecom" });
+      const companyA = await ctx.db.insert("companies", {
+        name: "AICC",
+        sectorId: sector,
+        countryId: country,
+        contractStatus: "active",
+      });
+      const companyB = await ctx.db.insert("companies", {
+        name: "Safari",
+        sectorId: sector,
+        countryId: country,
+        contractStatus: "active",
+      });
+
+      await ctx.db.insert("manageOneTenants", {
+        vdcId: "aicc-vdc",
+        name: "AICC VDC",
+        regionId: "som-1",
+        regionName: "Somalia Region",
+        linkedCompanyId: companyA,
+        ecsFlavors: [
+          { flavorName: "c6.large.2", vcpus: 4, ramMb: 8192, count: 3 },
+        ],
+        evsVolumeTypes: [{ volumeType: "SSD", totalGb: 5000, count: 12 }],
+        lastSyncedAt: 1,
+      });
+      await ctx.db.insert("manageOneTenants", {
+        vdcId: "safari-vdc",
+        name: "Safari VDC",
+        regionId: "som-1",
+        regionName: "Somalia Region",
+        linkedCompanyId: companyB,
+        ecsFlavors: [
+          { flavorName: "c6.small.2", vcpus: 2, ramMb: 4096, count: 2 },
+        ],
+        resources: [{ serviceId: "evs", resource: "gigabytes", used: 9000 }],
+        lastSyncedAt: 1,
+      });
+    });
+
+    await t.mutation(internal.manageOneTenants.bulkUpsert, {
+      tenants: [
+        {
+          vdcId: "synced-vdc",
+          name: "Synced VDC",
+          regionId: "som-1",
+          regionName: "Somalia Region",
+        },
+      ],
+    });
+
+    const cpuConsumers = await asUser(t, users.ceo).query(
+      api.regionConsumers.topConsumersByRegion,
+      { regionId: "som-1", metric: "cpu" },
+    );
+    expect(cpuConsumers[0]).toMatchObject({
+      tenantName: "AICC VDC",
+      companyName: "AICC",
+      value: 12,
+    });
+
+    const memoryConsumers = await asUser(t, users.ceo).query(
+      api.regionConsumers.topConsumersByRegion,
+      { regionId: "som-1", metric: "memory" },
+    );
+    expect(memoryConsumers[0]).toMatchObject({
+      tenantName: "AICC VDC",
+      value: 24,
+    });
+
+    const storageConsumers = await asUser(t, users.gm).query(
+      api.regionConsumers.topConsumersByRegion,
+      { regionId: "som-1", metric: "storage" },
+    );
+    expect(storageConsumers[0]).toMatchObject({
+      tenantName: "Safari VDC",
+      value: 9000,
+    });
+
+    await expect(
+      asUser(t, users.am).query(api.regionConsumers.topConsumersByRegion, {
+        regionId: "som-1",
+        metric: "cpu",
+      }),
+    ).rejects.toThrow(/Cloud Health/);
+  });
 });

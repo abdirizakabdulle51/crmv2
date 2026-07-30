@@ -107,6 +107,8 @@ export default defineSchema({
     managerName: v.optional(v.string()),
     managerPhone: v.optional(v.string()),
     managerEmail: v.optional(v.string()),
+    regionId: v.optional(v.string()),
+    regionName: v.optional(v.string()),
     ecsUsed: v.optional(v.number()),
     evsUsed: v.optional(v.number()),
     projectCount: v.optional(v.number()),
@@ -143,6 +145,7 @@ export default defineSchema({
     linkedCompanyId: v.optional(v.id("companies")),
   })
     .index("by_vdc_id", ["vdcId"])
+    .index("by_region_id", ["regionId"])
     .index("by_linked_company", ["linkedCompanyId"]),
 
   cloudCapacityRegions: defineTable({
@@ -162,6 +165,24 @@ export default defineSchema({
     storageOversubscriptionRatio: v.optional(v.number()),
     lastSyncedAt: v.number(),
   }).index("by_region_id", ["regionId"]),
+
+  cloudCapacitySnapshots: defineTable({
+    regionId: v.string(),
+    regionName: v.string(),
+    cpuUsed: v.number(),
+    cpuTotal: v.number(),
+    cpuOversubscriptionCapacity: v.optional(v.number()),
+    cpuOversubscriptionRatio: v.optional(v.number()),
+    memoryUsedGb: v.number(),
+    memoryTotalGb: v.number(),
+    memoryOversubscriptionCapacityGb: v.optional(v.number()),
+    memoryOversubscriptionRatio: v.optional(v.number()),
+    storageUsedGb: v.number(),
+    storageTotalGb: v.number(),
+    storageOversubscriptionCapacityGb: v.optional(v.number()),
+    storageOversubscriptionRatio: v.optional(v.number()),
+    snapshotAt: v.number(),
+  }).index("by_region_snapshot_at", ["regionId", "snapshotAt"]),
 
   tenantUsageHistory: defineTable({
     linkedCompanyId: v.id("companies"),
