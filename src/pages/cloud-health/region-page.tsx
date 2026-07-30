@@ -120,27 +120,26 @@ export default function CloudHealthRegionPage() {
     api.cloudCapacitySnapshots.historyForRegion,
     canView && decodedRegionId ? { regionId: decodedRegionId } : "skip",
   );
+  const region = capacity?.find(
+    (capacityRegion) => capacityRegion.regionId === decodedRegionId,
+  );
+  const consumerQueryArgs =
+    canView && region?.regionName
+      ? { regionName: region.regionName }
+      : canView && decodedRegionId
+        ? { regionId: decodedRegionId }
+        : null;
   const cpuConsumers = useQuery(
     api.regionConsumers.topConsumersByRegion,
-    canView && decodedRegionId
-      ? { regionId: decodedRegionId, metric: "cpu" }
-      : "skip",
+    consumerQueryArgs ? { ...consumerQueryArgs, metric: "cpu" } : "skip",
   );
   const memoryConsumers = useQuery(
     api.regionConsumers.topConsumersByRegion,
-    canView && decodedRegionId
-      ? { regionId: decodedRegionId, metric: "memory" }
-      : "skip",
+    consumerQueryArgs ? { ...consumerQueryArgs, metric: "memory" } : "skip",
   );
   const storageConsumers = useQuery(
     api.regionConsumers.topConsumersByRegion,
-    canView && decodedRegionId
-      ? { regionId: decodedRegionId, metric: "storage" }
-      : "skip",
-  );
-
-  const region = capacity?.find(
-    (capacityRegion) => capacityRegion.regionId === decodedRegionId,
+    consumerQueryArgs ? { ...consumerQueryArgs, metric: "storage" } : "skip",
   );
   const chartData = useMemo(
     () =>

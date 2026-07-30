@@ -403,8 +403,8 @@ describe("Cloud Health", () => {
       await ctx.db.insert("manageOneTenants", {
         vdcId: "aicc-vdc",
         name: "AICC VDC",
-        regionId: "som-1",
-        regionName: "Somalia Region",
+        regionId: "hoa-mogadishu-2",
+        regionName: " Hoa-Mogadishu-2 ",
         linkedCompanyId: companyA,
         ecsFlavors: [
           { flavorName: "c6.large.2", vcpus: 4, ramMb: 8192, count: 3 },
@@ -415,8 +415,8 @@ describe("Cloud Health", () => {
       await ctx.db.insert("manageOneTenants", {
         vdcId: "safari-vdc",
         name: "Safari VDC",
-        regionId: "som-1",
-        regionName: "Somalia Region",
+        regionId: "hoa-mogadishu-2",
+        regionName: "Hoa-Mogadishu-2",
         linkedCompanyId: companyB,
         ecsFlavors: [
           { flavorName: "c6.small.2", vcpus: 2, ramMb: 4096, count: 2 },
@@ -431,15 +431,15 @@ describe("Cloud Health", () => {
         {
           vdcId: "synced-vdc",
           name: "Synced VDC",
-          regionId: "som-1",
-          regionName: "Somalia Region",
+          regionId: "hoa-mogadishu-2",
+          regionName: "Hoa-Mogadishu-2",
         },
       ],
     });
 
     const cpuConsumers = await asUser(t, users.ceo).query(
       api.regionConsumers.topConsumersByRegion,
-      { regionId: "som-1", metric: "cpu" },
+      { regionName: "Hoa-Mogadishu-2", metric: "cpu" },
     );
     expect(cpuConsumers[0]).toMatchObject({
       tenantName: "AICC VDC",
@@ -449,7 +449,7 @@ describe("Cloud Health", () => {
 
     const memoryConsumers = await asUser(t, users.ceo).query(
       api.regionConsumers.topConsumersByRegion,
-      { regionId: "som-1", metric: "memory" },
+      { regionName: "Hoa-Mogadishu-2", metric: "memory" },
     );
     expect(memoryConsumers[0]).toMatchObject({
       tenantName: "AICC VDC",
@@ -458,7 +458,7 @@ describe("Cloud Health", () => {
 
     const storageConsumers = await asUser(t, users.gm).query(
       api.regionConsumers.topConsumersByRegion,
-      { regionId: "som-1", metric: "storage" },
+      { regionName: "Hoa-Mogadishu-2", metric: "storage" },
     );
     expect(storageConsumers[0]).toMatchObject({
       tenantName: "Safari VDC",
@@ -467,7 +467,7 @@ describe("Cloud Health", () => {
 
     await expect(
       asUser(t, users.am).query(api.regionConsumers.topConsumersByRegion, {
-        regionId: "som-1",
+        regionName: "Hoa-Mogadishu-2",
         metric: "cpu",
       }),
     ).rejects.toThrow(/Cloud Health/);

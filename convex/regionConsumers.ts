@@ -101,7 +101,8 @@ function metricValueForTenant(
 
 export const topConsumersByRegion = query({
   args: {
-    regionId: v.string(),
+    regionName: v.optional(v.string()),
+    regionId: v.optional(v.string()),
     metric: v.union(
       v.literal("cpu"),
       v.literal("memory"),
@@ -112,10 +113,14 @@ export const topConsumersByRegion = query({
     const user = await getCurrentUserOrThrow(ctx);
     assertCanViewCloudHealth(user);
 
-    const tenants = await ctx.db
-      .query("manageOneTenants")
-      .withIndex("by_region_id", (q) => q.eq("regionId", args.regionId))
-      .collect();
+    const allTenants = await ctx.db.query("manageOneTenants").collect();
+    const normalizedRegionName = args.regionName?.trim().toLowerCase();
+    const tenants = normalizedRegionName
+      ? allTenants.filter(
+          (tenant) =>
+            tenant.regionName?.trim().toLowerCase() === normalizedRegionName,
+        )
+      : allTenants.filter((tenant) => tenant.regionId === args.regionId);
     const companyIds = new Set(
       tenants
         .map((tenant) => tenant.linkedCompanyId)
