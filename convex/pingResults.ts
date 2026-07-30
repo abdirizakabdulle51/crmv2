@@ -202,3 +202,86 @@ export const recentHistoryForActiveTargets = query({
     };
   },
 });
+
+export const historyForActiveTargetsInRange = query({
+  args: {
+    from: v.number(),
+    to: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanViewCloudHealth(user);
+
+    const targets = await ctx.db
+      .query("pingTargets")
+      .withIndex("by_active", (q) => q.eq("active", true))
+      .collect();
+    const activeTargets = targets.sort((a, b) => a.name.localeCompare(b.name));
+    const activeTargetIds = new Set(activeTargets.map((target) => target._id));
+    const rangeMs = Math.max(0, args.to - args.from);
+    const bucketSizeMs =
+      rangeMs <= 24 * 60 * 60 * 1000 ? 60 * 1000 : 60 * 60 * 1000;
+    const results = (
+      await ctx.db
+        .query("pingResults")
+        .withIndex("by_checked_at", (q) =>
+          q.gte("checkedAt", args.from).lte("checkedAt", args.to),
+        )
+        .collect()
+    )
+      .filter((result) => activeTargetIds.has(result.targetId))
+      .sort((a, b) => b.checkedAt - a.checkedAt);
+
+    const buckets = new Map<
+      number,
+      {
+        checkedAt: number;
+        values: Map<string, { latencyMs: number | null; checkedAt: number }>;
+      }
+    >();
+
+    for (const result of results) {
+      const bucketTime =
+        Math.floor(result.checkedAt / bucketSizeMs) * bucketSizeMs;
+      const bucket = buckets.get(bucketTime) ?? {
+        checkedAt: bucketTime,
+        values: new Map(),
+      };
+      const targetKey = result.targetId;
+      const existing = bucket.values.get(targetKey);
+
+      if (!existing || result.checkedAt > existing.checkedAt) {
+        bucket.values.set(targetKey, {
+          latencyMs: result.success ? (result.latencyMs ?? null) : null,
+          checkedAt: result.checkedAt,
+        });
+      }
+
+      buckets.set(bucketTime, bucket);
+    }
+
+    const sortedBuckets = [...buckets.values()].sort(
+      (a, b) => a.checkedAt - b.checkedAt,
+    );
+
+    return {
+      bucketSizeMs,
+      targets: activeTargets.map((target) => ({
+        _id: target._id,
+        name: target.name,
+        ip: target.ip,
+      })),
+      buckets: sortedBuckets.map((bucket) => {
+        const row: Record<string, number | string | null> = {
+          checkedAt: bucket.checkedAt,
+        };
+
+        for (const target of activeTargets) {
+          row[target._id] = bucket.values.get(target._id)?.latencyMs ?? null;
+        }
+
+        return row;
+      }),
+    };
+  },
+});

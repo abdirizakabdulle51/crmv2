@@ -93,6 +93,191 @@ const LATENCY_LINE_COLORS = [
 // Flip this back on when the service/DNS target-entry UX is finalized.
 const SHOW_SERVICE_DNS_HEALTH = false;
 
+type LatencyRangeId =
+  | "last_5_minutes"
+  | "last_15_minutes"
+  | "last_30_minutes"
+  | "last_1_hour"
+  | "last_3_hours"
+  | "last_6_hours"
+  | "last_12_hours"
+  | "last_24_hours"
+  | "last_2_days"
+  | "last_7_days"
+  | "last_30_days"
+  | "yesterday"
+  | "day_before_yesterday"
+  | "this_day_last_week"
+  | "previous_week"
+  | "previous_month"
+  | "today"
+  | "today_so_far"
+  | "this_week"
+  | "this_week_so_far"
+  | "this_month"
+  | "this_month_so_far";
+
+const LATENCY_RANGE_OPTIONS: Array<{ id: LatencyRangeId; label: string }> = [
+  { id: "last_5_minutes", label: "Last 5 minutes" },
+  { id: "last_15_minutes", label: "Last 15 minutes" },
+  { id: "last_30_minutes", label: "Last 30 minutes" },
+  { id: "last_1_hour", label: "Last 1 hour" },
+  { id: "last_3_hours", label: "Last 3 hours" },
+  { id: "last_6_hours", label: "Last 6 hours" },
+  { id: "last_12_hours", label: "Last 12 hours" },
+  { id: "last_24_hours", label: "Last 24 hours" },
+  { id: "last_2_days", label: "Last 2 days" },
+  { id: "last_7_days", label: "Last 7 days" },
+  { id: "last_30_days", label: "Last 30 days" },
+  { id: "yesterday", label: "Yesterday" },
+  { id: "day_before_yesterday", label: "Day before yesterday" },
+  { id: "this_day_last_week", label: "This day last week" },
+  { id: "previous_week", label: "Previous week" },
+  { id: "previous_month", label: "Previous month" },
+  { id: "today", label: "Today" },
+  { id: "today_so_far", label: "Today so far" },
+  { id: "this_week", label: "This week" },
+  { id: "this_week_so_far", label: "This week so far" },
+  { id: "this_month", label: "This month" },
+  { id: "this_month_so_far", label: "This month so far" },
+];
+
+function startOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function endOfDay(date: Date) {
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    23,
+    59,
+    59,
+    999,
+  );
+}
+
+function startOfWeek(date: Date) {
+  const start = startOfDay(date);
+  const mondayOffset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - mondayOffset);
+  return start;
+}
+
+function endOfWeek(date: Date) {
+  const end = startOfWeek(date);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return end;
+}
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function endOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+function getLatencyRange(rangeId: LatencyRangeId, nowMs: number) {
+  const now = new Date(nowMs);
+  const previousDay = new Date(now);
+  previousDay.setDate(previousDay.getDate() - 1);
+  const twoDaysAgo = new Date(now);
+  twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+  const lastWeekDay = new Date(now);
+  lastWeekDay.setDate(lastWeekDay.getDate() - 7);
+
+  switch (rangeId) {
+    case "last_5_minutes":
+      return { from: nowMs - 5 * 60 * 1000, to: nowMs };
+    case "last_15_minutes":
+      return { from: nowMs - 15 * 60 * 1000, to: nowMs };
+    case "last_30_minutes":
+      return { from: nowMs - 30 * 60 * 1000, to: nowMs };
+    case "last_1_hour":
+      return { from: nowMs - 60 * 60 * 1000, to: nowMs };
+    case "last_3_hours":
+      return { from: nowMs - 3 * 60 * 60 * 1000, to: nowMs };
+    case "last_6_hours":
+      return { from: nowMs - 6 * 60 * 60 * 1000, to: nowMs };
+    case "last_12_hours":
+      return { from: nowMs - 12 * 60 * 60 * 1000, to: nowMs };
+    case "last_24_hours":
+      return { from: nowMs - 24 * 60 * 60 * 1000, to: nowMs };
+    case "last_2_days":
+      return { from: nowMs - 2 * 24 * 60 * 60 * 1000, to: nowMs };
+    case "last_7_days":
+      return { from: nowMs - 7 * 24 * 60 * 60 * 1000, to: nowMs };
+    case "last_30_days":
+      return { from: nowMs - 30 * 24 * 60 * 60 * 1000, to: nowMs };
+    case "yesterday":
+      return {
+        from: startOfDay(previousDay).getTime(),
+        to: endOfDay(previousDay).getTime(),
+      };
+    case "day_before_yesterday":
+      return {
+        from: startOfDay(twoDaysAgo).getTime(),
+        to: endOfDay(twoDaysAgo).getTime(),
+      };
+    case "this_day_last_week":
+      return {
+        from: startOfDay(lastWeekDay).getTime(),
+        to: endOfDay(lastWeekDay).getTime(),
+      };
+    case "previous_week": {
+      const previousWeek = startOfWeek(now);
+      previousWeek.setDate(previousWeek.getDate() - 7);
+      return {
+        from: previousWeek.getTime(),
+        to: endOfWeek(previousWeek).getTime(),
+      };
+    }
+    case "previous_month":
+      return {
+        from: new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime(),
+        to: new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          0,
+          23,
+          59,
+          59,
+          999,
+        ).getTime(),
+      };
+    case "today":
+      return { from: startOfDay(now).getTime(), to: endOfDay(now).getTime() };
+    case "today_so_far":
+      return { from: startOfDay(now).getTime(), to: nowMs };
+    case "this_week":
+      return { from: startOfWeek(now).getTime(), to: endOfWeek(now).getTime() };
+    case "this_week_so_far":
+      return { from: startOfWeek(now).getTime(), to: nowMs };
+    case "this_month":
+      return {
+        from: startOfMonth(now).getTime(),
+        to: endOfMonth(now).getTime(),
+      };
+    case "this_month_so_far":
+      return { from: startOfMonth(now).getTime(), to: nowMs };
+  }
+}
+
+function getLatencyAxisDomain(values: number[]): [number, number] | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = Math.max(max - min, 5);
+  const padding = span * 0.2;
+  return [Math.max(0, Math.floor(min - padding)), Math.ceil(max + padding)];
+}
+
 function RingGauge({
   label,
   percent,
@@ -181,22 +366,56 @@ export default function CloudHealthPage() {
   const [hiddenLatencyTargetIds, setHiddenLatencyTargetIds] = useState<
     Set<string>
   >(new Set());
+  const [latencyRangeId, setLatencyRangeId] =
+    useState<LatencyRangeId>("last_3_hours");
+  const [latencyRangeCalculatedAt, setLatencyRangeCalculatedAt] = useState(() =>
+    Date.now(),
+  );
+  const latencyRange = useMemo(
+    () => getLatencyRange(latencyRangeId, latencyRangeCalculatedAt),
+    [latencyRangeCalculatedAt, latencyRangeId],
+  );
   const latencyHistory = useQuery(
-    api.pingResults.recentHistoryForActiveTargets,
-    canView ? { limit: 100 } : "skip",
+    api.pingResults.historyForActiveTargetsInRange,
+    canView ? latencyRange : "skip",
   );
   const chartData = useMemo(
     () =>
       (latencyHistory?.buckets ?? []).map((bucket) => ({
         ...bucket,
         time: new Intl.DateTimeFormat("en-US", {
+          ...(latencyHistory?.bucketSizeMs &&
+          latencyHistory.bucketSizeMs > 60 * 1000
+            ? { month: "short", day: "numeric" }
+            : {}),
           hour: "2-digit",
           minute: "2-digit",
         }).format(new Date(bucket.checkedAt as number)),
       })),
     [latencyHistory],
   );
-  const latencyTargets = latencyHistory?.targets ?? [];
+  const latencyTargets = useMemo(
+    () => latencyHistory?.targets ?? [],
+    [latencyHistory?.targets],
+  );
+  const latencyAxisDomain = useMemo(() => {
+    const visibleTargetIds = latencyTargets
+      .map((target) => target._id)
+      .filter((targetId) => !hiddenLatencyTargetIds.has(targetId));
+    const values: number[] = [];
+
+    for (const row of chartData) {
+      const latencyRow = row as Record<string, unknown>;
+      for (const targetId of visibleTargetIds) {
+        const value = latencyRow[targetId];
+        if (typeof value === "number") {
+          values.push(value);
+        }
+      }
+    }
+
+    return getLatencyAxisDomain(values);
+  }, [chartData, hiddenLatencyTargetIds, latencyTargets]);
   const visibleServiceTargets = serviceTargets ?? [];
   const visibleServiceStatuses = serviceStatuses ?? [];
   const serviceHistory = useQuery(
@@ -633,6 +852,24 @@ export default function CloudHealthPage() {
               <CardTitle className="text-base">Latency Trend</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              <Select
+                value={latencyRangeId}
+                onValueChange={(value) => {
+                  setLatencyRangeId(value as LatencyRangeId);
+                  setLatencyRangeCalculatedAt(Date.now());
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LATENCY_RANGE_OPTIONS.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <div className="h-64">
                 {latencyTargets.length > 0 && chartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -642,7 +879,11 @@ export default function CloudHealthPage() {
                         className="opacity-30"
                       />
                       <XAxis dataKey="time" className="text-xs" />
-                      <YAxis className="text-xs" unit=" ms" />
+                      <YAxis
+                        className="text-xs"
+                        unit=" ms"
+                        domain={latencyAxisDomain}
+                      />
                       <Tooltip
                         labelFormatter={(_, payload) =>
                           payload?.[0]?.payload?.checkedAt

@@ -281,6 +281,106 @@ describe("Cloud Health", () => {
     ]);
   });
 
+  it("queries active ping target history by time range and buckets long ranges hourly", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+    const targetA = await asUser(t, users.ceo).mutation(
+      api.pingTargets.create,
+      {
+        name: "ISP A",
+        ip: "196.201.0.1",
+      },
+    );
+    const targetB = await asUser(t, users.ceo).mutation(
+      api.pingTargets.create,
+      {
+        name: "ISP B",
+        ip: "196.201.0.2",
+      },
+    );
+    const inactiveTarget = await asUser(t, users.ceo).mutation(
+      api.pingTargets.create,
+      {
+        name: "Paused ISP",
+        ip: "196.201.0.3",
+      },
+    );
+    await asUser(t, users.ceo).mutation(api.pingTargets.setActive, {
+      targetId: inactiveTarget,
+      active: false,
+    });
+    const rangeStart = Date.UTC(2026, 6, 29, 0, 0, 0);
+    const firstHour = Date.UTC(2026, 6, 29, 9, 0, 0);
+    const secondHour = Date.UTC(2026, 6, 29, 10, 0, 0);
+
+    await t.mutation(internal.pingResults.bulkUpsert, {
+      results: [
+        {
+          targetId: targetA,
+          success: true,
+          latencyMs: 11,
+          checkedAt: rangeStart - 60_000,
+        },
+        {
+          targetId: targetA,
+          success: true,
+          latencyMs: 12,
+          checkedAt: firstHour + 5 * 60_000,
+        },
+        {
+          targetId: targetA,
+          success: true,
+          latencyMs: 18,
+          checkedAt: firstHour + 40 * 60_000,
+        },
+        {
+          targetId: targetB,
+          success: true,
+          latencyMs: 25,
+          checkedAt: firstHour + 20 * 60_000,
+        },
+        {
+          targetId: targetA,
+          success: false,
+          error: "timeout",
+          checkedAt: secondHour + 10 * 60_000,
+        },
+        {
+          targetId: inactiveTarget,
+          success: true,
+          latencyMs: 99,
+          checkedAt: firstHour + 10 * 60_000,
+        },
+      ],
+    });
+
+    const history = await asUser(t, users.gm).query(
+      api.pingResults.historyForActiveTargetsInRange,
+      {
+        from: rangeStart,
+        to: rangeStart + 2 * 24 * 60 * 60 * 1000,
+      },
+    );
+
+    expect(history.bucketSizeMs).toBe(60 * 60 * 1000);
+    expect(history.targets.map((target) => target.name)).toEqual([
+      "ISP A",
+      "ISP B",
+    ]);
+    expect(history.buckets).toEqual([
+      {
+        checkedAt: firstHour,
+        [targetA]: 18,
+        [targetB]: 25,
+      },
+      {
+        checkedAt: secondHour,
+        [targetA]: null,
+        [targetB]: null,
+      },
+    ]);
+  });
+
   it("hard-deletes ping targets and their appended result history for admins only", async () => {
     const t = convexTest(schema, modules);
     const users = await seedUsers(t);
