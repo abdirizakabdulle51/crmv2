@@ -141,4 +141,65 @@ describe("documentation", () => {
       data: expect.objectContaining({ code: "FORBIDDEN" }),
     });
   });
+
+  it("replaces the navigation section with idempotent per-page guides", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+    await t.mutation(internal.documentation.seedInitialDocs, {});
+
+    const firstRun = await t.mutation(
+      internal.documentation.replaceNavigationSection,
+      {},
+    );
+    expect(firstRun.removed).toBe(true);
+    expect(firstRun.inserted).toEqual([
+      "page-dashboard",
+      "page-companies",
+      "page-pipeline",
+      "page-targets",
+      "page-pace",
+      "page-usage",
+      "page-at-risk",
+      "page-quotes",
+      "page-ai-recs",
+      "page-coach",
+      "page-activities",
+      "page-manageone",
+      "page-cloud-health",
+      "page-team",
+      "page-settings",
+    ]);
+
+    const amSections = await asUser(t, users.am).query(
+      api.documentation.list,
+      {},
+    );
+    expect(amSections.map((section) => section.slug).slice(0, 17)).toEqual([
+      "roles-and-access",
+      ...firstRun.inserted,
+      "common-workflows",
+    ]);
+    expect(
+      amSections.some((section) => section.slug === "navigating-the-crm"),
+    ).toBe(false);
+
+    const commonWorkflows = amSections.find(
+      (section) => section.slug === "common-workflows",
+    );
+    expect(commonWorkflows?.order).toBe(17);
+
+    const dashboard = await asUser(t, users.am).query(
+      api.documentation.getBySlug,
+      { slug: "page-dashboard" },
+    );
+    expect(dashboard.group).toBe("Team Guide");
+    expect(dashboard.visibility).toBe("public");
+    expect(dashboard.content).toContain("The Dashboard is your personal");
+
+    const secondRun = await t.mutation(
+      internal.documentation.replaceNavigationSection,
+      {},
+    );
+    expect(secondRun).toEqual({ removed: false, inserted: [] });
+  });
 });

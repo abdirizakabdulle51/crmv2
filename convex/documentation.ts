@@ -304,6 +304,245 @@ Or via Prisma: \`npx prisma studio\``,
   },
 ];
 
+const PAGE_DOCUMENTATION_SECTIONS: SeedDocumentationSection[] = [
+  {
+    slug: "page-dashboard",
+    title: "Dashboard",
+    group: "Team Guide",
+    order: 2,
+    visibility: "public",
+    content: `The Dashboard is your personal landing page — it's what you see first after logging in.
+
+- Greets you by name and role (e.g. "Welcome back, Jane — Account Manager").
+- A year selector lets you switch which year's data the metric cards reflect.
+- Key metrics are shown as clickable cards (revenue, pipeline, targets) — clicking a card navigates you to the relevant page (e.g. clicking a pipeline metric takes you to Pipeline) for a closer look.
+
+There's nothing to configure here — it's a read-only overview to orient you at the start of a session.`,
+  },
+  {
+    slug: "page-companies",
+    title: "Companies",
+    group: "Team Guide",
+    order: 3,
+    visibility: "public",
+    content: `The Companies page is the master list of every company in the CRM, and the entry point to each company's detail page.
+
+**Finding a company:**
+- Search box: "Search by name or contact..." — matches on company name or contact name.
+- Status filter: All Statuses / Active / Pending / Expired / Terminated.
+- Sector filter: All Sectors, or a specific industry sector.
+- Country filter: All Countries, or a specific country.
+
+**What each row shows:** company name, sector, country (with region), assigned account manager ("AM: {name}"), contact name, and a color-coded status badge (Active = green, Pending = amber, Expired = gray, Terminated = red).
+
+**Actions:**
+- Click anywhere on a company's row to open its detail page (contract/payment status, contact info, linked ManageOne tenant, Usage Trends chart).
+- **Add Company** button — opens a form to create a new company from scratch.
+- **Import CSV** button — bulk-creates companies from a spreadsheet.
+
+If no companies exist yet, you'll see an empty state with an Add Company prompt. If your filters just don't match anything, you'll see "No results" instead.`,
+  },
+  {
+    slug: "page-pipeline",
+    title: "Pipeline",
+    group: "Team Guide",
+    order: 4,
+    visibility: "public",
+    content: `Pipeline tracks sales deals ("leads") as they move toward closing.
+
+The subtitle shows your total lead count and the active pipeline value — the sum of every open deal's potential value (deals marked Won or Lost don't count toward this).
+
+**Two views, switchable by tab:**
+- **Board** (default) — a Kanban-style board with a column per stage: New Lead, Qualified, Discovery, Proposal, Negotiation, Won, Lost. Drag a deal between columns to change its stage.
+- **List** — the same leads as a flat, sortable table instead of a board.
+
+**Actions:**
+- **Add Lead** — create a new deal, tied to a company and an account manager.
+- **Import CSV** — bulk-create leads from a spreadsheet.
+- Click any lead (in either view) to edit its details.`,
+  },
+  {
+    slug: "page-targets",
+    title: "Targets",
+    group: "Team Guide",
+    order: 5,
+    visibility: "public",
+    content: `*Leadership only (CEO / Head of Business) — everyone else sees a restricted-access notice here.*
+
+Targets is where quarterly sales goals are set per account manager.
+
+- A year selector switches which year you're viewing/editing.
+- One card per account manager, showing their yearly total (sum of all four quarters) and a Q1–Q4 grid of target amounts.
+- Click directly into any quarter's cell to edit that number inline (press Enter to save, Escape to cancel).
+- **Set Target** button — a dialog to pick an account manager, a quarter, and a dollar amount, for setting a target from scratch rather than editing an existing cell.
+
+If no account managers have been assigned roles yet, you'll see a prompt to assign roles from the Team page first.`,
+  },
+  {
+    slug: "page-pace",
+    title: "Pace",
+    group: "Team Guide",
+    order: 6,
+    visibility: "public",
+    content: `*Labeled "Performance Pace" on the page itself.*
+
+Pace answers one question: are we on track to hit this quarter's target?
+
+It shows year-to-date progress against the yearly and current-quarter targets, along with how many working days have elapsed in the quarter out of the total — so you can judge whether current performance is ahead of, on, or behind where it needs to be by this point in the quarter. This is a read-only view; targets themselves are set on the Targets page.`,
+  },
+  {
+    slug: "page-usage",
+    title: "Usage",
+    group: "Team Guide",
+    order: 7,
+    visibility: "public",
+    content: `Usage tracking is where monthly resource consumption gets recorded per company — this is the raw input that quotes are generated from later.
+
+**Two ways to add usage data:**
+- Manually enter usage entries one at a time.
+- **Auto-fill from ManageOne** — a dedicated page that pulls a company's real, live resource usage from ManageOne and converts it into priced usage entries automatically, so you don't have to type numbers in by hand. Use this whenever a company's tenant is provisioned in ManageOne — it's much faster and less error-prone than manual entry.
+
+Usage entries are grouped by company and month. Once entries exist for a given company/month, that data becomes available to Quotes → Generate from Usage.`,
+  },
+  {
+    slug: "page-at-risk",
+    title: "At Risk",
+    group: "Team Guide",
+    order: 8,
+    visibility: "public",
+    content: `At Risk is an early-warning list — it flags companies whose resource usage has been declining for 2 or more consecutive months, which can be a sign of churn or a shrinking account before it becomes an obvious problem.
+
+The summary cards at the top show how many tenants are currently flagged, how usage compares month-over-month, and how many tenants have enough usage history to be evaluated at all.
+
+There's nothing to configure here — it's a read-only list. Click through to a flagged company's detail page to see the actual Usage Trends chart and decide whether outreach is warranted.`,
+  },
+  {
+    slug: "page-quotes",
+    title: "Quotes",
+    group: "Team Guide",
+    order: 9,
+    visibility: "public",
+    content: `Quotes covers everything from generating a price quote to sending it to a customer.
+
+**Generate from Usage** — the main way quotes get created: pick a company and a month, and the CRM builds a draft quote automatically from that company's usage entries for that month, priced using the Service Catalog. Review the auto-priced line items before saving.
+
+**On an individual quote's page**, you can:
+- Review every line item, quantity, and the monthly/yearly totals.
+- **Print / Export** — generates a formatted, branded copy of the quote.
+- Change status: Draft → Sent → Accepted (or revert back to Draft).
+- **Send to Customer** — emails the quote directly to the company's contact address (requires a contact email to be set on that company's record first — add one on the Companies page if it's missing).
+
+Quotes already generated appear in the main Quotes list, with their current status visible at a glance.`,
+  },
+  {
+    slug: "page-ai-recs",
+    title: "AI Recs",
+    group: "Team Guide",
+    order: 10,
+    visibility: "public",
+    content: `AI Recs surfaces cross-sell and upsell opportunities based on actual usage patterns — every recommendation traces back to real data, not a model guessing.
+
+**Summary cards:** total recommendations, how many are high priority, how many are medium priority, and how many distinct companies have at least one opportunity.
+
+**Filters:** by company, by rule type (Backup, Object Storage, Log Management, Connectivity, WAF, Payment Risk, Compliance), by priority (High/Medium/Low), and how many results to show per page.
+
+**Two kinds of cards you'll see:**
+- An **AI-generated narrative** (at most one per company) — a written summary generated weekly, citing a specific dollar estimate.
+- **Rule-based recommendations** — one per triggered rule, showing the trigger reason, the recommended service, and an estimated dollar value with its basis.
+
+This page is read-only/informational — there's no "dismiss" or "convert to lead" action here; it's meant to inform outreach you do elsewhere (e.g. logging an Activity or updating a Pipeline deal).`,
+  },
+  {
+    slug: "page-coach",
+    title: "Coach",
+    group: "Team Guide",
+    order: 11,
+    visibility: "public",
+    content: `*Titled "Daily Sales Coach" on the page itself.*
+
+Coach gives each account manager a daily, personalized summary: current pace against their target, their active proposals and total value, and suggested priorities for the day. It's meant to be the first stop of the day for an AM deciding what to focus on. Read-only — no actions to take here, it's a briefing.`,
+  },
+  {
+    slug: "page-activities",
+    title: "Activities",
+    group: "Team Guide",
+    order: 12,
+    visibility: "public",
+    content: `Activities is the log of everything an account manager has done against a lead — calls, meetings, and proposals sent.
+
+**Add an entry:** **Log Activity** button — records a type (Call / Meeting / Proposal Sent), the associated lead, a date, and an optional description.
+
+**Filters:** by activity type, and by account manager.
+
+**Each entry shows:** a type icon and color (Call = blue, Meeting = purple, Proposal Sent = amber), which lead it's tied to, who logged it, the date, and the description if one was written.
+
+Leadership (CEO/HOB) can delete activity entries; other roles can only add them, not remove them.`,
+  },
+  {
+    slug: "page-manageone",
+    title: "ManageOne",
+    group: "Team Guide",
+    order: 13,
+    visibility: "public",
+    content: `*Leadership only (CEO / Head of Business) — everyone else sees a restricted-access notice here.*
+
+This is a read-only view of every tenant synced nightly from ManageOne (Huawei's cloud platform): VDC info, resource usage (ECS instances used, EVS storage used, project count), manager contact details, and when each tenant last synced.
+
+**Linking a tenant to a CRM company** — each tenant row shows one of three states in its Company column:
+- Already linked — shows the company name as a link; clicking it jumps to that company filtered in the Companies list.
+- A suggested match exists but isn't confirmed yet — shows "Suggested: {company name}" with a **Confirm Link** button.
+- No match found — shows a **Create Company** button, which opens a form (sector, country, and account manager required) to create a brand-new CRM company directly from this tenant's data.
+
+If the list is empty, it means the nightly ManageOne sync job hasn't run or hasn't found any tenants yet — that's an infrastructure issue, not something to fix from this page.`,
+  },
+  {
+    slug: "page-cloud-health",
+    title: "Cloud Health",
+    group: "Team Guide",
+    order: 14,
+    visibility: "public",
+    content: `*Leadership and Country GM only — everyone else sees a restricted-access notice here.*
+
+Cloud Health is infrastructure monitoring: capacity and network health, not sales data.
+
+- **Capacity gauges** — per-region CPU, memory, and storage usage with oversubscription ratios, refreshed periodically. Click a region for a detailed drill-down page.
+- **Network Status** — upstream ISP ping targets with live status (Active/Paused), latest latency, and 24-hour uptime percentage. Add new ping targets here (name, IP address, optional notes) or pause/delete existing ones.
+- **Latency Trend chart** — a time-range picker (from "Last 5 minutes" up to "Last 30 days" / "Previous month") lets you look at historical latency for each ping target, not just the current moment.
+
+This page is about catching network or capacity issues early — before a customer notices something's wrong.`,
+  },
+  {
+    slug: "page-team",
+    title: "Team",
+    group: "Team Guide",
+    order: 15,
+    visibility: "public",
+    content: `*Leadership only (CEO / Head of Business) can make changes here — other roles can view team members' roles and country assignments, but can't edit anything.*
+
+**Creating a new team member** (leadership only): **Create Team Member** button — set their name, email, role (Account Manager / Country GM / Head of Business / CEO), and optional country assignment. A temporary password is auto-generated (you can regenerate it) and shown once after creation — copy it to give to the new team member.
+
+**Managing an existing member** (leadership only):
+- Change their role or country assignment directly via inline dropdowns.
+- **Reset Password** — generates a new temporary password, shown once for you to copy and share.
+- **Disable** / **Re-enable** — deactivates or restores a team member's access without deleting their account (their historical records stay intact either way).
+- Delete — permanently removes the account. Note: a team member who's still assigned to companies, leads, or targets can't be deleted until those assignments are reassigned elsewhere.`,
+  },
+  {
+    slug: "page-settings",
+    title: "Settings",
+    group: "Team Guide",
+    order: 16,
+    visibility: "public",
+    content: `**Profile** (everyone) — update your own display name here.
+
+**Everything below Profile is leadership-only** (CEO / Head of Business); other roles see a restricted-access notice instead.
+
+- **Countries & Regions** — add/edit/delete the countries and regions used elsewhere in the CRM (company assignment, GM scoping, etc.).
+- **Industry Sectors** — add/edit/delete the industry sector list used to categorize companies.
+- **Service Catalog** — this is where you manage pricing directly. Every catalog item has an edit (pencil) icon that opens a form with the item's monthly/yearly/hourly price, billing unit, and specs — change the number and save, and it takes effect everywhere immediately (Quotes, auto-pricing, everywhere else that reads pricing) since the CRM updates in real time. Use **Add** to create a brand-new service with its own pricing, or **Import** to bulk-load catalog items from a spreadsheet. You do not need to ask anyone to update a price for you — this is self-service.`,
+  },
+];
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -442,5 +681,52 @@ export const seedInitialDocs = internalMutation({
       inserted: INITIAL_DOCUMENTATION_SECTIONS.length,
       byGroup,
     };
+  },
+});
+
+export const replaceNavigationSection = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const navigationSection = await ctx.db
+      .query("documentationSections")
+      .withIndex("by_slug", (q) => q.eq("slug", "navigating-the-crm"))
+      .unique();
+    let removed = false;
+
+    if (navigationSection) {
+      await ctx.db.delete(navigationSection._id);
+      removed = true;
+    }
+
+    const inserted: string[] = [];
+    const now = Date.now();
+
+    for (const section of PAGE_DOCUMENTATION_SECTIONS) {
+      const existing = await ctx.db
+        .query("documentationSections")
+        .withIndex("by_slug", (q) => q.eq("slug", section.slug))
+        .unique();
+
+      if (existing) {
+        continue;
+      }
+
+      await ctx.db.insert("documentationSections", {
+        ...section,
+        updatedAt: now,
+      });
+      inserted.push(section.slug);
+    }
+
+    const commonWorkflows = await ctx.db
+      .query("documentationSections")
+      .withIndex("by_slug", (q) => q.eq("slug", "common-workflows"))
+      .unique();
+
+    if (commonWorkflows) {
+      await ctx.db.patch(commonWorkflows._id, { order: 17 });
+    }
+
+    return { removed, inserted };
   },
 });
