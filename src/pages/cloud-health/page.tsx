@@ -90,6 +90,9 @@ const LATENCY_LINE_COLORS = [
   "#be123c",
 ];
 
+// Flip this back on when the service/DNS target-entry UX is finalized.
+const SHOW_SERVICE_DNS_HEALTH = false;
+
 function RingGauge({
   label,
   percent,
@@ -150,11 +153,11 @@ export default function CloudHealthPage() {
   const removeTarget = useMutation(api.pingTargets.remove);
   const serviceTargets = useQuery(
     api.serviceHealthTargets.list,
-    canView ? {} : "skip",
+    canView && SHOW_SERVICE_DNS_HEALTH ? {} : "skip",
   );
   const serviceStatuses = useQuery(
     api.serviceHealthResults.latestStatusByTarget,
-    canView ? {} : "skip",
+    canView && SHOW_SERVICE_DNS_HEALTH ? {} : "skip",
   );
   const createServiceTarget = useMutation(api.serviceHealthTargets.create);
   const setServiceTargetActive = useMutation(
@@ -194,9 +197,11 @@ export default function CloudHealthPage() {
     [latencyHistory],
   );
   const latencyTargets = latencyHistory?.targets ?? [];
+  const visibleServiceTargets = serviceTargets ?? [];
+  const visibleServiceStatuses = serviceStatuses ?? [];
   const serviceHistory = useQuery(
     api.serviceHealthResults.recentHistory,
-    canView && selectedServiceTargetId
+    canView && SHOW_SERVICE_DNS_HEALTH && selectedServiceTargetId
       ? {
           targetId: selectedServiceTargetId as Id<"serviceHealthTargets">,
           limit: 100,
@@ -253,8 +258,7 @@ export default function CloudHealthPage() {
     !capacity ||
     !targets ||
     !statuses ||
-    !serviceTargets ||
-    !serviceStatuses
+    (SHOW_SERVICE_DNS_HEALTH && (!serviceTargets || !serviceStatuses))
   ) {
     return (
       <div className="space-y-4 p-6 md:p-8">
@@ -697,282 +701,288 @@ export default function CloudHealthPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Globe2 className="h-4 w-4 text-primary" />
-              Service &amp; DNS Health
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {serviceStatuses.length === 0 ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">
-                No service health targets configured yet.
-              </div>
-            ) : (
-              serviceStatuses.map((status) => (
-                <div
-                  key={status.target._id}
-                  className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="flex items-start gap-3">
-                    <span
-                      className={`mt-1 h-3 w-3 rounded-full ${
-                        status.latest?.success ? "bg-emerald-500" : "bg-red-500"
-                      }`}
-                    />
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">
-                          {status.target.name}
-                        </span>
-                        <Badge variant="secondary">
-                          {formatCheckType(status.target.checkType)}
-                        </Badge>
-                        <Badge
-                          variant={
-                            status.target.active ? "default" : "secondary"
+      {SHOW_SERVICE_DNS_HEALTH && (
+        <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Globe2 className="h-4 w-4 text-primary" />
+                Service &amp; DNS Health
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {visibleServiceStatuses.length === 0 ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  No service health targets configured yet.
+                </div>
+              ) : (
+                visibleServiceStatuses.map((status) => (
+                  <div
+                    key={status.target._id}
+                    className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="flex items-start gap-3">
+                      <span
+                        className={`mt-1 h-3 w-3 rounded-full ${
+                          status.latest?.success
+                            ? "bg-emerald-500"
+                            : "bg-red-500"
+                        }`}
+                      />
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium">
+                            {status.target.name}
+                          </span>
+                          <Badge variant="secondary">
+                            {formatCheckType(status.target.checkType)}
+                          </Badge>
+                          <Badge
+                            variant={
+                              status.target.active ? "default" : "secondary"
+                            }
+                          >
+                            {status.target.active ? "Active" : "Paused"}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {status.target.target} Â· Last checked{" "}
+                          {formatDateTime(status.latest?.checkedAt)}
+                        </div>
+                        {status.latest?.resolvedValue ? (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {status.latest.resolvedValue}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <div>
+                        <div className="font-semibold">
+                          {status.latest?.success
+                            ? formatNumber(status.latest.latencyMs, " ms")
+                            : "Down"}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Latest latency
+                        </div>
+                      </div>
+                      <div>
+                        <div className="font-semibold">
+                          {status.uptime24hPercent == null
+                            ? "-"
+                            : `${status.uptime24hPercent}%`}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          24h uptime
+                        </div>
+                      </div>
+                      {canManage ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            handleSetServiceTargetActive(
+                              status.target._id,
+                              !status.target.active,
+                            )
                           }
                         >
-                          {status.target.active ? "Active" : "Paused"}
-                        </Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {status.target.target} Â· Last checked{" "}
-                        {formatDateTime(status.latest?.checkedAt)}
-                      </div>
-                      {status.latest?.resolvedValue ? (
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {status.latest.resolvedValue}
-                        </div>
+                          {status.target.active ? (
+                            <Pause className="mr-2 h-4 w-4" />
+                          ) : (
+                            <Play className="mr-2 h-4 w-4" />
+                          )}
+                          {status.target.active ? "Pause" : "Resume"}
+                        </Button>
                       ) : null}
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <div>
-                      <div className="font-semibold">
-                        {status.latest?.success
-                          ? formatNumber(status.latest.latencyMs, " ms")
-                          : "Down"}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Latest latency
-                      </div>
-                    </div>
-                    <div>
-                      <div className="font-semibold">
-                        {status.uptime24hPercent == null
-                          ? "-"
-                          : `${status.uptime24hPercent}%`}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        24h uptime
-                      </div>
-                    </div>
-                    {canManage ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          handleSetServiceTargetActive(
-                            status.target._id,
-                            !status.target.active,
-                          )
-                        }
-                      >
-                        {status.target.active ? (
-                          <Pause className="mr-2 h-4 w-4" />
-                        ) : (
-                          <Play className="mr-2 h-4 w-4" />
-                        )}
-                        {status.target.active ? "Pause" : "Resume"}
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
+                ))
+              )}
+            </CardContent>
+          </Card>
 
-        <div className="space-y-4">
-          {canManage ? (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Add Service Health Target
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="service-target-name">Name</Label>
-                  <Input
-                    id="service-target-name"
-                    value={serviceName}
-                    onChange={(event) => setServiceName(event.target.value)}
-                    placeholder="CRM API"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Check Type</Label>
-                  <Select
-                    value={serviceCheckType}
-                    onValueChange={(value) =>
-                      setServiceCheckType(value as ServiceCheckType)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="http">HTTP</SelectItem>
-                      <SelectItem value="tcp">TCP</SelectItem>
-                      <SelectItem value="dns">DNS</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="service-target-value">Target</Label>
-                  <Input
-                    id="service-target-value"
-                    value={serviceTargetValue}
-                    onChange={(event) =>
-                      setServiceTargetValue(event.target.value)
-                    }
-                    placeholder={
-                      serviceCheckType === "http"
-                        ? "https://crm-api.example.com"
-                        : serviceCheckType === "tcp"
-                          ? "crm-api.example.com:443"
-                          : "crm.example.com"
-                    }
-                  />
-                </div>
-                {serviceCheckType === "http" ? (
-                  <>
+          <div className="space-y-4">
+            {canManage ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Add Service Health Target
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="service-target-name">Name</Label>
+                    <Input
+                      id="service-target-name"
+                      value={serviceName}
+                      onChange={(event) => setServiceName(event.target.value)}
+                      placeholder="CRM API"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Check Type</Label>
+                    <Select
+                      value={serviceCheckType}
+                      onValueChange={(value) =>
+                        setServiceCheckType(value as ServiceCheckType)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="http">HTTP</SelectItem>
+                        <SelectItem value="tcp">TCP</SelectItem>
+                        <SelectItem value="dns">DNS</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="service-target-value">Target</Label>
+                    <Input
+                      id="service-target-value"
+                      value={serviceTargetValue}
+                      onChange={(event) =>
+                        setServiceTargetValue(event.target.value)
+                      }
+                      placeholder={
+                        serviceCheckType === "http"
+                          ? "https://crm-api.example.com"
+                          : serviceCheckType === "tcp"
+                            ? "crm-api.example.com:443"
+                            : "crm.example.com"
+                      }
+                    />
+                  </div>
+                  {serviceCheckType === "http" ? (
+                    <>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="expected-status-code">
+                          Expected Status Code
+                        </Label>
+                        <Input
+                          id="expected-status-code"
+                          type="number"
+                          value={expectedStatusCode}
+                          onChange={(event) =>
+                            setExpectedStatusCode(event.target.value)
+                          }
+                          placeholder="200"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="expected-response">
+                          Expected Response Contains
+                        </Label>
+                        <Input
+                          id="expected-response"
+                          value={expectedResponseContains}
+                          onChange={(event) =>
+                            setExpectedResponseContains(event.target.value)
+                          }
+                          placeholder="Optional"
+                        />
+                      </div>
+                    </>
+                  ) : null}
+                  {serviceCheckType === "dns" ? (
                     <div className="space-y-1.5">
-                      <Label htmlFor="expected-status-code">
-                        Expected Status Code
-                      </Label>
+                      <Label htmlFor="expected-ip">Expected IP</Label>
                       <Input
-                        id="expected-status-code"
-                        type="number"
-                        value={expectedStatusCode}
-                        onChange={(event) =>
-                          setExpectedStatusCode(event.target.value)
-                        }
-                        placeholder="200"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="expected-response">
-                        Expected Response Contains
-                      </Label>
-                      <Input
-                        id="expected-response"
-                        value={expectedResponseContains}
-                        onChange={(event) =>
-                          setExpectedResponseContains(event.target.value)
-                        }
+                        id="expected-ip"
+                        value={expectedIp}
+                        onChange={(event) => setExpectedIp(event.target.value)}
                         placeholder="Optional"
                       />
                     </div>
-                  </>
-                ) : null}
-                {serviceCheckType === "dns" ? (
+                  ) : null}
                   <div className="space-y-1.5">
-                    <Label htmlFor="expected-ip">Expected IP</Label>
+                    <Label htmlFor="service-notes">Notes</Label>
                     <Input
-                      id="expected-ip"
-                      value={expectedIp}
-                      onChange={(event) => setExpectedIp(event.target.value)}
+                      id="service-notes"
+                      value={serviceNotes}
+                      onChange={(event) => setServiceNotes(event.target.value)}
                       placeholder="Optional"
                     />
                   </div>
-                ) : null}
-                <div className="space-y-1.5">
-                  <Label htmlFor="service-notes">Notes</Label>
-                  <Input
-                    id="service-notes"
-                    value={serviceNotes}
-                    onChange={(event) => setServiceNotes(event.target.value)}
-                    placeholder="Optional"
-                  />
-                </div>
-                <Button
-                  className="w-full"
-                  onClick={handleCreateServiceTarget}
-                  disabled={serviceSubmitting}
+                  <Button
+                    className="w-full"
+                    onClick={handleCreateServiceTarget}
+                    disabled={serviceSubmitting}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Service Target
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Service Latency Trend
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Select
+                  value={selectedServiceTargetId}
+                  onValueChange={setSelectedServiceTargetId}
+                  disabled={visibleServiceTargets.length === 0}
                 >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Service Target
-                </Button>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select service target" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {visibleServiceTargets.map((target) => (
+                      <SelectItem key={target._id} value={target._id}>
+                        {target.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="h-64">
+                  {selectedServiceTargetId && serviceChartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={serviceChartData}>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          className="opacity-30"
+                        />
+                        <XAxis dataKey="time" className="text-xs" />
+                        <YAxis className="text-xs" unit=" ms" />
+                        <Tooltip
+                          labelFormatter={(_, payload) =>
+                            payload?.[0]?.payload?.checkedAt
+                              ? formatDateTime(payload[0].payload.checkedAt)
+                              : ""
+                          }
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="latency"
+                          name="Latency"
+                          stroke="#0d9488"
+                          strokeWidth={2}
+                          dot={false}
+                          connectNulls={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="grid h-full place-items-center rounded-lg border text-sm text-muted-foreground">
+                      {selectedServiceTargetId
+                        ? "No recent service health history yet."
+                        : "No service health target selected."}
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
-          ) : null}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Service Latency Trend</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Select
-                value={selectedServiceTargetId}
-                onValueChange={setSelectedServiceTargetId}
-                disabled={serviceTargets.length === 0}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select service target" />
-                </SelectTrigger>
-                <SelectContent>
-                  {serviceTargets.map((target) => (
-                    <SelectItem key={target._id} value={target._id}>
-                      {target.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="h-64">
-                {selectedServiceTargetId && serviceChartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={serviceChartData}>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        className="opacity-30"
-                      />
-                      <XAxis dataKey="time" className="text-xs" />
-                      <YAxis className="text-xs" unit=" ms" />
-                      <Tooltip
-                        labelFormatter={(_, payload) =>
-                          payload?.[0]?.payload?.checkedAt
-                            ? formatDateTime(payload[0].payload.checkedAt)
-                            : ""
-                        }
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="latency"
-                        name="Latency"
-                        stroke="#0d9488"
-                        strokeWidth={2}
-                        dot={false}
-                        connectNulls={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="grid h-full place-items-center rounded-lg border text-sm text-muted-foreground">
-                    {selectedServiceTargetId
-                      ? "No recent service health history yet."
-                      : "No service health target selected."}
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </section>
+          </div>
+        </section>
+      )}
     </div>
   );
 }
