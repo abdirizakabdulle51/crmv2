@@ -142,3 +142,67 @@
     cursor: pointer;
   }
 }
+
+@layer components {
+  .docs-article {
+    @apply text-[0.96rem] leading-7 text-foreground;
+  }
+
+  .docs-article h2 {
+    @apply mt-10 scroll-mt-8 border-b pb-2 text-2xl font-semibold tracking-tight first:mt-0;
+  }
+
+  .docs-article h3 {
+    @apply mt-7 scroll-mt-8 text-xl font-semibold tracking-tight;
+  }
+
+  .docs-article p {
+    @apply my-4 text-muted-foreground;
+  }
+
+  .docs-article ul,
+  .docs-article ol {
+    @apply my-4 ml-6 space-y-2 text-muted-foreground;
+  }
+
+  .docs-article ul {
+    @apply list-disc;
+  }
+
+  .docs-article ol {
+    @apply list-decimal;
+  }
+
+  .docs-article strong {
+    @apply font-semibold text-foreground;
+  }
+
+  .docs-article code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-sm text-foreground;
+  }
+
+  .docs-article pre {
+    @apply my-5 overflow-x-auto rounded-lg border bg-muted p-4;
+  }
+
+  .docs-article pre code {
+    @apply bg-transparent p-0;
+  }
+
+  .docs-article table {
+    @apply my-5 w-full border-collapse overflow-hidden rounded-lg text-sm;
+  }
+
+  .docs-article th,
+  .docs-article td {
+    @apply border px-3 py-2 align-top;
+  }
+
+  .docs-article th {
+    @apply bg-muted text-left font-semibold text-foreground;
+  }
+
+  .docs-article td {
+    @apply text-muted-foreground;
+  }
+}

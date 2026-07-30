@@ -16,6 +16,7 @@ import {
   Zap,
   Cloud,
   CloudSun,
+  BookOpen,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -46,6 +47,7 @@ const NAV_ITEMS = [
     icon: CloudSun,
     cloudHealthOnly: true,
   },
+  { to: "/documentation", label: "Documentation", icon: BookOpen },
   { to: "/team", label: "Team", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
 ];

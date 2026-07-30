@@ -246,6 +246,19 @@ export default defineSchema({
     .index("by_target_checked_at", ["targetId", "checkedAt"])
     .index("by_checked_at", ["checkedAt"]),
 
+  documentationSections: defineTable({
+    slug: v.string(),
+    title: v.string(),
+    group: v.string(),
+    content: v.string(),
+    order: v.number(),
+    visibility: v.union(v.literal("public"), v.literal("restricted")),
+    updatedAt: v.number(),
+    updatedBy: v.optional(v.id("users")),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_order", ["order"]),
+
   activities: defineTable({
     accountManagerId: v.id("users"),
     leadId: v.id("leads"),

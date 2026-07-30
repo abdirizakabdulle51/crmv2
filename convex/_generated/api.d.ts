@@ -19,6 +19,7 @@ import type * as companiesImport from "../companiesImport.js";
 import type * as consumption from "../consumption.js";
 import type * as countries from "../countries.js";
 import type * as dashboard from "../dashboard.js";
+import type * as documentation from "../documentation.js";
 import type * as http from "../http.js";
 import type * as leads from "../leads.js";
 import type * as leadsImport from "../leadsImport.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   consumption: typeof consumption;
   countries: typeof countries;
   dashboard: typeof dashboard;
+  documentation: typeof documentation;
   http: typeof http;
   leads: typeof leads;
   leadsImport: typeof leadsImport;
