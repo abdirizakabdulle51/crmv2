@@ -17,7 +17,7 @@ export function BrandLogo({
         aria-hidden="true"
         className={`${iconClassName} shrink-0`}
       />
-      <span className={`font-extrabold tracking-tight ${textClassName}`}>
+      <span className={`font-bold tracking-tight ${textClassName}`}>
         HTGCLOUDS
       </span>
     </div>

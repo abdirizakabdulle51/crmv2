@@ -1,28 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 312 90" role="img" aria-label="HTGCLOUDS">
   <defs>
-    <linearGradient id="htgclouds-logo-gradient" x1="14" y1="45" x2="76" y2="45" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#0b3f79" />
-      <stop offset="0.55" stop-color="#158aa0" />
-      <stop offset="1" stop-color="#38d2c8" />
+    <linearGradient id="htgclouds-logo-gradient" x1="0" y1="47" x2="42" y2="47" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6590e5" />
+      <stop offset="0.58" stop-color="#6dc8ce" />
+      <stop offset="1" stop-color="#a2e1e5" />
     </linearGradient>
   </defs>
-  <rect x="14" y="17" width="62" height="56" rx="16" fill="url(#htgclouds-logo-gradient)" />
+  <path
+    fill="url(#htgclouds-logo-gradient)"
+    d="M9.5 59.2C4.3 59.2 0 55 0 49.8c0-4.8 3.7-8.9 8.4-9.3 2.4-6.1 7.9-10.1 14.6-10.1 8.2 0 14.9 6.2 15.7 14.1 2.6 1.3 4.2 4 4.2 6.9 0 4.3-3.5 7.8-7.8 7.8H9.5Z"
+  />
   <path
     fill="#ffffff"
-    d="M35.6 56.8c-5.8 0-10.5-4.3-10.5-9.6 0-5 4-9.1 9.3-9.5 2.1-4.6 6.4-7.4 11.4-7.4 6.7 0 12.2 5 12.8 11.5 3.4.9 5.8 3.9 5.8 7.4 0 4.3-3.6 7.7-8 7.7H35.6Z"
-  />
-  <path
-    fill="#dffdfb"
-    d="M44.6 39.1a2.2 2.2 0 0 1 3.1 0l6.9 6.4c.9.8.3 2.3-.9 2.3h-2.4v5.5c0 .8-.7 1.5-1.5 1.5h-10c-.8 0-1.5-.7-1.5-1.5v-5.5h-2.5c-1.2 0-1.8-1.5-.9-2.3l6.9-6.4Z"
-    opacity="0.95"
+    d="M15.7 51.2h5.9l-3.2-15.1L5.1 56.2h8.7l1.9-5Z"
   />
   <text
-    x="94"
-    y="58"
-    fill="#0a0a0a"
+    x="56"
+    y="59"
+    fill="#101219"
     font-family="Inter, Arial, Helvetica, sans-serif"
-    font-size="34"
-    font-weight="800"
+    font-size="36"
+    font-weight="700"
     letter-spacing="0"
   >HTGCLOUDS</text>
 </svg>
