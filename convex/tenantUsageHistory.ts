@@ -4,6 +4,9 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
 
 type Ctx = QueryCtx | MutationCtx;
+type TenantUsageHistoryRow = Doc<"tenantUsageHistory">;
+
+const SYNC_RUN_BUCKET_MS = 5 * 60 * 1000;
 
 async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
@@ -61,6 +64,59 @@ const usageHistoryItem = {
   wafInstances: v.number(),
   syncedAt: v.number(),
 };
+
+function createAggregateRow(row: TenantUsageHistoryRow): TenantUsageHistoryRow {
+  return { ...row };
+}
+
+function addRowToAggregate(
+  aggregate: TenantUsageHistoryRow,
+  row: TenantUsageHistoryRow,
+) {
+  aggregate.ecsInstances += row.ecsInstances;
+  aggregate.ecsCores += row.ecsCores;
+  aggregate.ecsRamGb += row.ecsRamGb;
+  aggregate.rdsInstances += row.rdsInstances;
+  aggregate.cceClusters += row.cceClusters;
+  aggregate.evsGb += row.evsGb;
+  aggregate.obsGb += row.obsGb;
+  aggregate.sfsGb += row.sfsGb;
+  aggregate.publicIps += row.publicIps;
+  aggregate.wafInstances += row.wafInstances;
+  aggregate.tenantName = `${aggregate.tenantName}, ${row.tenantName}`;
+}
+
+export function aggregateTenantUsageHistoryRows(
+  rows: TenantUsageHistoryRow[],
+  limit: number,
+): TenantUsageHistoryRow[] {
+  const sortedRows = [...rows].sort((a, b) => a.syncedAt - b.syncedAt);
+  const buckets: Array<{
+    startedAt: number;
+    aggregate: TenantUsageHistoryRow;
+  }> = [];
+
+  for (const row of sortedRows) {
+    const currentBucket = buckets[buckets.length - 1];
+
+    if (
+      currentBucket &&
+      row.syncedAt - currentBucket.startedAt <= SYNC_RUN_BUCKET_MS
+    ) {
+      addRowToAggregate(currentBucket.aggregate, row);
+      continue;
+    }
+
+    buckets.push({
+      startedAt: row.syncedAt,
+      aggregate: createAggregateRow(row),
+    });
+  }
+
+  return buckets
+    .slice(Math.max(0, buckets.length - limit))
+    .map((bucket) => bucket.aggregate);
+}
 
 export const bulkInsert = internalMutation({
   args: {
@@ -120,14 +176,15 @@ export const history = query({
     assertCanViewTenantUsageHistory(user);
 
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 90), 1), 365);
+    const rawLimit = Math.min(limit * 20, 2000);
     const rows = await ctx.db
       .query("tenantUsageHistory")
       .withIndex("by_company_synced_at", (q) =>
         q.eq("linkedCompanyId", args.companyId),
       )
       .order("desc")
-      .take(limit);
+      .take(rawLimit);
 
-    return rows.reverse();
+    return aggregateTenantUsageHistoryRows(rows, limit);
   },
 });
