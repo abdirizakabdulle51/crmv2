@@ -5,23 +5,22 @@ import { useEffect, useState } from "react";
 import { SignInForm } from "@/components/ui/signin.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { CrmProvider } from "@/lib/crm-context.tsx";
-import { Building2 } from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { toast } from "sonner";
+import { BrandLogo } from "@/components/brand-logo.tsx";
 
 function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="text-center space-y-6 max-w-md px-6">
-        <div className="flex items-center justify-center gap-3">
-          <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
-            <Building2 className="h-6 w-6 text-primary-foreground" />
-          </div>
-          <h1 className="text-3xl font-bold tracking-tight">HTGCLOUDS</h1>
-        </div>
+        <BrandLogo
+          className="justify-center"
+          iconClassName="h-12 w-12"
+          textClassName="text-3xl text-foreground"
+        />
         <p className="text-muted-foreground">
           Sign in to access the CRM platform
         </p>
@@ -106,7 +105,11 @@ function AuthenticatedCrm({ children }: { children: React.ReactNode }) {
               Your account has been disabled, contact your administrator.
             </p>
           </div>
-          <Button className="w-full" type="button" onClick={() => void signOut()}>
+          <Button
+            className="w-full"
+            type="button"
+            onClick={() => void signOut()}
+          >
             Sign Out
           </Button>
         </div>
@@ -114,9 +117,7 @@ function AuthenticatedCrm({ children }: { children: React.ReactNode }) {
     );
   }
 
-  async function handlePasswordChange(
-    event: React.FormEvent<HTMLFormElement>,
-  ) {
+  async function handlePasswordChange(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsChangingPassword(true);
 
@@ -180,7 +181,11 @@ function AuthenticatedCrm({ children }: { children: React.ReactNode }) {
               required
             />
           </div>
-          <Button className="w-full" type="submit" disabled={isChangingPassword}>
+          <Button
+            className="w-full"
+            type="submit"
+            disabled={isChangingPassword}
+          >
             Update Password
           </Button>
         </form>

@@ -20,6 +20,7 @@ import {
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
 import { ThemeToggle } from "@/components/theme-toggle.tsx";
+import { BrandLogo } from "@/components/brand-logo.tsx";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -70,9 +71,10 @@ export default function AppLayout() {
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex md:w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
         <div className="p-5 border-b border-sidebar-border">
-          <h1 className="text-lg font-bold tracking-tight text-sidebar-primary">
-            HTGCLOUDS
-          </h1>
+          <BrandLogo
+            iconClassName="h-8 w-8"
+            textClassName="text-lg text-sidebar-foreground"
+          />
           <p className="text-xs text-sidebar-foreground/60 mt-0.5">
             One System. Every Team. Total Control.
           </p>
