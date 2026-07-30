@@ -74,7 +74,7 @@ export default function AppLayout() {
             HTGCLOUDS
           </h1>
           <p className="text-xs text-sidebar-foreground/60 mt-0.5">
-            Internal CRM
+            One System. Every Team. Total Control.
           </p>
         </div>
 
