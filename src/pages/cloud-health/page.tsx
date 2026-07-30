@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -31,13 +32,6 @@ import {
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 import { toast } from "sonner";
 
@@ -67,6 +61,17 @@ function formatDateTime(value: number | undefined) {
     timeStyle: "short",
   }).format(new Date(value));
 }
+
+const LATENCY_LINE_COLORS = [
+  "#0d9488",
+  "#2563eb",
+  "#d97706",
+  "#7c3aed",
+  "#dc2626",
+  "#16a34a",
+  "#0891b2",
+  "#be123c",
+];
 
 function RingGauge({
   label,
@@ -124,35 +129,25 @@ export default function CloudHealthPage() {
   const [ip, setIp] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [selectedTargetId, setSelectedTargetId] =
-    useState<Id<"pingTargets"> | null>(null);
-
-  useEffect(() => {
-    if (!selectedTargetId && targets && targets.length > 0) {
-      setSelectedTargetId(targets[0]._id);
-    }
-  }, [selectedTargetId, targets]);
-
-  const history = useQuery(
-    api.pingResults.recentHistory,
-    selectedTargetId ? { targetId: selectedTargetId, limit: 100 } : "skip",
-  );
-
-  const selectedTarget = targets?.find(
-    (target) => target._id === selectedTargetId,
+  const [hiddenLatencyTargetIds, setHiddenLatencyTargetIds] = useState<
+    Set<string>
+  >(new Set());
+  const latencyHistory = useQuery(
+    api.pingResults.recentHistoryForActiveTargets,
+    canView ? { limit: 100 } : "skip",
   );
   const chartData = useMemo(
     () =>
-      [...(history ?? [])].reverse().map((result) => ({
-        checkedAt: result.checkedAt,
+      (latencyHistory?.buckets ?? []).map((bucket) => ({
+        ...bucket,
         time: new Intl.DateTimeFormat("en-US", {
           hour: "2-digit",
           minute: "2-digit",
-        }).format(new Date(result.checkedAt)),
-        latencyMs: result.success ? (result.latencyMs ?? 0) : null,
+        }).format(new Date(bucket.checkedAt as number)),
       })),
-    [history],
+    [latencyHistory],
   );
+  const latencyTargets = latencyHistory?.targets ?? [];
 
   if (!canView) {
     return (
@@ -233,9 +228,6 @@ export default function CloudHealthPage() {
 
     try {
       const result = await removeTarget({ targetId });
-      if (selectedTargetId === targetId) {
-        setSelectedTargetId(null);
-      }
       toast.success("Ping target deleted", {
         description: `${result.deletedResults} history row${
           result.deletedResults === 1 ? "" : "s"
@@ -460,27 +452,8 @@ export default function CloudHealthPage() {
               <CardTitle className="text-base">Latency Trend</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {targets.length > 0 ? (
-                <Select
-                  value={selectedTargetId ?? ""}
-                  onValueChange={(value) =>
-                    setSelectedTargetId(value as Id<"pingTargets">)
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select target" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {targets.map((target) => (
-                      <SelectItem key={target._id} value={target._id}>
-                        {target.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : null}
               <div className="h-64">
-                {selectedTarget && chartData.length > 0 ? (
+                {latencyTargets.length > 0 && chartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData}>
                       <CartesianGrid
@@ -496,22 +469,49 @@ export default function CloudHealthPage() {
                             : ""
                         }
                       />
-                      <Line
-                        type="monotone"
-                        dataKey="latencyMs"
-                        name="Latency"
-                        stroke="var(--primary)"
-                        strokeWidth={2}
-                        dot={false}
-                        connectNulls={false}
+                      <Legend
+                        verticalAlign="bottom"
+                        height={32}
+                        onClick={(entry) => {
+                          const targetId = String(entry.dataKey ?? "");
+                          if (!targetId) {
+                            return;
+                          }
+                          setHiddenLatencyTargetIds((current) => {
+                            const next = new Set(current);
+                            if (next.has(targetId)) {
+                              next.delete(targetId);
+                            } else {
+                              next.add(targetId);
+                            }
+                            return next;
+                          });
+                        }}
                       />
+                      {latencyTargets.map((target, index) => (
+                        <Line
+                          key={target._id}
+                          type="monotone"
+                          dataKey={target._id}
+                          name={target.name}
+                          stroke={
+                            LATENCY_LINE_COLORS[
+                              index % LATENCY_LINE_COLORS.length
+                            ]
+                          }
+                          strokeWidth={2}
+                          dot={false}
+                          connectNulls={false}
+                          hide={hiddenLatencyTargetIds.has(target._id)}
+                        />
+                      ))}
                     </LineChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="grid h-full place-items-center rounded-lg border text-sm text-muted-foreground">
-                    {selectedTarget
+                    {latencyTargets.length > 0
                       ? "No recent ping history yet."
-                      : "Select a target to view latency."}
+                      : "No active ping targets to chart."}
                   </div>
                 )}
               </div>

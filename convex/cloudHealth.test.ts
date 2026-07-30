@@ -198,6 +198,89 @@ describe("Cloud Health", () => {
     expect(history[0].success).toBe(false);
   });
 
+  it("buckets recent history for all active ping targets into shared chart rows", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+    const targetA = await asUser(t, users.ceo).mutation(
+      api.pingTargets.create,
+      {
+        name: "ISP A",
+        ip: "196.201.0.1",
+      },
+    );
+    const targetB = await asUser(t, users.ceo).mutation(
+      api.pingTargets.create,
+      {
+        name: "ISP B",
+        ip: "196.201.0.2",
+      },
+    );
+    const inactiveTarget = await asUser(t, users.ceo).mutation(
+      api.pingTargets.create,
+      {
+        name: "Paused ISP",
+        ip: "196.201.0.3",
+      },
+    );
+    await asUser(t, users.ceo).mutation(api.pingTargets.setActive, {
+      targetId: inactiveTarget,
+      active: false,
+    });
+    const bucketOne = Date.UTC(2026, 6, 30, 9, 0, 0);
+    const bucketTwo = Date.UTC(2026, 6, 30, 9, 2, 0);
+
+    await t.mutation(internal.pingResults.bulkUpsert, {
+      results: [
+        {
+          targetId: targetA,
+          success: true,
+          latencyMs: 12,
+          checkedAt: bucketOne + 10_000,
+        },
+        {
+          targetId: targetB,
+          success: true,
+          latencyMs: 22,
+          checkedAt: bucketOne + 20_000,
+        },
+        {
+          targetId: targetA,
+          success: false,
+          error: "timeout",
+          checkedAt: bucketTwo + 10_000,
+        },
+        {
+          targetId: inactiveTarget,
+          success: true,
+          latencyMs: 99,
+          checkedAt: bucketOne + 10_000,
+        },
+      ],
+    });
+
+    const history = await asUser(t, users.gm).query(
+      api.pingResults.recentHistoryForActiveTargets,
+      { limit: 10 },
+    );
+
+    expect(history.targets.map((target) => target.name)).toEqual([
+      "ISP A",
+      "ISP B",
+    ]);
+    expect(history.buckets).toEqual([
+      {
+        checkedAt: bucketOne,
+        [targetA]: 12,
+        [targetB]: 22,
+      },
+      {
+        checkedAt: bucketTwo,
+        [targetA]: null,
+        [targetB]: null,
+      },
+    ]);
+  });
+
   it("hard-deletes ping targets and their appended result history for admins only", async () => {
     const t = convexTest(schema, modules);
     const users = await seedUsers(t);
