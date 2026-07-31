@@ -1180,31 +1180,31 @@ export default function CloudHealthPage() {
         onValueChange={setActiveTab}
         className="space-y-4"
       >
-        <TabsList className="grid h-auto w-full max-w-[460px] grid-cols-2 gap-1 rounded-lg border bg-muted/70 p-1 shadow-sm sm:inline-grid sm:w-auto sm:grid-cols-4">
+        <TabsList className="grid h-auto w-full max-w-[460px] grid-cols-2 gap-0.5 rounded-lg border bg-muted/70 p-1 shadow-sm sm:inline-grid sm:w-auto sm:grid-cols-4">
           <TabsTrigger
             value="overview"
-            className="h-10 gap-1.5 rounded-md border border-transparent px-3 text-sm font-medium data-[state=active]:border-primary/30 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-xs sm:min-w-24"
+            className="h-10 gap-1.5 rounded-md px-3 text-sm font-medium data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none sm:min-w-24"
           >
             <LayoutDashboard className="h-3.5 w-3.5 opacity-80" />
             Overview
           </TabsTrigger>
           <TabsTrigger
             value="alarms"
-            className="h-10 gap-1.5 rounded-md border border-transparent px-3 text-sm font-medium data-[state=active]:border-primary/30 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-xs sm:min-w-24"
+            className="h-10 gap-1.5 rounded-md px-3 text-sm font-medium data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none sm:min-w-24"
           >
             <BellRing className="h-3.5 w-3.5 opacity-80" />
             Alarms
           </TabsTrigger>
           <TabsTrigger
             value="capacity"
-            className="h-10 gap-1.5 rounded-md border border-transparent px-3 text-sm font-medium data-[state=active]:border-primary/30 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-xs sm:min-w-24"
+            className="h-10 gap-1.5 rounded-md px-3 text-sm font-medium data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none sm:min-w-24"
           >
             <Activity className="h-3.5 w-3.5 opacity-80" />
             Capacity
           </TabsTrigger>
           <TabsTrigger
             value="network"
-            className="h-10 gap-1.5 rounded-md border border-transparent px-3 text-sm font-medium data-[state=active]:border-primary/30 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-xs sm:min-w-24"
+            className="h-10 gap-1.5 rounded-md px-3 text-sm font-medium data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none sm:min-w-24"
           >
             <Wifi className="h-3.5 w-3.5 opacity-80" />
             Network
