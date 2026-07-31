@@ -694,4 +694,171 @@ describe("Cloud Health", () => {
       }),
     ).rejects.toThrow(/Cloud Health/);
   });
+
+  it("syncs active cloud alarms, links tenants by vdcId, and deactivates missing alarms", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+
+    const companyId = await t.run(async (ctx) => {
+      const country = await ctx.db.insert("countries", {
+        name: "Kenya",
+        region: "East Africa",
+      });
+      const sector = await ctx.db.insert("sectors", { name: "Finance" });
+      const company = await ctx.db.insert("companies", {
+        name: "WAAFI",
+        sectorId: sector,
+        countryId: country,
+        contractStatus: "active",
+      });
+      await ctx.db.insert("manageOneTenants", {
+        vdcId: "waafi-vdc",
+        name: "WAAFI",
+        linkedCompanyId: company,
+        lastSyncedAt: 1,
+      });
+      return company;
+    });
+
+    const firstSync = await t.mutation(internal.cloudAlarms.bulkSync, {
+      syncedAt: 1785520000000,
+      alarms: [
+        {
+          csn: 234900364,
+          alarmId: "1016003",
+          alarmName: "Number of Alarms in Kafka Exceeds the Threshold",
+          severity: 1,
+          cleared: 0,
+          acked: 0,
+          category: 1,
+          eventType: 18,
+          meName: "Deploy Instance",
+          meCategory: "Cloud Services",
+          meType: "SYS_DeployInstance",
+          moc: "SYS_DeployInstance",
+          address: "10.20.4.222",
+          logicalRegionId: "region-hash-1",
+          logicalRegionName: "Mogadishu-region-hq3",
+          vdcId: "waafi-vdc",
+          vdcName: "WAAFI",
+          tenantId: "tenant-1",
+          tenant: "WAAFI",
+          additionalInformation: "Kafka alarm count exceeded threshold",
+          probableCause: "Threshold crossed",
+          occurUtc: 1785501100055,
+          arriveUtc: 1785501102225,
+          latestOccurUtc: 1785501100055,
+          rawPayload: { source: "test" },
+          lastSyncedAt: 1785520000000,
+        },
+        {
+          csn: 234900365,
+          alarmId: "2000001",
+          alarmName: "Platform alarm",
+          severity: 2,
+          cleared: 0,
+          acked: 1,
+          category: 2,
+          eventType: 10,
+          logicalRegionId: "region-hash-1",
+          logicalRegionName: "Mogadishu-region-hq3",
+          vdcId: "",
+          vdcName: "",
+          tenantId: "",
+          tenant: "",
+          occurUtc: 1785501200055,
+          arriveUtc: 1785501202225,
+          latestOccurUtc: 1785501200055,
+          rawPayload: {},
+          lastSyncedAt: 1785520000000,
+        },
+      ],
+    });
+
+    expect(firstSync).toEqual({
+      received: 2,
+      upserted: 2,
+      deactivated: 0,
+      syncedAt: 1785520000000,
+    });
+
+    const summary = await asUser(t, users.gm).query(
+      api.cloudAlarms.summary,
+      {},
+    );
+    expect(summary).toMatchObject({
+      active: 2,
+      critical: 1,
+      major: 1,
+      tenantLinked: 1,
+      platform: 1,
+      regions: 1,
+    });
+
+    const alarms = await asUser(t, users.ceo).query(
+      api.cloudAlarms.listActive,
+      {},
+    );
+    expect(alarms).toHaveLength(2);
+    expect(alarms[0]).toMatchObject({
+      csn: 234900365,
+      linkedCompanyName: null,
+    });
+    expect(alarms[1]).toMatchObject({
+      csn: 234900364,
+      linkedCompanyId: companyId,
+      linkedCompanyName: "WAAFI",
+    });
+
+    const regionAlarms = await asUser(t, users.hob).query(
+      api.cloudAlarms.listActiveByRegion,
+      { logicalRegionId: "region-hash-1" },
+    );
+    expect(regionAlarms.map((alarm) => alarm.csn)).toEqual([
+      234900365, 234900364,
+    ]);
+
+    const secondSync = await t.mutation(internal.cloudAlarms.bulkSync, {
+      syncedAt: 1785520300000,
+      alarms: [
+        {
+          csn: 234900364,
+          alarmId: "1016003",
+          alarmName: "Number of Alarms in Kafka Exceeds the Threshold Updated",
+          severity: 1,
+          cleared: 0,
+          acked: 0,
+          category: 1,
+          eventType: 18,
+          logicalRegionId: "region-hash-1",
+          logicalRegionName: "Mogadishu-region-hq3",
+          vdcId: "waafi-vdc",
+          occurUtc: 1785501100055,
+          arriveUtc: 1785501102225,
+          latestOccurUtc: 1785520300000,
+          rawPayload: { source: "second" },
+          lastSyncedAt: 1785520300000,
+        },
+      ],
+    });
+    expect(secondSync).toMatchObject({
+      received: 1,
+      upserted: 1,
+      deactivated: 1,
+    });
+
+    const remaining = await asUser(t, users.ceo).query(
+      api.cloudAlarms.listActive,
+      {},
+    );
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toMatchObject({
+      csn: 234900364,
+      alarmName: "Number of Alarms in Kafka Exceeds the Threshold Updated",
+    });
+
+    await expect(
+      asUser(t, users.am).query(api.cloudAlarms.summary, {}),
+    ).rejects.toThrow(/Cloud Health/);
+  });
 });

@@ -77,6 +77,35 @@ type CloudCapacitySnapshotInput = CloudCapacityRegionInput & {
   snapshotAt: number;
 };
 
+type CloudAlarmInput = {
+  csn: number;
+  alarmId: string;
+  alarmName: string;
+  severity: number;
+  cleared: number;
+  acked: number;
+  category: number;
+  eventType: number;
+  meName?: string;
+  meCategory?: string;
+  meType?: string;
+  moc?: string;
+  address?: string;
+  logicalRegionId?: string;
+  logicalRegionName?: string;
+  vdcId?: string;
+  vdcName?: string;
+  tenantId?: string;
+  tenant?: string;
+  additionalInformation?: string;
+  probableCause?: string;
+  occurUtc: number;
+  arriveUtc: number;
+  latestOccurUtc: number;
+  rawPayload: unknown;
+  lastSyncedAt: number;
+};
+
 type PingResultInput = {
   targetId: string;
   success: boolean;
@@ -437,6 +466,20 @@ function optionalUnknownNumber(
   return value;
 }
 
+function optionalUnknownString(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key];
+  if (value == null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be a string`);
+  }
+  return value;
+}
+
 function normalizeCloudCapacityRegion(
   value: unknown,
 ): CloudCapacityRegionInput {
@@ -519,6 +562,76 @@ function normalizeCloudCapacitySnapshot(
   return {
     ...normalizeCloudCapacityRegion(value),
     snapshotAt: requireUnknownNumber(value, "snapshotAt"),
+  };
+}
+
+function normalizeCloudAlarm(
+  value: unknown,
+  fallbackSyncedAt: number,
+): CloudAlarmInput {
+  if (!isRecord(value)) {
+    throw new Error("Each cloud alarm must be an object");
+  }
+
+  return {
+    csn: requireUnknownNumber(value, "csn"),
+    alarmId: requireUnknownString(value, "alarmId"),
+    alarmName: requireUnknownString(value, "alarmName"),
+    severity: requireUnknownNumber(value, "severity"),
+    cleared: requireUnknownNumber(value, "cleared"),
+    acked: requireUnknownNumber(value, "acked"),
+    category: requireUnknownNumber(value, "category"),
+    eventType: requireUnknownNumber(value, "eventType"),
+    ...(optionalUnknownString(value, "meName") !== undefined
+      ? { meName: optionalUnknownString(value, "meName") }
+      : {}),
+    ...(optionalUnknownString(value, "meCategory") !== undefined
+      ? { meCategory: optionalUnknownString(value, "meCategory") }
+      : {}),
+    ...(optionalUnknownString(value, "meType") !== undefined
+      ? { meType: optionalUnknownString(value, "meType") }
+      : {}),
+    ...(optionalUnknownString(value, "moc") !== undefined
+      ? { moc: optionalUnknownString(value, "moc") }
+      : {}),
+    ...(optionalUnknownString(value, "address") !== undefined
+      ? { address: optionalUnknownString(value, "address") }
+      : {}),
+    ...(optionalUnknownString(value, "logicalRegionId") !== undefined
+      ? { logicalRegionId: optionalUnknownString(value, "logicalRegionId") }
+      : {}),
+    ...(optionalUnknownString(value, "logicalRegionName") !== undefined
+      ? { logicalRegionName: optionalUnknownString(value, "logicalRegionName") }
+      : {}),
+    ...(optionalUnknownString(value, "vdcId") !== undefined
+      ? { vdcId: optionalUnknownString(value, "vdcId") }
+      : {}),
+    ...(optionalUnknownString(value, "vdcName") !== undefined
+      ? { vdcName: optionalUnknownString(value, "vdcName") }
+      : {}),
+    ...(optionalUnknownString(value, "tenantId") !== undefined
+      ? { tenantId: optionalUnknownString(value, "tenantId") }
+      : {}),
+    ...(optionalUnknownString(value, "tenant") !== undefined
+      ? { tenant: optionalUnknownString(value, "tenant") }
+      : {}),
+    ...(optionalUnknownString(value, "additionalInformation") !== undefined
+      ? {
+          additionalInformation: optionalUnknownString(
+            value,
+            "additionalInformation",
+          ),
+        }
+      : {}),
+    ...(optionalUnknownString(value, "probableCause") !== undefined
+      ? { probableCause: optionalUnknownString(value, "probableCause") }
+      : {}),
+    occurUtc: requireUnknownNumber(value, "occurUtc"),
+    arriveUtc: requireUnknownNumber(value, "arriveUtc"),
+    latestOccurUtc: requireUnknownNumber(value, "latestOccurUtc"),
+    rawPayload: value.rawPayload ?? value,
+    lastSyncedAt:
+      optionalUnknownNumber(value, "lastSyncedAt") ?? fallbackSyncedAt,
   };
 }
 
@@ -612,6 +725,59 @@ function normalizeTenantUsageHistory(value: unknown): TenantUsageHistoryInput {
     syncedAt: requireUnknownNumber(value, "syncedAt"),
   };
 }
+
+http.route({
+  path: "/cloud-alarms/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "MANAGEONE_ALARMS_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json();
+      if (!isRecord(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an object" },
+          { status: 400 },
+        );
+      }
+      if (!Array.isArray(body.alarms)) {
+        return Response.json(
+          { success: false, error: "alarms must be an array" },
+          { status: 400 },
+        );
+      }
+      if (typeof body.syncedAt !== "number") {
+        return Response.json(
+          { success: false, error: "syncedAt is required" },
+          { status: 400 },
+        );
+      }
+
+      const alarms = body.alarms.map((alarm) =>
+        normalizeCloudAlarm(alarm, body.syncedAt as number),
+      );
+      const summary = await ctx.runMutation(internal.cloudAlarms.bulkSync, {
+        alarms,
+        syncedAt: body.syncedAt,
+      });
+
+      return Response.json({ success: true, ...summary });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
 
 http.route({
   path: "/manageone/sync",

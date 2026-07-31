@@ -184,6 +184,43 @@ export default defineSchema({
     snapshotAt: v.number(),
   }).index("by_region_snapshot_at", ["regionId", "snapshotAt"]),
 
+  cloudAlarms: defineTable({
+    csn: v.number(),
+    alarmId: v.string(),
+    alarmName: v.string(),
+    severity: v.number(),
+    cleared: v.number(),
+    acked: v.number(),
+    category: v.number(),
+    eventType: v.number(),
+    meName: v.optional(v.string()),
+    meCategory: v.optional(v.string()),
+    meType: v.optional(v.string()),
+    moc: v.optional(v.string()),
+    address: v.optional(v.string()),
+    logicalRegionId: v.optional(v.string()),
+    logicalRegionName: v.optional(v.string()),
+    vdcId: v.optional(v.string()),
+    vdcName: v.optional(v.string()),
+    tenantId: v.optional(v.string()),
+    tenant: v.optional(v.string()),
+    additionalInformation: v.optional(v.string()),
+    probableCause: v.optional(v.string()),
+    occurUtc: v.number(),
+    arriveUtc: v.number(),
+    latestOccurUtc: v.number(),
+    rawPayload: v.any(),
+    active: v.boolean(),
+    firstSeenAt: v.number(),
+    lastSyncedAt: v.number(),
+    inactiveAt: v.optional(v.number()),
+    linkedCompanyId: v.optional(v.id("companies")),
+  })
+    .index("by_csn", ["csn"])
+    .index("by_active", ["active"])
+    .index("by_region_active", ["logicalRegionId", "active"])
+    .index("by_linked_company", ["linkedCompanyId"]),
+
   tenantUsageHistory: defineTable({
     linkedCompanyId: v.id("companies"),
     tenantName: v.string(),

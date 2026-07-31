@@ -12,6 +12,7 @@ import type * as activities from "../activities.js";
 import type * as aiRecommendations from "../aiRecommendations.js";
 import type * as auth from "../auth.js";
 import type * as authorization from "../authorization.js";
+import type * as cloudAlarms from "../cloudAlarms.js";
 import type * as cloudCapacity from "../cloudCapacity.js";
 import type * as cloudCapacitySnapshots from "../cloudCapacitySnapshots.js";
 import type * as companies from "../companies.js";
@@ -49,6 +50,7 @@ declare const fullApi: ApiFromModules<{
   aiRecommendations: typeof aiRecommendations;
   auth: typeof auth;
   authorization: typeof authorization;
+  cloudAlarms: typeof cloudAlarms;
   cloudCapacity: typeof cloudCapacity;
   cloudCapacitySnapshots: typeof cloudCapacitySnapshots;
   companies: typeof companies;

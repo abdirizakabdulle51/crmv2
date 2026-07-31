@@ -11,8 +11,16 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowLeft, Cpu, Database, HardDrive, ShieldAlert } from "lucide-react";
+import {
+  ArrowLeft,
+  BellRing,
+  Cpu,
+  Database,
+  HardDrive,
+  ShieldAlert,
+} from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
+import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
   Card,
@@ -43,6 +51,22 @@ function formatDateTime(value: number | undefined) {
 function percentage(used: number, total: number) {
   if (total <= 0) return 0;
   return Math.round((used / total) * 1000) / 10;
+}
+
+function severityLabel(severity: number) {
+  if (severity === 1) return "Critical";
+  if (severity === 2) return "Major";
+  if (severity === 3) return "Minor";
+  if (severity === 4) return "Warning";
+  return `Severity ${severity}`;
+}
+
+function severityBadgeVariant(severity: number) {
+  return severity <= 2
+    ? "destructive"
+    : severity === 3
+      ? "secondary"
+      : "outline";
 }
 
 function ConsumerTable({
@@ -141,6 +165,10 @@ export default function CloudHealthRegionPage() {
     api.regionConsumers.topConsumersByRegion,
     consumerQueryArgs ? { ...consumerQueryArgs, metric: "storage" } : "skip",
   );
+  const regionAlarms = useQuery(
+    api.cloudAlarms.listActiveByRegion,
+    canView && decodedRegionId ? { logicalRegionId: decodedRegionId } : "skip",
+  );
   const chartData = useMemo(
     () =>
       (history ?? []).map((snapshot) => ({
@@ -171,7 +199,7 @@ export default function CloudHealthRegionPage() {
     );
   }
 
-  if (!capacity || !history) {
+  if (!capacity || !history || !regionAlarms) {
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-8 w-48" />
@@ -288,6 +316,72 @@ export default function CloudHealthRegionPage() {
           rows={storageConsumers}
         />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <BellRing className="h-4 w-4 text-primary" />
+            Active Alarms in Region
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {regionAlarms.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              No active alarms for this region.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full min-w-[860px] text-sm">
+                <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Severity</th>
+                    <th className="px-3 py-2 font-medium">Alarm</th>
+                    <th className="px-3 py-2 font-medium">Resource</th>
+                    <th className="px-3 py-2 font-medium">Company</th>
+                    <th className="px-3 py-2 font-medium">Occurred</th>
+                    <th className="px-3 py-2 font-medium">Ack</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {regionAlarms.map((alarm) => (
+                    <tr key={alarm._id} className="border-t">
+                      <td className="px-3 py-2">
+                        <Badge variant={severityBadgeVariant(alarm.severity)}>
+                          {severityLabel(alarm.severity)}
+                        </Badge>
+                      </td>
+                      <td className="max-w-[320px] px-3 py-2">
+                        <div className="font-medium">{alarm.alarmName}</div>
+                        <div className="text-xs text-muted-foreground">
+                          CSN {alarm.csn} · ID {alarm.alarmId}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div>{alarm.meName || alarm.address || "-"}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {alarm.meCategory ?? alarm.meType ?? alarm.moc ?? "-"}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        {alarm.linkedCompanyName ??
+                          alarm.tenant ??
+                          alarm.vdcName ??
+                          "Platform"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatDateTime(alarm.latestOccurUtc)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {alarm.acked ? "Acked" : "Unacked"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

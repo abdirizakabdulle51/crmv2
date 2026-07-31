@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import {
   Activity,
+  BellRing,
   Globe2,
   Pause,
   Play,
@@ -77,6 +78,26 @@ function formatDateTime(value: number | undefined) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function severityLabel(severity: number) {
+  if (severity === 1) return "Critical";
+  if (severity === 2) return "Major";
+  if (severity === 3) return "Minor";
+  if (severity === 4) return "Warning";
+  return `Severity ${severity}`;
+}
+
+function severityBadgeVariant(severity: number) {
+  return severity <= 2
+    ? "destructive"
+    : severity === 3
+      ? "secondary"
+      : "outline";
+}
+
+function categoryLabel(category: number) {
+  return `Category ${category}`;
 }
 
 const LATENCY_LINE_COLORS = [
@@ -328,6 +349,10 @@ export default function CloudHealthPage() {
   const canView = canViewCloudHealth(currentUser?.role);
   const canManage = canManagePingTargets(currentUser?.role);
   const capacity = useQuery(api.cloudCapacity.list, canView ? {} : "skip");
+  const alarmsSummary = useQuery(
+    api.cloudAlarms.summary,
+    canView ? {} : "skip",
+  );
   const targets = useQuery(api.pingTargets.list, canView ? {} : "skip");
   const statuses = useQuery(
     api.pingResults.latestStatusByTarget,
@@ -353,6 +378,9 @@ export default function CloudHealthPage() {
   const [ip, setIp] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [alarmSeverityFilter, setAlarmSeverityFilter] = useState("all");
+  const [alarmRegionFilter, setAlarmRegionFilter] = useState("all");
+  const [alarmCategoryFilter, setAlarmCategoryFilter] = useState("all");
   const [serviceName, setServiceName] = useState("");
   const [serviceCheckType, setServiceCheckType] =
     useState<ServiceCheckType>("http");
@@ -374,6 +402,24 @@ export default function CloudHealthPage() {
   const latencyRange = useMemo(
     () => getLatencyRange(latencyRangeId, latencyRangeCalculatedAt),
     [latencyRangeCalculatedAt, latencyRangeId],
+  );
+  const alarmFilters = useMemo(
+    () => ({
+      ...(alarmSeverityFilter !== "all"
+        ? { severity: Number(alarmSeverityFilter) }
+        : {}),
+      ...(alarmRegionFilter !== "all"
+        ? { logicalRegionId: alarmRegionFilter }
+        : {}),
+      ...(alarmCategoryFilter !== "all"
+        ? { category: Number(alarmCategoryFilter) }
+        : {}),
+    }),
+    [alarmCategoryFilter, alarmRegionFilter, alarmSeverityFilter],
+  );
+  const activeAlarms = useQuery(
+    api.cloudAlarms.listActive,
+    canView ? alarmFilters : "skip",
   );
   const latencyHistory = useQuery(
     api.pingResults.historyForActiveTargetsInRange,
@@ -442,6 +488,23 @@ export default function CloudHealthPage() {
         })),
     [serviceHistory],
   );
+  const alarmRegions = useMemo(() => {
+    const regions = new Map<string, string>();
+    for (const alarm of activeAlarms ?? []) {
+      if (alarm.logicalRegionId) {
+        regions.set(
+          alarm.logicalRegionId,
+          alarm.logicalRegionName ?? alarm.logicalRegionId,
+        );
+      }
+    }
+    return [...regions.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [activeAlarms]);
+  const alarmCategories = useMemo(() => {
+    return [
+      ...new Set((activeAlarms ?? []).map((alarm) => alarm.category)),
+    ].sort((a, b) => a - b);
+  }, [activeAlarms]);
 
   useEffect(() => {
     if (!serviceTargets) {
@@ -475,6 +538,8 @@ export default function CloudHealthPage() {
 
   if (
     !capacity ||
+    !alarmsSummary ||
+    !activeAlarms ||
     !targets ||
     !statuses ||
     (SHOW_SERVICE_DNS_HEALTH && (!serviceTargets || !serviceStatuses))
@@ -634,6 +699,206 @@ export default function CloudHealthPage() {
           Infrastructure capacity and upstream network monitoring.
         </p>
       </div>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <BellRing className="h-5 w-5 text-primary" />
+          <h2 className="text-lg font-semibold">Active Alarms</h2>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">
+                Active
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold">
+                {alarmsSummary.active}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Synced {formatDateTime(alarmsSummary.lastSyncedAt)}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">
+                Critical
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold text-destructive">
+                {alarmsSummary.critical}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">
+                Major
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold">
+                {alarmsSummary.major}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">
+                Linked Tenants
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold">
+                {alarmsSummary.tenantLinked}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {alarmsSummary.platform} platform-level
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">
+                Regions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-semibold">
+                {alarmsSummary.regions}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <CardTitle className="text-base">
+                Current ManageOne Alarms
+              </CardTitle>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <Select
+                  value={alarmSeverityFilter}
+                  onValueChange={setAlarmSeverityFilter}
+                >
+                  <SelectTrigger className="w-full sm:w-40">
+                    <SelectValue placeholder="Severity" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Severities</SelectItem>
+                    <SelectItem value="1">Critical</SelectItem>
+                    <SelectItem value="2">Major</SelectItem>
+                    <SelectItem value="3">Minor</SelectItem>
+                    <SelectItem value="4">Warning</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={alarmRegionFilter}
+                  onValueChange={setAlarmRegionFilter}
+                >
+                  <SelectTrigger className="w-full sm:w-48">
+                    <SelectValue placeholder="Region" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Regions</SelectItem>
+                    {alarmRegions.map(([regionId, regionName]) => (
+                      <SelectItem key={regionId} value={regionId}>
+                        {regionName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={alarmCategoryFilter}
+                  onValueChange={setAlarmCategoryFilter}
+                >
+                  <SelectTrigger className="w-full sm:w-40">
+                    <SelectValue placeholder="Category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories</SelectItem>
+                    {alarmCategories.map((category) => (
+                      <SelectItem key={category} value={String(category)}>
+                        {categoryLabel(category)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {activeAlarms.length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                No active alarms match the selected filters.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full min-w-[980px] text-sm">
+                  <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Severity</th>
+                      <th className="px-3 py-2 font-medium">Alarm</th>
+                      <th className="px-3 py-2 font-medium">Resource</th>
+                      <th className="px-3 py-2 font-medium">Region</th>
+                      <th className="px-3 py-2 font-medium">Company</th>
+                      <th className="px-3 py-2 font-medium">Occurred</th>
+                      <th className="px-3 py-2 font-medium">Ack</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeAlarms.map((alarm) => (
+                      <tr key={alarm._id} className="border-t">
+                        <td className="px-3 py-2">
+                          <Badge variant={severityBadgeVariant(alarm.severity)}>
+                            {severityLabel(alarm.severity)}
+                          </Badge>
+                        </td>
+                        <td className="max-w-[320px] px-3 py-2">
+                          <div className="font-medium">{alarm.alarmName}</div>
+                          <div className="text-xs text-muted-foreground">
+                            CSN {alarm.csn} · ID {alarm.alarmId}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div>{alarm.meName || alarm.address || "-"}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {alarm.meCategory ??
+                              alarm.meType ??
+                              alarm.moc ??
+                              "-"}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          {alarm.logicalRegionName ??
+                            alarm.logicalRegionId ??
+                            "-"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {alarm.linkedCompanyName ??
+                            alarm.tenant ??
+                            alarm.vdcName ??
+                            "Platform"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatDateTime(alarm.latestOccurUtc)}
+                        </td>
+                        <td className="px-3 py-2">
+                          {alarm.acked ? "Acked" : "Unacked"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
