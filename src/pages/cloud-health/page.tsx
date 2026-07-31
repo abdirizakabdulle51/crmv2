@@ -49,6 +49,12 @@ import {
   SelectValue,
 } from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 import { toast } from "sonner";
 
@@ -123,6 +129,7 @@ const LATENCY_LINE_COLORS = [
 
 // Flip this back on when the service/DNS target-entry UX is finalized.
 const SHOW_SERVICE_DNS_HEALTH = false;
+const ALARM_PAGE_SIZE = 50;
 
 type LatencyRangeId =
   | "last_5_minutes"
@@ -696,6 +703,8 @@ export default function CloudHealthPage() {
   const [alarmCategoryFilter, setAlarmCategoryFilter] = useState("all");
   const [alarmShortcut, setAlarmShortcut] = useState<AlarmShortcut>("all");
   const [selectedAlarmCsn, setSelectedAlarmCsn] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [alarmPage, setAlarmPage] = useState(1);
   const [serviceName, setServiceName] = useState("");
   const [serviceCheckType, setServiceCheckType] =
     useState<ServiceCheckType>("http");
@@ -763,6 +772,28 @@ export default function CloudHealthPage() {
       (allActiveAlarms ?? []).find((alarm) => alarm.csn === selectedAlarmCsn),
     [allActiveAlarms, selectedAlarmCsn],
   );
+  const topActiveAlarms = useMemo(() => {
+    return [...(allActiveAlarms ?? [])]
+      .sort(
+        (a, b) =>
+          a.severity - b.severity || b.latestOccurUtc - a.latestOccurUtc,
+      )
+      .slice(0, 10);
+  }, [allActiveAlarms]);
+  const alarmPageCount = Math.max(
+    1,
+    Math.ceil(activeAlarms.length / ALARM_PAGE_SIZE),
+  );
+  const pagedActiveAlarms = useMemo(() => {
+    const start = (alarmPage - 1) * ALARM_PAGE_SIZE;
+    return activeAlarms.slice(start, start + ALARM_PAGE_SIZE);
+  }, [activeAlarms, alarmPage]);
+  const alarmShowingStart =
+    activeAlarms.length === 0 ? 0 : (alarmPage - 1) * ALARM_PAGE_SIZE + 1;
+  const alarmShowingEnd = Math.min(
+    activeAlarms.length,
+    alarmPage * ALARM_PAGE_SIZE,
+  );
   const latencyHistory = useQuery(
     api.pingResults.historyForActiveTargetsInRange,
     canView ? latencyRange : "skip",
@@ -804,6 +835,38 @@ export default function CloudHealthPage() {
 
     return getLatencyAxisDomain(values);
   }, [chartData, hiddenLatencyTargetIds, latencyTargets]);
+  const networkSummary = useMemo(
+    () => {
+      const rows = statuses ?? [];
+      return {
+        total: rows.length,
+        up: rows.filter((status) => status.latest?.success).length,
+        down: rows.filter(
+          (status) => status.latest && !status.latest.success,
+        ).length,
+        paused: rows.filter((status) => !status.target.active).length,
+      };
+    },
+    [statuses],
+  );
+  const capacitySummary = useMemo(() => {
+    const rows = capacity ?? [];
+    const regionCount = rows.length;
+    const warningRegions = rows.filter(
+      (region) =>
+        region.cpuUsedPercent >= 70 ||
+        region.memoryUsedPercent >= 70 ||
+        region.storageUsedPercent >= 70,
+    ).length;
+    const criticalRegions = rows.filter(
+      (region) =>
+        region.cpuUsedPercent >= 90 ||
+        region.memoryUsedPercent >= 90 ||
+        region.storageUsedPercent >= 90,
+    ).length;
+
+    return { regionCount, warningRegions, criticalRegions };
+  }, [capacity]);
   const visibleServiceTargets = serviceTargets ?? [];
   const visibleServiceStatuses = serviceStatuses ?? [];
   const serviceHistory = useQuery(
@@ -863,7 +926,17 @@ export default function CloudHealthPage() {
     setSelectedServiceTargetId(serviceTargets[0]?._id ?? "");
   }, [selectedServiceTargetId, serviceTargets]);
 
+  useEffect(() => {
+    setAlarmPage(1);
+  }, [
+    alarmCategoryFilter,
+    alarmRegionFilter,
+    alarmSeverityFilter,
+    alarmShortcut,
+  ]);
+
   const applyAlarmShortcut = (shortcut: AlarmShortcut) => {
+    setActiveTab("alarms");
     setAlarmShortcut(shortcut);
 
     if (shortcut === "critical") {
@@ -1105,775 +1178,1028 @@ export default function CloudHealthPage() {
         </p>
       </div>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <BellRing className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">Active Alarms</h2>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <AlarmShortcutCard
-            title="Active"
-            value={alarmsSummary.active}
-            detail={`Synced ${formatDateTime(alarmsSummary.lastSyncedAt)}`}
-            active={alarmShortcut === "all"}
-            onClick={() => applyAlarmShortcut("all")}
-          />
-          <AlarmShortcutCard
-            title="Critical"
-            value={alarmsSummary.critical}
-            active={alarmShortcut === "critical"}
-            onClick={() => applyAlarmShortcut("critical")}
-            valueClassName="text-destructive"
-          />
-          <AlarmShortcutCard
-            title="Major"
-            value={alarmsSummary.major}
-            active={alarmShortcut === "major"}
-            onClick={() => applyAlarmShortcut("major")}
-          />
-          <AlarmShortcutCard
-            title="Linked Tenants"
-            value={alarmsSummary.tenantLinked}
-            detail={`${alarmsSummary.platform} platform-level`}
-            active={alarmShortcut === "linked"}
-            onClick={() => applyAlarmShortcut("linked")}
-          />
-          <AlarmShortcutCard
-            title="Regions"
-            value={alarmsSummary.regions}
-            active={alarmShortcut === "regions"}
-            onClick={() => applyAlarmShortcut("regions")}
-          />
-        </div>
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="space-y-4"
+      >
+        <TabsList className="grid h-auto w-full grid-cols-2 sm:w-fit sm:grid-cols-4">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="alarms">Alarms</TabsTrigger>
+          <TabsTrigger value="capacity">Capacity</TabsTrigger>
+          <TabsTrigger value="network">Network</TabsTrigger>
+        </TabsList>
 
-        <Card id="cloud-health-alarms-table">
-          <CardHeader>
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <CardTitle className="text-base">
-                Current ManageOne Alarms
-              </CardTitle>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <Select
-                  value={alarmSeverityFilter}
-                  onValueChange={updateAlarmSeverityFilter}
-                >
-                  <SelectTrigger className="w-full sm:w-40">
-                    <SelectValue placeholder="Severity" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Severities</SelectItem>
-                    <SelectItem value="1">Critical</SelectItem>
-                    <SelectItem value="2">Major</SelectItem>
-                    <SelectItem value="3">Minor</SelectItem>
-                    <SelectItem value="4">Warning</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={alarmRegionFilter}
-                  onValueChange={updateAlarmRegionFilter}
-                >
-                  <SelectTrigger className="w-full sm:w-48">
-                    <SelectValue placeholder="Region" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Regions</SelectItem>
-                    {alarmRegions.map(([regionId, regionName]) => (
-                      <SelectItem key={regionId} value={regionId}>
-                        {regionName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={alarmCategoryFilter}
-                  onValueChange={updateAlarmCategoryFilter}
-                >
-                  <SelectTrigger className="w-full sm:w-40">
-                    <SelectValue placeholder="Category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Categories</SelectItem>
-                    {alarmCategories.map((category) => (
-                      <SelectItem key={category} value={String(category)}>
-                        {categoryLabel(category)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+        <TabsContent value="overview" className="space-y-6">
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <BellRing className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold">Active Alarms</h2>
             </div>
-          </CardHeader>
-          <CardContent>
-            {activeAlarms.length === 0 ? (
-              <div className="py-10 text-center text-sm text-muted-foreground">
-                No active alarms match the selected filters.
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-md border">
-                <table className="w-full min-w-[980px] text-sm">
-                  <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
-                    <tr>
-                      <th className="px-3 py-2 font-medium">Severity</th>
-                      <th className="px-3 py-2 font-medium">Alarm</th>
-                      <th className="px-3 py-2 font-medium">Resource</th>
-                      <th className="px-3 py-2 font-medium">Region</th>
-                      <th className="px-3 py-2 font-medium">Company</th>
-                      <th className="px-3 py-2 font-medium">Occurred</th>
-                      <th className="px-3 py-2 font-medium">Ack</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeAlarms.map((alarm) => (
-                      <tr
-                        key={alarm._id}
-                        tabIndex={0}
-                        role="button"
-                        aria-label={`View details for ${alarm.alarmName}`}
-                        className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                        onClick={() => setSelectedAlarmCsn(alarm.csn)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            setSelectedAlarmCsn(alarm.csn);
-                          }
-                        }}
-                      >
-                        <td className="px-3 py-2">
-                          <Badge variant={severityBadgeVariant(alarm.severity)}>
-                            {severityLabel(alarm.severity)}
-                          </Badge>
-                        </td>
-                        <td className="max-w-[320px] px-3 py-2">
-                          <div className="font-medium">{alarm.alarmName}</div>
-                          <div className="text-xs text-muted-foreground">
-                            CSN {alarm.csn} · ID {alarm.alarmId}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div>{alarm.meName || alarm.address || "-"}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {alarm.meCategory ??
-                              alarm.meType ??
-                              alarm.moc ??
-                              "-"}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          {alarm.logicalRegionName ??
-                            alarm.logicalRegionId ??
-                            "-"}
-                        </td>
-                        <td className="px-3 py-2">
-                          {alarm.linkedCompanyName ??
-                            alarm.tenant ??
-                            alarm.vdcName ??
-                            "Platform"}
-                        </td>
-                        <td className="px-3 py-2">
-                          {formatDateTime(alarm.latestOccurUtc)}
-                        </td>
-                        <td className="px-3 py-2">
-                          {alarm.acked ? "Acked" : "Unacked"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </section>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <AlarmShortcutCard
+                title="Active"
+                value={alarmsSummary.active}
+                detail={`Synced ${formatDateTime(alarmsSummary.lastSyncedAt)}`}
+                active={alarmShortcut === "all"}
+                onClick={() => applyAlarmShortcut("all")}
+              />
+              <AlarmShortcutCard
+                title="Critical"
+                value={alarmsSummary.critical}
+                active={alarmShortcut === "critical"}
+                onClick={() => applyAlarmShortcut("critical")}
+                valueClassName="text-destructive"
+              />
+              <AlarmShortcutCard
+                title="Major"
+                value={alarmsSummary.major}
+                active={alarmShortcut === "major"}
+                onClick={() => applyAlarmShortcut("major")}
+              />
+              <AlarmShortcutCard
+                title="Linked Tenants"
+                value={alarmsSummary.tenantLinked}
+                detail={`${alarmsSummary.platform} platform-level`}
+                active={alarmShortcut === "linked"}
+                onClick={() => applyAlarmShortcut("linked")}
+              />
+              <AlarmShortcutCard
+                title="Regions"
+                value={alarmsSummary.regions}
+                active={alarmShortcut === "regions"}
+                onClick={() => applyAlarmShortcut("regions")}
+              />
+            </div>
+          </section>
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Activity className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">Infrastructure Capacity</h2>
-        </div>
-        {capacity.length === 0 ? (
-          <Card>
-            <CardContent className="py-10 text-center text-muted-foreground">
-              No capacity regions synced yet.
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4 xl:grid-cols-2">
-            {capacity.map((region) => (
-              <Card key={region._id}>
-                <CardHeader>
-                  <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
-                    {region.regionName}
-                    <span className="text-xs font-normal text-muted-foreground">
-                      Synced {formatDateTime(region.lastSyncedAt)}
-                    </span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="grid gap-3 md:grid-cols-3">
-                  <RingGauge
-                    label="CPU"
-                    percent={region.cpuUsedPercent}
-                    detail={`${formatNumber(region.cpuUsed)} / ${formatNumber(region.cpuTotal)} cores`}
-                    oversubscriptionRatio={region.cpuOversubscriptionRatio}
-                    onClick={() =>
-                      navigate(
-                        `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
-                      )
-                    }
-                  />
-                  <RingGauge
-                    label="Memory"
-                    percent={region.memoryUsedPercent}
-                    detail={`${formatNumber(region.memoryUsedGb, " GB")} / ${formatNumber(region.memoryTotalGb, " GB")}`}
-                    oversubscriptionRatio={region.memoryOversubscriptionRatio}
-                    onClick={() =>
-                      navigate(
-                        `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
-                      )
-                    }
-                  />
-                  <RingGauge
-                    label="Storage"
-                    percent={region.storageUsedPercent}
-                    detail={`${formatNumber(region.storageUsedGb, " GB")} / ${formatNumber(region.storageTotalGb, " GB")}`}
-                    oversubscriptionRatio={region.storageOversubscriptionRatio}
-                    onClick={() =>
-                      navigate(
-                        `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
-                      )
-                    }
-                  />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Wifi className="h-4 w-4 text-primary" />
-              Network Status
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {statuses.length === 0 ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">
-                No ping targets configured yet.
-              </div>
-            ) : (
-              statuses.map((status) => (
-                <div
-                  key={status.target._id}
-                  className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="flex items-start gap-3">
-                    <span
-                      className={`mt-1 h-3 w-3 rounded-full ${
-                        status.latest?.success ? "bg-emerald-500" : "bg-red-500"
-                      }`}
-                    />
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">
-                          {status.target.name}
-                        </span>
-                        <Badge
-                          variant={
-                            status.target.active ? "default" : "secondary"
-                          }
-                        >
-                          {status.target.active ? "Active" : "Paused"}
-                        </Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {status.target.ip} · Last checked{" "}
-                        {formatDateTime(status.latest?.checkedAt)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <div>
-                      <div className="font-semibold">
-                        {status.latest?.success
-                          ? formatNumber(status.latest.latencyMs, " ms")
-                          : "Down"}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Latest latency
-                      </div>
-                    </div>
-                    <div>
-                      <div className="font-semibold">
-                        {status.uptime24hPercent == null
-                          ? "-"
-                          : `${status.uptime24hPercent}%`}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        24h uptime
-                      </div>
-                    </div>
-                    {canManage ? (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            handleSetActive(
-                              status.target._id,
-                              !status.target.active,
-                            )
-                          }
-                        >
-                          {status.target.active ? (
-                            <Pause className="mr-2 h-4 w-4" />
-                          ) : (
-                            <Play className="mr-2 h-4 w-4" />
-                          )}
-                          {status.target.active ? "Pause" : "Resume"}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleDeleteTarget(status.target._id)}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-
-        <div className="space-y-4">
-          {canManage ? (
+          <section className="grid gap-4 xl:grid-cols-[1.4fr_0.8fr]">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Add Ping Target</CardTitle>
+                <CardTitle className="text-base">Top Active Alarms</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="target-name">Name</Label>
-                  <Input
-                    id="target-name"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Upstream ISP"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="target-ip">IP Address</Label>
-                  <Input
-                    id="target-ip"
-                    value={ip}
-                    onChange={(event) => setIp(event.target.value)}
-                    placeholder="196.201.0.1"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="target-notes">Notes</Label>
-                  <Input
-                    id="target-notes"
-                    value={notes}
-                    onChange={(event) => setNotes(event.target.value)}
-                    placeholder="Optional"
-                  />
-                </div>
-                <Button
-                  className="w-full"
-                  onClick={handleCreateTarget}
-                  disabled={submitting}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Target
-                </Button>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Latency Trend</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Select
-                value={latencyRangeId}
-                onValueChange={(value) => {
-                  setLatencyRangeId(value as LatencyRangeId);
-                  setLatencyRangeCalculatedAt(Date.now());
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {LATENCY_RANGE_OPTIONS.map((option) => (
-                    <SelectItem key={option.id} value={option.id}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="h-64">
-                {latencyTargets.length > 0 && chartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData}>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        className="opacity-30"
-                      />
-                      <XAxis dataKey="time" className="text-xs" />
-                      <YAxis
-                        className="text-xs"
-                        unit=" ms"
-                        domain={latencyAxisDomain}
-                      />
-                      <Tooltip
-                        labelFormatter={(_, payload) =>
-                          payload?.[0]?.payload?.checkedAt
-                            ? formatDateTime(payload[0].payload.checkedAt)
-                            : ""
-                        }
-                      />
-                      <Legend
-                        verticalAlign="bottom"
-                        height={32}
-                        onClick={(entry) => {
-                          const targetId = String(entry.dataKey ?? "");
-                          if (!targetId) {
-                            return;
-                          }
-                          setHiddenLatencyTargetIds((current) => {
-                            const next = new Set(current);
-                            if (next.has(targetId)) {
-                              next.delete(targetId);
-                            } else {
-                              next.add(targetId);
-                            }
-                            return next;
-                          });
-                        }}
-                      />
-                      {latencyTargets.map((target, index) => (
-                        <Line
-                          key={target._id}
-                          type="monotone"
-                          dataKey={target._id}
-                          name={target.name}
-                          stroke={
-                            LATENCY_LINE_COLORS[
-                              index % LATENCY_LINE_COLORS.length
-                            ]
-                          }
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls={false}
-                          hide={hiddenLatencyTargetIds.has(target._id)}
-                        />
-                      ))}
-                    </LineChart>
-                  </ResponsiveContainer>
+              <CardContent>
+                {topActiveAlarms.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-muted-foreground">
+                    No active alarms.
+                  </div>
                 ) : (
-                  <div className="grid h-full place-items-center rounded-lg border text-sm text-muted-foreground">
-                    {latencyTargets.length > 0
-                      ? "No recent ping history yet."
-                      : "No active ping targets to chart."}
+                  <div className="overflow-x-auto rounded-md border">
+                    <table className="w-full min-w-[760px] text-sm">
+                      <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Severity</th>
+                          <th className="px-3 py-2 font-medium">Alarm</th>
+                          <th className="px-3 py-2 font-medium">Region</th>
+                          <th className="px-3 py-2 font-medium">Company</th>
+                          <th className="px-3 py-2 font-medium">Latest</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {topActiveAlarms.map((alarm) => (
+                          <tr
+                            key={alarm._id}
+                            tabIndex={0}
+                            role="button"
+                            aria-label={`View details for ${alarm.alarmName}`}
+                            className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                            onClick={() => setSelectedAlarmCsn(alarm.csn)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setSelectedAlarmCsn(alarm.csn);
+                              }
+                            }}
+                          >
+                            <td className="px-3 py-2">
+                              <Badge
+                                variant={severityBadgeVariant(alarm.severity)}
+                              >
+                                {severityLabel(alarm.severity)}
+                              </Badge>
+                            </td>
+                            <td className="max-w-[320px] px-3 py-2">
+                              <div className="font-medium">
+                                {alarm.alarmName}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                CSN {alarm.csn}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              {alarm.logicalRegionName ??
+                                alarm.logicalRegionId ??
+                                "-"}
+                            </td>
+                            <td className="px-3 py-2">
+                              {alarm.linkedCompanyName ??
+                                alarm.tenant ??
+                                alarm.vdcName ??
+                                "Platform"}
+                            </td>
+                            <td className="px-3 py-2">
+                              {formatDateTime(alarm.latestOccurUtc)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </section>
+              </CardContent>
+            </Card>
 
-      {SHOW_SERVICE_DNS_HEALTH && (
-        <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Globe2 className="h-4 w-4 text-primary" />
-                Service &amp; DNS Health
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {visibleServiceStatuses.length === 0 ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  No service health targets configured yet.
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Infrastructure Capacity
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="text-2xl font-semibold">
+                    {capacitySummary.regionCount}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Regions monitored
+                  </p>
+                  <div className="flex gap-2 text-xs">
+                    <Badge variant="secondary">
+                      {capacitySummary.warningRegions} warning
+                    </Badge>
+                    <Badge
+                      variant={
+                        capacitySummary.criticalRegions > 0
+                          ? "destructive"
+                          : "outline"
+                      }
+                    >
+                      {capacitySummary.criticalRegions} critical
+                    </Badge>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Network Status
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="text-2xl font-semibold">
+                    {networkSummary.up}/{networkSummary.total}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Targets up right now
+                  </p>
+                  <div className="flex gap-2 text-xs">
+                    <Badge
+                      variant={
+                        networkSummary.down > 0 ? "destructive" : "outline"
+                      }
+                    >
+                      {networkSummary.down} down
+                    </Badge>
+                    <Badge variant="secondary">
+                      {networkSummary.paused} paused
+                    </Badge>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </section>
+        </TabsContent>
+
+        <TabsContent value="alarms" className="space-y-6">
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <BellRing className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold">Active Alarms</h2>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <AlarmShortcutCard
+                title="Active"
+                value={alarmsSummary.active}
+                detail={`Synced ${formatDateTime(alarmsSummary.lastSyncedAt)}`}
+                active={alarmShortcut === "all"}
+                onClick={() => applyAlarmShortcut("all")}
+              />
+              <AlarmShortcutCard
+                title="Critical"
+                value={alarmsSummary.critical}
+                active={alarmShortcut === "critical"}
+                onClick={() => applyAlarmShortcut("critical")}
+                valueClassName="text-destructive"
+              />
+              <AlarmShortcutCard
+                title="Major"
+                value={alarmsSummary.major}
+                active={alarmShortcut === "major"}
+                onClick={() => applyAlarmShortcut("major")}
+              />
+              <AlarmShortcutCard
+                title="Linked Tenants"
+                value={alarmsSummary.tenantLinked}
+                detail={`${alarmsSummary.platform} platform-level`}
+                active={alarmShortcut === "linked"}
+                onClick={() => applyAlarmShortcut("linked")}
+              />
+              <AlarmShortcutCard
+                title="Regions"
+                value={alarmsSummary.regions}
+                active={alarmShortcut === "regions"}
+                onClick={() => applyAlarmShortcut("regions")}
+              />
+            </div>
+
+            <Card id="cloud-health-alarms-table">
+              <CardHeader>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <CardTitle className="text-base">
+                    Current ManageOne Alarms
+                  </CardTitle>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Select
+                      value={alarmSeverityFilter}
+                      onValueChange={updateAlarmSeverityFilter}
+                    >
+                      <SelectTrigger className="w-full sm:w-40">
+                        <SelectValue placeholder="Severity" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Severities</SelectItem>
+                        <SelectItem value="1">Critical</SelectItem>
+                        <SelectItem value="2">Major</SelectItem>
+                        <SelectItem value="3">Minor</SelectItem>
+                        <SelectItem value="4">Warning</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={alarmRegionFilter}
+                      onValueChange={updateAlarmRegionFilter}
+                    >
+                      <SelectTrigger className="w-full sm:w-48">
+                        <SelectValue placeholder="Region" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Regions</SelectItem>
+                        {alarmRegions.map(([regionId, regionName]) => (
+                          <SelectItem key={regionId} value={regionId}>
+                            {regionName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={alarmCategoryFilter}
+                      onValueChange={updateAlarmCategoryFilter}
+                    >
+                      <SelectTrigger className="w-full sm:w-40">
+                        <SelectValue placeholder="Category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Categories</SelectItem>
+                        {alarmCategories.map((category) => (
+                          <SelectItem key={category} value={String(category)}>
+                            {categoryLabel(category)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-              ) : (
-                visibleServiceStatuses.map((status) => (
-                  <div
-                    key={status.target._id}
-                    className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="flex items-start gap-3">
-                      <span
-                        className={`mt-1 h-3 w-3 rounded-full ${
-                          status.latest?.success
-                            ? "bg-emerald-500"
-                            : "bg-red-500"
-                        }`}
-                      />
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium">
-                            {status.target.name}
-                          </span>
-                          <Badge variant="secondary">
-                            {formatCheckType(status.target.checkType)}
-                          </Badge>
-                          <Badge
-                            variant={
-                              status.target.active ? "default" : "secondary"
-                            }
+              </CardHeader>
+              <CardContent>
+                {activeAlarms.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-muted-foreground">
+                    No active alarms match the selected filters.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-md border">
+                    <table className="w-full min-w-[980px] text-sm">
+                      <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Severity</th>
+                          <th className="px-3 py-2 font-medium">Alarm</th>
+                          <th className="px-3 py-2 font-medium">Resource</th>
+                          <th className="px-3 py-2 font-medium">Region</th>
+                          <th className="px-3 py-2 font-medium">Company</th>
+                          <th className="px-3 py-2 font-medium">Occurred</th>
+                          <th className="px-3 py-2 font-medium">Ack</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pagedActiveAlarms.map((alarm) => (
+                          <tr
+                            key={alarm._id}
+                            tabIndex={0}
+                            role="button"
+                            aria-label={`View details for ${alarm.alarmName}`}
+                            className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                            onClick={() => setSelectedAlarmCsn(alarm.csn)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setSelectedAlarmCsn(alarm.csn);
+                              }
+                            }}
                           >
-                            {status.target.active ? "Active" : "Paused"}
-                          </Badge>
+                            <td className="px-3 py-2">
+                              <Badge
+                                variant={severityBadgeVariant(alarm.severity)}
+                              >
+                                {severityLabel(alarm.severity)}
+                              </Badge>
+                            </td>
+                            <td className="max-w-[320px] px-3 py-2">
+                              <div className="font-medium">
+                                {alarm.alarmName}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                CSN {alarm.csn} · ID {alarm.alarmId}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div>{alarm.meName || alarm.address || "-"}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {alarm.meCategory ??
+                                  alarm.meType ??
+                                  alarm.moc ??
+                                  "-"}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              {alarm.logicalRegionName ??
+                                alarm.logicalRegionId ??
+                                "-"}
+                            </td>
+                            <td className="px-3 py-2">
+                              {alarm.linkedCompanyName ??
+                                alarm.tenant ??
+                                alarm.vdcName ??
+                                "Platform"}
+                            </td>
+                            <td className="px-3 py-2">
+                              {formatDateTime(alarm.latestOccurUtc)}
+                            </td>
+                            <td className="px-3 py-2">
+                              {alarm.acked ? "Acked" : "Unacked"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {activeAlarms.length > 0 ? (
+                  <div className="mt-4 flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      Showing {alarmShowingStart}-{alarmShowingEnd} of{" "}
+                      {activeAlarms.length} alarms
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setAlarmPage((page) => Math.max(1, page - 1))
+                        }
+                        disabled={alarmPage <= 1}
+                      >
+                        Previous
+                      </Button>
+                      <span>
+                        Page {alarmPage} of {alarmPageCount}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setAlarmPage((page) =>
+                            Math.min(alarmPageCount, page + 1),
+                          )
+                        }
+                        disabled={alarmPage >= alarmPageCount}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          </section>
+        </TabsContent>
+
+        <TabsContent value="capacity" className="space-y-6">
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold">Infrastructure Capacity</h2>
+            </div>
+            {capacity.length === 0 ? (
+              <Card>
+                <CardContent className="py-10 text-center text-muted-foreground">
+                  No capacity regions synced yet.
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid gap-4 xl:grid-cols-2">
+                {capacity.map((region) => (
+                  <Card key={region._id}>
+                    <CardHeader>
+                      <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+                        {region.regionName}
+                        <span className="text-xs font-normal text-muted-foreground">
+                          Synced {formatDateTime(region.lastSyncedAt)}
+                        </span>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid gap-3 md:grid-cols-3">
+                      <RingGauge
+                        label="CPU"
+                        percent={region.cpuUsedPercent}
+                        detail={`${formatNumber(region.cpuUsed)} / ${formatNumber(region.cpuTotal)} cores`}
+                        oversubscriptionRatio={region.cpuOversubscriptionRatio}
+                        onClick={() =>
+                          navigate(
+                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
+                          )
+                        }
+                      />
+                      <RingGauge
+                        label="Memory"
+                        percent={region.memoryUsedPercent}
+                        detail={`${formatNumber(region.memoryUsedGb, " GB")} / ${formatNumber(region.memoryTotalGb, " GB")}`}
+                        oversubscriptionRatio={
+                          region.memoryOversubscriptionRatio
+                        }
+                        onClick={() =>
+                          navigate(
+                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
+                          )
+                        }
+                      />
+                      <RingGauge
+                        label="Storage"
+                        percent={region.storageUsedPercent}
+                        detail={`${formatNumber(region.storageUsedGb, " GB")} / ${formatNumber(region.storageTotalGb, " GB")}`}
+                        oversubscriptionRatio={
+                          region.storageOversubscriptionRatio
+                        }
+                        onClick={() =>
+                          navigate(
+                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
+                          )
+                        }
+                      />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </section>
+        </TabsContent>
+
+        <TabsContent value="network" className="space-y-6">
+          <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Wifi className="h-4 w-4 text-primary" />
+                  Network Status
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {statuses.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-muted-foreground">
+                    No ping targets configured yet.
+                  </div>
+                ) : (
+                  statuses.map((status) => (
+                    <div
+                      key={status.target._id}
+                      className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="flex items-start gap-3">
+                        <span
+                          className={`mt-1 h-3 w-3 rounded-full ${
+                            status.latest?.success
+                              ? "bg-emerald-500"
+                              : "bg-red-500"
+                          }`}
+                        />
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">
+                              {status.target.name}
+                            </span>
+                            <Badge
+                              variant={
+                                status.target.active ? "default" : "secondary"
+                              }
+                            >
+                              {status.target.active ? "Active" : "Paused"}
+                            </Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {status.target.ip} · Last checked{" "}
+                            {formatDateTime(status.latest?.checkedAt)}
+                          </div>
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {status.target.target} Â· Last checked{" "}
-                          {formatDateTime(status.latest?.checkedAt)}
+                      </div>
+                      <div className="flex items-center gap-4 text-sm">
+                        <div>
+                          <div className="font-semibold">
+                            {status.latest?.success
+                              ? formatNumber(status.latest.latencyMs, " ms")
+                              : "Down"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Latest latency
+                          </div>
                         </div>
-                        {status.latest?.resolvedValue ? (
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {status.latest.resolvedValue}
+                        <div>
+                          <div className="font-semibold">
+                            {status.uptime24hPercent == null
+                              ? "-"
+                              : `${status.uptime24hPercent}%`}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            24h uptime
+                          </div>
+                        </div>
+                        {canManage ? (
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                handleSetActive(
+                                  status.target._id,
+                                  !status.target.active,
+                                )
+                              }
+                            >
+                              {status.target.active ? (
+                                <Pause className="mr-2 h-4 w-4" />
+                              ) : (
+                                <Play className="mr-2 h-4 w-4" />
+                              )}
+                              {status.target.active ? "Pause" : "Resume"}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() =>
+                                handleDeleteTarget(status.target._id)
+                              }
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </Button>
                           </div>
                         ) : null}
                       </div>
                     </div>
-                    <div className="flex items-center gap-4 text-sm">
-                      <div>
-                        <div className="font-semibold">
-                          {status.latest?.success
-                            ? formatNumber(status.latest.latencyMs, " ms")
-                            : "Down"}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          Latest latency
-                        </div>
-                      </div>
-                      <div>
-                        <div className="font-semibold">
-                          {status.uptime24hPercent == null
-                            ? "-"
-                            : `${status.uptime24hPercent}%`}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          24h uptime
-                        </div>
-                      </div>
-                      {canManage ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            handleSetServiceTargetActive(
-                              status.target._id,
-                              !status.target.active,
-                            )
-                          }
-                        >
-                          {status.target.active ? (
-                            <Pause className="mr-2 h-4 w-4" />
-                          ) : (
-                            <Play className="mr-2 h-4 w-4" />
-                          )}
-                          {status.target.active ? "Pause" : "Resume"}
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
+                  ))
+                )}
+              </CardContent>
+            </Card>
 
-          <div className="space-y-4">
-            {canManage ? (
+            <div className="space-y-4">
+              {canManage ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Add Ping Target</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="target-name">Name</Label>
+                      <Input
+                        id="target-name"
+                        value={name}
+                        onChange={(event) => setName(event.target.value)}
+                        placeholder="Upstream ISP"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="target-ip">IP Address</Label>
+                      <Input
+                        id="target-ip"
+                        value={ip}
+                        onChange={(event) => setIp(event.target.value)}
+                        placeholder="196.201.0.1"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="target-notes">Notes</Label>
+                      <Input
+                        id="target-notes"
+                        value={notes}
+                        onChange={(event) => setNotes(event.target.value)}
+                        placeholder="Optional"
+                      />
+                    </div>
+                    <Button
+                      className="w-full"
+                      onClick={handleCreateTarget}
+                      disabled={submitting}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Target
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : null}
+
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">
-                    Add Service Health Target
+                  <CardTitle className="text-base">Latency Trend</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Select
+                    value={latencyRangeId}
+                    onValueChange={(value) => {
+                      setLatencyRangeId(value as LatencyRangeId);
+                      setLatencyRangeCalculatedAt(Date.now());
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LATENCY_RANGE_OPTIONS.map((option) => (
+                        <SelectItem key={option.id} value={option.id}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="h-64">
+                    {latencyTargets.length > 0 && chartData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData}>
+                          <CartesianGrid
+                            strokeDasharray="3 3"
+                            className="opacity-30"
+                          />
+                          <XAxis dataKey="time" className="text-xs" />
+                          <YAxis
+                            className="text-xs"
+                            unit=" ms"
+                            domain={latencyAxisDomain}
+                          />
+                          <Tooltip
+                            labelFormatter={(_, payload) =>
+                              payload?.[0]?.payload?.checkedAt
+                                ? formatDateTime(payload[0].payload.checkedAt)
+                                : ""
+                            }
+                          />
+                          <Legend
+                            verticalAlign="bottom"
+                            height={32}
+                            onClick={(entry) => {
+                              const targetId = String(entry.dataKey ?? "");
+                              if (!targetId) {
+                                return;
+                              }
+                              setHiddenLatencyTargetIds((current) => {
+                                const next = new Set(current);
+                                if (next.has(targetId)) {
+                                  next.delete(targetId);
+                                } else {
+                                  next.add(targetId);
+                                }
+                                return next;
+                              });
+                            }}
+                          />
+                          {latencyTargets.map((target, index) => (
+                            <Line
+                              key={target._id}
+                              type="monotone"
+                              dataKey={target._id}
+                              name={target.name}
+                              stroke={
+                                LATENCY_LINE_COLORS[
+                                  index % LATENCY_LINE_COLORS.length
+                                ]
+                              }
+                              strokeWidth={2}
+                              dot={false}
+                              connectNulls={false}
+                              hide={hiddenLatencyTargetIds.has(target._id)}
+                            />
+                          ))}
+                        </LineChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="grid h-full place-items-center rounded-lg border text-sm text-muted-foreground">
+                        {latencyTargets.length > 0
+                          ? "No recent ping history yet."
+                          : "No active ping targets to chart."}
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </section>
+
+          {SHOW_SERVICE_DNS_HEALTH && (
+            <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Globe2 className="h-4 w-4 text-primary" />
+                    Service &amp; DNS Health
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="service-target-name">Name</Label>
-                    <Input
-                      id="service-target-name"
-                      value={serviceName}
-                      onChange={(event) => setServiceName(event.target.value)}
-                      placeholder="CRM API"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Check Type</Label>
-                    <Select
-                      value={serviceCheckType}
-                      onValueChange={(value) =>
-                        setServiceCheckType(value as ServiceCheckType)
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="http">HTTP</SelectItem>
-                        <SelectItem value="tcp">TCP</SelectItem>
-                        <SelectItem value="dns">DNS</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="service-target-value">Target</Label>
-                    <Input
-                      id="service-target-value"
-                      value={serviceTargetValue}
-                      onChange={(event) =>
-                        setServiceTargetValue(event.target.value)
-                      }
-                      placeholder={
-                        serviceCheckType === "http"
-                          ? "https://crm-api.example.com"
-                          : serviceCheckType === "tcp"
-                            ? "crm-api.example.com:443"
-                            : "crm.example.com"
-                      }
-                    />
-                  </div>
-                  {serviceCheckType === "http" ? (
-                    <>
+                  {visibleServiceStatuses.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">
+                      No service health targets configured yet.
+                    </div>
+                  ) : (
+                    visibleServiceStatuses.map((status) => (
+                      <div
+                        key={status.target._id}
+                        className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="flex items-start gap-3">
+                          <span
+                            className={`mt-1 h-3 w-3 rounded-full ${
+                              status.latest?.success
+                                ? "bg-emerald-500"
+                                : "bg-red-500"
+                            }`}
+                          />
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-medium">
+                                {status.target.name}
+                              </span>
+                              <Badge variant="secondary">
+                                {formatCheckType(status.target.checkType)}
+                              </Badge>
+                              <Badge
+                                variant={
+                                  status.target.active ? "default" : "secondary"
+                                }
+                              >
+                                {status.target.active ? "Active" : "Paused"}
+                              </Badge>
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {status.target.target} Â· Last checked{" "}
+                              {formatDateTime(status.latest?.checkedAt)}
+                            </div>
+                            {status.latest?.resolvedValue ? (
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {status.latest.resolvedValue}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4 text-sm">
+                          <div>
+                            <div className="font-semibold">
+                              {status.latest?.success
+                                ? formatNumber(status.latest.latencyMs, " ms")
+                                : "Down"}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Latest latency
+                            </div>
+                          </div>
+                          <div>
+                            <div className="font-semibold">
+                              {status.uptime24hPercent == null
+                                ? "-"
+                                : `${status.uptime24hPercent}%`}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              24h uptime
+                            </div>
+                          </div>
+                          {canManage ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                handleSetServiceTargetActive(
+                                  status.target._id,
+                                  !status.target.active,
+                                )
+                              }
+                            >
+                              {status.target.active ? (
+                                <Pause className="mr-2 h-4 w-4" />
+                              ) : (
+                                <Play className="mr-2 h-4 w-4" />
+                              )}
+                              {status.target.active ? "Pause" : "Resume"}
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="space-y-4">
+                {canManage ? (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">
+                        Add Service Health Target
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
                       <div className="space-y-1.5">
-                        <Label htmlFor="expected-status-code">
-                          Expected Status Code
-                        </Label>
+                        <Label htmlFor="service-target-name">Name</Label>
                         <Input
-                          id="expected-status-code"
-                          type="number"
-                          value={expectedStatusCode}
+                          id="service-target-name"
+                          value={serviceName}
                           onChange={(event) =>
-                            setExpectedStatusCode(event.target.value)
+                            setServiceName(event.target.value)
                           }
-                          placeholder="200"
+                          placeholder="CRM API"
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="expected-response">
-                          Expected Response Contains
-                        </Label>
+                        <Label>Check Type</Label>
+                        <Select
+                          value={serviceCheckType}
+                          onValueChange={(value) =>
+                            setServiceCheckType(value as ServiceCheckType)
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="http">HTTP</SelectItem>
+                            <SelectItem value="tcp">TCP</SelectItem>
+                            <SelectItem value="dns">DNS</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="service-target-value">Target</Label>
                         <Input
-                          id="expected-response"
-                          value={expectedResponseContains}
+                          id="service-target-value"
+                          value={serviceTargetValue}
                           onChange={(event) =>
-                            setExpectedResponseContains(event.target.value)
+                            setServiceTargetValue(event.target.value)
+                          }
+                          placeholder={
+                            serviceCheckType === "http"
+                              ? "https://crm-api.example.com"
+                              : serviceCheckType === "tcp"
+                                ? "crm-api.example.com:443"
+                                : "crm.example.com"
+                          }
+                        />
+                      </div>
+                      {serviceCheckType === "http" ? (
+                        <>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="expected-status-code">
+                              Expected Status Code
+                            </Label>
+                            <Input
+                              id="expected-status-code"
+                              type="number"
+                              value={expectedStatusCode}
+                              onChange={(event) =>
+                                setExpectedStatusCode(event.target.value)
+                              }
+                              placeholder="200"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="expected-response">
+                              Expected Response Contains
+                            </Label>
+                            <Input
+                              id="expected-response"
+                              value={expectedResponseContains}
+                              onChange={(event) =>
+                                setExpectedResponseContains(event.target.value)
+                              }
+                              placeholder="Optional"
+                            />
+                          </div>
+                        </>
+                      ) : null}
+                      {serviceCheckType === "dns" ? (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="expected-ip">Expected IP</Label>
+                          <Input
+                            id="expected-ip"
+                            value={expectedIp}
+                            onChange={(event) =>
+                              setExpectedIp(event.target.value)
+                            }
+                            placeholder="Optional"
+                          />
+                        </div>
+                      ) : null}
+                      <div className="space-y-1.5">
+                        <Label htmlFor="service-notes">Notes</Label>
+                        <Input
+                          id="service-notes"
+                          value={serviceNotes}
+                          onChange={(event) =>
+                            setServiceNotes(event.target.value)
                           }
                           placeholder="Optional"
                         />
                       </div>
-                    </>
-                  ) : null}
-                  {serviceCheckType === "dns" ? (
-                    <div className="space-y-1.5">
-                      <Label htmlFor="expected-ip">Expected IP</Label>
-                      <Input
-                        id="expected-ip"
-                        value={expectedIp}
-                        onChange={(event) => setExpectedIp(event.target.value)}
-                        placeholder="Optional"
-                      />
-                    </div>
-                  ) : null}
-                  <div className="space-y-1.5">
-                    <Label htmlFor="service-notes">Notes</Label>
-                    <Input
-                      id="service-notes"
-                      value={serviceNotes}
-                      onChange={(event) => setServiceNotes(event.target.value)}
-                      placeholder="Optional"
-                    />
-                  </div>
-                  <Button
-                    className="w-full"
-                    onClick={handleCreateServiceTarget}
-                    disabled={serviceSubmitting}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Service Target
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : null}
+                      <Button
+                        className="w-full"
+                        onClick={handleCreateServiceTarget}
+                        disabled={serviceSubmitting}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        Add Service Target
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : null}
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Service Latency Trend
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Select
-                  value={selectedServiceTargetId}
-                  onValueChange={setSelectedServiceTargetId}
-                  disabled={visibleServiceTargets.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select service target" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {visibleServiceTargets.map((target) => (
-                      <SelectItem key={target._id} value={target._id}>
-                        {target.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="h-64">
-                  {selectedServiceTargetId && serviceChartData.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={serviceChartData}>
-                        <CartesianGrid
-                          strokeDasharray="3 3"
-                          className="opacity-30"
-                        />
-                        <XAxis dataKey="time" className="text-xs" />
-                        <YAxis className="text-xs" unit=" ms" />
-                        <Tooltip
-                          labelFormatter={(_, payload) =>
-                            payload?.[0]?.payload?.checkedAt
-                              ? formatDateTime(payload[0].payload.checkedAt)
-                              : ""
-                          }
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="latency"
-                          name="Latency"
-                          stroke="#0d9488"
-                          strokeWidth={2}
-                          dot={false}
-                          connectNulls={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="grid h-full place-items-center rounded-lg border text-sm text-muted-foreground">
-                      {selectedServiceTargetId
-                        ? "No recent service health history yet."
-                        : "No service health target selected."}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">
+                      Service Latency Trend
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Select
+                      value={selectedServiceTargetId}
+                      onValueChange={setSelectedServiceTargetId}
+                      disabled={visibleServiceTargets.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select service target" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {visibleServiceTargets.map((target) => (
+                          <SelectItem key={target._id} value={target._id}>
+                            {target.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <div className="h-64">
+                      {selectedServiceTargetId &&
+                      serviceChartData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={serviceChartData}>
+                            <CartesianGrid
+                              strokeDasharray="3 3"
+                              className="opacity-30"
+                            />
+                            <XAxis dataKey="time" className="text-xs" />
+                            <YAxis className="text-xs" unit=" ms" />
+                            <Tooltip
+                              labelFormatter={(_, payload) =>
+                                payload?.[0]?.payload?.checkedAt
+                                  ? formatDateTime(payload[0].payload.checkedAt)
+                                  : ""
+                              }
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="latency"
+                              name="Latency"
+                              stroke="#0d9488"
+                              strokeWidth={2}
+                              dot={false}
+                              connectNulls={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="grid h-full place-items-center rounded-lg border text-sm text-muted-foreground">
+                          {selectedServiceTargetId
+                            ? "No recent service health history yet."
+                            : "No service health target selected."}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-      )}
+                  </CardContent>
+                </Card>
+              </div>
+            </section>
+          )}
+        </TabsContent>
+      </Tabs>
       <AlarmDetailSheet
         alarm={selectedAlarm}
         open={selectedAlarmCsn !== null}
