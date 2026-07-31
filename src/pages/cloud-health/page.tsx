@@ -66,6 +66,25 @@ type ServiceCheckType = "http" | "tcp" | "dns";
 type CloudAlarmWithCompany = Doc<"cloudAlarms"> & {
   linkedCompanyName?: string | null;
 };
+type AlarmView = "all" | "repeated";
+
+type RepeatedAlarmPattern = {
+  key: string;
+  alarmId: string;
+  alarmName: string;
+  resource: string;
+  region: string;
+  company: string;
+  count: number;
+  worstSeverity: number;
+  firstSeen: number;
+  latestSeen: number;
+  ackedCount: number;
+  clearedCount: number;
+  severityCounts: Record<number, number>;
+  latestAlarm: CloudAlarmWithCompany;
+  alarms: CloudAlarmWithCompany[];
+};
 
 function formatCheckType(checkType: ServiceCheckType) {
   if (checkType === "http") return "HTTP";
@@ -391,7 +410,101 @@ function parseDateInput(value: string, endOfSelectedDay = false) {
 }
 
 function getAlarmTimestamp(alarm: CloudAlarmWithCompany) {
-  return alarm.latestOccurUtc ?? alarm.occurUtc;
+  return alarm.latestOccurUtc ?? alarm.occurUtc ?? 0;
+}
+
+function getAlarmResourceKey(alarm: CloudAlarmWithCompany) {
+  return [alarm.meName, alarm.address].filter(Boolean).join(" / ") || "unknown";
+}
+
+function getAlarmRegionKey(alarm: CloudAlarmWithCompany) {
+  return (
+    [alarm.logicalRegionId, alarm.logicalRegionName].filter(Boolean).join(" / ") ||
+    "unknown"
+  );
+}
+
+function getAlarmOwnerKey(alarm: CloudAlarmWithCompany) {
+  if (alarm.linkedCompanyId) {
+    return `company:${alarm.linkedCompanyId}`;
+  }
+
+  if (alarm.vdcId || alarm.tenantId || alarm.tenant) {
+    return `tenant:${[alarm.vdcId, alarm.tenantId, alarm.tenant]
+      .filter(Boolean)
+      .join(" / ")}`;
+  }
+
+  return "platform";
+}
+
+function getAlarmCompanyLabel(alarm: CloudAlarmWithCompany) {
+  return alarm.linkedCompanyName ?? alarm.tenant ?? alarm.vdcName ?? "Platform";
+}
+
+function getRepeatedAlarmPatternKey(alarm: CloudAlarmWithCompany) {
+  return JSON.stringify([
+    alarm.alarmId,
+    alarm.alarmName,
+    getAlarmResourceKey(alarm),
+    getAlarmRegionKey(alarm),
+    getAlarmOwnerKey(alarm),
+  ]);
+}
+
+function buildRepeatedAlarmPatterns(
+  alarms: CloudAlarmWithCompany[],
+  minimumRepeats: number,
+) {
+  const groups = new Map<string, CloudAlarmWithCompany[]>();
+
+  for (const alarm of alarms) {
+    const key = getRepeatedAlarmPatternKey(alarm);
+    groups.set(key, [...(groups.get(key) ?? []), alarm]);
+  }
+
+  return [...groups.entries()]
+    .map(([key, groupAlarms]): RepeatedAlarmPattern => {
+      const sortedAlarms = [...groupAlarms].sort(
+        (a, b) => getAlarmTimestamp(b) - getAlarmTimestamp(a),
+      );
+      const latestAlarm = sortedAlarms[0];
+      const firstSeen = Math.min(...groupAlarms.map(getAlarmTimestamp));
+      const latestSeen = Math.max(...groupAlarms.map(getAlarmTimestamp));
+      const severityCounts = groupAlarms.reduce<Record<number, number>>(
+        (counts, alarm) => {
+          counts[alarm.severity] = (counts[alarm.severity] ?? 0) + 1;
+          return counts;
+        },
+        {},
+      );
+
+      return {
+        key,
+        alarmId: latestAlarm.alarmId,
+        alarmName: latestAlarm.alarmName,
+        resource: latestAlarm.meName || latestAlarm.address || "-",
+        region:
+          latestAlarm.logicalRegionName ?? latestAlarm.logicalRegionId ?? "-",
+        company: getAlarmCompanyLabel(latestAlarm),
+        count: groupAlarms.length,
+        worstSeverity: Math.min(...groupAlarms.map((alarm) => alarm.severity)),
+        firstSeen,
+        latestSeen,
+        ackedCount: groupAlarms.filter((alarm) => alarm.acked).length,
+        clearedCount: groupAlarms.filter((alarm) => alarm.cleared).length,
+        severityCounts,
+        latestAlarm,
+        alarms: sortedAlarms,
+      };
+    })
+    .filter((pattern) => pattern.count >= minimumRepeats)
+    .sort(
+      (a, b) =>
+        b.count - a.count ||
+        a.worstSeverity - b.worstSeverity ||
+        b.latestSeen - a.latestSeen,
+    );
 }
 
 function getAlarmTimeRangeBounds(
@@ -754,6 +867,207 @@ function AlarmDetailSheet({
   );
 }
 
+function RepeatedAlarmPatternSheet({
+  pattern,
+  open,
+  onOpenChange,
+}: {
+  pattern: RepeatedAlarmPattern | undefined;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const latestAlarm = pattern?.latestAlarm;
+  const nextSteps = latestAlarm ? getEngineeringNextSteps(latestAlarm) : [];
+  const severityBreakdown = pattern
+    ? Object.entries(pattern.severityCounts)
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(
+          ([severity, count]) => `${severityLabel(Number(severity))}: ${count}`,
+        )
+        .join(" · ")
+    : "";
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-xl lg:max-w-2xl">
+        <SheetHeader className="border-b pr-10">
+          <SheetTitle>
+            {pattern?.alarmName ?? "Repeated alarm pattern"}
+          </SheetTitle>
+          <SheetDescription>
+            Grouped repeat pattern based on alarm, resource, region, and
+            customer context.
+          </SheetDescription>
+        </SheetHeader>
+        {pattern && latestAlarm ? (
+          <div className="space-y-6 px-4 pb-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={severityBadgeVariant(pattern.worstSeverity)}>
+                Worst: {severityLabel(pattern.worstSeverity)}
+              </Badge>
+              <Badge variant="secondary">{pattern.count} repeats</Badge>
+              <Badge
+                variant={
+                  pattern.ackedCount === pattern.count ? "secondary" : "outline"
+                }
+              >
+                {pattern.ackedCount}/{pattern.count} acked
+              </Badge>
+              <Badge
+                variant={
+                  pattern.clearedCount === pattern.count
+                    ? "secondary"
+                    : "outline"
+                }
+              >
+                {pattern.clearedCount}/{pattern.count} cleared
+              </Badge>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <AlarmDetailField
+                label="Alarm Name"
+                value={pattern.alarmName}
+                className="sm:col-span-2"
+              />
+              <AlarmDetailField label="Alarm ID" value={pattern.alarmId} />
+              <AlarmDetailField label="Repeat Count" value={pattern.count} />
+              <AlarmDetailField
+                label="Resource"
+                value={displayValue(pattern.resource)}
+              />
+              <AlarmDetailField
+                label="Region"
+                value={displayValue(pattern.region)}
+              />
+              <AlarmDetailField
+                label="Company / Tenant"
+                value={displayValue(pattern.company)}
+              />
+              <AlarmDetailField
+                label="First Seen"
+                value={formatDateTime(pattern.firstSeen)}
+              />
+              <AlarmDetailField
+                label="Latest Seen"
+                value={formatDateTime(pattern.latestSeen)}
+              />
+              <AlarmDetailField
+                label="Severity Breakdown"
+                value={severityBreakdown}
+                className="sm:col-span-2"
+              />
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold">Member alarms</h3>
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">CSN</th>
+                      <th className="px-3 py-2 font-medium">Occurred</th>
+                      <th className="px-3 py-2 font-medium">Severity</th>
+                      <th className="px-3 py-2 font-medium">Ack</th>
+                      <th className="px-3 py-2 font-medium">Cleared</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pattern.alarms.map((alarm) => (
+                      <tr key={alarm._id} className="border-t">
+                        <td className="px-3 py-2 font-medium">{alarm.csn}</td>
+                        <td className="px-3 py-2">
+                          {formatDateTime(getAlarmTimestamp(alarm))}
+                        </td>
+                        <td className="px-3 py-2">
+                          <Badge variant={severityBadgeVariant(alarm.severity)}>
+                            {severityLabel(alarm.severity)}
+                          </Badge>
+                        </td>
+                        <td className="px-3 py-2">
+                          {alarm.acked ? "Acked" : "Unacked"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {alarm.cleared ? "Cleared" : "Active"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <h3 className="text-sm font-semibold">Engineering next steps</h3>
+              <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
+                {nextSteps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold">
+                Latest ManageOne context
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <AlarmDetailField label="CSN" value={latestAlarm.csn} />
+                <AlarmDetailField
+                  label="Resource Category / meCategory"
+                  value={displayValue(latestAlarm.meCategory)}
+                />
+                <AlarmDetailField
+                  label="Resource Type / meType"
+                  value={displayValue(latestAlarm.meType)}
+                />
+                <AlarmDetailField
+                  label="MOC"
+                  value={displayValue(latestAlarm.moc)}
+                />
+                <AlarmDetailField
+                  label="logicalRegionId"
+                  value={displayValue(latestAlarm.logicalRegionId)}
+                />
+                <AlarmDetailField
+                  label="Address / IP"
+                  value={displayValue(latestAlarm.address)}
+                />
+                <AlarmDetailField
+                  label="Probable Cause"
+                  value={
+                    <span className="whitespace-pre-wrap">
+                      {displayValue(latestAlarm.probableCause)}
+                    </span>
+                  }
+                  className="sm:col-span-2"
+                />
+                <AlarmDetailField
+                  label="Additional Information"
+                  value={
+                    <span className="whitespace-pre-wrap">
+                      {displayValue(latestAlarm.additionalInformation)}
+                    </span>
+                  }
+                  className="sm:col-span-2"
+                />
+              </div>
+            </div>
+
+            <details className="rounded-lg border">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+                Latest raw ManageOne payload
+              </summary>
+              <pre className="max-h-96 overflow-auto border-t bg-muted/30 p-4 text-xs">
+                {JSON.stringify(latestAlarm.rawPayload, null, 2)}
+              </pre>
+            </details>
+          </div>
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export default function CloudHealthPage() {
   const { currentUser } = useCrm();
   const navigate = useNavigate();
@@ -796,7 +1110,12 @@ export default function CloudHealthPage() {
   const [alarmCustomStartDate, setAlarmCustomStartDate] = useState("");
   const [alarmCustomEndDate, setAlarmCustomEndDate] = useState("");
   const [alarmShortcut, setAlarmShortcut] = useState<AlarmShortcut>("all");
+  const [alarmView, setAlarmView] = useState<AlarmView>("all");
+  const [minimumRepeats, setMinimumRepeats] = useState("2");
   const [selectedAlarmCsn, setSelectedAlarmCsn] = useState<number | null>(null);
+  const [selectedRepeatedPatternKey, setSelectedRepeatedPatternKey] = useState<
+    string | null
+  >(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [alarmPage, setAlarmPage] = useState(1);
   const [serviceName, setServiceName] = useState("");
@@ -887,6 +1206,25 @@ export default function CloudHealthPage() {
       (allActiveAlarms ?? []).find((alarm) => alarm.csn === selectedAlarmCsn),
     [allActiveAlarms, selectedAlarmCsn],
   );
+  const repeatedPatterns = useMemo(
+    () => buildRepeatedAlarmPatterns(activeAlarms, Number(minimumRepeats)),
+    [activeAlarms, minimumRepeats],
+  );
+  const allRepeatedPatterns = useMemo(
+    () => buildRepeatedAlarmPatterns(allActiveAlarms ?? [], 2),
+    [allActiveAlarms],
+  );
+  const topRepeatedPatterns = useMemo(
+    () => allRepeatedPatterns.slice(0, 5),
+    [allRepeatedPatterns],
+  );
+  const selectedRepeatedPattern = useMemo(
+    () =>
+      [...repeatedPatterns, ...allRepeatedPatterns].find(
+        (pattern) => pattern.key === selectedRepeatedPatternKey,
+      ),
+    [allRepeatedPatterns, repeatedPatterns, selectedRepeatedPatternKey],
+  );
   const topActiveAlarms = useMemo(() => {
     return [...(allActiveAlarms ?? [])]
       .sort(
@@ -895,18 +1233,24 @@ export default function CloudHealthPage() {
       )
       .slice(0, 10);
   }, [allActiveAlarms]);
+  const visibleAlarmRowCount =
+    alarmView === "repeated" ? repeatedPatterns.length : activeAlarms.length;
   const alarmPageCount = Math.max(
     1,
-    Math.ceil(activeAlarms.length / ALARM_PAGE_SIZE),
+    Math.ceil(visibleAlarmRowCount / ALARM_PAGE_SIZE),
   );
   const pagedActiveAlarms = useMemo(() => {
     const start = (alarmPage - 1) * ALARM_PAGE_SIZE;
     return activeAlarms.slice(start, start + ALARM_PAGE_SIZE);
   }, [activeAlarms, alarmPage]);
+  const pagedRepeatedPatterns = useMemo(() => {
+    const start = (alarmPage - 1) * ALARM_PAGE_SIZE;
+    return repeatedPatterns.slice(start, start + ALARM_PAGE_SIZE);
+  }, [alarmPage, repeatedPatterns]);
   const alarmShowingStart =
-    activeAlarms.length === 0 ? 0 : (alarmPage - 1) * ALARM_PAGE_SIZE + 1;
+    visibleAlarmRowCount === 0 ? 0 : (alarmPage - 1) * ALARM_PAGE_SIZE + 1;
   const alarmShowingEnd = Math.min(
-    activeAlarms.length,
+    visibleAlarmRowCount,
     alarmPage * ALARM_PAGE_SIZE,
   );
   const latencyHistory = useQuery(
@@ -1047,6 +1391,8 @@ export default function CloudHealthPage() {
     alarmSeverityFilter,
     alarmShortcut,
     alarmTimeRange,
+    alarmView,
+    minimumRepeats,
   ]);
 
   const applyAlarmShortcut = (shortcut: AlarmShortcut) => {
@@ -1404,80 +1750,164 @@ export default function CloudHealthPage() {
           </section>
 
           <section className="grid gap-4 xl:grid-cols-[1.4fr_0.8fr]">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Top Active Alarms</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {topActiveAlarms.length === 0 ? (
-                  <div className="py-8 text-center text-sm text-muted-foreground">
-                    No active alarms.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto rounded-md border">
-                    <table className="w-full min-w-[760px] text-sm">
-                      <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-2 font-medium">Severity</th>
-                          <th className="px-3 py-2 font-medium">Alarm</th>
-                          <th className="px-3 py-2 font-medium">Region</th>
-                          <th className="px-3 py-2 font-medium">Company</th>
-                          <th className="px-3 py-2 font-medium">Latest</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {topActiveAlarms.map((alarm) => (
-                          <tr
-                            key={alarm._id}
-                            tabIndex={0}
-                            role="button"
-                            aria-label={`View details for ${alarm.alarmName}`}
-                            className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                            onClick={() => setSelectedAlarmCsn(alarm.csn)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                setSelectedAlarmCsn(alarm.csn);
-                              }
-                            }}
-                          >
-                            <td className="px-3 py-2">
-                              <Badge
-                                variant={severityBadgeVariant(alarm.severity)}
-                              >
-                                {severityLabel(alarm.severity)}
-                              </Badge>
-                            </td>
-                            <td className="max-w-[320px] px-3 py-2">
-                              <div className="font-medium">
-                                {alarm.alarmName}
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                CSN {alarm.csn}
-                              </div>
-                            </td>
-                            <td className="px-3 py-2">
-                              {alarm.logicalRegionName ??
-                                alarm.logicalRegionId ??
-                                "-"}
-                            </td>
-                            <td className="px-3 py-2">
-                              {alarm.linkedCompanyName ??
-                                alarm.tenant ??
-                                alarm.vdcName ??
-                                "Platform"}
-                            </td>
-                            <td className="px-3 py-2">
-                              {formatDateTime(alarm.latestOccurUtc)}
-                            </td>
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Top Active Alarms</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {topActiveAlarms.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">
+                      No active alarms.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-md border">
+                      <table className="w-full min-w-[760px] text-sm">
+                        <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                          <tr>
+                            <th className="px-3 py-2 font-medium">Severity</th>
+                            <th className="px-3 py-2 font-medium">Alarm</th>
+                            <th className="px-3 py-2 font-medium">Region</th>
+                            <th className="px-3 py-2 font-medium">Company</th>
+                            <th className="px-3 py-2 font-medium">Latest</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                        </thead>
+                        <tbody>
+                          {topActiveAlarms.map((alarm) => (
+                            <tr
+                              key={alarm._id}
+                              tabIndex={0}
+                              role="button"
+                              aria-label={`View details for ${alarm.alarmName}`}
+                              className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                              onClick={() => setSelectedAlarmCsn(alarm.csn)}
+                              onKeyDown={(event) => {
+                                if (
+                                  event.key === "Enter" ||
+                                  event.key === " "
+                                ) {
+                                  event.preventDefault();
+                                  setSelectedAlarmCsn(alarm.csn);
+                                }
+                              }}
+                            >
+                              <td className="px-3 py-2">
+                                <Badge
+                                  variant={severityBadgeVariant(alarm.severity)}
+                                >
+                                  {severityLabel(alarm.severity)}
+                                </Badge>
+                              </td>
+                              <td className="max-w-[320px] px-3 py-2">
+                                <div className="font-medium">
+                                  {alarm.alarmName}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  CSN {alarm.csn}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2">
+                                {alarm.logicalRegionName ??
+                                  alarm.logicalRegionId ??
+                                  "-"}
+                              </td>
+                              <td className="px-3 py-2">
+                                {alarm.linkedCompanyName ??
+                                  alarm.tenant ??
+                                  alarm.vdcName ??
+                                  "Platform"}
+                              </td>
+                              <td className="px-3 py-2">
+                                {formatDateTime(alarm.latestOccurUtc)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Top Repeated Patterns
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {topRepeatedPatterns.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">
+                      No repeated alarm patterns found.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-md border">
+                      <table className="w-full min-w-[760px] text-sm">
+                        <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                          <tr>
+                            <th className="px-3 py-2 font-medium">Severity</th>
+                            <th className="px-3 py-2 font-medium">Pattern</th>
+                            <th className="px-3 py-2 font-medium">Region</th>
+                            <th className="px-3 py-2 font-medium">Company</th>
+                            <th className="px-3 py-2 font-medium">Count</th>
+                            <th className="px-3 py-2 font-medium">Latest</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {topRepeatedPatterns.map((pattern) => (
+                            <tr
+                              key={pattern.key}
+                              tabIndex={0}
+                              role="button"
+                              aria-label={`View repeated pattern for ${pattern.alarmName}`}
+                              className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                              onClick={() =>
+                                setSelectedRepeatedPatternKey(pattern.key)
+                              }
+                              onKeyDown={(event) => {
+                                if (
+                                  event.key === "Enter" ||
+                                  event.key === " "
+                                ) {
+                                  event.preventDefault();
+                                  setSelectedRepeatedPatternKey(pattern.key);
+                                }
+                              }}
+                            >
+                              <td className="px-3 py-2">
+                                <Badge
+                                  variant={severityBadgeVariant(
+                                    pattern.worstSeverity,
+                                  )}
+                                >
+                                  {severityLabel(pattern.worstSeverity)}
+                                </Badge>
+                              </td>
+                              <td className="max-w-[320px] px-3 py-2">
+                                <div className="font-medium">
+                                  {pattern.alarmName}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  ID {pattern.alarmId}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2">{pattern.region}</td>
+                              <td className="px-3 py-2">{pattern.company}</td>
+                              <td className="px-3 py-2 font-medium">
+                                {pattern.count}
+                              </td>
+                              <td className="px-3 py-2">
+                                {formatDateTime(pattern.latestSeen)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
 
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
               <Card>
@@ -1584,10 +2014,61 @@ export default function CloudHealthPage() {
 
             <Card id="cloud-health-alarms-table">
               <CardHeader>
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <CardTitle className="text-base">
-                    Current ManageOne Alarms
-                  </CardTitle>
+                <div className="space-y-3">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <CardTitle className="text-base">
+                        Current ManageOne Alarms
+                      </CardTitle>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {alarmView === "all"
+                          ? "All individual alarm rows matching the current filters."
+                          : "Grouped repeat patterns after applying the current filters."}
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <div className="grid grid-cols-2 rounded-lg border bg-muted/40 p-1">
+                        <button
+                          type="button"
+                          className={`h-9 rounded-md px-3 text-sm transition-colors ${
+                            alarmView === "all"
+                              ? "bg-primary/10 font-medium text-primary"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          onClick={() => setAlarmView("all")}
+                        >
+                          All Alarms
+                        </button>
+                        <button
+                          type="button"
+                          className={`h-9 rounded-md px-3 text-sm transition-colors ${
+                            alarmView === "repeated"
+                              ? "bg-primary/10 font-medium text-primary"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          onClick={() => setAlarmView("repeated")}
+                        >
+                          Repeated Patterns
+                        </button>
+                      </div>
+                      {alarmView === "repeated" ? (
+                        <Select
+                          value={minimumRepeats}
+                          onValueChange={setMinimumRepeats}
+                        >
+                          <SelectTrigger className="w-full sm:w-36">
+                            <SelectValue placeholder="Minimum repeats" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="2">2+ repeats</SelectItem>
+                            <SelectItem value="3">3+ repeats</SelectItem>
+                            <SelectItem value="5">5+ repeats</SelectItem>
+                            <SelectItem value="10">10+ repeats</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : null}
+                    </div>
+                  </div>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
                     <Select
                       value={alarmSeverityFilter}
@@ -1699,11 +2180,13 @@ export default function CloudHealthPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                {activeAlarms.length === 0 ? (
+                {visibleAlarmRowCount === 0 ? (
                   <div className="py-10 text-center text-sm text-muted-foreground">
-                    No active alarms match the selected filters.
+                    {alarmView === "all"
+                      ? "No active alarms match the selected filters."
+                      : "No repeated alarm patterns match the selected filters."}
                   </div>
-                ) : (
+                ) : alarmView === "all" ? (
                   <div className="overflow-x-auto rounded-md border">
                     <table className="w-full min-w-[980px] text-sm">
                       <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
@@ -1779,12 +2262,92 @@ export default function CloudHealthPage() {
                       </tbody>
                     </table>
                   </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-md border">
+                    <table className="w-full min-w-[1120px] text-sm">
+                      <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">
+                            Worst Severity
+                          </th>
+                          <th className="px-3 py-2 font-medium">
+                            Alarm Pattern
+                          </th>
+                          <th className="px-3 py-2 font-medium">Resource</th>
+                          <th className="px-3 py-2 font-medium">Region</th>
+                          <th className="px-3 py-2 font-medium">Company</th>
+                          <th className="px-3 py-2 font-medium">Count</th>
+                          <th className="px-3 py-2 font-medium">
+                            First Seen
+                          </th>
+                          <th className="px-3 py-2 font-medium">
+                            Latest Seen
+                          </th>
+                          <th className="px-3 py-2 font-medium">Ack</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pagedRepeatedPatterns.map((pattern) => (
+                          <tr
+                            key={pattern.key}
+                            tabIndex={0}
+                            role="button"
+                            aria-label={`View repeated pattern for ${pattern.alarmName}`}
+                            className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                            onClick={() =>
+                              setSelectedRepeatedPatternKey(pattern.key)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setSelectedRepeatedPatternKey(pattern.key);
+                              }
+                            }}
+                          >
+                            <td className="px-3 py-2">
+                              <Badge
+                                variant={severityBadgeVariant(
+                                  pattern.worstSeverity,
+                                )}
+                              >
+                                {severityLabel(pattern.worstSeverity)}
+                              </Badge>
+                            </td>
+                            <td className="max-w-[320px] px-3 py-2">
+                              <div className="font-medium">
+                                {pattern.alarmName}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                ID {pattern.alarmId}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">{pattern.resource}</td>
+                            <td className="px-3 py-2">{pattern.region}</td>
+                            <td className="px-3 py-2">{pattern.company}</td>
+                            <td className="px-3 py-2 font-medium">
+                              {pattern.count}
+                            </td>
+                            <td className="px-3 py-2">
+                              {formatDateTime(pattern.firstSeen)}
+                            </td>
+                            <td className="px-3 py-2">
+                              {formatDateTime(pattern.latestSeen)}
+                            </td>
+                            <td className="px-3 py-2">
+                              {pattern.ackedCount}/{pattern.count} acked
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
-                {activeAlarms.length > 0 ? (
+                {visibleAlarmRowCount > 0 ? (
                   <div className="mt-4 flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       Showing {alarmShowingStart}-{alarmShowingEnd} of{" "}
-                      {activeAlarms.length} alarms
+                      {visibleAlarmRowCount}{" "}
+                      {alarmView === "all" ? "alarms" : "patterns"}
                     </div>
                     <div className="flex items-center gap-2">
                       <Button
@@ -2435,6 +2998,15 @@ export default function CloudHealthPage() {
         onOpenChange={(open) => {
           if (!open) {
             setSelectedAlarmCsn(null);
+          }
+        }}
+      />
+      <RepeatedAlarmPatternSheet
+        pattern={selectedRepeatedPattern}
+        open={selectedRepeatedPatternKey !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedRepeatedPatternKey(null);
           }
         }}
       />
