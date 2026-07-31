@@ -1180,31 +1180,31 @@ export default function CloudHealthPage() {
         onValueChange={setActiveTab}
         className="space-y-4"
       >
-        <TabsList className="grid h-auto w-full max-w-[460px] grid-cols-2 gap-0 rounded-lg border bg-muted/70 p-1 sm:grid-cols-4">
+        <TabsList className="grid h-auto w-full max-w-[460px] grid-cols-2 rounded-lg border bg-muted/40 p-1 sm:inline-grid sm:w-auto sm:grid-cols-4">
           <TabsTrigger
             value="overview"
-            className="h-10 w-full gap-1.5 rounded-md border-0 bg-transparent px-3 text-sm font-medium text-muted-foreground shadow-none data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:bg-primary/15"
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-md border-transparent bg-transparent px-3 text-sm text-muted-foreground shadow-none data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-primary/10"
           >
             <LayoutDashboard className="h-3.5 w-3.5 opacity-80" />
             Overview
           </TabsTrigger>
           <TabsTrigger
             value="alarms"
-            className="h-10 w-full gap-1.5 rounded-md border-0 bg-transparent px-3 text-sm font-medium text-muted-foreground shadow-none data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:bg-primary/15"
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-md border-transparent bg-transparent px-3 text-sm text-muted-foreground shadow-none data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-primary/10"
           >
             <BellRing className="h-3.5 w-3.5 opacity-80" />
             Alarms
           </TabsTrigger>
           <TabsTrigger
             value="capacity"
-            className="h-10 w-full gap-1.5 rounded-md border-0 bg-transparent px-3 text-sm font-medium text-muted-foreground shadow-none data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:bg-primary/15"
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-md border-transparent bg-transparent px-3 text-sm text-muted-foreground shadow-none data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-primary/10"
           >
             <Activity className="h-3.5 w-3.5 opacity-80" />
             Capacity
           </TabsTrigger>
           <TabsTrigger
             value="network"
-            className="h-10 w-full gap-1.5 rounded-md border-0 bg-transparent px-3 text-sm font-medium text-muted-foreground shadow-none data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:bg-primary/15"
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-md border-transparent bg-transparent px-3 text-sm text-muted-foreground shadow-none data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-primary/10"
           >
             <Wifi className="h-3.5 w-3.5 opacity-80" />
             Network
