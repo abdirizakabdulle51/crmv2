@@ -15,6 +15,7 @@ import {
   Activity,
   BellRing,
   Globe2,
+  LayoutDashboard,
   Pause,
   Play,
   Plus,
@@ -835,20 +836,16 @@ export default function CloudHealthPage() {
 
     return getLatencyAxisDomain(values);
   }, [chartData, hiddenLatencyTargetIds, latencyTargets]);
-  const networkSummary = useMemo(
-    () => {
-      const rows = statuses ?? [];
-      return {
-        total: rows.length,
-        up: rows.filter((status) => status.latest?.success).length,
-        down: rows.filter(
-          (status) => status.latest && !status.latest.success,
-        ).length,
-        paused: rows.filter((status) => !status.target.active).length,
-      };
-    },
-    [statuses],
-  );
+  const networkSummary = useMemo(() => {
+    const rows = statuses ?? [];
+    return {
+      total: rows.length,
+      up: rows.filter((status) => status.latest?.success).length,
+      down: rows.filter((status) => status.latest && !status.latest.success)
+        .length,
+      paused: rows.filter((status) => !status.target.active).length,
+    };
+  }, [statuses]);
   const capacitySummary = useMemo(() => {
     const rows = capacity ?? [];
     const regionCount = rows.length;
@@ -1183,11 +1180,35 @@ export default function CloudHealthPage() {
         onValueChange={setActiveTab}
         className="space-y-4"
       >
-        <TabsList className="grid h-auto w-full grid-cols-2 sm:w-fit sm:grid-cols-4">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="alarms">Alarms</TabsTrigger>
-          <TabsTrigger value="capacity">Capacity</TabsTrigger>
-          <TabsTrigger value="network">Network</TabsTrigger>
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-xl border bg-card p-2 shadow-sm sm:inline-grid sm:w-auto sm:grid-cols-4">
+          <TabsTrigger
+            value="overview"
+            className="h-12 justify-start gap-2 rounded-lg border px-4 text-sm font-semibold data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm sm:h-11 sm:min-w-32"
+          >
+            <LayoutDashboard className="h-4 w-4" />
+            Overview
+          </TabsTrigger>
+          <TabsTrigger
+            value="alarms"
+            className="h-12 justify-start gap-2 rounded-lg border px-4 text-sm font-semibold data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm sm:h-11 sm:min-w-32"
+          >
+            <BellRing className="h-4 w-4" />
+            Alarms
+          </TabsTrigger>
+          <TabsTrigger
+            value="capacity"
+            className="h-12 justify-start gap-2 rounded-lg border px-4 text-sm font-semibold data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm sm:h-11 sm:min-w-32"
+          >
+            <Activity className="h-4 w-4" />
+            Capacity
+          </TabsTrigger>
+          <TabsTrigger
+            value="network"
+            className="h-12 justify-start gap-2 rounded-lg border px-4 text-sm font-semibold data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm sm:h-11 sm:min-w-32"
+          >
+            <Wifi className="h-4 w-4" />
+            Network
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
