@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -343,6 +343,63 @@ function RingGauge({
   );
 }
 
+type AlarmShortcut = "all" | "critical" | "major" | "linked" | "regions" | "custom";
+
+function inferAlarmShortcutFromFilters(
+  severity: string,
+  region: string,
+  category: string,
+): AlarmShortcut {
+  if (severity === "all" && region === "all" && category === "all") {
+    return "all";
+  }
+
+  if (severity === "1" && region === "all" && category === "all") {
+    return "critical";
+  }
+
+  if (severity === "2" && region === "all" && category === "all") {
+    return "major";
+  }
+
+  return "custom";
+}
+
+function AlarmShortcutCard({
+  title,
+  value,
+  detail,
+  active,
+  onClick,
+  valueClassName,
+}: {
+  title: string;
+  value: number;
+  detail?: ReactNode;
+  active: boolean;
+  onClick: () => void;
+  valueClassName?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded-xl border bg-card p-4 text-left shadow-sm transition-colors hover:border-primary/60 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        active ? "border-primary bg-primary/10 ring-2 ring-primary/25" : ""
+      }`}
+    >
+      <div className="text-sm font-medium text-muted-foreground">{title}</div>
+      <div className={`mt-4 text-2xl font-semibold ${valueClassName ?? ""}`}>
+        {value}
+      </div>
+      {detail ? (
+        <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+      ) : null}
+    </button>
+  );
+}
+
 export default function CloudHealthPage() {
   const { currentUser } = useCrm();
   const navigate = useNavigate();
@@ -381,6 +438,7 @@ export default function CloudHealthPage() {
   const [alarmSeverityFilter, setAlarmSeverityFilter] = useState("all");
   const [alarmRegionFilter, setAlarmRegionFilter] = useState("all");
   const [alarmCategoryFilter, setAlarmCategoryFilter] = useState("all");
+  const [alarmShortcut, setAlarmShortcut] = useState<AlarmShortcut>("all");
   const [serviceName, setServiceName] = useState("");
   const [serviceCheckType, setServiceCheckType] =
     useState<ServiceCheckType>("http");
@@ -403,24 +461,46 @@ export default function CloudHealthPage() {
     () => getLatencyRange(latencyRangeId, latencyRangeCalculatedAt),
     [latencyRangeCalculatedAt, latencyRangeId],
   );
-  const alarmFilters = useMemo(
-    () => ({
-      ...(alarmSeverityFilter !== "all"
-        ? { severity: Number(alarmSeverityFilter) }
-        : {}),
-      ...(alarmRegionFilter !== "all"
-        ? { logicalRegionId: alarmRegionFilter }
-        : {}),
-      ...(alarmCategoryFilter !== "all"
-        ? { category: Number(alarmCategoryFilter) }
-        : {}),
-    }),
-    [alarmCategoryFilter, alarmRegionFilter, alarmSeverityFilter],
-  );
-  const activeAlarms = useQuery(
+  const allActiveAlarms = useQuery(
     api.cloudAlarms.listActive,
-    canView ? alarmFilters : "skip",
+    canView ? {} : "skip",
   );
+  const activeAlarms = useMemo(() => {
+    return (allActiveAlarms ?? []).filter((alarm) => {
+      if (
+        alarmSeverityFilter !== "all" &&
+        alarm.severity !== Number(alarmSeverityFilter)
+      ) {
+        return false;
+      }
+
+      if (
+        alarmRegionFilter !== "all" &&
+        alarm.logicalRegionId !== alarmRegionFilter
+      ) {
+        return false;
+      }
+
+      if (
+        alarmCategoryFilter !== "all" &&
+        alarm.category !== Number(alarmCategoryFilter)
+      ) {
+        return false;
+      }
+
+      if (alarmShortcut === "linked" && !alarm.linkedCompanyId) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [
+    alarmCategoryFilter,
+    alarmRegionFilter,
+    alarmSeverityFilter,
+    alarmShortcut,
+    allActiveAlarms,
+  ]);
   const latencyHistory = useQuery(
     api.pingResults.historyForActiveTargetsInRange,
     canView ? latencyRange : "skip",
@@ -490,7 +570,7 @@ export default function CloudHealthPage() {
   );
   const alarmRegions = useMemo(() => {
     const regions = new Map<string, string>();
-    for (const alarm of activeAlarms ?? []) {
+    for (const alarm of allActiveAlarms ?? []) {
       if (alarm.logicalRegionId) {
         regions.set(
           alarm.logicalRegionId,
@@ -499,12 +579,12 @@ export default function CloudHealthPage() {
       }
     }
     return [...regions.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [activeAlarms]);
+  }, [allActiveAlarms]);
   const alarmCategories = useMemo(() => {
     return [
-      ...new Set((activeAlarms ?? []).map((alarm) => alarm.category)),
+      ...new Set((allActiveAlarms ?? []).map((alarm) => alarm.category)),
     ].sort((a, b) => a - b);
-  }, [activeAlarms]);
+  }, [allActiveAlarms]);
 
   useEffect(() => {
     if (!serviceTargets) {
@@ -520,6 +600,69 @@ export default function CloudHealthPage() {
 
     setSelectedServiceTargetId(serviceTargets[0]?._id ?? "");
   }, [selectedServiceTargetId, serviceTargets]);
+
+  const applyAlarmShortcut = (shortcut: AlarmShortcut) => {
+    setAlarmShortcut(shortcut);
+
+    if (shortcut === "critical") {
+      setAlarmSeverityFilter("1");
+      setAlarmRegionFilter("all");
+      setAlarmCategoryFilter("all");
+      return;
+    }
+
+    if (shortcut === "major") {
+      setAlarmSeverityFilter("2");
+      setAlarmRegionFilter("all");
+      setAlarmCategoryFilter("all");
+      return;
+    }
+
+    setAlarmSeverityFilter("all");
+    setAlarmRegionFilter("all");
+    setAlarmCategoryFilter("all");
+
+    if (shortcut === "regions") {
+      window.setTimeout(() => {
+        document
+          .getElementById("cloud-health-alarms-table")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    }
+  };
+
+  const updateAlarmSeverityFilter = (value: string) => {
+    setAlarmSeverityFilter(value);
+    setAlarmShortcut(
+      inferAlarmShortcutFromFilters(
+        value,
+        alarmRegionFilter,
+        alarmCategoryFilter,
+      ),
+    );
+  };
+
+  const updateAlarmRegionFilter = (value: string) => {
+    setAlarmRegionFilter(value);
+    setAlarmShortcut(
+      inferAlarmShortcutFromFilters(
+        alarmSeverityFilter,
+        value,
+        alarmCategoryFilter,
+      ),
+    );
+  };
+
+  const updateAlarmCategoryFilter = (value: string) => {
+    setAlarmCategoryFilter(value);
+    setAlarmShortcut(
+      inferAlarmShortcutFromFilters(
+        alarmSeverityFilter,
+        alarmRegionFilter,
+        value,
+      ),
+    );
+  };
 
   if (!canView) {
     return (
@@ -539,7 +682,7 @@ export default function CloudHealthPage() {
   if (
     !capacity ||
     !alarmsSummary ||
-    !activeAlarms ||
+    !allActiveAlarms ||
     !targets ||
     !statuses ||
     (SHOW_SERVICE_DNS_HEALTH && (!serviceTargets || !serviceStatuses))
@@ -706,75 +849,42 @@ export default function CloudHealthPage() {
           <h2 className="text-lg font-semibold">Active Alarms</h2>
         </div>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">
-                Active
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold">
-                {alarmsSummary.active}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Synced {formatDateTime(alarmsSummary.lastSyncedAt)}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">
-                Critical
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold text-destructive">
-                {alarmsSummary.critical}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">
-                Major
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold">
-                {alarmsSummary.major}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">
-                Linked Tenants
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold">
-                {alarmsSummary.tenantLinked}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {alarmsSummary.platform} platform-level
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">
-                Regions
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold">
-                {alarmsSummary.regions}
-              </div>
-            </CardContent>
-          </Card>
+          <AlarmShortcutCard
+            title="Active"
+            value={alarmsSummary.active}
+            detail={`Synced ${formatDateTime(alarmsSummary.lastSyncedAt)}`}
+            active={alarmShortcut === "all"}
+            onClick={() => applyAlarmShortcut("all")}
+          />
+          <AlarmShortcutCard
+            title="Critical"
+            value={alarmsSummary.critical}
+            active={alarmShortcut === "critical"}
+            onClick={() => applyAlarmShortcut("critical")}
+            valueClassName="text-destructive"
+          />
+          <AlarmShortcutCard
+            title="Major"
+            value={alarmsSummary.major}
+            active={alarmShortcut === "major"}
+            onClick={() => applyAlarmShortcut("major")}
+          />
+          <AlarmShortcutCard
+            title="Linked Tenants"
+            value={alarmsSummary.tenantLinked}
+            detail={`${alarmsSummary.platform} platform-level`}
+            active={alarmShortcut === "linked"}
+            onClick={() => applyAlarmShortcut("linked")}
+          />
+          <AlarmShortcutCard
+            title="Regions"
+            value={alarmsSummary.regions}
+            active={alarmShortcut === "regions"}
+            onClick={() => applyAlarmShortcut("regions")}
+          />
         </div>
 
-        <Card>
+        <Card id="cloud-health-alarms-table">
           <CardHeader>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <CardTitle className="text-base">
@@ -783,7 +893,7 @@ export default function CloudHealthPage() {
               <div className="grid gap-2 sm:grid-cols-3">
                 <Select
                   value={alarmSeverityFilter}
-                  onValueChange={setAlarmSeverityFilter}
+                  onValueChange={updateAlarmSeverityFilter}
                 >
                   <SelectTrigger className="w-full sm:w-40">
                     <SelectValue placeholder="Severity" />
@@ -798,7 +908,7 @@ export default function CloudHealthPage() {
                 </Select>
                 <Select
                   value={alarmRegionFilter}
-                  onValueChange={setAlarmRegionFilter}
+                  onValueChange={updateAlarmRegionFilter}
                 >
                   <SelectTrigger className="w-full sm:w-48">
                     <SelectValue placeholder="Region" />
@@ -814,7 +924,7 @@ export default function CloudHealthPage() {
                 </Select>
                 <Select
                   value={alarmCategoryFilter}
-                  onValueChange={setAlarmCategoryFilter}
+                  onValueChange={updateAlarmCategoryFilter}
                 >
                   <SelectTrigger className="w-full sm:w-40">
                     <SelectValue placeholder="Category" />
