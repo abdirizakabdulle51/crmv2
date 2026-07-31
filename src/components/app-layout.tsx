@@ -195,10 +195,10 @@ function SidebarNavLink({ item }: { item: (typeof NAV_ITEMS)[number] }) {
     <NavLink
       to={item.to}
       className={({ isActive }) =>
-        `flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+        `flex items-center gap-3 border-l-4 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
           isActive
-            ? "bg-sidebar-accent text-sidebar-accent-foreground"
-            : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+            ? "border-l-[#35C7C9] bg-[#DDF8F9] text-[#149CA3]"
+            : "border-l-transparent text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
         }`
       }
     >
