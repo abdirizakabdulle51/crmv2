@@ -412,7 +412,7 @@ export default function CloudHealthRegionPage() {
                     type="monotone"
                     dataKey="cpu"
                     name="CPU"
-                    stroke="#0d9488"
+                    stroke="#35C7C9"
                     strokeWidth={2}
                     dot={false}
                   />

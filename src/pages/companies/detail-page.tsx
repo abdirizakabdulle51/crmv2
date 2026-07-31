@@ -29,7 +29,7 @@ const CHART_GROUPS = [
   {
     title: "Compute Counts",
     metrics: [
-      { key: "ecsInstances", label: "ECS", color: "#0d9488" },
+      { key: "ecsInstances", label: "ECS", color: "#35C7C9" },
       { key: "rdsInstances", label: "RDS", color: "#2563eb" },
       { key: "cceClusters", label: "CCE", color: "#7c3aed" },
     ],

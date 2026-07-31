@@ -113,7 +113,7 @@ function categoryLabel(category: number) {
 }
 
 const LATENCY_LINE_COLORS = [
-  "#0d9488",
+  "#35C7C9",
   "#2563eb",
   "#d97706",
   "#7c3aed",
@@ -2226,7 +2226,7 @@ export default function CloudHealthPage() {
                               type="monotone"
                               dataKey="latency"
                               name="Latency"
-                              stroke="#0d9488"
+                              stroke="#35C7C9"
                               strokeWidth={2}
                               dot={false}
                               connectNulls={false}
