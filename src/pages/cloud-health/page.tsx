@@ -23,7 +23,7 @@ import {
   Wifi,
 } from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
-import type { Id } from "@/convex/_generated/dataModel.d.ts";
+import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -32,6 +32,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card.tsx";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import {
@@ -54,6 +61,9 @@ function canManagePingTargets(role: string | undefined) {
 }
 
 type ServiceCheckType = "http" | "tcp" | "dns";
+type CloudAlarmWithCompany = Doc<"cloudAlarms"> & {
+  linkedCompanyName?: string | null;
+};
 
 function formatCheckType(checkType: ServiceCheckType) {
   if (checkType === "http") return "HTTP";
@@ -343,7 +353,13 @@ function RingGauge({
   );
 }
 
-type AlarmShortcut = "all" | "critical" | "major" | "linked" | "regions" | "custom";
+type AlarmShortcut =
+  | "all"
+  | "critical"
+  | "major"
+  | "linked"
+  | "regions"
+  | "custom";
 
 function inferAlarmShortcutFromFilters(
   severity: string,
@@ -400,6 +416,246 @@ function AlarmShortcutCard({
   );
 }
 
+function displayValue(value: string | number | null | undefined) {
+  if (value === undefined || value === null || value === "") {
+    return "-";
+  }
+
+  return String(value);
+}
+
+function getEngineeringNextSteps(alarm: CloudAlarmWithCompany) {
+  const alarmText = [
+    alarm.alarmName,
+    alarm.meName,
+    alarm.meCategory,
+    alarm.meType,
+    alarm.moc,
+    alarm.additionalInformation,
+    alarm.probableCause,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (alarmText.includes("eip") || alarmText.includes("bandwidth")) {
+    return [
+      "Check the EIP bandwidth limit and current traffic trend.",
+      "Confirm which resource the EIP is attached to and whether the customer needs a higher bandwidth tier.",
+    ];
+  }
+
+  if (alarmText.includes("kafka")) {
+    return [
+      "Check Kafka node, partition, and replica health.",
+      "Confirm whether platform services depending on Kafka are degraded or delayed.",
+    ];
+  }
+
+  if (alarmText.includes("storage") || alarmText.includes("capacity")) {
+    return [
+      "Check storage pool capacity, allocation pressure, and recent growth.",
+      "Confirm whether cleanup, expansion, or customer capacity planning is needed.",
+    ];
+  }
+
+  if (alarmText.includes("vpn")) {
+    return [
+      "Check VPN tunnel, session, and connectivity status.",
+      "Confirm peer reachability and any recent configuration or upstream changes.",
+    ];
+  }
+
+  if (alarmText.includes("db") || alarmText.includes("database")) {
+    return [
+      "Check DB service status and active failover or replication state.",
+      "Confirm whether the affected database service has customer impact.",
+    ];
+  }
+
+  return [
+    "Review the affected resource, probable cause, and ManageOne recommended action.",
+  ];
+}
+
+function AlarmDetailField({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 break-words text-sm">{value}</div>
+    </div>
+  );
+}
+
+function AlarmDetailSheet({
+  alarm,
+  open,
+  onOpenChange,
+}: {
+  alarm: CloudAlarmWithCompany | undefined;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const nextSteps = alarm ? getEngineeringNextSteps(alarm) : [];
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-xl lg:max-w-2xl">
+        <SheetHeader className="border-b pr-10">
+          <SheetTitle>{alarm?.alarmName ?? "Alarm details"}</SheetTitle>
+          <SheetDescription>
+            Full ManageOne alarm context for engineering investigation.
+          </SheetDescription>
+        </SheetHeader>
+        {alarm ? (
+          <div className="space-y-6 px-4 pb-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={severityBadgeVariant(alarm.severity)}>
+                {severityLabel(alarm.severity)}
+              </Badge>
+              <Badge variant={alarm.acked ? "secondary" : "outline"}>
+                {alarm.acked ? "Acked" : "Unacked"}
+              </Badge>
+              <Badge variant={alarm.cleared ? "secondary" : "outline"}>
+                {alarm.cleared ? "Cleared" : "Active"}
+              </Badge>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <AlarmDetailField
+                label="Alarm Name"
+                value={alarm.alarmName}
+                className="sm:col-span-2"
+              />
+              <AlarmDetailField label="CSN" value={alarm.csn} />
+              <AlarmDetailField label="Alarm ID" value={alarm.alarmId} />
+              <AlarmDetailField
+                label="Resource / meName"
+                value={displayValue(alarm.meName)}
+              />
+              <AlarmDetailField
+                label="Resource Category / meCategory"
+                value={displayValue(alarm.meCategory)}
+              />
+              <AlarmDetailField
+                label="Resource Type / meType"
+                value={displayValue(alarm.meType)}
+              />
+              <AlarmDetailField label="MOC" value={displayValue(alarm.moc)} />
+              <AlarmDetailField
+                label="Region"
+                value={displayValue(alarm.logicalRegionName)}
+              />
+              <AlarmDetailField
+                label="logicalRegionId"
+                value={displayValue(alarm.logicalRegionId)}
+              />
+              <AlarmDetailField
+                label="Company"
+                value={
+                  alarm.linkedCompanyName ??
+                  "Platform-level / not linked to tenant"
+                }
+              />
+              <AlarmDetailField
+                label="Address / IP"
+                value={displayValue(alarm.address)}
+              />
+              <AlarmDetailField
+                label="vdcId"
+                value={displayValue(alarm.vdcId)}
+              />
+              <AlarmDetailField
+                label="vdcName"
+                value={displayValue(alarm.vdcName)}
+              />
+              <AlarmDetailField
+                label="tenantId"
+                value={displayValue(alarm.tenantId)}
+              />
+              <AlarmDetailField
+                label="Tenant"
+                value={displayValue(alarm.tenant)}
+              />
+              <AlarmDetailField
+                label="Occurred"
+                value={formatDateTime(alarm.occurUtc)}
+              />
+              <AlarmDetailField
+                label="Arrived"
+                value={formatDateTime(alarm.arriveUtc)}
+              />
+              <AlarmDetailField
+                label="Latest Occurred"
+                value={formatDateTime(alarm.latestOccurUtc)}
+              />
+              <AlarmDetailField
+                label="Category"
+                value={categoryLabel(alarm.category)}
+              />
+              <AlarmDetailField
+                label="Ack Status"
+                value={alarm.acked ? "Acked" : "Unacked"}
+              />
+              <AlarmDetailField
+                label="Cleared Status"
+                value={alarm.cleared ? "Cleared" : "Active / not cleared"}
+              />
+            </div>
+
+            <div className="space-y-4">
+              <AlarmDetailField
+                label="Probable Cause"
+                value={
+                  <span className="whitespace-pre-wrap">
+                    {displayValue(alarm.probableCause)}
+                  </span>
+                }
+              />
+              <AlarmDetailField
+                label="Additional Information"
+                value={
+                  <span className="whitespace-pre-wrap">
+                    {displayValue(alarm.additionalInformation)}
+                  </span>
+                }
+              />
+            </div>
+
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <h3 className="text-sm font-semibold">Engineering next steps</h3>
+              <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
+                {nextSteps.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ul>
+            </div>
+
+            <details className="rounded-lg border">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+                Raw ManageOne payload
+              </summary>
+              <pre className="max-h-96 overflow-auto border-t bg-muted/30 p-4 text-xs">
+                {JSON.stringify(alarm.rawPayload, null, 2)}
+              </pre>
+            </details>
+          </div>
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export default function CloudHealthPage() {
   const { currentUser } = useCrm();
   const navigate = useNavigate();
@@ -439,6 +695,7 @@ export default function CloudHealthPage() {
   const [alarmRegionFilter, setAlarmRegionFilter] = useState("all");
   const [alarmCategoryFilter, setAlarmCategoryFilter] = useState("all");
   const [alarmShortcut, setAlarmShortcut] = useState<AlarmShortcut>("all");
+  const [selectedAlarmCsn, setSelectedAlarmCsn] = useState<number | null>(null);
   const [serviceName, setServiceName] = useState("");
   const [serviceCheckType, setServiceCheckType] =
     useState<ServiceCheckType>("http");
@@ -501,6 +758,11 @@ export default function CloudHealthPage() {
     alarmShortcut,
     allActiveAlarms,
   ]);
+  const selectedAlarm = useMemo(
+    () =>
+      (allActiveAlarms ?? []).find((alarm) => alarm.csn === selectedAlarmCsn),
+    [allActiveAlarms, selectedAlarmCsn],
+  );
   const latencyHistory = useQuery(
     api.pingResults.historyForActiveTargetsInRange,
     canView ? latencyRange : "skip",
@@ -962,7 +1224,20 @@ export default function CloudHealthPage() {
                   </thead>
                   <tbody>
                     {activeAlarms.map((alarm) => (
-                      <tr key={alarm._id} className="border-t">
+                      <tr
+                        key={alarm._id}
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`View details for ${alarm.alarmName}`}
+                        className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        onClick={() => setSelectedAlarmCsn(alarm.csn)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedAlarmCsn(alarm.csn);
+                          }
+                        }}
+                      >
                         <td className="px-3 py-2">
                           <Badge variant={severityBadgeVariant(alarm.severity)}>
                             {severityLabel(alarm.severity)}
@@ -1599,6 +1874,15 @@ export default function CloudHealthPage() {
           </div>
         </section>
       )}
+      <AlarmDetailSheet
+        alarm={selectedAlarm}
+        open={selectedAlarmCsn !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedAlarmCsn(null);
+          }
+        }}
+      />
     </div>
   );
 }
