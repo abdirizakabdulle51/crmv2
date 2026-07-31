@@ -50,12 +50,7 @@ import {
   SelectValue,
 } from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs.tsx";
+import { Tabs, TabsContent } from "@/components/ui/tabs.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 import { toast } from "sonner";
 
@@ -1180,36 +1175,68 @@ export default function CloudHealthPage() {
         onValueChange={setActiveTab}
         className="space-y-4"
       >
-        <TabsList className="grid h-auto w-full max-w-[460px] grid-cols-2 rounded-lg border bg-muted/40 p-1 sm:inline-grid sm:w-auto sm:grid-cols-4">
-          <TabsTrigger
-            value="overview"
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-md border-transparent bg-transparent px-3 text-sm text-muted-foreground shadow-none data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-primary/10"
+        <div
+          role="tablist"
+          aria-label="Cloud Health sections"
+          className="grid w-full max-w-[460px] grid-cols-2 rounded-lg border bg-muted/40 p-1 sm:grid-cols-4"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "overview"}
+            onClick={() => setActiveTab("overview")}
+            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+              activeTab === "overview"
+                ? "bg-primary/10 font-medium text-primary"
+                : ""
+            }`}
           >
             <LayoutDashboard className="h-3.5 w-3.5 opacity-80" />
             Overview
-          </TabsTrigger>
-          <TabsTrigger
-            value="alarms"
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-md border-transparent bg-transparent px-3 text-sm text-muted-foreground shadow-none data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-primary/10"
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "alarms"}
+            onClick={() => setActiveTab("alarms")}
+            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+              activeTab === "alarms"
+                ? "bg-primary/10 font-medium text-primary"
+                : ""
+            }`}
           >
             <BellRing className="h-3.5 w-3.5 opacity-80" />
             Alarms
-          </TabsTrigger>
-          <TabsTrigger
-            value="capacity"
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-md border-transparent bg-transparent px-3 text-sm text-muted-foreground shadow-none data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-primary/10"
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "capacity"}
+            onClick={() => setActiveTab("capacity")}
+            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+              activeTab === "capacity"
+                ? "bg-primary/10 font-medium text-primary"
+                : ""
+            }`}
           >
             <Activity className="h-3.5 w-3.5 opacity-80" />
             Capacity
-          </TabsTrigger>
-          <TabsTrigger
-            value="network"
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-md border-transparent bg-transparent px-3 text-sm text-muted-foreground shadow-none data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:font-medium data-[state=active]:text-primary data-[state=active]:shadow-none dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-primary/10"
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "network"}
+            onClick={() => setActiveTab("network")}
+            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+              activeTab === "network"
+                ? "bg-primary/10 font-medium text-primary"
+                : ""
+            }`}
           >
             <Wifi className="h-3.5 w-3.5 opacity-80" />
             Network
-          </TabsTrigger>
-        </TabsList>
+          </button>
+        </div>
 
         <TabsContent value="overview" className="space-y-6">
           <section className="space-y-3">
