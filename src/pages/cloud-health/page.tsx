@@ -364,6 +364,101 @@ type AlarmShortcut =
   | "regions"
   | "custom";
 
+type AlarmTimeRange =
+  | "all"
+  | "today"
+  | "yesterday"
+  | "last_7_days"
+  | "this_month"
+  | "last_month"
+  | "custom";
+
+function parseDateInput(value: string, endOfSelectedDay = false) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return new Date(
+    year,
+    month - 1,
+    day,
+    endOfSelectedDay ? 23 : 0,
+    endOfSelectedDay ? 59 : 0,
+    endOfSelectedDay ? 59 : 0,
+    endOfSelectedDay ? 999 : 0,
+  ).getTime();
+}
+
+function getAlarmTimestamp(alarm: CloudAlarmWithCompany) {
+  return alarm.latestOccurUtc ?? alarm.occurUtc;
+}
+
+function getAlarmTimeRangeBounds(
+  range: AlarmTimeRange,
+  customStartDate: string,
+  customEndDate: string,
+) {
+  const now = new Date();
+
+  switch (range) {
+    case "all":
+      return null;
+    case "today":
+      return {
+        from: startOfDay(now).getTime(),
+        to: endOfDay(now).getTime(),
+      };
+    case "yesterday": {
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      return {
+        from: startOfDay(yesterday).getTime(),
+        to: endOfDay(yesterday).getTime(),
+      };
+    }
+    case "last_7_days": {
+      const start = new Date(now);
+      start.setDate(start.getDate() - 6);
+      return {
+        from: startOfDay(start).getTime(),
+        to: endOfDay(now).getTime(),
+      };
+    }
+    case "this_month":
+      return {
+        from: startOfMonth(now).getTime(),
+        to: endOfMonth(now).getTime(),
+      };
+    case "last_month":
+      return {
+        from: new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime(),
+        to: new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          0,
+          23,
+          59,
+          59,
+          999,
+        ).getTime(),
+      };
+    case "custom": {
+      if (!customStartDate || !customEndDate) {
+        return null;
+      }
+
+      const from = parseDateInput(customStartDate);
+      const to = parseDateInput(customEndDate, true);
+      if (from == null || to == null) {
+        return null;
+      }
+
+      return from <= to ? { from, to } : { from: to, to: from };
+    }
+  }
+}
+
 function inferAlarmShortcutFromFilters(
   severity: string,
   region: string,
@@ -697,6 +792,9 @@ export default function CloudHealthPage() {
   const [alarmSeverityFilter, setAlarmSeverityFilter] = useState("all");
   const [alarmRegionFilter, setAlarmRegionFilter] = useState("all");
   const [alarmCategoryFilter, setAlarmCategoryFilter] = useState("all");
+  const [alarmTimeRange, setAlarmTimeRange] = useState<AlarmTimeRange>("all");
+  const [alarmCustomStartDate, setAlarmCustomStartDate] = useState("");
+  const [alarmCustomEndDate, setAlarmCustomEndDate] = useState("");
   const [alarmShortcut, setAlarmShortcut] = useState<AlarmShortcut>("all");
   const [selectedAlarmCsn, setSelectedAlarmCsn] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
@@ -727,6 +825,15 @@ export default function CloudHealthPage() {
     api.cloudAlarms.listActive,
     canView ? {} : "skip",
   );
+  const alarmTimeRangeBounds = useMemo(
+    () =>
+      getAlarmTimeRangeBounds(
+        alarmTimeRange,
+        alarmCustomStartDate,
+        alarmCustomEndDate,
+      ),
+    [alarmCustomEndDate, alarmCustomStartDate, alarmTimeRange],
+  );
   const activeAlarms = useMemo(() => {
     return (allActiveAlarms ?? []).filter((alarm) => {
       if (
@@ -754,6 +861,17 @@ export default function CloudHealthPage() {
         return false;
       }
 
+      if (alarmTimeRangeBounds) {
+        const timestamp = getAlarmTimestamp(alarm);
+        if (
+          timestamp == null ||
+          timestamp < alarmTimeRangeBounds.from ||
+          timestamp > alarmTimeRangeBounds.to
+        ) {
+          return false;
+        }
+      }
+
       return true;
     });
   }, [
@@ -761,6 +879,7 @@ export default function CloudHealthPage() {
     alarmRegionFilter,
     alarmSeverityFilter,
     alarmShortcut,
+    alarmTimeRangeBounds,
     allActiveAlarms,
   ]);
   const selectedAlarm = useMemo(
@@ -922,9 +1041,12 @@ export default function CloudHealthPage() {
     setAlarmPage(1);
   }, [
     alarmCategoryFilter,
+    alarmCustomEndDate,
+    alarmCustomStartDate,
     alarmRegionFilter,
     alarmSeverityFilter,
     alarmShortcut,
+    alarmTimeRange,
   ]);
 
   const applyAlarmShortcut = (shortcut: AlarmShortcut) => {
@@ -1466,12 +1588,12 @@ export default function CloudHealthPage() {
                   <CardTitle className="text-base">
                     Current ManageOne Alarms
                   </CardTitle>
-                  <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
                     <Select
                       value={alarmSeverityFilter}
                       onValueChange={updateAlarmSeverityFilter}
                     >
-                      <SelectTrigger className="w-full sm:w-40">
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Severity" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1486,7 +1608,7 @@ export default function CloudHealthPage() {
                       value={alarmRegionFilter}
                       onValueChange={updateAlarmRegionFilter}
                     >
-                      <SelectTrigger className="w-full sm:w-48">
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Region" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1502,7 +1624,7 @@ export default function CloudHealthPage() {
                       value={alarmCategoryFilter}
                       onValueChange={updateAlarmCategoryFilter}
                     >
-                      <SelectTrigger className="w-full sm:w-40">
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Category" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1514,6 +1636,65 @@ export default function CloudHealthPage() {
                         ))}
                       </SelectContent>
                     </Select>
+                    <Select
+                      value={alarmTimeRange}
+                      onValueChange={(value) =>
+                        setAlarmTimeRange(value as AlarmTimeRange)
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="All Time" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Time</SelectItem>
+                        <SelectItem value="today">Today</SelectItem>
+                        <SelectItem value="yesterday">Yesterday</SelectItem>
+                        <SelectItem value="last_7_days">
+                          Last 7 Days
+                        </SelectItem>
+                        <SelectItem value="this_month">This Month</SelectItem>
+                        <SelectItem value="last_month">Last Month</SelectItem>
+                        <SelectItem value="custom">Custom Range</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {alarmTimeRange === "custom" ? (
+                      <>
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor="alarm-custom-start-date"
+                            className="sr-only"
+                          >
+                            Start Date
+                          </Label>
+                          <Input
+                            id="alarm-custom-start-date"
+                            type="date"
+                            aria-label="Start Date"
+                            value={alarmCustomStartDate}
+                            onChange={(event) =>
+                              setAlarmCustomStartDate(event.target.value)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor="alarm-custom-end-date"
+                            className="sr-only"
+                          >
+                            End Date
+                          </Label>
+                          <Input
+                            id="alarm-custom-end-date"
+                            type="date"
+                            aria-label="End Date"
+                            value={alarmCustomEndDate}
+                            onChange={(event) =>
+                              setAlarmCustomEndDate(event.target.value)
+                            }
+                          />
+                        </div>
+                      </>
+                    ) : null}
                   </div>
                 </div>
               </CardHeader>
