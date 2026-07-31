@@ -1180,33 +1180,33 @@ export default function CloudHealthPage() {
         onValueChange={setActiveTab}
         className="space-y-4"
       >
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-xl border bg-card p-2 shadow-sm sm:inline-grid sm:w-auto sm:grid-cols-4">
+        <TabsList className="grid h-auto w-full max-w-[460px] grid-cols-2 gap-1 rounded-lg border bg-muted/70 p-1 shadow-sm sm:inline-grid sm:w-auto sm:grid-cols-4">
           <TabsTrigger
             value="overview"
-            className="h-12 justify-start gap-2 rounded-lg border px-4 text-sm font-semibold data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm sm:h-11 sm:min-w-32"
+            className="h-10 gap-1.5 rounded-md border border-transparent px-3 text-sm font-medium data-[state=active]:border-primary/30 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-xs sm:min-w-24"
           >
-            <LayoutDashboard className="h-4 w-4" />
+            <LayoutDashboard className="h-3.5 w-3.5 opacity-80" />
             Overview
           </TabsTrigger>
           <TabsTrigger
             value="alarms"
-            className="h-12 justify-start gap-2 rounded-lg border px-4 text-sm font-semibold data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm sm:h-11 sm:min-w-32"
+            className="h-10 gap-1.5 rounded-md border border-transparent px-3 text-sm font-medium data-[state=active]:border-primary/30 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-xs sm:min-w-24"
           >
-            <BellRing className="h-4 w-4" />
+            <BellRing className="h-3.5 w-3.5 opacity-80" />
             Alarms
           </TabsTrigger>
           <TabsTrigger
             value="capacity"
-            className="h-12 justify-start gap-2 rounded-lg border px-4 text-sm font-semibold data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm sm:h-11 sm:min-w-32"
+            className="h-10 gap-1.5 rounded-md border border-transparent px-3 text-sm font-medium data-[state=active]:border-primary/30 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-xs sm:min-w-24"
           >
-            <Activity className="h-4 w-4" />
+            <Activity className="h-3.5 w-3.5 opacity-80" />
             Capacity
           </TabsTrigger>
           <TabsTrigger
             value="network"
-            className="h-12 justify-start gap-2 rounded-lg border px-4 text-sm font-semibold data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm sm:h-11 sm:min-w-32"
+            className="h-10 gap-1.5 rounded-md border border-transparent px-3 text-sm font-medium data-[state=active]:border-primary/30 data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-xs sm:min-w-24"
           >
-            <Wifi className="h-4 w-4" />
+            <Wifi className="h-3.5 w-3.5 opacity-80" />
             Network
           </TabsTrigger>
         </TabsList>
