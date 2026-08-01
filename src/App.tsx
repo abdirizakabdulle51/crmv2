@@ -21,6 +21,8 @@ import RecommendationsPage from "./pages/recommendations/page.tsx";
 import CoachPage from "./pages/coach/page.tsx";
 import ManageOneTenantsPage from "./pages/manageone-tenants/page.tsx";
 import CloudHealthPage from "./pages/cloud-health/page.tsx";
+import CloudHealthAlarmPage from "./pages/cloud-health/alarm-page.tsx";
+import CloudHealthHostGroupPage from "./pages/cloud-health/host-group-page.tsx";
 import CloudHealthRegionPage from "./pages/cloud-health/region-page.tsx";
 import DocumentationPage from "./pages/documentation/page.tsx";
 import NotFound from "./pages/NotFound.tsx";
@@ -61,6 +63,14 @@ export default function App() {
               element={<ManageOneTenantsPage />}
             />
             <Route path="/cloud-health" element={<CloudHealthPage />} />
+            <Route
+              path="/cloud-health/alarms/:csn"
+              element={<CloudHealthAlarmPage />}
+            />
+            <Route
+              path="/cloud-health/host-groups/:hostGroupId"
+              element={<CloudHealthHostGroupPage />}
+            />
             <Route
               path="/cloud-health/regions/:regionId"
               element={<CloudHealthRegionPage />}

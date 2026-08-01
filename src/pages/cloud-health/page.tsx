@@ -472,8 +472,9 @@ function getAlarmResourceKey(alarm: CloudAlarmWithCompany) {
 
 function getAlarmRegionKey(alarm: CloudAlarmWithCompany) {
   return (
-    [alarm.logicalRegionId, alarm.logicalRegionName].filter(Boolean).join(" / ") ||
-    "unknown"
+    [alarm.logicalRegionId, alarm.logicalRegionName]
+      .filter(Boolean)
+      .join(" / ") || "unknown"
   );
 }
 
@@ -784,165 +785,6 @@ function AlarmDetailField({
   );
 }
 
-function AlarmDetailSheet({
-  alarm,
-  open,
-  onOpenChange,
-}: {
-  alarm: CloudAlarmWithCompany | undefined;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const nextSteps = alarm ? getEngineeringNextSteps(alarm) : [];
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-xl lg:max-w-2xl">
-        <SheetHeader className="border-b pr-10">
-          <SheetTitle>{alarm?.alarmName ?? "Alarm details"}</SheetTitle>
-          <SheetDescription>
-            Full ManageOne alarm context for engineering investigation.
-          </SheetDescription>
-        </SheetHeader>
-        {alarm ? (
-          <div className="space-y-6 px-4 pb-6">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={severityBadgeVariant(alarm.severity)}>
-                {severityLabel(alarm.severity)}
-              </Badge>
-              <Badge variant={alarm.acked ? "secondary" : "outline"}>
-                {alarm.acked ? "Acked" : "Unacked"}
-              </Badge>
-              <Badge variant={alarm.cleared ? "secondary" : "outline"}>
-                {alarm.cleared ? "Cleared" : "Active"}
-              </Badge>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <AlarmDetailField
-                label="Alarm Name"
-                value={alarm.alarmName}
-                className="sm:col-span-2"
-              />
-              <AlarmDetailField label="CSN" value={alarm.csn} />
-              <AlarmDetailField label="Alarm ID" value={alarm.alarmId} />
-              <AlarmDetailField
-                label="Resource / meName"
-                value={displayValue(alarm.meName)}
-              />
-              <AlarmDetailField
-                label="Resource Category / meCategory"
-                value={displayValue(alarm.meCategory)}
-              />
-              <AlarmDetailField
-                label="Resource Type / meType"
-                value={displayValue(alarm.meType)}
-              />
-              <AlarmDetailField label="MOC" value={displayValue(alarm.moc)} />
-              <AlarmDetailField
-                label="Region"
-                value={displayValue(alarm.logicalRegionName)}
-              />
-              <AlarmDetailField
-                label="logicalRegionId"
-                value={displayValue(alarm.logicalRegionId)}
-              />
-              <AlarmDetailField
-                label="Company"
-                value={
-                  alarm.linkedCompanyName ??
-                  "Platform-level / not linked to tenant"
-                }
-              />
-              <AlarmDetailField
-                label="Address / IP"
-                value={displayValue(alarm.address)}
-              />
-              <AlarmDetailField
-                label="vdcId"
-                value={displayValue(alarm.vdcId)}
-              />
-              <AlarmDetailField
-                label="vdcName"
-                value={displayValue(alarm.vdcName)}
-              />
-              <AlarmDetailField
-                label="tenantId"
-                value={displayValue(alarm.tenantId)}
-              />
-              <AlarmDetailField
-                label="Tenant"
-                value={displayValue(alarm.tenant)}
-              />
-              <AlarmDetailField
-                label="Occurred"
-                value={formatDateTime(alarm.occurUtc)}
-              />
-              <AlarmDetailField
-                label="Arrived"
-                value={formatDateTime(alarm.arriveUtc)}
-              />
-              <AlarmDetailField
-                label="Latest Occurred"
-                value={formatDateTime(alarm.latestOccurUtc)}
-              />
-              <AlarmDetailField
-                label="Category"
-                value={categoryLabel(alarm.category)}
-              />
-              <AlarmDetailField
-                label="Ack Status"
-                value={alarm.acked ? "Acked" : "Unacked"}
-              />
-              <AlarmDetailField
-                label="Cleared Status"
-                value={alarm.cleared ? "Cleared" : "Active / not cleared"}
-              />
-            </div>
-
-            <div className="space-y-4">
-              <AlarmDetailField
-                label="Probable Cause"
-                value={
-                  <span className="whitespace-pre-wrap">
-                    {displayValue(alarm.probableCause)}
-                  </span>
-                }
-              />
-              <AlarmDetailField
-                label="Additional Information"
-                value={
-                  <span className="whitespace-pre-wrap">
-                    {displayValue(alarm.additionalInformation)}
-                  </span>
-                }
-              />
-            </div>
-
-            <div className="rounded-lg border bg-muted/20 p-4">
-              <h3 className="text-sm font-semibold">Engineering next steps</h3>
-              <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
-                {nextSteps.map((step) => (
-                  <li key={step}>{step}</li>
-                ))}
-              </ul>
-            </div>
-
-            <details className="rounded-lg border">
-              <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-                Raw ManageOne payload
-              </summary>
-              <pre className="max-h-96 overflow-auto border-t bg-muted/30 p-4 text-xs">
-                {JSON.stringify(alarm.rawPayload, null, 2)}
-              </pre>
-            </details>
-          </div>
-        ) : null}
-      </SheetContent>
-    </Sheet>
-  );
-}
-
 function RepeatedAlarmPatternSheet({
   pattern,
   open,
@@ -1172,7 +1014,9 @@ function HostGroupDetailSheet({
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Badge variant={hostGroupRiskBadgeVariant(hostGroup.riskLevel)}>
+                  <Badge
+                    variant={hostGroupRiskBadgeVariant(hostGroup.riskLevel)}
+                  >
                     {hostGroupRiskLabel(hostGroup.riskLevel)}
                   </Badge>
                 </CardContent>
@@ -1489,7 +1333,6 @@ export default function CloudHealthPage() {
   const [alarmShortcut, setAlarmShortcut] = useState<AlarmShortcut>("all");
   const [alarmView, setAlarmView] = useState<AlarmView>("all");
   const [minimumRepeats, setMinimumRepeats] = useState("2");
-  const [selectedAlarmCsn, setSelectedAlarmCsn] = useState<number | null>(null);
   const [selectedRepeatedPatternKey, setSelectedRepeatedPatternKey] = useState<
     string | null
   >(null);
@@ -1498,8 +1341,6 @@ export default function CloudHealthPage() {
   const [hostGroupSummaryShortcut, setHostGroupSummaryShortcut] =
     useState<HostGroupSummaryShortcut>("totalHostGroups");
   const [hostGroupSearch, setHostGroupSearch] = useState("");
-  const [selectedHostGroup, setSelectedHostGroup] =
-    useState<CloudHostGroup | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [alarmPage, setAlarmPage] = useState(1);
   const [serviceName, setServiceName] = useState("");
@@ -1595,11 +1436,6 @@ export default function CloudHealthPage() {
     alarmTimeRangeBounds,
     allActiveAlarms,
   ]);
-  const selectedAlarm = useMemo(
-    () =>
-      (allActiveAlarms ?? []).find((alarm) => alarm.csn === selectedAlarmCsn),
-    [allActiveAlarms, selectedAlarmCsn],
-  );
   const repeatedPatterns = useMemo(
     () => buildRepeatedAlarmPatterns(activeAlarms, Number(minimumRepeats)),
     [activeAlarms, minimumRepeats],
@@ -1893,9 +1729,7 @@ export default function CloudHealthPage() {
   ) => {
     setHostGroupSummaryShortcut(shortcut);
     setHostGroupRiskFilter(
-      shortcut === "critical" ||
-        shortcut === "watch" ||
-        shortcut === "healthy"
+      shortcut === "critical" || shortcut === "watch" || shortcut === "healthy"
         ? shortcut
         : "all",
     );
@@ -2247,14 +2081,16 @@ export default function CloudHealthPage() {
                               role="button"
                               aria-label={`View details for ${alarm.alarmName}`}
                               className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                              onClick={() => setSelectedAlarmCsn(alarm.csn)}
+                              onClick={() =>
+                                navigate(`/cloud-health/alarms/${alarm.csn}`)
+                              }
                               onKeyDown={(event) => {
                                 if (
                                   event.key === "Enter" ||
                                   event.key === " "
                                 ) {
                                   event.preventDefault();
-                                  setSelectedAlarmCsn(alarm.csn);
+                                  navigate(`/cloud-health/alarms/${alarm.csn}`);
                                 }
                               }}
                             >
@@ -2458,8 +2294,9 @@ export default function CloudHealthPage() {
                           type="button"
                           className="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors hover:border-primary/60 hover:bg-muted/30"
                           onClick={() => {
-                            setActiveTab("host-groups");
-                            setSelectedHostGroup(hostGroup);
+                            navigate(
+                              `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}`,
+                            );
                           }}
                         >
                           <span className="min-w-0">
@@ -2587,7 +2424,10 @@ export default function CloudHealthPage() {
                     </div>
                   </div>
                   <div>
-                    <Label htmlFor="cloud-health-alarm-search" className="sr-only">
+                    <Label
+                      htmlFor="cloud-health-alarm-search"
+                      className="sr-only"
+                    >
                       Search alarms
                     </Label>
                     <Input
@@ -2659,9 +2499,7 @@ export default function CloudHealthPage() {
                         <SelectItem value="all">All Time</SelectItem>
                         <SelectItem value="today">Today</SelectItem>
                         <SelectItem value="yesterday">Yesterday</SelectItem>
-                        <SelectItem value="last_7_days">
-                          Last 7 Days
-                        </SelectItem>
+                        <SelectItem value="last_7_days">Last 7 Days</SelectItem>
                         <SelectItem value="this_month">This Month</SelectItem>
                         <SelectItem value="last_month">Last Month</SelectItem>
                         <SelectItem value="custom">Custom Range</SelectItem>
@@ -2737,11 +2575,13 @@ export default function CloudHealthPage() {
                             role="button"
                             aria-label={`View details for ${alarm.alarmName}`}
                             className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                            onClick={() => setSelectedAlarmCsn(alarm.csn)}
+                            onClick={() =>
+                              navigate(`/cloud-health/alarms/${alarm.csn}`)
+                            }
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                setSelectedAlarmCsn(alarm.csn);
+                                navigate(`/cloud-health/alarms/${alarm.csn}`);
                               }
                             }}
                           >
@@ -2806,12 +2646,8 @@ export default function CloudHealthPage() {
                           <th className="px-3 py-2 font-medium">Region</th>
                           <th className="px-3 py-2 font-medium">Company</th>
                           <th className="px-3 py-2 font-medium">Count</th>
-                          <th className="px-3 py-2 font-medium">
-                            First Seen
-                          </th>
-                          <th className="px-3 py-2 font-medium">
-                            Latest Seen
-                          </th>
+                          <th className="px-3 py-2 font-medium">First Seen</th>
+                          <th className="px-3 py-2 font-medium">Latest Seen</th>
                           <th className="px-3 py-2 font-medium">Ack</th>
                         </tr>
                       </thead>
@@ -2995,9 +2831,7 @@ export default function CloudHealthPage() {
                 value={hostGroupsSummary.totalHostGroups}
                 detail={`Synced ${formatDateTime(hostGroupsSummary.lastSyncedAt)}`}
                 active={hostGroupSummaryShortcut === "totalHostGroups"}
-                onClick={() =>
-                  applyHostGroupSummaryShortcut("totalHostGroups")
-                }
+                onClick={() => applyHostGroupSummaryShortcut("totalHostGroups")}
               />
               <AlarmShortcutCard
                 title="Critical"
@@ -3085,9 +2919,7 @@ export default function CloudHealthPage() {
                       <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
                         <tr>
                           <th className="px-3 py-2 font-medium">Risk</th>
-                          <th className="px-3 py-2 font-medium">
-                            Host Group
-                          </th>
+                          <th className="px-3 py-2 font-medium">Host Group</th>
                           <th className="px-3 py-2 font-medium">Region</th>
                           <th className="px-3 py-2 font-medium">AZ</th>
                           <th className="px-3 py-2 text-right font-medium">
@@ -3099,12 +2931,8 @@ export default function CloudHealthPage() {
                           <th className="px-3 py-2 text-right font-medium">
                             Memory Avg / Max
                           </th>
-                          <th className="px-3 py-2 font-medium">
-                            Worst Host
-                          </th>
-                          <th className="px-3 py-2 font-medium">
-                            Last Synced
-                          </th>
+                          <th className="px-3 py-2 font-medium">Worst Host</th>
+                          <th className="px-3 py-2 font-medium">Last Synced</th>
                           <th className="px-3 py-2 font-medium">Action</th>
                         </tr>
                       </thead>
@@ -3116,11 +2944,17 @@ export default function CloudHealthPage() {
                             role="button"
                             aria-label={`View details for ${hostGroup.hostGroupName}`}
                             className="cursor-pointer border-t transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            onClick={() => setSelectedHostGroup(hostGroup)}
+                            onClick={() =>
+                              navigate(
+                                `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}`,
+                              )
+                            }
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                setSelectedHostGroup(hostGroup);
+                                navigate(
+                                  `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}`,
+                                );
                               }
                             }}
                           >
@@ -3166,10 +3000,7 @@ export default function CloudHealthPage() {
                               <div className="text-xs text-muted-foreground">
                                 CPU {formatNumber(hostGroup.cpuMaxPercent, "%")}{" "}
                                 · Mem{" "}
-                                {formatNumber(
-                                  hostGroup.memoryMaxPercent,
-                                  "%",
-                                )}
+                                {formatNumber(hostGroup.memoryMaxPercent, "%")}
                               </div>
                             </td>
                             <td className="px-3 py-2">
@@ -3181,7 +3012,9 @@ export default function CloudHealthPage() {
                                 className="text-sm font-medium text-primary hover:underline"
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  setSelectedHostGroup(hostGroup);
+                                  navigate(
+                                    `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}`,
+                                  );
                                 }}
                               >
                                 View details
@@ -3737,30 +3570,12 @@ export default function CloudHealthPage() {
           )}
         </TabsContent>
       </Tabs>
-      <AlarmDetailSheet
-        alarm={selectedAlarm}
-        open={selectedAlarmCsn !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedAlarmCsn(null);
-          }
-        }}
-      />
       <RepeatedAlarmPatternSheet
         pattern={selectedRepeatedPattern}
         open={selectedRepeatedPatternKey !== null}
         onOpenChange={(open) => {
           if (!open) {
             setSelectedRepeatedPatternKey(null);
-          }
-        }}
-      />
-      <HostGroupDetailSheet
-        hostGroup={selectedHostGroup ?? undefined}
-        open={selectedHostGroup !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedHostGroup(null);
           }
         }}
       />
