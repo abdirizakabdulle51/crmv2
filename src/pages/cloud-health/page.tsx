@@ -175,12 +175,6 @@ function hostUtilizationStatus(cpuPercent: number, memoryPercent: number) {
   return "healthy";
 }
 
-function utilizationBarClass(value: number) {
-  if (value >= 85) return "bg-destructive";
-  if (value >= 70) return "bg-amber-500";
-  return "bg-primary";
-}
-
 function getHostGroupSearchText(hostGroup: CloudHostGroup) {
   return [
     hostGroup.hostGroupName,
@@ -1919,6 +1913,36 @@ export default function CloudHealthPage() {
           Math.max(a.cpuMaxPercent, a.memoryMaxPercent),
       );
   }, [hostGroups]);
+  const hostGroupPressureBrief = useMemo(() => {
+    const highestMemory = riskyHostGroups.reduce<CloudHostGroup | undefined>(
+      (highest, hostGroup) =>
+        !highest || hostGroup.memoryMaxPercent > highest.memoryMaxPercent
+          ? hostGroup
+          : highest,
+      undefined,
+    );
+    const highestCpu = riskyHostGroups.reduce<CloudHostGroup | undefined>(
+      (highest, hostGroup) =>
+        !highest || hostGroup.cpuMaxPercent > highest.cpuMaxPercent
+          ? hostGroup
+          : highest,
+      undefined,
+    );
+    const memoryBoundCount = riskyHostGroups.filter(
+      (hostGroup) => hostGroup.memoryMaxPercent >= hostGroup.cpuMaxPercent,
+    ).length;
+    const cpuBoundCount = riskyHostGroups.filter(
+      (hostGroup) => hostGroup.cpuMaxPercent > hostGroup.memoryMaxPercent,
+    ).length;
+
+    return {
+      highestMemory,
+      highestCpu,
+      memoryBoundCount,
+      cpuBoundCount,
+      firstRecommended: riskyHostGroups[0],
+    };
+  }, [riskyHostGroups]);
   const filteredHostGroups = useMemo(() => {
     const normalizedSearch = hostGroupSearch.trim().toLowerCase();
 
@@ -3281,10 +3305,10 @@ export default function CloudHealthPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">
-                  Risk Utilization Snapshot
+                  CPU vs Memory Pressure Map
                 </CardTitle>
                 <p className="text-xs text-muted-foreground">
-                  Critical and Watch host groups sorted by peak CPU or memory
+                  Critical and Watch host groups plotted by peak CPU and memory
                   pressure.
                 </p>
               </CardHeader>
@@ -3294,75 +3318,264 @@ export default function CloudHealthPage() {
                     No host groups currently require attention.
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {riskyHostGroups.map((hostGroup) => (
-                      <button
-                        key={hostGroup._id}
-                        type="button"
-                        className="w-full rounded-lg border bg-card p-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={() =>
-                          navigate(
-                            `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}?returnTab=host-groups`,
-                          )
-                        }
-                      >
-                        <div className="grid gap-3 lg:grid-cols-[minmax(220px,0.8fr)_1fr] lg:items-center">
-                          <div className="min-w-0 space-y-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="truncate font-medium">
-                                {hostGroup.hostGroupName}
-                              </span>
-                              <Badge
-                                variant={hostGroupRiskBadgeVariant(
-                                  hostGroup.riskLevel,
-                                )}
+                  <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
+                    <div className="rounded-lg border bg-background/70 p-3">
+                      <div className="h-72 w-full">
+                        <svg
+                          role="img"
+                          aria-label="CPU vs memory pressure map for risky host groups"
+                          viewBox="0 0 112 108"
+                          className="h-full w-full overflow-visible"
+                        >
+                          <line
+                            x1="70"
+                            y1="0"
+                            x2="70"
+                            y2="100"
+                            className="stroke-amber-500/50"
+                            strokeDasharray="3 3"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          <line
+                            x1="85"
+                            y1="0"
+                            x2="85"
+                            y2="100"
+                            className="stroke-destructive/50"
+                            strokeDasharray="3 3"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          <line
+                            x1="0"
+                            y1="30"
+                            x2="100"
+                            y2="30"
+                            className="stroke-amber-500/50"
+                            strokeDasharray="3 3"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          <line
+                            x1="0"
+                            y1="15"
+                            x2="100"
+                            y2="15"
+                            className="stroke-destructive/50"
+                            strokeDasharray="3 3"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          <line
+                            x1="0"
+                            y1="100"
+                            x2="100"
+                            y2="100"
+                            className="stroke-border"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          <line
+                            x1="0"
+                            y1="0"
+                            x2="0"
+                            y2="100"
+                            className="stroke-border"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          <text
+                            x="2"
+                            y="7"
+                            className="fill-muted-foreground text-[3px]"
+                          >
+                            Memory Max %
+                          </text>
+                          <text
+                            x="75"
+                            y="107"
+                            className="fill-muted-foreground text-[3px]"
+                          >
+                            CPU Max %
+                          </text>
+                          <text
+                            x="70"
+                            y="104"
+                            className="fill-amber-600 text-[2.6px]"
+                          >
+                            70
+                          </text>
+                          <text
+                            x="85"
+                            y="104"
+                            className="fill-destructive text-[2.6px]"
+                          >
+                            85
+                          </text>
+                          <text
+                            x="102"
+                            y="31"
+                            className="fill-amber-600 text-[2.6px]"
+                          >
+                            70
+                          </text>
+                          <text
+                            x="102"
+                            y="16"
+                            className="fill-destructive text-[2.6px]"
+                          >
+                            85
+                          </text>
+                          {riskyHostGroups.map((hostGroup, index) => {
+                            const x = Math.min(
+                              Math.max(hostGroup.cpuMaxPercent, 0),
+                              100,
+                            );
+                            const y =
+                              100 -
+                              Math.min(
+                                Math.max(hostGroup.memoryMaxPercent, 0),
+                                100,
+                              );
+                            const radius = Math.min(
+                              6,
+                              Math.max(3, 2.5 + hostGroup.hostCount / 10),
+                            );
+                            const isLabeled = index < 4;
+
+                            return (
+                              <g
+                                key={hostGroup._id}
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`View ${hostGroup.hostGroupName}, CPU ${formatNumber(hostGroup.cpuMaxPercent, "%")}, memory ${formatNumber(hostGroup.memoryMaxPercent, "%")}`}
+                                className="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                onClick={() =>
+                                  navigate(
+                                    `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}?returnTab=host-groups`,
+                                  )
+                                }
+                                onKeyDown={(event) => {
+                                  if (
+                                    event.key === "Enter" ||
+                                    event.key === " "
+                                  ) {
+                                    event.preventDefault();
+                                    navigate(
+                                      `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}?returnTab=host-groups`,
+                                    );
+                                  }
+                                }}
                               >
-                                {hostGroupRiskLabel(hostGroup.riskLevel)}
-                              </Badge>
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {hostGroup.regionName}
-                            </div>
+                                <circle
+                                  cx={x}
+                                  cy={y}
+                                  r={radius}
+                                  className={
+                                    hostGroup.riskLevel === "critical"
+                                      ? "fill-destructive/85 stroke-destructive"
+                                      : "fill-amber-500/85 stroke-amber-600"
+                                  }
+                                  strokeWidth="0.8"
+                                />
+                                {isLabeled ? (
+                                  <text
+                                    x={Math.min(x + radius + 1.5, 88)}
+                                    y={Math.max(y - radius - 1, 5)}
+                                    className="fill-foreground text-[3px] font-medium"
+                                  >
+                                    {hostGroup.hostGroupName.slice(0, 18)}
+                                  </text>
+                                ) : null}
+                              </g>
+                            );
+                          })}
+                        </svg>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="h-2 w-2 rounded-full bg-destructive" />
+                          Critical
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="h-2 w-2 rounded-full bg-amber-500" />
+                          Watch
+                        </span>
+                        <span>Dot size reflects host count</span>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <div className="text-sm font-semibold">NOC Brief</div>
+                      <div className="mt-3 space-y-3 text-sm">
+                        <div>
+                          <div className="text-xs text-muted-foreground">
+                            Highest memory pressure
                           </div>
-                          <div className="grid gap-2 md:grid-cols-2">
-                            {[
-                              {
-                                label: "CPU Max",
-                                value: hostGroup.cpuMaxPercent,
-                              },
-                              {
-                                label: "Memory Max",
-                                value: hostGroup.memoryMaxPercent,
-                              },
-                            ].map((metric) => (
-                              <div key={metric.label} className="space-y-1">
-                                <div className="flex items-center justify-between gap-3 text-xs">
-                                  <span className="font-medium text-muted-foreground">
-                                    {metric.label}
-                                  </span>
-                                  <span className="font-semibold">
-                                    {formatNumber(metric.value, "%")}
-                                  </span>
-                                </div>
-                                <div className="relative h-2 rounded-full bg-muted">
-                                  <div
-                                    className={`h-2 rounded-full ${utilizationBarClass(metric.value)}`}
-                                    style={{
-                                      width: `${Math.min(metric.value, 100)}%`,
-                                    }}
-                                  />
-                                  <div
-                                    className="absolute top-[-3px] h-4 w-px bg-foreground/40"
-                                    style={{ left: "80%" }}
-                                    aria-hidden="true"
-                                  />
-                                </div>
-                              </div>
-                            ))}
+                          <div className="font-medium">
+                            {hostGroupPressureBrief.highestMemory
+                              ?.hostGroupName ?? "-"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {formatNumber(
+                              hostGroupPressureBrief.highestMemory
+                                ?.memoryMaxPercent,
+                              "%",
+                            )}
                           </div>
                         </div>
-                      </button>
-                    ))}
+                        <div>
+                          <div className="text-xs text-muted-foreground">
+                            Highest CPU pressure
+                          </div>
+                          <div className="font-medium">
+                            {hostGroupPressureBrief.highestCpu
+                              ?.hostGroupName ?? "-"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {formatNumber(
+                              hostGroupPressureBrief.highestCpu?.cpuMaxPercent,
+                              "%",
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="rounded-md bg-background/80 p-2">
+                            <div className="text-xs text-muted-foreground">
+                              Memory-bound
+                            </div>
+                            <div className="text-lg font-semibold">
+                              {hostGroupPressureBrief.memoryBoundCount}
+                            </div>
+                          </div>
+                          <div className="rounded-md bg-background/80 p-2">
+                            <div className="text-xs text-muted-foreground">
+                              CPU-bound
+                            </div>
+                            <div className="text-lg font-semibold">
+                              {hostGroupPressureBrief.cpuBoundCount}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
+                          <div className="text-xs font-medium text-primary">
+                            First recommended review
+                          </div>
+                          <div className="mt-1 font-semibold">
+                            {hostGroupPressureBrief.firstRecommended
+                              ?.hostGroupName ?? "-"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Peak{" "}
+                            {formatNumber(
+                              hostGroupPressureBrief.firstRecommended
+                                ? Math.max(
+                                    hostGroupPressureBrief.firstRecommended
+                                      .cpuMaxPercent,
+                                    hostGroupPressureBrief.firstRecommended
+                                      .memoryMaxPercent,
+                                  )
+                                : undefined,
+                              "%",
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </CardContent>
