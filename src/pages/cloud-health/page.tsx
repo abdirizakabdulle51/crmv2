@@ -224,10 +224,16 @@ function isCloudHealthTab(value: string | null): value is CloudHealthTab {
   return CLOUD_HEALTH_TABS.includes(value as CloudHealthTab);
 }
 
-const ALARM_VIEW_OPTIONS: Array<{ value: AlarmView; label: string }> = [
+const PRIMARY_ALARM_VIEW_OPTIONS: Array<{ value: AlarmView; label: string }> = [
   { value: "new", label: "New Alarms" },
   { value: "all", label: "All Alarms" },
   { value: "repeated", label: "Repeated Patterns" },
+];
+
+const OPERATIONAL_ALARM_VIEW_OPTIONS: Array<{
+  value: AlarmView;
+  label: string;
+}> = [
   { value: "security", label: "Security" },
   { value: "backup_dr", label: "Backup / DR" },
   { value: "platform_services", label: "Platform Services" },
@@ -603,12 +609,18 @@ function matchesOperationalAlarmView(
   if (alarmView === "backup_dr") {
     return alarmTextIncludes(alarm, [
       "backup",
+      "backup service",
+      "backup failure",
       "restore",
       "replication",
       "redundancy",
       "disaster recovery",
-      " dr ",
-      "drs",
+      "dr service",
+      "dr failure",
+      "dr replication",
+      "drs backup",
+      "drs replication",
+      "drs service",
     ]);
   }
 
@@ -617,13 +629,27 @@ function matchesOperationalAlarmView(
       "kafka",
       "drs",
       "secmaster",
+      "sec master",
       "manageone",
       "microservice",
+      "micro-service",
+      "micro service",
+      "microservice abnormal",
       "system service",
       "deployment node",
+      "deployment nodes",
       "deployinstance",
+      "deploy instance",
       "platform",
       "service abnormal",
+      "service process abnormal",
+      "external system communication",
+      "communication alarm",
+      "communication",
+      "api threshold",
+      "console threshold",
+      "api",
+      "console",
     ]);
   }
 
@@ -2600,9 +2626,31 @@ export default function CloudHealthPage() {
                         {getAlarmViewSubtitle(alarmView)}
                       </p>
                     </div>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <div className="flex max-w-4xl flex-wrap gap-1.5 rounded-lg border bg-muted/40 p-1">
-                        {ALARM_VIEW_OPTIONS.map((option) => (
+                    <div className="flex flex-col gap-2">
+                      <div
+                        aria-label="Primary alarm views"
+                        className="flex flex-wrap gap-1.5 rounded-lg border bg-muted/40 p-1"
+                      >
+                        {PRIMARY_ALARM_VIEW_OPTIONS.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={`h-9 rounded-md px-3 text-sm transition-colors ${
+                              alarmView === option.value
+                                ? "bg-primary/10 font-medium text-primary"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                            onClick={() => setAlarmView(option.value)}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div
+                        aria-label="Operational alarm views"
+                        className="flex flex-wrap gap-1.5 rounded-lg border bg-muted/40 p-1"
+                      >
+                        {OPERATIONAL_ALARM_VIEW_OPTIONS.map((option) => (
                           <button
                             key={option.value}
                             type="button"
