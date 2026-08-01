@@ -59,6 +59,32 @@ function categoryLabel(category: number) {
   return `Category ${category}`;
 }
 
+function getAffectedResourceLabel(alarm: CloudAlarmWithCompany) {
+  const resourceType = alarm.meCategory ?? alarm.meType ?? alarm.moc;
+  const resourceName = alarm.meName ?? alarm.address;
+
+  if (resourceType && resourceName) {
+    return `${resourceType} ${resourceName}`;
+  }
+
+  return resourceType ?? resourceName ?? "Unknown resource";
+}
+
+function getBelongsToLabel(alarm: CloudAlarmWithCompany) {
+  if (alarm.linkedCompanyName) {
+    const tenantLabel = alarm.tenant ?? alarm.vdcName;
+    return tenantLabel
+      ? `${alarm.linkedCompanyName} / ${tenantLabel}`
+      : alarm.linkedCompanyName;
+  }
+
+  if (alarm.tenant || alarm.vdcName) {
+    return alarm.tenant ?? alarm.vdcName;
+  }
+
+  return "Platform-level / not linked to tenant";
+}
+
 function getEngineeringNextSteps(alarm: CloudAlarmWithCompany) {
   const haystack = [
     alarm.alarmName,
@@ -217,6 +243,8 @@ export default function CloudHealthAlarmPage() {
   }
 
   const nextSteps = getEngineeringNextSteps(alarm);
+  const affectedResource = getAffectedResourceLabel(alarm);
+  const belongsTo = getBelongsToLabel(alarm);
 
   return (
     <div className="space-y-6 p-6 md:p-8">
@@ -242,6 +270,26 @@ export default function CloudHealthAlarmPage() {
           Full ManageOne alarm context for engineering investigation.
         </p>
       </div>
+
+      <Card className="border-primary/30 bg-primary/5">
+        <CardHeader>
+          <CardTitle className="text-base">Affected Resource</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          <DetailField label="Affected Resource" value={affectedResource} />
+          <DetailField label="Belongs To" value={belongsTo} />
+          <DetailField
+            label="Region"
+            value={alarm.logicalRegionName ?? "Unknown region"}
+          />
+          <DetailField label="Issue" value={alarm.alarmName} />
+          <DetailField
+            label="Probable Cause"
+            value={displayValue(alarm.probableCause)}
+            className="sm:col-span-2"
+          />
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <DetailCard title="Alarm Identity">
