@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { ArrowLeft } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc } from "@/convex/_generated/dataModel.d.ts";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -18,9 +18,35 @@ import { useCrm } from "@/lib/crm-context.tsx";
 type CloudAlarmWithCompany = Doc<"cloudAlarms"> & {
   linkedCompanyName?: string | null;
 };
+type CloudHealthTab =
+  | "overview"
+  | "alarms"
+  | "capacity"
+  | "network"
+  | "host-groups";
+
+const CLOUD_HEALTH_TABS: CloudHealthTab[] = [
+  "overview",
+  "alarms",
+  "capacity",
+  "network",
+  "host-groups",
+];
 
 function canViewCloudHealth(role: string | undefined) {
   return role === "ceo" || role === "head_of_business" || role === "country_gm";
+}
+
+function isCloudHealthTab(value: string | null): value is CloudHealthTab {
+  return CLOUD_HEALTH_TABS.includes(value as CloudHealthTab);
+}
+
+function getCloudHealthReturnPath(
+  searchParams: URLSearchParams,
+  fallbackTab: CloudHealthTab,
+) {
+  const returnTab = searchParams.get("returnTab");
+  return `/cloud-health?tab=${isCloudHealthTab(returnTab) ? returnTab : fallbackTab}`;
 }
 
 function displayValue(value: string | number | null | undefined) {
@@ -184,10 +210,12 @@ function DetailCard({
 
 function NotFoundState() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnPath = getCloudHealthReturnPath(searchParams, "alarms");
 
   return (
     <div className="space-y-6 p-6 md:p-8">
-      <Button variant="outline" onClick={() => navigate("/cloud-health")}>
+      <Button variant="outline" onClick={() => navigate(returnPath)}>
         <ArrowLeft className="mr-2 h-4 w-4" />
         Back to Cloud Health
       </Button>
@@ -207,6 +235,8 @@ export default function CloudHealthAlarmPage() {
   const { currentUser } = useCrm();
   const navigate = useNavigate();
   const params = useParams();
+  const [searchParams] = useSearchParams();
+  const returnPath = getCloudHealthReturnPath(searchParams, "alarms");
   const canView = canViewCloudHealth(currentUser?.role);
   const alarms = useQuery(api.cloudAlarms.listActive, canView ? {} : "skip");
   const csn = Number(params.csn);
@@ -248,7 +278,7 @@ export default function CloudHealthAlarmPage() {
 
   return (
     <div className="space-y-6 p-6 md:p-8">
-      <Button variant="outline" onClick={() => navigate("/cloud-health")}>
+      <Button variant="outline" onClick={() => navigate(returnPath)}>
         <ArrowLeft className="mr-2 h-4 w-4" />
         Back to Cloud Health
       </Button>

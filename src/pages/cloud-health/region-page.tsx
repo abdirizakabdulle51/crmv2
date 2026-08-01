@@ -234,7 +234,7 @@ export default function CloudHealthRegionPage() {
           <Button
             variant="ghost"
             className="-ml-3 mb-2"
-            onClick={() => navigate("/cloud-health")}
+            onClick={() => navigate("/cloud-health?tab=capacity")}
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Cloud Health
@@ -356,9 +356,7 @@ export default function CloudHealthRegionPage() {
                     <th className="px-3 py-2 font-medium">Risk</th>
                     <th className="px-3 py-2 font-medium">Host Group</th>
                     <th className="px-3 py-2 font-medium">AZ</th>
-                    <th className="px-3 py-2 text-right font-medium">
-                      Hosts
-                    </th>
+                    <th className="px-3 py-2 text-right font-medium">Hosts</th>
                     <th className="px-3 py-2 text-right font-medium">
                       CPU Avg / Max
                     </th>

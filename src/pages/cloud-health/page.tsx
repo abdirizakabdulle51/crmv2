@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
   Legend,
@@ -87,6 +87,12 @@ type RepeatedAlarmPattern = {
   alarms: CloudAlarmWithCompany[];
 };
 type CloudHostGroup = Doc<"cloudHostGroups">;
+type CloudHealthTab =
+  | "overview"
+  | "alarms"
+  | "capacity"
+  | "network"
+  | "host-groups";
 type HostGroupSummaryShortcut =
   | "totalHostGroups"
   | "critical"
@@ -198,6 +204,17 @@ const LATENCY_LINE_COLORS = [
 // Flip this back on when the service/DNS target-entry UX is finalized.
 const SHOW_SERVICE_DNS_HEALTH = false;
 const ALARM_PAGE_SIZE = 50;
+const CLOUD_HEALTH_TABS: CloudHealthTab[] = [
+  "overview",
+  "alarms",
+  "capacity",
+  "network",
+  "host-groups",
+];
+
+function isCloudHealthTab(value: string | null): value is CloudHealthTab {
+  return CLOUD_HEALTH_TABS.includes(value as CloudHealthTab);
+}
 
 type LatencyRangeId =
   | "last_5_minutes"
@@ -1286,6 +1303,8 @@ function HostGroupDetailSheet({
 export default function CloudHealthPage() {
   const { currentUser } = useCrm();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromQuery = searchParams.get("tab");
   const canView = canViewCloudHealth(currentUser?.role);
   const canManage = canManagePingTargets(currentUser?.role);
   const capacity = useQuery(api.cloudCapacity.list, canView ? {} : "skip");
@@ -1344,7 +1363,9 @@ export default function CloudHealthPage() {
   const [hostGroupSummaryShortcut, setHostGroupSummaryShortcut] =
     useState<HostGroupSummaryShortcut>("totalHostGroups");
   const [hostGroupSearch, setHostGroupSearch] = useState("");
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState<CloudHealthTab>(
+    isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview",
+  );
   const [alarmPage, setAlarmPage] = useState(1);
   const [serviceName, setServiceName] = useState("");
   const [serviceCheckType, setServiceCheckType] =
@@ -1678,8 +1699,19 @@ export default function CloudHealthPage() {
     minimumRepeats,
   ]);
 
+  useEffect(() => {
+    setActiveTab(isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview");
+  }, [tabFromQuery]);
+
+  const updateActiveTab = (tab: CloudHealthTab) => {
+    setActiveTab(tab);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("tab", tab);
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const applyAlarmShortcut = (shortcut: AlarmShortcut) => {
-    setActiveTab("alarms");
+    updateActiveTab("alarms");
     setAlarmView("all");
     setAlarmShortcut(shortcut);
 
@@ -1946,7 +1978,11 @@ export default function CloudHealthPage() {
 
       <Tabs
         value={activeTab}
-        onValueChange={setActiveTab}
+        onValueChange={(value) => {
+          if (isCloudHealthTab(value)) {
+            updateActiveTab(value);
+          }
+        }}
         className="space-y-4"
       >
         <div
@@ -1958,7 +1994,7 @@ export default function CloudHealthPage() {
             type="button"
             role="tab"
             aria-selected={activeTab === "overview"}
-            onClick={() => setActiveTab("overview")}
+            onClick={() => updateActiveTab("overview")}
             className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
               activeTab === "overview"
                 ? "bg-primary/10 font-medium text-primary"
@@ -1972,7 +2008,7 @@ export default function CloudHealthPage() {
             type="button"
             role="tab"
             aria-selected={activeTab === "alarms"}
-            onClick={() => setActiveTab("alarms")}
+            onClick={() => updateActiveTab("alarms")}
             className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
               activeTab === "alarms"
                 ? "bg-primary/10 font-medium text-primary"
@@ -1986,7 +2022,7 @@ export default function CloudHealthPage() {
             type="button"
             role="tab"
             aria-selected={activeTab === "capacity"}
-            onClick={() => setActiveTab("capacity")}
+            onClick={() => updateActiveTab("capacity")}
             className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
               activeTab === "capacity"
                 ? "bg-primary/10 font-medium text-primary"
@@ -2000,7 +2036,7 @@ export default function CloudHealthPage() {
             type="button"
             role="tab"
             aria-selected={activeTab === "network"}
-            onClick={() => setActiveTab("network")}
+            onClick={() => updateActiveTab("network")}
             className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
               activeTab === "network"
                 ? "bg-primary/10 font-medium text-primary"
@@ -2014,7 +2050,7 @@ export default function CloudHealthPage() {
             type="button"
             role="tab"
             aria-selected={activeTab === "host-groups"}
-            onClick={() => setActiveTab("host-groups")}
+            onClick={() => updateActiveTab("host-groups")}
             className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
               activeTab === "host-groups"
                 ? "bg-primary/10 font-medium text-primary"
@@ -2101,7 +2137,9 @@ export default function CloudHealthPage() {
                               aria-label={`View details for ${alarm.alarmName}`}
                               className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                               onClick={() =>
-                                navigate(`/cloud-health/alarms/${alarm.csn}`)
+                                navigate(
+                                  `/cloud-health/alarms/${alarm.csn}?returnTab=overview`,
+                                )
                               }
                               onKeyDown={(event) => {
                                 if (
@@ -2109,7 +2147,9 @@ export default function CloudHealthPage() {
                                   event.key === " "
                                 ) {
                                   event.preventDefault();
-                                  navigate(`/cloud-health/alarms/${alarm.csn}`);
+                                  navigate(
+                                    `/cloud-health/alarms/${alarm.csn}?returnTab=overview`,
+                                  );
                                 }
                               }}
                             >
@@ -2314,7 +2354,7 @@ export default function CloudHealthPage() {
                           className="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors hover:border-primary/60 hover:bg-muted/30"
                           onClick={() => {
                             navigate(
-                              `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}`,
+                              `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}?returnTab=overview`,
                             );
                           }}
                         >
@@ -2610,12 +2650,16 @@ export default function CloudHealthPage() {
                             aria-label={`View details for ${alarm.alarmName}`}
                             className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                             onClick={() =>
-                              navigate(`/cloud-health/alarms/${alarm.csn}`)
+                              navigate(
+                                `/cloud-health/alarms/${alarm.csn}?returnTab=alarms`,
+                              )
                             }
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                navigate(`/cloud-health/alarms/${alarm.csn}`);
+                                navigate(
+                                  `/cloud-health/alarms/${alarm.csn}?returnTab=alarms`,
+                                );
                               }
                             }}
                           >
@@ -2814,7 +2858,7 @@ export default function CloudHealthPage() {
                         oversubscriptionRatio={region.cpuOversubscriptionRatio}
                         onClick={() =>
                           navigate(
-                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
+                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
                           )
                         }
                       />
@@ -2827,7 +2871,7 @@ export default function CloudHealthPage() {
                         }
                         onClick={() =>
                           navigate(
-                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
+                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
                           )
                         }
                       />
@@ -2840,7 +2884,7 @@ export default function CloudHealthPage() {
                         }
                         onClick={() =>
                           navigate(
-                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}`,
+                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
                           )
                         }
                       />
@@ -2980,14 +3024,14 @@ export default function CloudHealthPage() {
                             className="cursor-pointer border-t transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             onClick={() =>
                               navigate(
-                                `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}`,
+                                `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}?returnTab=host-groups`,
                               )
                             }
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
                                 navigate(
-                                  `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}`,
+                                  `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}?returnTab=host-groups`,
                                 );
                               }
                             }}
@@ -3047,7 +3091,7 @@ export default function CloudHealthPage() {
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   navigate(
-                                    `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}`,
+                                    `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}?returnTab=host-groups`,
                                   );
                                 }}
                               >
