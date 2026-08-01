@@ -17,6 +17,7 @@ import {
   Cpu,
   Database,
   HardDrive,
+  Server,
   ShieldAlert,
 } from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
@@ -67,6 +68,20 @@ function severityBadgeVariant(severity: number) {
     : severity === 3
       ? "secondary"
       : "outline";
+}
+
+function hostGroupRiskLabel(riskLevel: "healthy" | "watch" | "critical") {
+  if (riskLevel === "critical") return "Critical";
+  if (riskLevel === "watch") return "Watch";
+  return "Healthy";
+}
+
+function hostGroupRiskBadgeVariant(
+  riskLevel: "healthy" | "watch" | "critical",
+) {
+  if (riskLevel === "critical") return "destructive";
+  if (riskLevel === "watch") return "secondary";
+  return "outline";
 }
 
 function ConsumerTable({
@@ -169,6 +184,10 @@ export default function CloudHealthRegionPage() {
     api.cloudAlarms.listActiveByRegion,
     canView && decodedRegionId ? { logicalRegionId: decodedRegionId } : "skip",
   );
+  const regionHostGroups = useQuery(
+    api.cloudHostGroups.listActiveByRegion,
+    canView && decodedRegionId ? { regionId: decodedRegionId } : "skip",
+  );
   const chartData = useMemo(
     () =>
       (history ?? []).map((snapshot) => ({
@@ -199,7 +218,7 @@ export default function CloudHealthRegionPage() {
     );
   }
 
-  if (!capacity || !history || !regionAlarms) {
+  if (!capacity || !history || !regionAlarms || !regionHostGroups) {
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-8 w-48" />
@@ -316,6 +335,82 @@ export default function CloudHealthRegionPage() {
           rows={storageConsumers}
         />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Server className="h-4 w-4 text-primary" />
+            Host Groups in Region
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {regionHostGroups.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              No active host groups for this region.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full min-w-[900px] text-sm">
+                <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Risk</th>
+                    <th className="px-3 py-2 font-medium">Host Group</th>
+                    <th className="px-3 py-2 font-medium">AZ</th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      Hosts
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      CPU Avg / Max
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      Memory Avg / Max
+                    </th>
+                    <th className="px-3 py-2 font-medium">Last Synced</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {regionHostGroups.map((hostGroup) => (
+                    <tr key={hostGroup._id} className="border-t">
+                      <td className="px-3 py-2">
+                        <Badge
+                          variant={hostGroupRiskBadgeVariant(
+                            hostGroup.riskLevel,
+                          )}
+                        >
+                          {hostGroupRiskLabel(hostGroup.riskLevel)}
+                        </Badge>
+                      </td>
+                      <td className="max-w-[280px] px-3 py-2">
+                        <div className="font-medium">
+                          {hostGroup.hostGroupName}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {hostGroup.resourcePoolName}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">{hostGroup.azName}</td>
+                      <td className="px-3 py-2 text-right">
+                        {hostGroup.hostCount}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {formatNumber(hostGroup.cpuAvgPercent, "%")} /{" "}
+                        {formatNumber(hostGroup.cpuMaxPercent, "%")}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {formatNumber(hostGroup.memoryAvgPercent, "%")} /{" "}
+                        {formatNumber(hostGroup.memoryMaxPercent, "%")}
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatDateTime(hostGroup.lastSyncedAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

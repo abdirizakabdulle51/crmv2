@@ -221,6 +221,62 @@ export default defineSchema({
     .index("by_region_active", ["logicalRegionId", "active"])
     .index("by_linked_company", ["linkedCompanyId"]),
 
+  cloudHostGroups: defineTable({
+    hostGroupId: v.string(),
+    hostGroupName: v.string(),
+    regionId: v.string(),
+    regionName: v.string(),
+    azId: v.string(),
+    azName: v.string(),
+    resourcePoolId: v.string(),
+    resourcePoolName: v.string(),
+    hypervisorType: v.string(),
+    hostCount: v.number(),
+    cpuAvgPercent: v.number(),
+    cpuMaxPercent: v.number(),
+    memoryAvgPercent: v.number(),
+    memoryMaxPercent: v.number(),
+    riskLevel: v.union(
+      v.literal("healthy"),
+      v.literal("watch"),
+      v.literal("critical"),
+    ),
+    riskReasons: v.array(v.string()),
+    worstCpuHost: v.optional(
+      v.object({
+        hostId: v.string(),
+        hostName: v.string(),
+        cpuPercent: v.number(),
+      }),
+    ),
+    worstMemoryHost: v.optional(
+      v.object({
+        hostId: v.string(),
+        hostName: v.string(),
+        memoryPercent: v.number(),
+      }),
+    ),
+    hosts: v.array(
+      v.object({
+        hostId: v.string(),
+        hostName: v.string(),
+        manageIp: v.optional(v.string()),
+        cpuPercent: v.number(),
+        memoryPercent: v.number(),
+      }),
+    ),
+    rawCluster: v.any(),
+    rawHostSample: v.any(),
+    active: v.boolean(),
+    firstSeenAt: v.number(),
+    lastSyncedAt: v.number(),
+    inactiveAt: v.optional(v.number()),
+  })
+    .index("by_host_group_id", ["hostGroupId"])
+    .index("by_active", ["active"])
+    .index("by_region_active", ["regionId", "active"])
+    .index("by_risk_active", ["riskLevel", "active"]),
+
   tenantUsageHistory: defineTable({
     linkedCompanyId: v.id("companies"),
     tenantName: v.string(),

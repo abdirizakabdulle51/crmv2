@@ -106,6 +106,45 @@ type CloudAlarmInput = {
   lastSyncedAt: number;
 };
 
+type CloudHostGroupInput = {
+  hostGroupId: string;
+  hostGroupName: string;
+  regionId: string;
+  regionName: string;
+  azId: string;
+  azName: string;
+  resourcePoolId: string;
+  resourcePoolName: string;
+  hypervisorType: string;
+  hostCount: number;
+  cpuAvgPercent: number;
+  cpuMaxPercent: number;
+  memoryAvgPercent: number;
+  memoryMaxPercent: number;
+  riskLevel: "healthy" | "watch" | "critical";
+  riskReasons: string[];
+  worstCpuHost?: {
+    hostId: string;
+    hostName: string;
+    cpuPercent: number;
+  };
+  worstMemoryHost?: {
+    hostId: string;
+    hostName: string;
+    memoryPercent: number;
+  };
+  hosts: Array<{
+    hostId: string;
+    hostName: string;
+    manageIp?: string;
+    cpuPercent: number;
+    memoryPercent: number;
+  }>;
+  rawCluster: unknown;
+  rawHostSample: unknown;
+  lastSyncedAt: number;
+};
+
 type PingResultInput = {
   targetId: string;
   success: boolean;
@@ -635,6 +674,109 @@ function normalizeCloudAlarm(
   };
 }
 
+function normalizeHostGroupRiskLevel(value: unknown) {
+  if (value === "healthy" || value === "watch" || value === "critical") {
+    return value;
+  }
+  throw new Error("riskLevel must be healthy, watch, or critical");
+}
+
+function normalizeHostGroupRiskReasons(value: unknown) {
+  if (!Array.isArray(value)) {
+    throw new Error("riskReasons must be an array");
+  }
+  return value.map((reason) => {
+    if (typeof reason !== "string") {
+      throw new Error("riskReasons must contain only strings");
+    }
+    return reason;
+  });
+}
+
+function normalizeWorstCpuHost(value: unknown) {
+  if (value == null) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("worstCpuHost must be an object");
+  }
+  return {
+    hostId: requireUnknownString(value, "hostId"),
+    hostName: requireUnknownString(value, "hostName"),
+    cpuPercent: requireUnknownNumber(value, "cpuPercent"),
+  };
+}
+
+function normalizeWorstMemoryHost(value: unknown) {
+  if (value == null) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("worstMemoryHost must be an object");
+  }
+  return {
+    hostId: requireUnknownString(value, "hostId"),
+    hostName: requireUnknownString(value, "hostName"),
+    memoryPercent: requireUnknownNumber(value, "memoryPercent"),
+  };
+}
+
+function normalizeHost(value: unknown) {
+  if (!isRecord(value)) {
+    throw new Error("Each host must be an object");
+  }
+
+  return {
+    hostId: requireUnknownString(value, "hostId"),
+    hostName: requireUnknownString(value, "hostName"),
+    ...(optionalUnknownString(value, "manageIp") !== undefined
+      ? { manageIp: optionalUnknownString(value, "manageIp") }
+      : {}),
+    cpuPercent: requireUnknownNumber(value, "cpuPercent"),
+    memoryPercent: requireUnknownNumber(value, "memoryPercent"),
+  };
+}
+
+function normalizeCloudHostGroup(
+  value: unknown,
+  fallbackSyncedAt: number,
+): CloudHostGroupInput {
+  if (!isRecord(value)) {
+    throw new Error("Each host group must be an object");
+  }
+  if (!Array.isArray(value.hosts)) {
+    throw new Error("hosts must be an array");
+  }
+
+  const worstCpuHost = normalizeWorstCpuHost(value.worstCpuHost);
+  const worstMemoryHost = normalizeWorstMemoryHost(value.worstMemoryHost);
+
+  return {
+    hostGroupId: requireUnknownString(value, "hostGroupId"),
+    hostGroupName: requireUnknownString(value, "hostGroupName"),
+    regionId: requireUnknownString(value, "regionId"),
+    regionName: requireUnknownString(value, "regionName"),
+    azId: requireUnknownString(value, "azId"),
+    azName: requireUnknownString(value, "azName"),
+    resourcePoolId: requireUnknownString(value, "resourcePoolId"),
+    resourcePoolName: requireUnknownString(value, "resourcePoolName"),
+    hypervisorType: requireUnknownString(value, "hypervisorType"),
+    hostCount: requireUnknownNumber(value, "hostCount"),
+    cpuAvgPercent: requireUnknownNumber(value, "cpuAvgPercent"),
+    cpuMaxPercent: requireUnknownNumber(value, "cpuMaxPercent"),
+    memoryAvgPercent: requireUnknownNumber(value, "memoryAvgPercent"),
+    memoryMaxPercent: requireUnknownNumber(value, "memoryMaxPercent"),
+    riskLevel: normalizeHostGroupRiskLevel(value.riskLevel),
+    riskReasons: normalizeHostGroupRiskReasons(value.riskReasons),
+    ...(worstCpuHost ? { worstCpuHost } : {}),
+    ...(worstMemoryHost ? { worstMemoryHost } : {}),
+    hosts: value.hosts.map(normalizeHost),
+    rawCluster: value.rawCluster ?? {},
+    rawHostSample: value.rawHostSample ?? {},
+    lastSyncedAt: optionalUnknownNumber(value, "lastSyncedAt") ?? fallbackSyncedAt,
+  };
+}
+
 function normalizePingResult(value: unknown): PingResultInput {
   if (!isRecord(value)) {
     throw new Error("Each ping result must be an object");
@@ -1128,6 +1270,59 @@ http.route({
       );
 
       return Response.json({ success: true, count });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/cloud-host-groups/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "HOST_GROUPS_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json();
+      if (!isRecord(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an object" },
+          { status: 400 },
+        );
+      }
+      if (!Array.isArray(body.hostGroups)) {
+        return Response.json(
+          { success: false, error: "hostGroups must be an array" },
+          { status: 400 },
+        );
+      }
+      if (typeof body.syncedAt !== "number") {
+        return Response.json(
+          { success: false, error: "syncedAt is required" },
+          { status: 400 },
+        );
+      }
+
+      const hostGroups = body.hostGroups.map((hostGroup) =>
+        normalizeCloudHostGroup(hostGroup, body.syncedAt as number),
+      );
+      const summary = await ctx.runMutation(internal.cloudHostGroups.bulkSync, {
+        hostGroups,
+        syncedAt: body.syncedAt,
+      });
+
+      return Response.json({ success: true, ...summary });
     } catch (error) {
       return Response.json(
         {

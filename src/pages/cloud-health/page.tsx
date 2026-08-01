@@ -19,6 +19,7 @@ import {
   Pause,
   Play,
   Plus,
+  Server,
   ShieldAlert,
   Trash2,
   Wifi,
@@ -85,6 +86,7 @@ type RepeatedAlarmPattern = {
   latestAlarm: CloudAlarmWithCompany;
   alarms: CloudAlarmWithCompany[];
 };
+type CloudHostGroup = Doc<"cloudHostGroups">;
 
 function formatCheckType(checkType: ServiceCheckType) {
   if (checkType === "http") return "HTTP";
@@ -125,6 +127,44 @@ function severityBadgeVariant(severity: number) {
     : severity === 3
       ? "secondary"
       : "outline";
+}
+
+function hostGroupRiskLabel(riskLevel: CloudHostGroup["riskLevel"]) {
+  if (riskLevel === "critical") return "Critical";
+  if (riskLevel === "watch") return "Watch";
+  return "Healthy";
+}
+
+function hostGroupRiskBadgeVariant(riskLevel: CloudHostGroup["riskLevel"]) {
+  if (riskLevel === "critical") return "destructive";
+  if (riskLevel === "watch") return "secondary";
+  return "outline";
+}
+
+function hostGroupRiskSortValue(riskLevel: CloudHostGroup["riskLevel"]) {
+  if (riskLevel === "critical") return 0;
+  if (riskLevel === "watch") return 1;
+  return 2;
+}
+
+function getHostGroupSearchText(hostGroup: CloudHostGroup) {
+  return [
+    hostGroup.hostGroupName,
+    hostGroup.hostGroupId,
+    hostGroup.regionName,
+    hostGroup.regionId,
+    hostGroup.azName,
+    hostGroup.resourcePoolName,
+    hostGroup.hypervisorType,
+    ...hostGroup.hosts.flatMap((host) => [
+      host.hostName,
+      host.hostId,
+      host.manageIp,
+    ]),
+  ]
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .join(" ")
+    .toLowerCase();
 }
 
 function categoryLabel(category: number) {
@@ -1091,6 +1131,228 @@ function RepeatedAlarmPatternSheet({
   );
 }
 
+function HostGroupDetailSheet({
+  hostGroup,
+  open,
+  onOpenChange,
+}: {
+  hostGroup: CloudHostGroup | undefined;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-xl lg:max-w-2xl">
+        <SheetHeader className="border-b pr-10">
+          <SheetTitle>{hostGroup?.hostGroupName ?? "Host group"}</SheetTitle>
+          <SheetDescription>
+            ManageOne host group utilization and per-host hot spots.
+          </SheetDescription>
+        </SheetHeader>
+        {hostGroup ? (
+          <div className="space-y-6 px-4 pb-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={hostGroupRiskBadgeVariant(hostGroup.riskLevel)}>
+                {hostGroupRiskLabel(hostGroup.riskLevel)}
+              </Badge>
+              <Badge variant="secondary">{hostGroup.hostCount} hosts</Badge>
+              <Badge variant="outline">
+                Synced {formatDateTime(hostGroup.lastSyncedAt)}
+              </Badge>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <AlarmDetailField
+                label="Host Group"
+                value={hostGroup.hostGroupName}
+                className="sm:col-span-2"
+              />
+              <AlarmDetailField
+                label="Host Group ID"
+                value={hostGroup.hostGroupId}
+              />
+              <AlarmDetailField
+                label="Hypervisor"
+                value={hostGroup.hypervisorType}
+              />
+              <AlarmDetailField label="Region" value={hostGroup.regionName} />
+              <AlarmDetailField label="Region ID" value={hostGroup.regionId} />
+              <AlarmDetailField label="AZ" value={hostGroup.azName} />
+              <AlarmDetailField label="AZ ID" value={hostGroup.azId} />
+              <AlarmDetailField
+                label="Resource Pool"
+                value={hostGroup.resourcePoolName}
+              />
+              <AlarmDetailField
+                label="Resource Pool ID"
+                value={hostGroup.resourcePoolId}
+              />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">CPU Utilization</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-semibold">
+                    {formatNumber(hostGroup.cpuAvgPercent, "%")}
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Max {formatNumber(hostGroup.cpuMaxPercent, "%")}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Memory Utilization</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-semibold">
+                    {formatNumber(hostGroup.memoryAvgPercent, "%")}
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Max {formatNumber(hostGroup.memoryMaxPercent, "%")}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <h3 className="text-sm font-semibold">Risk reasons</h3>
+              {hostGroup.riskReasons.length === 0 ? (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  No risk reasons reported.
+                </p>
+              ) : (
+                <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
+                  {hostGroup.riskReasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Worst CPU Host</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-1 text-sm">
+                  {hostGroup.worstCpuHost ? (
+                    <>
+                      <div className="font-medium">
+                        {hostGroup.worstCpuHost.hostName}
+                      </div>
+                      <div className="text-muted-foreground">
+                        {hostGroup.worstCpuHost.hostId}
+                      </div>
+                      <div>
+                        {formatNumber(hostGroup.worstCpuHost.cpuPercent, "%")}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-muted-foreground">Not reported</div>
+                  )}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Worst Memory Host</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-1 text-sm">
+                  {hostGroup.worstMemoryHost ? (
+                    <>
+                      <div className="font-medium">
+                        {hostGroup.worstMemoryHost.hostName}
+                      </div>
+                      <div className="text-muted-foreground">
+                        {hostGroup.worstMemoryHost.hostId}
+                      </div>
+                      <div>
+                        {formatNumber(
+                          hostGroup.worstMemoryHost.memoryPercent,
+                          "%",
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-muted-foreground">Not reported</div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold">Hosts</h3>
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Host</th>
+                      <th className="px-3 py-2 font-medium">Manage IP</th>
+                      <th className="px-3 py-2 text-right font-medium">CPU</th>
+                      <th className="px-3 py-2 text-right font-medium">
+                        Memory
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {hostGroup.hosts
+                      .slice()
+                      .sort(
+                        (a, b) =>
+                          Math.max(b.cpuPercent, b.memoryPercent) -
+                          Math.max(a.cpuPercent, a.memoryPercent),
+                      )
+                      .map((host) => (
+                        <tr key={host.hostId} className="border-t">
+                          <td className="px-3 py-2">
+                            <div className="font-medium">{host.hostName}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {host.hostId}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            {host.manageIp ?? "-"}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {formatNumber(host.cpuPercent, "%")}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {formatNumber(host.memoryPercent, "%")}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <details className="rounded-lg border">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+                Raw cluster payload
+              </summary>
+              <pre className="max-h-96 overflow-auto border-t bg-muted/30 p-4 text-xs">
+                {JSON.stringify(hostGroup.rawCluster, null, 2)}
+              </pre>
+            </details>
+
+            <details className="rounded-lg border">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+                Raw host sample
+              </summary>
+              <pre className="max-h-96 overflow-auto border-t bg-muted/30 p-4 text-xs">
+                {JSON.stringify(hostGroup.rawHostSample, null, 2)}
+              </pre>
+            </details>
+          </div>
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export default function CloudHealthPage() {
   const { currentUser } = useCrm();
   const navigate = useNavigate();
@@ -1099,6 +1361,14 @@ export default function CloudHealthPage() {
   const capacity = useQuery(api.cloudCapacity.list, canView ? {} : "skip");
   const alarmsSummary = useQuery(
     api.cloudAlarms.summary,
+    canView ? {} : "skip",
+  );
+  const hostGroups = useQuery(
+    api.cloudHostGroups.listActive,
+    canView ? {} : "skip",
+  );
+  const hostGroupsSummary = useQuery(
+    api.cloudHostGroups.summary,
     canView ? {} : "skip",
   );
   const targets = useQuery(api.pingTargets.list, canView ? {} : "skip");
@@ -1140,6 +1410,12 @@ export default function CloudHealthPage() {
   const [selectedRepeatedPatternKey, setSelectedRepeatedPatternKey] = useState<
     string | null
   >(null);
+  const [hostGroupRegionFilter, setHostGroupRegionFilter] = useState("all");
+  const [hostGroupRiskFilter, setHostGroupRiskFilter] = useState("all");
+  const [hostGroupSearch, setHostGroupSearch] = useState("");
+  const [selectedHostGroupId, setSelectedHostGroupId] = useState<string | null>(
+    null,
+  );
   const [activeTab, setActiveTab] = useState("overview");
   const [alarmPage, setAlarmPage] = useState(1);
   const [serviceName, setServiceName] = useState("");
@@ -1356,6 +1632,47 @@ export default function CloudHealthPage() {
 
     return { regionCount, warningRegions, criticalRegions };
   }, [capacity]);
+  const hostGroupRegions = useMemo(() => {
+    const regions = new Map<string, string>();
+    for (const hostGroup of hostGroups ?? []) {
+      regions.set(hostGroup.regionId, hostGroup.regionName);
+    }
+    return [...regions.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [hostGroups]);
+  const filteredHostGroups = useMemo(() => {
+    const normalizedSearch = hostGroupSearch.trim().toLowerCase();
+
+    return (hostGroups ?? [])
+      .filter((hostGroup) =>
+        hostGroupRegionFilter === "all"
+          ? true
+          : hostGroup.regionId === hostGroupRegionFilter,
+      )
+      .filter((hostGroup) =>
+        hostGroupRiskFilter === "all"
+          ? true
+          : hostGroup.riskLevel === hostGroupRiskFilter,
+      )
+      .filter((hostGroup) =>
+        normalizedSearch
+          ? getHostGroupSearchText(hostGroup).includes(normalizedSearch)
+          : true,
+      )
+      .sort(
+        (a, b) =>
+          hostGroupRiskSortValue(a.riskLevel) -
+            hostGroupRiskSortValue(b.riskLevel) ||
+          Math.max(b.cpuMaxPercent, b.memoryMaxPercent) -
+            Math.max(a.cpuMaxPercent, a.memoryMaxPercent),
+      );
+  }, [hostGroupRegionFilter, hostGroupRiskFilter, hostGroupSearch, hostGroups]);
+  const selectedHostGroup = useMemo(
+    () =>
+      (hostGroups ?? []).find(
+        (hostGroup) => hostGroup.hostGroupId === selectedHostGroupId,
+      ),
+    [hostGroups, selectedHostGroupId],
+  );
   const visibleServiceTargets = serviceTargets ?? [];
   const visibleServiceStatuses = serviceStatuses ?? [];
   const serviceHistory = useQuery(
@@ -1513,6 +1830,8 @@ export default function CloudHealthPage() {
     !capacity ||
     !alarmsSummary ||
     !allActiveAlarms ||
+    !hostGroups ||
+    !hostGroupsSummary ||
     !targets ||
     !statuses ||
     (SHOW_SERVICE_DNS_HEALTH && (!serviceTargets || !serviceStatuses))
@@ -1681,7 +2000,7 @@ export default function CloudHealthPage() {
         <div
           role="tablist"
           aria-label="Cloud Health sections"
-          className="grid w-full max-w-[460px] grid-cols-2 rounded-lg border bg-muted/40 p-1 sm:grid-cols-4"
+          className="grid w-full max-w-[620px] grid-cols-2 rounded-lg border bg-muted/40 p-1 sm:grid-cols-5"
         >
           <button
             type="button"
@@ -1738,6 +2057,20 @@ export default function CloudHealthPage() {
           >
             <Wifi className="h-3.5 w-3.5 opacity-80" />
             Network
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "host-groups"}
+            onClick={() => setActiveTab("host-groups")}
+            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+              activeTab === "host-groups"
+                ? "bg-primary/10 font-medium text-primary"
+                : ""
+            }`}
+          >
+            <Server className="h-3.5 w-3.5 opacity-80" />
+            Host Groups
           </button>
         </div>
 
@@ -1999,6 +2332,56 @@ export default function CloudHealthPage() {
                       {networkSummary.paused} paused
                     </Badge>
                   </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Host Group Risk
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="text-2xl font-semibold">
+                    {hostGroupsSummary.critical}/{hostGroupsSummary.watch}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Critical / watch host groups
+                  </p>
+                  {hostGroupsSummary.topRisk.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">
+                      No host group data synced yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {hostGroupsSummary.topRisk.map((hostGroup) => (
+                        <button
+                          key={hostGroup._id}
+                          type="button"
+                          className="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors hover:border-primary/60 hover:bg-muted/30"
+                          onClick={() => {
+                            setActiveTab("host-groups");
+                            setSelectedHostGroupId(hostGroup.hostGroupId);
+                          }}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium">
+                              {hostGroup.hostGroupName}
+                            </span>
+                            <span className="block truncate text-muted-foreground">
+                              {hostGroup.regionName}
+                            </span>
+                          </span>
+                          <Badge
+                            variant={hostGroupRiskBadgeVariant(
+                              hostGroup.riskLevel,
+                            )}
+                          >
+                            {hostGroupRiskLabel(hostGroup.riskLevel)}
+                          </Badge>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -2497,6 +2880,240 @@ export default function CloudHealthPage() {
                 ))}
               </div>
             )}
+          </section>
+        </TabsContent>
+
+        <TabsContent value="host-groups" className="space-y-6">
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Server className="h-5 w-5 text-primary" />
+              <h2 className="text-lg font-semibold">Host Groups</h2>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Total Host Groups
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-semibold">
+                    {hostGroupsSummary.totalHostGroups}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Synced {formatDateTime(hostGroupsSummary.lastSyncedAt)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Critical
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-semibold text-destructive">
+                    {hostGroupsSummary.critical}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Watch
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-semibold">
+                    {hostGroupsSummary.watch}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Healthy
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-semibold">
+                    {hostGroupsSummary.healthy}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Total Hosts
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-semibold">
+                    {hostGroupsSummary.totalHosts}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <CardTitle className="text-base">
+                    ManageOne Host Group Utilization
+                  </CardTitle>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Select
+                      value={hostGroupRegionFilter}
+                      onValueChange={setHostGroupRegionFilter}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Region" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Regions</SelectItem>
+                        {hostGroupRegions.map(([regionId, regionName]) => (
+                          <SelectItem key={regionId} value={regionId}>
+                            {regionName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={hostGroupRiskFilter}
+                      onValueChange={setHostGroupRiskFilter}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Risk Level" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Risk Levels</SelectItem>
+                        <SelectItem value="critical">Critical</SelectItem>
+                        <SelectItem value="watch">Watch</SelectItem>
+                        <SelectItem value="healthy">Healthy</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="search"
+                      placeholder="Search host groups or hosts..."
+                      value={hostGroupSearch}
+                      onChange={(event) =>
+                        setHostGroupSearch(event.target.value)
+                      }
+                    />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {filteredHostGroups.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-muted-foreground">
+                    No host groups match the selected filters.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-md border">
+                    <table className="w-full min-w-[1120px] text-sm">
+                      <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Risk</th>
+                          <th className="px-3 py-2 font-medium">
+                            Host Group
+                          </th>
+                          <th className="px-3 py-2 font-medium">Region</th>
+                          <th className="px-3 py-2 font-medium">AZ</th>
+                          <th className="px-3 py-2 text-right font-medium">
+                            Host Count
+                          </th>
+                          <th className="px-3 py-2 text-right font-medium">
+                            CPU Avg / Max
+                          </th>
+                          <th className="px-3 py-2 text-right font-medium">
+                            Memory Avg / Max
+                          </th>
+                          <th className="px-3 py-2 font-medium">
+                            Worst Host
+                          </th>
+                          <th className="px-3 py-2 font-medium">
+                            Last Synced
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredHostGroups.map((hostGroup) => (
+                          <tr
+                            key={hostGroup._id}
+                            tabIndex={0}
+                            role="button"
+                            aria-label={`View details for ${hostGroup.hostGroupName}`}
+                            className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                            onClick={() =>
+                              setSelectedHostGroupId(hostGroup.hostGroupId)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setSelectedHostGroupId(hostGroup.hostGroupId);
+                              }
+                            }}
+                          >
+                            <td className="px-3 py-2">
+                              <Badge
+                                variant={hostGroupRiskBadgeVariant(
+                                  hostGroup.riskLevel,
+                                )}
+                              >
+                                {hostGroupRiskLabel(hostGroup.riskLevel)}
+                              </Badge>
+                            </td>
+                            <td className="max-w-[260px] px-3 py-2">
+                              <div className="font-medium">
+                                {hostGroup.hostGroupName}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {hostGroup.hypervisorType} ·{" "}
+                                {hostGroup.resourcePoolName}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              {hostGroup.regionName}
+                            </td>
+                            <td className="px-3 py-2">{hostGroup.azName}</td>
+                            <td className="px-3 py-2 text-right">
+                              {hostGroup.hostCount}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {formatNumber(hostGroup.cpuAvgPercent, "%")} /{" "}
+                              {formatNumber(hostGroup.cpuMaxPercent, "%")}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {formatNumber(hostGroup.memoryAvgPercent, "%")} /{" "}
+                              {formatNumber(hostGroup.memoryMaxPercent, "%")}
+                            </td>
+                            <td className="max-w-[260px] px-3 py-2">
+                              <div className="truncate">
+                                {hostGroup.worstMemoryHost?.hostName ??
+                                  hostGroup.worstCpuHost?.hostName ??
+                                  "-"}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                CPU {formatNumber(hostGroup.cpuMaxPercent, "%")}{" "}
+                                · Mem{" "}
+                                {formatNumber(
+                                  hostGroup.memoryMaxPercent,
+                                  "%",
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              {formatDateTime(hostGroup.lastSyncedAt)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </section>
         </TabsContent>
 
@@ -3054,6 +3671,15 @@ export default function CloudHealthPage() {
         onOpenChange={(open) => {
           if (!open) {
             setSelectedRepeatedPatternKey(null);
+          }
+        }}
+      />
+      <HostGroupDetailSheet
+        hostGroup={selectedHostGroup}
+        open={selectedHostGroupId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedHostGroupId(null);
           }
         }}
       />
