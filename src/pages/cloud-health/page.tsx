@@ -690,17 +690,7 @@ function matchesOperationalAlarmView(
   alarmView: AlarmView,
 ) {
   if (alarmView === "customer_impact") {
-    const companyName = alarm.linkedCompanyName?.trim().toLowerCase();
-    const tenantMapping =
-      alarm.tenant?.trim() ||
-      alarm.vdcName?.trim() ||
-      alarm.tenantId?.trim() ||
-      alarm.vdcId?.trim();
-    return Boolean(
-      alarm.linkedCompanyId ||
-        (companyName && companyName !== "platform") ||
-        tenantMapping,
-    );
+    return Boolean(alarm.linkedCompanyId);
   }
 
   if (alarmView === "security") {
