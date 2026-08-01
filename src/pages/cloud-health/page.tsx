@@ -212,6 +212,7 @@ const LATENCY_LINE_COLORS = [
 // Flip this back on when the service/DNS target-entry UX is finalized.
 const SHOW_SERVICE_DNS_HEALTH = false;
 const ALARM_PAGE_SIZE = 50;
+const MONITORED_ALARM_REGIONS = ["Hoa-Mogadishu-2", "Mogadishu-region-hq3"];
 const CLOUD_HEALTH_TABS: CloudHealthTab[] = [
   "overview",
   "alarms",
@@ -1631,6 +1632,44 @@ export default function CloudHealthPage() {
     api.cloudAlarms.listActive,
     canView ? {} : "skip",
   );
+  const monitoredActiveAlarms = useMemo(() => {
+    return (allActiveAlarms ?? []).filter((alarm) =>
+      MONITORED_ALARM_REGIONS.includes(alarm.logicalRegionName ?? ""),
+    );
+  }, [allActiveAlarms]);
+  const monitoredAlarmsSummary = useMemo(() => {
+    const active = monitoredActiveAlarms.length;
+    const critical = monitoredActiveAlarms.filter(
+      (alarm) => alarm.severity === 1,
+    ).length;
+    const major = monitoredActiveAlarms.filter(
+      (alarm) => alarm.severity === 2,
+    ).length;
+    const tenantLinked = monitoredActiveAlarms.filter(
+      (alarm) => alarm.linkedCompanyId,
+    ).length;
+    const regions = new Set(
+      monitoredActiveAlarms
+        .map((alarm) => alarm.logicalRegionName)
+        .filter((regionName): regionName is string => Boolean(regionName)),
+    ).size;
+    const lastSyncedAt =
+      monitoredActiveAlarms.length > 0
+        ? Math.max(
+            ...monitoredActiveAlarms.map((alarm) => alarm.lastSyncedAt ?? 0),
+          )
+        : undefined;
+
+    return {
+      active,
+      critical,
+      major,
+      tenantLinked,
+      platform: active - tenantLinked,
+      regions,
+      lastSyncedAt,
+    };
+  }, [monitoredActiveAlarms]);
   const alarmTimeRangeBounds = useMemo(
     () =>
       getAlarmTimeRangeBounds(
@@ -1643,7 +1682,7 @@ export default function CloudHealthPage() {
   const activeAlarms = useMemo(() => {
     const normalizedSearch = alarmSearch.trim().toLowerCase();
 
-    return (allActiveAlarms ?? [])
+    return monitoredActiveAlarms
       .filter((alarm) => {
         if (
           alarmSeverityFilter !== "all" &&
@@ -1654,7 +1693,7 @@ export default function CloudHealthPage() {
 
         if (
           alarmRegionFilter !== "all" &&
-          alarm.logicalRegionId !== alarmRegionFilter
+          alarm.logicalRegionName !== alarmRegionFilter
         ) {
           return false;
         }
@@ -1698,7 +1737,7 @@ export default function CloudHealthPage() {
     alarmSeverityFilter,
     alarmShortcut,
     alarmTimeRangeBounds,
-    allActiveAlarms,
+    monitoredActiveAlarms,
   ]);
   const newAlarms = useMemo(
     () =>
@@ -1743,8 +1782,8 @@ export default function CloudHealthPage() {
     [activeAlarms, minimumRepeats],
   );
   const allRepeatedPatterns = useMemo(
-    () => buildRepeatedAlarmPatterns(allActiveAlarms ?? [], 2),
-    [allActiveAlarms],
+    () => buildRepeatedAlarmPatterns(monitoredActiveAlarms, 2),
+    [monitoredActiveAlarms],
   );
   const topRepeatedPatterns = useMemo(
     () => allRepeatedPatterns.slice(0, 5),
@@ -1758,14 +1797,14 @@ export default function CloudHealthPage() {
     [allRepeatedPatterns, repeatedPatterns, selectedRepeatedPatternKey],
   );
   const topActiveAlarms = useMemo(() => {
-    return [...(allActiveAlarms ?? [])]
+    return [...monitoredActiveAlarms]
       .sort(
         (a, b) =>
           a.severity - b.severity ||
           getAlarmTimestamp(b) - getAlarmTimestamp(a),
       )
       .slice(0, 10);
-  }, [allActiveAlarms]);
+  }, [monitoredActiveAlarms]);
   const visibleAlarmRowCount =
     alarmView === "repeated" ? repeatedPatterns.length : visibleAlarms.length;
   const alarmPageCount = Math.max(
@@ -1916,22 +1955,16 @@ export default function CloudHealthPage() {
     [serviceHistory],
   );
   const alarmRegions = useMemo(() => {
-    const regions = new Map<string, string>();
-    for (const alarm of allActiveAlarms ?? []) {
-      if (alarm.logicalRegionId) {
-        regions.set(
-          alarm.logicalRegionId,
-          alarm.logicalRegionName ?? alarm.logicalRegionId,
-        );
-      }
-    }
-    return [...regions.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [allActiveAlarms]);
+    return MONITORED_ALARM_REGIONS.map((regionName) => [
+      regionName,
+      regionName,
+    ] as const);
+  }, []);
   const alarmCategories = useMemo(() => {
     return [
-      ...new Set((allActiveAlarms ?? []).map((alarm) => alarm.category)),
+      ...new Set(monitoredActiveAlarms.map((alarm) => alarm.category)),
     ].sort((a, b) => a - b);
-  }, [allActiveAlarms]);
+  }, [monitoredActiveAlarms]);
 
   useEffect(() => {
     if (!serviceTargets) {
@@ -2335,34 +2368,34 @@ export default function CloudHealthPage() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
               <AlarmShortcutCard
                 title="Active"
-                value={alarmsSummary.active}
-                detail={`Synced ${formatDateTime(alarmsSummary.lastSyncedAt)}`}
+                value={monitoredAlarmsSummary.active}
+                detail={`Synced ${formatDateTime(monitoredAlarmsSummary.lastSyncedAt)}`}
                 active={alarmShortcut === "all"}
                 onClick={() => applyAlarmShortcut("all")}
               />
               <AlarmShortcutCard
                 title="Critical"
-                value={alarmsSummary.critical}
+                value={monitoredAlarmsSummary.critical}
                 active={alarmShortcut === "critical"}
                 onClick={() => applyAlarmShortcut("critical")}
                 valueClassName="text-destructive"
               />
               <AlarmShortcutCard
                 title="Major"
-                value={alarmsSummary.major}
+                value={monitoredAlarmsSummary.major}
                 active={alarmShortcut === "major"}
                 onClick={() => applyAlarmShortcut("major")}
               />
               <AlarmShortcutCard
                 title="Linked Tenants"
-                value={alarmsSummary.tenantLinked}
-                detail={`${alarmsSummary.platform} platform-level`}
+                value={monitoredAlarmsSummary.tenantLinked}
+                detail={`${monitoredAlarmsSummary.platform} platform-level`}
                 active={alarmShortcut === "linked"}
                 onClick={() => applyAlarmShortcut("linked")}
               />
               <AlarmShortcutCard
                 title="Regions"
-                value={alarmsSummary.regions}
+                value={monitoredAlarmsSummary.regions}
                 active={alarmShortcut === "regions"}
                 onClick={() => applyAlarmShortcut("regions")}
               />
@@ -2656,34 +2689,34 @@ export default function CloudHealthPage() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
               <AlarmShortcutCard
                 title="Active"
-                value={alarmsSummary.active}
-                detail={`Synced ${formatDateTime(alarmsSummary.lastSyncedAt)}`}
+                value={monitoredAlarmsSummary.active}
+                detail={`Synced ${formatDateTime(monitoredAlarmsSummary.lastSyncedAt)}`}
                 active={alarmShortcut === "all"}
                 onClick={() => applyAlarmShortcut("all")}
               />
               <AlarmShortcutCard
                 title="Critical"
-                value={alarmsSummary.critical}
+                value={monitoredAlarmsSummary.critical}
                 active={alarmShortcut === "critical"}
                 onClick={() => applyAlarmShortcut("critical")}
                 valueClassName="text-destructive"
               />
               <AlarmShortcutCard
                 title="Major"
-                value={alarmsSummary.major}
+                value={monitoredAlarmsSummary.major}
                 active={alarmShortcut === "major"}
                 onClick={() => applyAlarmShortcut("major")}
               />
               <AlarmShortcutCard
                 title="Linked Tenants"
-                value={alarmsSummary.tenantLinked}
-                detail={`${alarmsSummary.platform} platform-level`}
+                value={monitoredAlarmsSummary.tenantLinked}
+                detail={`${monitoredAlarmsSummary.platform} platform-level`}
                 active={alarmShortcut === "linked"}
                 onClick={() => applyAlarmShortcut("linked")}
               />
               <AlarmShortcutCard
                 title="Regions"
-                value={alarmsSummary.regions}
+                value={monitoredAlarmsSummary.regions}
                 active={alarmShortcut === "regions"}
                 onClick={() => applyAlarmShortcut("regions")}
               />
@@ -2820,7 +2853,9 @@ export default function CloudHealthPage() {
                         <SelectValue placeholder="Region" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All Regions</SelectItem>
+                        <SelectItem value="all">
+                          All Monitored Regions
+                        </SelectItem>
                         {alarmRegions.map(([regionId, regionName]) => (
                           <SelectItem key={regionId} value={regionId}>
                             {regionName}
