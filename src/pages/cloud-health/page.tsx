@@ -175,6 +175,12 @@ function hostUtilizationStatus(cpuPercent: number, memoryPercent: number) {
   return "healthy";
 }
 
+function utilizationBarClass(value: number) {
+  if (value >= 85) return "bg-destructive";
+  if (value >= 70) return "bg-amber-500";
+  return "bg-primary";
+}
+
 function getHostGroupSearchText(hostGroup: CloudHostGroup) {
   return [
     hostGroup.hostGroupName,
@@ -1901,6 +1907,18 @@ export default function CloudHealthPage() {
     }
     return [...regions.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [hostGroups]);
+  const riskyHostGroups = useMemo(() => {
+    return (hostGroups ?? [])
+      .filter(
+        (hostGroup) =>
+          hostGroup.riskLevel === "critical" || hostGroup.riskLevel === "watch",
+      )
+      .sort(
+        (a, b) =>
+          Math.max(b.cpuMaxPercent, b.memoryMaxPercent) -
+          Math.max(a.cpuMaxPercent, a.memoryMaxPercent),
+      );
+  }, [hostGroups]);
   const filteredHostGroups = useMemo(() => {
     const normalizedSearch = hostGroupSearch.trim().toLowerCase();
 
@@ -3259,6 +3277,96 @@ export default function CloudHealthPage() {
                 onClick={() => applyHostGroupSummaryShortcut("totalHosts")}
               />
             </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Risk Utilization Snapshot
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Critical and Watch host groups sorted by peak CPU or memory
+                  pressure.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {riskyHostGroups.length === 0 ? (
+                  <div className="rounded-md border bg-muted/20 px-4 py-5 text-sm text-muted-foreground">
+                    No host groups currently require attention.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {riskyHostGroups.map((hostGroup) => (
+                      <button
+                        key={hostGroup._id}
+                        type="button"
+                        className="w-full rounded-lg border bg-card p-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() =>
+                          navigate(
+                            `/cloud-health/host-groups/${encodeURIComponent(hostGroup.hostGroupId)}?returnTab=host-groups`,
+                          )
+                        }
+                      >
+                        <div className="grid gap-3 lg:grid-cols-[minmax(220px,0.8fr)_1fr] lg:items-center">
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate font-medium">
+                                {hostGroup.hostGroupName}
+                              </span>
+                              <Badge
+                                variant={hostGroupRiskBadgeVariant(
+                                  hostGroup.riskLevel,
+                                )}
+                              >
+                                {hostGroupRiskLabel(hostGroup.riskLevel)}
+                              </Badge>
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {hostGroup.regionName}
+                            </div>
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            {[
+                              {
+                                label: "CPU Max",
+                                value: hostGroup.cpuMaxPercent,
+                              },
+                              {
+                                label: "Memory Max",
+                                value: hostGroup.memoryMaxPercent,
+                              },
+                            ].map((metric) => (
+                              <div key={metric.label} className="space-y-1">
+                                <div className="flex items-center justify-between gap-3 text-xs">
+                                  <span className="font-medium text-muted-foreground">
+                                    {metric.label}
+                                  </span>
+                                  <span className="font-semibold">
+                                    {formatNumber(metric.value, "%")}
+                                  </span>
+                                </div>
+                                <div className="relative h-2 rounded-full bg-muted">
+                                  <div
+                                    className={`h-2 rounded-full ${utilizationBarClass(metric.value)}`}
+                                    style={{
+                                      width: `${Math.min(metric.value, 100)}%`,
+                                    }}
+                                  />
+                                  <div
+                                    className="absolute top-[-3px] h-4 w-px bg-foreground/40"
+                                    style={{ left: "80%" }}
+                                    aria-hidden="true"
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             <Card>
               <CardHeader>
