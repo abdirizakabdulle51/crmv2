@@ -2701,51 +2701,72 @@ export default function CloudHealthPage() {
                         {getAlarmViewSubtitle(alarmView)}
                       </p>
                     </div>
-                    <div className="flex flex-col gap-2">
-                      <div
-                        aria-label="Primary alarm views"
-                        className="flex flex-wrap gap-1.5 rounded-lg border bg-muted/40 p-1"
-                      >
-                        {PRIMARY_ALARM_VIEW_OPTIONS.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            className={`h-9 rounded-md px-3 text-sm transition-colors ${
-                              alarmView === option.value
-                                ? "bg-primary/10 font-medium text-primary"
-                                : "text-muted-foreground hover:text-foreground"
-                            }`}
-                            onClick={() => setAlarmView(option.value)}
+                    <div className="rounded-xl border bg-muted/30 p-3 shadow-sm">
+                      <div className="grid gap-3 xl:grid-cols-[auto_1fr] xl:items-center">
+                        <div className="space-y-1.5">
+                          <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground">
+                            View
+                          </span>
+                          <div
+                            aria-label="Primary alarm views"
+                            className="grid grid-cols-3 gap-1 rounded-lg border bg-background/80 p-1"
                           >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div
-                        aria-label="Operational alarm views"
-                        className="flex flex-wrap gap-1.5 rounded-lg border bg-muted/40 p-1"
-                      >
-                        {OPERATIONAL_ALARM_VIEW_OPTIONS.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            className={`h-9 rounded-md px-3 text-sm transition-colors ${
-                              alarmView === option.value
-                                ? "bg-primary/10 font-medium text-primary"
-                                : "text-muted-foreground hover:text-foreground"
-                            }`}
-                            onClick={() => setAlarmView(option.value)}
+                            {PRIMARY_ALARM_VIEW_OPTIONS.map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                className={`h-9 rounded-md px-3 text-xs font-medium transition-colors sm:text-sm ${
+                                  alarmView === option.value
+                                    ? "bg-primary/10 text-primary ring-1 ring-primary/30"
+                                    : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                                }`}
+                                onClick={() => setAlarmView(option.value)}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Focus
+                          </span>
+                          <div
+                            aria-label="Operational alarm views"
+                            className="flex flex-wrap gap-1.5"
                           >
-                            {option.label} ({operationalAlarmCounts[option.value] ?? 0})
-                          </button>
-                        ))}
+                            {OPERATIONAL_ALARM_VIEW_OPTIONS.map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                className={`inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors sm:text-sm ${
+                                  alarmView === option.value
+                                    ? "border-primary/40 bg-primary/10 text-primary"
+                                    : "border-border bg-background/80 text-muted-foreground hover:border-primary/30 hover:bg-primary/5 hover:text-foreground"
+                                }`}
+                                onClick={() => setAlarmView(option.value)}
+                              >
+                                <span>{option.label}</span>
+                                <span
+                                  className={`rounded-full px-1.5 py-0.5 text-[0.65rem] ${
+                                    alarmView === option.value
+                                      ? "bg-primary/15 text-primary"
+                                      : "bg-muted text-muted-foreground"
+                                  }`}
+                                >
+                                  {operationalAlarmCounts[option.value] ?? 0}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                       {alarmView === "repeated" ? (
                         <Select
                           value={minimumRepeats}
                           onValueChange={setMinimumRepeats}
                         >
-                          <SelectTrigger className="w-full sm:w-36">
+                          <SelectTrigger className="mt-3 w-full sm:w-40">
                             <SelectValue placeholder="Minimum repeats" />
                           </SelectTrigger>
                           <SelectContent>
