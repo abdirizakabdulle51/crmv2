@@ -1651,6 +1651,17 @@ export default function CloudHealthPage() {
         : activeAlarms,
     [activeAlarms, alarmView],
   );
+  const visibleAlarms = useMemo(() => {
+    if (alarmView === "new") {
+      return newAlarms;
+    }
+
+    if (alarmView === "all" || alarmView === "repeated") {
+      return activeAlarms;
+    }
+
+    return operationalAlarms;
+  }, [activeAlarms, alarmView, newAlarms, operationalAlarms]);
   const repeatedPatterns = useMemo(
     () => buildRepeatedAlarmPatterns(activeAlarms, Number(minimumRepeats)),
     [activeAlarms, minimumRepeats],
@@ -1680,27 +1691,15 @@ export default function CloudHealthPage() {
       .slice(0, 10);
   }, [allActiveAlarms]);
   const visibleAlarmRowCount =
-    alarmView === "repeated"
-      ? repeatedPatterns.length
-      : alarmView === "new"
-        ? newAlarms.length
-        : alarmView === "all"
-          ? activeAlarms.length
-          : operationalAlarms.length;
+    alarmView === "repeated" ? repeatedPatterns.length : visibleAlarms.length;
   const alarmPageCount = Math.max(
     1,
     Math.ceil(visibleAlarmRowCount / ALARM_PAGE_SIZE),
   );
   const pagedActiveAlarms = useMemo(() => {
     const start = (alarmPage - 1) * ALARM_PAGE_SIZE;
-    const visibleAlarms =
-      alarmView === "new"
-        ? newAlarms
-        : alarmView === "all"
-          ? activeAlarms
-          : operationalAlarms;
     return visibleAlarms.slice(start, start + ALARM_PAGE_SIZE);
-  }, [activeAlarms, alarmPage, alarmView, newAlarms, operationalAlarms]);
+  }, [alarmPage, visibleAlarms]);
   const pagedRepeatedPatterns = useMemo(() => {
     const start = (alarmPage - 1) * ALARM_PAGE_SIZE;
     return repeatedPatterns.slice(start, start + ALARM_PAGE_SIZE);
