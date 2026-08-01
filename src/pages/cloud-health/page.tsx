@@ -2701,10 +2701,10 @@ export default function CloudHealthPage() {
                         {getAlarmViewSubtitle(alarmView)}
                       </p>
                     </div>
-                    <div className="rounded-xl border bg-muted/30 p-2.5 shadow-sm">
-                      <div className="grid gap-2">
-                        <div className="grid gap-2 md:grid-cols-[4.5rem_1fr] md:items-center">
-                          <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground md:text-right">
+                    <div className="rounded-xl border bg-muted/30 p-3 shadow-sm">
+                      <div className="grid gap-2.5">
+                        <div className="grid gap-2 md:grid-cols-[5rem_1fr] md:items-center">
+                          <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/70 md:text-right">
                             VIEW
                           </span>
                           <div
@@ -2715,7 +2715,7 @@ export default function CloudHealthPage() {
                               <button
                                 key={option.value}
                                 type="button"
-                                className={`h-8 rounded-md px-2 text-xs font-medium transition-colors sm:px-3 sm:text-sm ${
+                                className={`h-9 rounded-md px-3 text-xs font-medium transition-colors sm:px-4 sm:text-sm ${
                                   alarmView === option.value
                                     ? "bg-primary/10 text-primary"
                                     : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
@@ -2727,8 +2727,8 @@ export default function CloudHealthPage() {
                             ))}
                           </div>
                         </div>
-                        <div className="grid gap-2 md:grid-cols-[4.5rem_1fr] md:items-center">
-                          <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground md:text-right">
+                        <div className="grid gap-2 md:grid-cols-[5rem_1fr] md:items-center">
+                          <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-foreground/70 md:text-right">
                             FOCUS
                           </span>
                           <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
@@ -2740,7 +2740,7 @@ export default function CloudHealthPage() {
                                 <button
                                   key={option.value}
                                   type="button"
-                                  className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors sm:px-3 ${
+                                  className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors sm:px-3.5 ${
                                     alarmView === option.value
                                       ? "border-primary/40 bg-primary/10 text-primary"
                                       : "border-border bg-background/80 text-muted-foreground hover:border-primary/30 hover:bg-primary/5 hover:text-foreground"
@@ -2765,7 +2765,7 @@ export default function CloudHealthPage() {
                                 value={minimumRepeats}
                                 onValueChange={setMinimumRepeats}
                               >
-                                <SelectTrigger className="h-8 w-full sm:w-40">
+                                <SelectTrigger className="h-9 w-full sm:w-40">
                                   <SelectValue placeholder="Minimum repeats" />
                                 </SelectTrigger>
                                 <SelectContent>
