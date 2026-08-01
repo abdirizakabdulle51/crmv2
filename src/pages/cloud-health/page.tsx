@@ -1786,7 +1786,10 @@ export default function CloudHealthPage() {
     [monitoredActiveAlarms],
   );
   const topRepeatedPatterns = useMemo(
-    () => allRepeatedPatterns.slice(0, 5),
+    () =>
+      [...allRepeatedPatterns]
+        .sort((a, b) => b.latestSeen - a.latestSeen)
+        .slice(0, 5),
     [allRepeatedPatterns],
   );
   const selectedRepeatedPattern = useMemo(
@@ -1798,11 +1801,7 @@ export default function CloudHealthPage() {
   );
   const topActiveAlarms = useMemo(() => {
     return [...monitoredActiveAlarms]
-      .sort(
-        (a, b) =>
-          a.severity - b.severity ||
-          getAlarmTimestamp(b) - getAlarmTimestamp(a),
-      )
+      .sort((a, b) => getAlarmTimestamp(b) - getAlarmTimestamp(a))
       .slice(0, 10);
   }, [monitoredActiveAlarms]);
   const visibleAlarmRowCount =
