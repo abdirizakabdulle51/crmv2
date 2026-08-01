@@ -160,7 +160,7 @@ function NotFoundState() {
   const navigate = useNavigate();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6 md:p-8">
       <Button variant="outline" onClick={() => navigate("/cloud-health")}>
         <ArrowLeft className="mr-2 h-4 w-4" />
         Back to Cloud Health
@@ -191,18 +191,20 @@ export default function CloudHealthAlarmPage() {
 
   if (!canView) {
     return (
-      <Card>
-        <CardContent className="py-12 text-center text-sm text-muted-foreground">
-          Cloud Health is available to Country GM, Head of Business, and CEO
-          roles.
-        </CardContent>
-      </Card>
+      <div className="p-6 md:p-8">
+        <Card>
+          <CardContent className="py-12 text-center text-sm text-muted-foreground">
+            Cloud Health is available to Country GM, Head of Business, and CEO
+            roles.
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
   if (alarms === undefined) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 p-6 md:p-8">
         <Skeleton className="h-10 w-48" />
         <Skeleton className="h-32 w-full" />
         <Skeleton className="h-64 w-full" />
@@ -217,7 +219,7 @@ export default function CloudHealthAlarmPage() {
   const nextSteps = getEngineeringNextSteps(alarm);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-6 md:p-8">
       <Button variant="outline" onClick={() => navigate("/cloud-health")}>
         <ArrowLeft className="mr-2 h-4 w-4" />
         Back to Cloud Health
