@@ -442,6 +442,29 @@ function getAlarmCompanyLabel(alarm: CloudAlarmWithCompany) {
   return alarm.linkedCompanyName ?? alarm.tenant ?? alarm.vdcName ?? "Platform";
 }
 
+function getAlarmSearchText(alarm: CloudAlarmWithCompany) {
+  return [
+    alarm.alarmName,
+    alarm.csn,
+    alarm.alarmId,
+    alarm.meName,
+    alarm.meCategory,
+    alarm.meType,
+    alarm.moc,
+    alarm.logicalRegionName,
+    alarm.linkedCompanyName,
+    alarm.tenant,
+    alarm.vdcName,
+    alarm.address,
+    alarm.probableCause,
+    alarm.additionalInformation,
+    JSON.stringify(alarm.rawPayload),
+  ]
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .join(" ")
+    .toLowerCase();
+}
+
 function getRepeatedAlarmPatternKey(alarm: CloudAlarmWithCompany) {
   return JSON.stringify([
     alarm.alarmId,
@@ -1109,6 +1132,7 @@ export default function CloudHealthPage() {
   const [alarmTimeRange, setAlarmTimeRange] = useState<AlarmTimeRange>("all");
   const [alarmCustomStartDate, setAlarmCustomStartDate] = useState("");
   const [alarmCustomEndDate, setAlarmCustomEndDate] = useState("");
+  const [alarmSearch, setAlarmSearch] = useState("");
   const [alarmShortcut, setAlarmShortcut] = useState<AlarmShortcut>("all");
   const [alarmView, setAlarmView] = useState<AlarmView>("all");
   const [minimumRepeats, setMinimumRepeats] = useState("2");
@@ -1154,6 +1178,8 @@ export default function CloudHealthPage() {
     [alarmCustomEndDate, alarmCustomStartDate, alarmTimeRange],
   );
   const activeAlarms = useMemo(() => {
+    const normalizedSearch = alarmSearch.trim().toLowerCase();
+
     return (allActiveAlarms ?? []).filter((alarm) => {
       if (
         alarmSeverityFilter !== "all" &&
@@ -1191,11 +1217,19 @@ export default function CloudHealthPage() {
         }
       }
 
+      if (
+        normalizedSearch &&
+        !getAlarmSearchText(alarm).includes(normalizedSearch)
+      ) {
+        return false;
+      }
+
       return true;
     });
   }, [
     alarmCategoryFilter,
     alarmRegionFilter,
+    alarmSearch,
     alarmSeverityFilter,
     alarmShortcut,
     alarmTimeRangeBounds,
@@ -1388,6 +1422,7 @@ export default function CloudHealthPage() {
     alarmCustomEndDate,
     alarmCustomStartDate,
     alarmRegionFilter,
+    alarmSearch,
     alarmSeverityFilter,
     alarmShortcut,
     alarmTimeRange,
@@ -2068,6 +2103,18 @@ export default function CloudHealthPage() {
                         </Select>
                       ) : null}
                     </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="cloud-health-alarm-search" className="sr-only">
+                      Search alarms
+                    </Label>
+                    <Input
+                      id="cloud-health-alarm-search"
+                      type="search"
+                      placeholder="Search alarms..."
+                      value={alarmSearch}
+                      onChange={(event) => setAlarmSearch(event.target.value)}
+                    />
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
                     <Select
