@@ -102,6 +102,7 @@ type CloudHealthTab =
   | "network"
   | "host-groups";
 type HostGroupSummaryShortcut =
+  | "attention"
   | "totalHostGroups"
   | "critical"
   | "watch"
@@ -1598,9 +1599,9 @@ export default function CloudHealthPage() {
     string | null
   >(null);
   const [hostGroupRegionFilter, setHostGroupRegionFilter] = useState("all");
-  const [hostGroupRiskFilter, setHostGroupRiskFilter] = useState("all");
+  const [hostGroupRiskFilter, setHostGroupRiskFilter] = useState("attention");
   const [hostGroupSummaryShortcut, setHostGroupSummaryShortcut] =
-    useState<HostGroupSummaryShortcut>("totalHostGroups");
+    useState<HostGroupSummaryShortcut>("attention");
   const [hostGroupSearch, setHostGroupSearch] = useState("");
   const [activeTab, setActiveTab] = useState<CloudHealthTab>(
     isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview",
@@ -1912,7 +1913,10 @@ export default function CloudHealthPage() {
       .filter((hostGroup) =>
         hostGroupRiskFilter === "all"
           ? true
-          : hostGroup.riskLevel === hostGroupRiskFilter,
+          : hostGroupRiskFilter === "attention"
+            ? hostGroup.riskLevel === "critical" ||
+              hostGroup.riskLevel === "watch"
+            : hostGroup.riskLevel === hostGroupRiskFilter,
       )
       .filter((hostGroup) =>
         normalizedSearch
@@ -2087,7 +2091,9 @@ export default function CloudHealthPage() {
     setHostGroupSummaryShortcut(
       value === "critical" || value === "watch" || value === "healthy"
         ? value
-        : "totalHostGroups",
+        : value === "attention"
+          ? "attention"
+          : "totalHostGroups",
     );
   };
 
@@ -3257,9 +3263,14 @@ export default function CloudHealthPage() {
             <Card>
               <CardHeader>
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <CardTitle className="text-base">
-                    ManageOne Host Group Utilization
-                  </CardTitle>
+                  <div>
+                    <CardTitle className="text-base">
+                      ManageOne Host Groups Requiring Attention
+                    </CardTitle>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Critical and Watch host groups are shown by default.
+                    </p>
+                  </div>
                   <div className="grid gap-2 sm:grid-cols-3">
                     <Select
                       value={hostGroupRegionFilter}
@@ -3285,6 +3296,9 @@ export default function CloudHealthPage() {
                         <SelectValue placeholder="Risk Level" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="attention">
+                          Attention Required
+                        </SelectItem>
                         <SelectItem value="all">All Risk Levels</SelectItem>
                         <SelectItem value="critical">Critical</SelectItem>
                         <SelectItem value="watch">Watch</SelectItem>
