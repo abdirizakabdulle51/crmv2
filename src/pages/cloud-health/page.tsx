@@ -67,7 +67,7 @@ type ServiceCheckType = "http" | "tcp" | "dns";
 type CloudAlarmWithCompany = Doc<"cloudAlarms"> & {
   linkedCompanyName?: string | null;
 };
-type AlarmView = "all" | "repeated";
+type AlarmView = "new" | "all" | "repeated";
 
 type RepeatedAlarmPattern = {
   key: string;
@@ -466,6 +466,14 @@ function getAlarmTimestamp(alarm: CloudAlarmWithCompany) {
   return alarm.latestOccurUtc ?? alarm.occurUtc ?? 0;
 }
 
+function isTodayTimestamp(timestamp: number) {
+  const today = new Date();
+  return (
+    timestamp >= startOfDay(today).getTime() &&
+    timestamp <= endOfDay(today).getTime()
+  );
+}
+
 function getAlarmResourceKey(alarm: CloudAlarmWithCompany) {
   return [alarm.meName, alarm.address].filter(Boolean).join(" / ") || "unknown";
 }
@@ -576,12 +584,7 @@ function buildRepeatedAlarmPatterns(
       };
     })
     .filter((pattern) => pattern.count >= minimumRepeats)
-    .sort(
-      (a, b) =>
-        b.count - a.count ||
-        a.worstSeverity - b.worstSeverity ||
-        b.latestSeen - a.latestSeen,
-    );
+    .sort((a, b) => b.count - a.count || b.latestSeen - a.latestSeen);
 }
 
 function getAlarmTimeRangeBounds(
@@ -1331,7 +1334,7 @@ export default function CloudHealthPage() {
   const [alarmCustomEndDate, setAlarmCustomEndDate] = useState("");
   const [alarmSearch, setAlarmSearch] = useState("");
   const [alarmShortcut, setAlarmShortcut] = useState<AlarmShortcut>("all");
-  const [alarmView, setAlarmView] = useState<AlarmView>("all");
+  const [alarmView, setAlarmView] = useState<AlarmView>("new");
   const [minimumRepeats, setMinimumRepeats] = useState("2");
   const [selectedRepeatedPatternKey, setSelectedRepeatedPatternKey] = useState<
     string | null
@@ -1381,52 +1384,54 @@ export default function CloudHealthPage() {
   const activeAlarms = useMemo(() => {
     const normalizedSearch = alarmSearch.trim().toLowerCase();
 
-    return (allActiveAlarms ?? []).filter((alarm) => {
-      if (
-        alarmSeverityFilter !== "all" &&
-        alarm.severity !== Number(alarmSeverityFilter)
-      ) {
-        return false;
-      }
-
-      if (
-        alarmRegionFilter !== "all" &&
-        alarm.logicalRegionId !== alarmRegionFilter
-      ) {
-        return false;
-      }
-
-      if (
-        alarmCategoryFilter !== "all" &&
-        alarm.category !== Number(alarmCategoryFilter)
-      ) {
-        return false;
-      }
-
-      if (alarmShortcut === "linked" && !alarm.linkedCompanyId) {
-        return false;
-      }
-
-      if (alarmTimeRangeBounds) {
-        const timestamp = getAlarmTimestamp(alarm);
+    return (allActiveAlarms ?? [])
+      .filter((alarm) => {
         if (
-          timestamp == null ||
-          timestamp < alarmTimeRangeBounds.from ||
-          timestamp > alarmTimeRangeBounds.to
+          alarmSeverityFilter !== "all" &&
+          alarm.severity !== Number(alarmSeverityFilter)
         ) {
           return false;
         }
-      }
 
-      if (
-        normalizedSearch &&
-        !getAlarmSearchText(alarm).includes(normalizedSearch)
-      ) {
-        return false;
-      }
+        if (
+          alarmRegionFilter !== "all" &&
+          alarm.logicalRegionId !== alarmRegionFilter
+        ) {
+          return false;
+        }
 
-      return true;
-    });
+        if (
+          alarmCategoryFilter !== "all" &&
+          alarm.category !== Number(alarmCategoryFilter)
+        ) {
+          return false;
+        }
+
+        if (alarmShortcut === "linked" && !alarm.linkedCompanyId) {
+          return false;
+        }
+
+        if (alarmTimeRangeBounds) {
+          const timestamp = getAlarmTimestamp(alarm);
+          if (
+            timestamp == null ||
+            timestamp < alarmTimeRangeBounds.from ||
+            timestamp > alarmTimeRangeBounds.to
+          ) {
+            return false;
+          }
+        }
+
+        if (
+          normalizedSearch &&
+          !getAlarmSearchText(alarm).includes(normalizedSearch)
+        ) {
+          return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => getAlarmTimestamp(b) - getAlarmTimestamp(a));
   }, [
     alarmCategoryFilter,
     alarmRegionFilter,
@@ -1436,6 +1441,13 @@ export default function CloudHealthPage() {
     alarmTimeRangeBounds,
     allActiveAlarms,
   ]);
+  const newAlarms = useMemo(
+    () =>
+      activeAlarms.filter((alarm) =>
+        isTodayTimestamp(getAlarmTimestamp(alarm)),
+      ),
+    [activeAlarms],
+  );
   const repeatedPatterns = useMemo(
     () => buildRepeatedAlarmPatterns(activeAlarms, Number(minimumRepeats)),
     [activeAlarms, minimumRepeats],
@@ -1459,20 +1471,26 @@ export default function CloudHealthPage() {
     return [...(allActiveAlarms ?? [])]
       .sort(
         (a, b) =>
-          a.severity - b.severity || b.latestOccurUtc - a.latestOccurUtc,
+          a.severity - b.severity ||
+          getAlarmTimestamp(b) - getAlarmTimestamp(a),
       )
       .slice(0, 10);
   }, [allActiveAlarms]);
   const visibleAlarmRowCount =
-    alarmView === "repeated" ? repeatedPatterns.length : activeAlarms.length;
+    alarmView === "repeated"
+      ? repeatedPatterns.length
+      : alarmView === "new"
+        ? newAlarms.length
+        : activeAlarms.length;
   const alarmPageCount = Math.max(
     1,
     Math.ceil(visibleAlarmRowCount / ALARM_PAGE_SIZE),
   );
   const pagedActiveAlarms = useMemo(() => {
     const start = (alarmPage - 1) * ALARM_PAGE_SIZE;
-    return activeAlarms.slice(start, start + ALARM_PAGE_SIZE);
-  }, [activeAlarms, alarmPage]);
+    const visibleAlarms = alarmView === "new" ? newAlarms : activeAlarms;
+    return visibleAlarms.slice(start, start + ALARM_PAGE_SIZE);
+  }, [activeAlarms, alarmPage, alarmView, newAlarms]);
   const pagedRepeatedPatterns = useMemo(() => {
     const start = (alarmPage - 1) * ALARM_PAGE_SIZE;
     return repeatedPatterns.slice(start, start + ALARM_PAGE_SIZE);
@@ -1662,6 +1680,7 @@ export default function CloudHealthPage() {
 
   const applyAlarmShortcut = (shortcut: AlarmShortcut) => {
     setActiveTab("alarms");
+    setAlarmView("all");
     setAlarmShortcut(shortcut);
 
     if (shortcut === "critical") {
@@ -2375,13 +2394,26 @@ export default function CloudHealthPage() {
                         Current ManageOne Alarms
                       </CardTitle>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {alarmView === "all"
-                          ? "All individual alarm rows matching the current filters."
-                          : "Grouped repeat patterns after applying the current filters."}
+                        {alarmView === "new"
+                          ? "Active alarms that occurred today after applying the current filters."
+                          : alarmView === "all"
+                            ? "All individual alarm rows matching the current filters."
+                            : "Grouped repeat patterns after applying the current filters."}
                       </p>
                     </div>
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <div className="grid grid-cols-2 rounded-lg border bg-muted/40 p-1">
+                      <div className="grid grid-cols-3 rounded-lg border bg-muted/40 p-1">
+                        <button
+                          type="button"
+                          className={`h-9 rounded-md px-3 text-sm transition-colors ${
+                            alarmView === "new"
+                              ? "bg-primary/10 font-medium text-primary"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                          onClick={() => setAlarmView("new")}
+                        >
+                          New Alarms
+                        </button>
                         <button
                           type="button"
                           className={`h-9 rounded-md px-3 text-sm transition-colors ${
@@ -2549,11 +2581,13 @@ export default function CloudHealthPage() {
               <CardContent>
                 {visibleAlarmRowCount === 0 ? (
                   <div className="py-10 text-center text-sm text-muted-foreground">
-                    {alarmView === "all"
-                      ? "No active alarms match the selected filters."
-                      : "No repeated alarm patterns match the selected filters."}
+                    {alarmView === "new"
+                      ? "No new alarms from today match the selected filters."
+                      : alarmView === "all"
+                        ? "No active alarms match the selected filters."
+                        : "No repeated alarm patterns match the selected filters."}
                   </div>
-                ) : alarmView === "all" ? (
+                ) : alarmView !== "repeated" ? (
                   <div className="overflow-x-auto rounded-md border">
                     <table className="w-full min-w-[980px] text-sm">
                       <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
@@ -2621,7 +2655,7 @@ export default function CloudHealthPage() {
                                 "Platform"}
                             </td>
                             <td className="px-3 py-2">
-                              {formatDateTime(alarm.latestOccurUtc)}
+                              {formatDateTime(getAlarmTimestamp(alarm))}
                             </td>
                             <td className="px-3 py-2">
                               {alarm.acked ? "Acked" : "Unacked"}
@@ -2712,7 +2746,7 @@ export default function CloudHealthPage() {
                     <div>
                       Showing {alarmShowingStart}-{alarmShowingEnd} of{" "}
                       {visibleAlarmRowCount}{" "}
-                      {alarmView === "all" ? "alarms" : "patterns"}
+                      {alarmView === "repeated" ? "patterns" : "alarms"}
                     </div>
                     <div className="flex items-center gap-2">
                       <Button
