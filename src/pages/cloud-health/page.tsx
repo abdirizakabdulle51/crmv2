@@ -574,6 +574,113 @@ function alarmTextIncludes(alarm: CloudAlarmWithCompany, keywords: string[]) {
   return keywords.some((keyword) => text.includes(keyword));
 }
 
+function normalizeAlarmText(values: Array<string | number | null | undefined>) {
+  return values
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .join(" ")
+    .toLowerCase();
+}
+
+function textIncludesAny(text: string, keywords: string[]) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function textMatchesAny(text: string, patterns: RegExp[]) {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function getAlarmIssueText(alarm: CloudAlarmWithCompany) {
+  return normalizeAlarmText([
+    alarm.alarmName,
+    alarm.probableCause,
+    alarm.additionalInformation,
+  ]);
+}
+
+function getAlarmResourceText(alarm: CloudAlarmWithCompany) {
+  return normalizeAlarmText([
+    alarm.meName,
+    alarm.meCategory,
+    alarm.meType,
+    alarm.moc,
+    alarm.address,
+  ]);
+}
+
+function isBackupDrAlarm(alarm: CloudAlarmWithCompany) {
+  const issueText = getAlarmIssueText(alarm);
+  const resourceText = getAlarmResourceText(alarm);
+  const backupTerms = [
+    "backup",
+    "back up",
+    "restore",
+    "restored",
+    "recovery",
+    "disaster recovery",
+    "replication",
+    "redundancy",
+  ];
+  const backupResourceTerms = [
+    ...backupTerms,
+    "cloud backup",
+    "csbs",
+    "vbs",
+    "volume backup",
+    "server backup",
+  ];
+
+  return (
+    textIncludesAny(issueText, backupTerms) ||
+    textMatchesAny(issueText, [/\bdr\b/]) ||
+    textIncludesAny(resourceText, backupResourceTerms)
+  );
+}
+
+function isPlatformServiceAlarm(alarm: CloudAlarmWithCompany) {
+  if (isBackupDrAlarm(alarm)) {
+    return false;
+  }
+
+  const text = normalizeAlarmText([
+    alarm.alarmName,
+    alarm.probableCause,
+    alarm.additionalInformation,
+    alarm.meName,
+    alarm.meCategory,
+    alarm.meType,
+    alarm.moc,
+  ]);
+
+  return (
+    textIncludesAny(text, [
+      "kafka",
+      "secmaster",
+      "sec master",
+      "manageone",
+      "microservice",
+      "micro-service",
+      "micro service",
+      "microservice abnormal",
+      "system service",
+      "deployment node",
+      "deployment nodes",
+      "deployinstance",
+      "deploy instance",
+      "service abnormal",
+      "service process abnormal",
+      "external system communication",
+      "communication alarm",
+      "api threshold",
+      "console threshold",
+      "api gateway",
+      "console",
+      "jvm",
+      "process abnormal",
+      "process",
+    ]) || textMatchesAny(text, [/\bdrs\b/])
+  );
+}
+
 function isOperationalAlarmView(alarmView: AlarmView) {
   return alarmView !== "new" && alarmView !== "all" && alarmView !== "repeated";
 }
@@ -584,8 +691,15 @@ function matchesOperationalAlarmView(
 ) {
   if (alarmView === "customer_impact") {
     const companyName = alarm.linkedCompanyName?.trim().toLowerCase();
+    const tenantMapping =
+      alarm.tenant?.trim() ||
+      alarm.vdcName?.trim() ||
+      alarm.tenantId?.trim() ||
+      alarm.vdcId?.trim();
     return Boolean(
-      alarm.linkedCompanyId || (companyName && companyName !== "platform"),
+      alarm.linkedCompanyId ||
+        (companyName && companyName !== "platform") ||
+        tenantMapping,
     );
   }
 
@@ -607,50 +721,11 @@ function matchesOperationalAlarmView(
   }
 
   if (alarmView === "backup_dr") {
-    return alarmTextIncludes(alarm, [
-      "backup",
-      "backup service",
-      "backup failure",
-      "restore",
-      "replication",
-      "redundancy",
-      "disaster recovery",
-      "dr service",
-      "dr failure",
-      "dr replication",
-      "drs backup",
-      "drs replication",
-      "drs service",
-    ]);
+    return isBackupDrAlarm(alarm);
   }
 
   if (alarmView === "platform_services") {
-    return alarmTextIncludes(alarm, [
-      "kafka",
-      "drs",
-      "secmaster",
-      "sec master",
-      "manageone",
-      "microservice",
-      "micro-service",
-      "micro service",
-      "microservice abnormal",
-      "system service",
-      "deployment node",
-      "deployment nodes",
-      "deployinstance",
-      "deploy instance",
-      "platform",
-      "service abnormal",
-      "service process abnormal",
-      "external system communication",
-      "communication alarm",
-      "communication",
-      "api threshold",
-      "console threshold",
-      "api",
-      "console",
-    ]);
+    return isPlatformServiceAlarm(alarm);
   }
 
   if (alarmView === "storage_risk") {
@@ -707,7 +782,7 @@ function getAlarmEmptyState(alarmView: AlarmView) {
     case "security":
       return "No security-related alarms match the selected filters.";
     case "backup_dr":
-      return "No backup or disaster recovery alarms match the selected filters.";
+      return "No Backup / DR alarms match the current filters.";
     case "platform_services":
       return "No platform service alarms match the selected filters.";
     case "storage_risk":
@@ -1642,6 +1717,17 @@ export default function CloudHealthPage() {
       ),
     [activeAlarms],
   );
+  const operationalAlarmCounts = useMemo(() => {
+    return OPERATIONAL_ALARM_VIEW_OPTIONS.reduce(
+      (counts, option) => {
+        counts[option.value] = activeAlarms.filter((alarm) =>
+          matchesOperationalAlarmView(alarm, option.value),
+        ).length;
+        return counts;
+      },
+      {} as Partial<Record<AlarmView, number>>,
+    );
+  }, [activeAlarms]);
   const operationalAlarms = useMemo(
     () =>
       isOperationalAlarmView(alarmView)
@@ -2660,7 +2746,7 @@ export default function CloudHealthPage() {
                             }`}
                             onClick={() => setAlarmView(option.value)}
                           >
-                            {option.label}
+                            {option.label} ({operationalAlarmCounts[option.value] ?? 0})
                           </button>
                         ))}
                       </div>
