@@ -114,9 +114,8 @@ function currentMonth() {
 }
 
 function latestUsageMonth(consumption: Doc<"consumption">[]) {
-  const latestMonth = [...new Set(consumption.map((entry) => entry.month))]
-    .sort()
-    .at(-1);
+  const months = [...new Set(consumption.map((entry) => entry.month))].sort();
+  const latestMonth = months.length > 0 ? months[months.length - 1] : undefined;
   return latestMonth ?? currentMonth();
 }
 
