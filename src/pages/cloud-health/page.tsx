@@ -67,7 +67,15 @@ type ServiceCheckType = "http" | "tcp" | "dns";
 type CloudAlarmWithCompany = Doc<"cloudAlarms"> & {
   linkedCompanyName?: string | null;
 };
-type AlarmView = "new" | "all" | "repeated";
+type AlarmView =
+  | "new"
+  | "all"
+  | "repeated"
+  | "security"
+  | "backup_dr"
+  | "platform_services"
+  | "storage_risk"
+  | "customer_impact";
 
 type RepeatedAlarmPattern = {
   key: string;
@@ -215,6 +223,17 @@ const CLOUD_HEALTH_TABS: CloudHealthTab[] = [
 function isCloudHealthTab(value: string | null): value is CloudHealthTab {
   return CLOUD_HEALTH_TABS.includes(value as CloudHealthTab);
 }
+
+const ALARM_VIEW_OPTIONS: Array<{ value: AlarmView; label: string }> = [
+  { value: "new", label: "New Alarms" },
+  { value: "all", label: "All Alarms" },
+  { value: "repeated", label: "Repeated Patterns" },
+  { value: "security", label: "Security" },
+  { value: "backup_dr", label: "Backup / DR" },
+  { value: "platform_services", label: "Platform Services" },
+  { value: "storage_risk", label: "Storage Risk" },
+  { value: "customer_impact", label: "Customer Impact" },
+];
 
 type LatencyRangeId =
   | "last_5_minutes"
@@ -542,6 +561,134 @@ function getAlarmSearchText(alarm: CloudAlarmWithCompany) {
     .filter((value) => value !== undefined && value !== null && value !== "")
     .join(" ")
     .toLowerCase();
+}
+
+function alarmTextIncludes(alarm: CloudAlarmWithCompany, keywords: string[]) {
+  const text = getAlarmSearchText(alarm);
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function isOperationalAlarmView(alarmView: AlarmView) {
+  return alarmView !== "new" && alarmView !== "all" && alarmView !== "repeated";
+}
+
+function matchesOperationalAlarmView(
+  alarm: CloudAlarmWithCompany,
+  alarmView: AlarmView,
+) {
+  if (alarmView === "customer_impact") {
+    const companyName = alarm.linkedCompanyName?.trim().toLowerCase();
+    return Boolean(
+      alarm.linkedCompanyId || (companyName && companyName !== "platform"),
+    );
+  }
+
+  if (alarmView === "security") {
+    return alarmTextIncludes(alarm, [
+      "account lockout",
+      "account locked",
+      "failed login",
+      "login failed",
+      "password expiry",
+      "password expired",
+      "password validity",
+      "security",
+      "login",
+      "authentication",
+      "auth",
+      "account",
+    ]);
+  }
+
+  if (alarmView === "backup_dr") {
+    return alarmTextIncludes(alarm, [
+      "backup",
+      "restore",
+      "replication",
+      "redundancy",
+      "disaster recovery",
+      " dr ",
+      "drs",
+    ]);
+  }
+
+  if (alarmView === "platform_services") {
+    return alarmTextIncludes(alarm, [
+      "kafka",
+      "drs",
+      "secmaster",
+      "manageone",
+      "microservice",
+      "system service",
+      "deployment node",
+      "deployinstance",
+      "platform",
+      "service abnormal",
+    ]);
+  }
+
+  if (alarmView === "storage_risk") {
+    return alarmTextIncludes(alarm, [
+      "disk not detected",
+      "storage allocation",
+      "storage pool",
+      "storage",
+      "evs",
+      "obsv3",
+      "obs",
+      "sfs",
+      "volume",
+      "capacity",
+      "data store",
+      "datastore",
+      "disk",
+      "cinder",
+    ]);
+  }
+
+  return true;
+}
+
+function getAlarmViewSubtitle(alarmView: AlarmView) {
+  switch (alarmView) {
+    case "new":
+      return "Active alarms that occurred today after applying the current filters.";
+    case "all":
+      return "All individual alarm rows matching the current filters.";
+    case "repeated":
+      return "Grouped repeat patterns after applying the current filters.";
+    case "security":
+      return "Security-related active alarms matching the current filters.";
+    case "backup_dr":
+      return "Backup and disaster recovery active alarms matching the current filters.";
+    case "platform_services":
+      return "Platform service active alarms matching the current filters.";
+    case "storage_risk":
+      return "Storage and capacity risk active alarms matching the current filters.";
+    case "customer_impact":
+      return "Customer-linked active alarms matching the current filters.";
+  }
+}
+
+function getAlarmEmptyState(alarmView: AlarmView) {
+  switch (alarmView) {
+    case "new":
+      return "No new alarms from today match the selected filters.";
+    case "all":
+      return "No active alarms match the selected filters.";
+    case "repeated":
+      return "No repeated alarm patterns match the selected filters.";
+    case "security":
+      return "No security-related alarms match the selected filters.";
+    case "backup_dr":
+      return "No backup or disaster recovery alarms match the selected filters.";
+    case "platform_services":
+      return "No platform service alarms match the selected filters.";
+    case "storage_risk":
+      return "No storage risk alarms match the selected filters.";
+    case "customer_impact":
+      return "No customer-linked alarms match the selected filters.";
+  }
 }
 
 function getRepeatedAlarmPatternKey(alarm: CloudAlarmWithCompany) {
@@ -1469,6 +1616,15 @@ export default function CloudHealthPage() {
       ),
     [activeAlarms],
   );
+  const operationalAlarms = useMemo(
+    () =>
+      isOperationalAlarmView(alarmView)
+        ? activeAlarms.filter((alarm) =>
+            matchesOperationalAlarmView(alarm, alarmView),
+          )
+        : activeAlarms,
+    [activeAlarms, alarmView],
+  );
   const repeatedPatterns = useMemo(
     () => buildRepeatedAlarmPatterns(activeAlarms, Number(minimumRepeats)),
     [activeAlarms, minimumRepeats],
@@ -1502,16 +1658,23 @@ export default function CloudHealthPage() {
       ? repeatedPatterns.length
       : alarmView === "new"
         ? newAlarms.length
-        : activeAlarms.length;
+        : alarmView === "all"
+          ? activeAlarms.length
+          : operationalAlarms.length;
   const alarmPageCount = Math.max(
     1,
     Math.ceil(visibleAlarmRowCount / ALARM_PAGE_SIZE),
   );
   const pagedActiveAlarms = useMemo(() => {
     const start = (alarmPage - 1) * ALARM_PAGE_SIZE;
-    const visibleAlarms = alarmView === "new" ? newAlarms : activeAlarms;
+    const visibleAlarms =
+      alarmView === "new"
+        ? newAlarms
+        : alarmView === "all"
+          ? activeAlarms
+          : operationalAlarms;
     return visibleAlarms.slice(start, start + ALARM_PAGE_SIZE);
-  }, [activeAlarms, alarmPage, alarmView, newAlarms]);
+  }, [activeAlarms, alarmPage, alarmView, newAlarms, operationalAlarms]);
   const pagedRepeatedPatterns = useMemo(() => {
     const start = (alarmPage - 1) * ALARM_PAGE_SIZE;
     return repeatedPatterns.slice(start, start + ALARM_PAGE_SIZE);
@@ -2434,48 +2597,25 @@ export default function CloudHealthPage() {
                         Current ManageOne Alarms
                       </CardTitle>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {alarmView === "new"
-                          ? "Active alarms that occurred today after applying the current filters."
-                          : alarmView === "all"
-                            ? "All individual alarm rows matching the current filters."
-                            : "Grouped repeat patterns after applying the current filters."}
+                        {getAlarmViewSubtitle(alarmView)}
                       </p>
                     </div>
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <div className="grid grid-cols-3 rounded-lg border bg-muted/40 p-1">
-                        <button
-                          type="button"
-                          className={`h-9 rounded-md px-3 text-sm transition-colors ${
-                            alarmView === "new"
-                              ? "bg-primary/10 font-medium text-primary"
-                              : "text-muted-foreground hover:text-foreground"
-                          }`}
-                          onClick={() => setAlarmView("new")}
-                        >
-                          New Alarms
-                        </button>
-                        <button
-                          type="button"
-                          className={`h-9 rounded-md px-3 text-sm transition-colors ${
-                            alarmView === "all"
-                              ? "bg-primary/10 font-medium text-primary"
-                              : "text-muted-foreground hover:text-foreground"
-                          }`}
-                          onClick={() => setAlarmView("all")}
-                        >
-                          All Alarms
-                        </button>
-                        <button
-                          type="button"
-                          className={`h-9 rounded-md px-3 text-sm transition-colors ${
-                            alarmView === "repeated"
-                              ? "bg-primary/10 font-medium text-primary"
-                              : "text-muted-foreground hover:text-foreground"
-                          }`}
-                          onClick={() => setAlarmView("repeated")}
-                        >
-                          Repeated Patterns
-                        </button>
+                      <div className="flex max-w-4xl flex-wrap gap-1.5 rounded-lg border bg-muted/40 p-1">
+                        {ALARM_VIEW_OPTIONS.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={`h-9 rounded-md px-3 text-sm transition-colors ${
+                              alarmView === option.value
+                                ? "bg-primary/10 font-medium text-primary"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                            onClick={() => setAlarmView(option.value)}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
                       </div>
                       {alarmView === "repeated" ? (
                         <Select
@@ -2621,11 +2761,7 @@ export default function CloudHealthPage() {
               <CardContent>
                 {visibleAlarmRowCount === 0 ? (
                   <div className="py-10 text-center text-sm text-muted-foreground">
-                    {alarmView === "new"
-                      ? "No new alarms from today match the selected filters."
-                      : alarmView === "all"
-                        ? "No active alarms match the selected filters."
-                        : "No repeated alarm patterns match the selected filters."}
+                    {getAlarmEmptyState(alarmView)}
                   </div>
                 ) : alarmView !== "repeated" ? (
                   <div className="overflow-x-auto rounded-md border">
