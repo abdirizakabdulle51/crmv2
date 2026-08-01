@@ -87,6 +87,12 @@ type RepeatedAlarmPattern = {
   alarms: CloudAlarmWithCompany[];
 };
 type CloudHostGroup = Doc<"cloudHostGroups">;
+type HostGroupSummaryShortcut =
+  | "totalHostGroups"
+  | "critical"
+  | "watch"
+  | "healthy"
+  | "totalHosts";
 
 function formatCheckType(checkType: ServiceCheckType) {
   if (checkType === "http") return "HTTP";
@@ -1489,6 +1495,8 @@ export default function CloudHealthPage() {
   >(null);
   const [hostGroupRegionFilter, setHostGroupRegionFilter] = useState("all");
   const [hostGroupRiskFilter, setHostGroupRiskFilter] = useState("all");
+  const [hostGroupSummaryShortcut, setHostGroupSummaryShortcut] =
+    useState<HostGroupSummaryShortcut>("totalHostGroups");
   const [hostGroupSearch, setHostGroupSearch] = useState("");
   const [selectedHostGroup, setSelectedHostGroup] =
     useState<CloudHostGroup | null>(null);
@@ -1877,6 +1885,28 @@ export default function CloudHealthPage() {
         alarmRegionFilter,
         value,
       ),
+    );
+  };
+
+  const applyHostGroupSummaryShortcut = (
+    shortcut: HostGroupSummaryShortcut,
+  ) => {
+    setHostGroupSummaryShortcut(shortcut);
+    setHostGroupRiskFilter(
+      shortcut === "critical" ||
+        shortcut === "watch" ||
+        shortcut === "healthy"
+        ? shortcut
+        : "all",
+    );
+  };
+
+  const updateHostGroupRiskFilter = (value: string) => {
+    setHostGroupRiskFilter(value);
+    setHostGroupSummaryShortcut(
+      value === "critical" || value === "watch" || value === "healthy"
+        ? value
+        : "totalHostGroups",
     );
   };
 
@@ -2960,69 +2990,40 @@ export default function CloudHealthPage() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm text-muted-foreground">
-                    Total Host Groups
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-semibold">
-                    {hostGroupsSummary.totalHostGroups}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Synced {formatDateTime(hostGroupsSummary.lastSyncedAt)}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm text-muted-foreground">
-                    Critical
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-semibold text-destructive">
-                    {hostGroupsSummary.critical}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm text-muted-foreground">
-                    Watch
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-semibold">
-                    {hostGroupsSummary.watch}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm text-muted-foreground">
-                    Healthy
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-semibold">
-                    {hostGroupsSummary.healthy}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm text-muted-foreground">
-                    Total Hosts
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-semibold">
-                    {hostGroupsSummary.totalHosts}
-                  </div>
-                </CardContent>
-              </Card>
+              <AlarmShortcutCard
+                title="Total Host Groups"
+                value={hostGroupsSummary.totalHostGroups}
+                detail={`Synced ${formatDateTime(hostGroupsSummary.lastSyncedAt)}`}
+                active={hostGroupSummaryShortcut === "totalHostGroups"}
+                onClick={() =>
+                  applyHostGroupSummaryShortcut("totalHostGroups")
+                }
+              />
+              <AlarmShortcutCard
+                title="Critical"
+                value={hostGroupsSummary.critical}
+                active={hostGroupSummaryShortcut === "critical"}
+                onClick={() => applyHostGroupSummaryShortcut("critical")}
+                valueClassName="text-destructive"
+              />
+              <AlarmShortcutCard
+                title="Watch"
+                value={hostGroupsSummary.watch}
+                active={hostGroupSummaryShortcut === "watch"}
+                onClick={() => applyHostGroupSummaryShortcut("watch")}
+              />
+              <AlarmShortcutCard
+                title="Healthy"
+                value={hostGroupsSummary.healthy}
+                active={hostGroupSummaryShortcut === "healthy"}
+                onClick={() => applyHostGroupSummaryShortcut("healthy")}
+              />
+              <AlarmShortcutCard
+                title="Total Hosts"
+                value={hostGroupsSummary.totalHosts}
+                active={hostGroupSummaryShortcut === "totalHosts"}
+                onClick={() => applyHostGroupSummaryShortcut("totalHosts")}
+              />
             </div>
 
             <Card>
@@ -3050,7 +3051,7 @@ export default function CloudHealthPage() {
                     </Select>
                     <Select
                       value={hostGroupRiskFilter}
-                      onValueChange={setHostGroupRiskFilter}
+                      onValueChange={updateHostGroupRiskFilter}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Risk Level" />
