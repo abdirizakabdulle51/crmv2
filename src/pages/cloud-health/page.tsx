@@ -1490,9 +1490,8 @@ export default function CloudHealthPage() {
   const [hostGroupRegionFilter, setHostGroupRegionFilter] = useState("all");
   const [hostGroupRiskFilter, setHostGroupRiskFilter] = useState("all");
   const [hostGroupSearch, setHostGroupSearch] = useState("");
-  const [selectedHostGroupId, setSelectedHostGroupId] = useState<string | null>(
-    null,
-  );
+  const [selectedHostGroup, setSelectedHostGroup] =
+    useState<CloudHostGroup | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [alarmPage, setAlarmPage] = useState(1);
   const [serviceName, setServiceName] = useState("");
@@ -1743,13 +1742,6 @@ export default function CloudHealthPage() {
             Math.max(a.cpuMaxPercent, a.memoryMaxPercent),
       );
   }, [hostGroupRegionFilter, hostGroupRiskFilter, hostGroupSearch, hostGroups]);
-  const selectedHostGroup = useMemo(
-    () =>
-      (hostGroups ?? []).find(
-        (hostGroup) => hostGroup.hostGroupId === selectedHostGroupId,
-      ),
-    [hostGroups, selectedHostGroupId],
-  );
   const visibleServiceTargets = serviceTargets ?? [];
   const visibleServiceStatuses = serviceStatuses ?? [];
   const serviceHistory = useQuery(
@@ -2437,7 +2429,7 @@ export default function CloudHealthPage() {
                           className="flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors hover:border-primary/60 hover:bg-muted/30"
                           onClick={() => {
                             setActiveTab("host-groups");
-                            setSelectedHostGroupId(hostGroup.hostGroupId);
+                            setSelectedHostGroup(hostGroup);
                           }}
                         >
                           <span className="min-w-0">
@@ -3112,6 +3104,7 @@ export default function CloudHealthPage() {
                           <th className="px-3 py-2 font-medium">
                             Last Synced
                           </th>
+                          <th className="px-3 py-2 font-medium">Action</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3121,14 +3114,12 @@ export default function CloudHealthPage() {
                             tabIndex={0}
                             role="button"
                             aria-label={`View details for ${hostGroup.hostGroupName}`}
-                            className="cursor-pointer border-t transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                            onClick={() =>
-                              setSelectedHostGroupId(hostGroup.hostGroupId)
-                            }
+                            className="cursor-pointer border-t transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={() => setSelectedHostGroup(hostGroup)}
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                setSelectedHostGroupId(hostGroup.hostGroupId);
+                                setSelectedHostGroup(hostGroup);
                               }
                             }}
                           >
@@ -3182,6 +3173,18 @@ export default function CloudHealthPage() {
                             </td>
                             <td className="px-3 py-2">
                               {formatDateTime(hostGroup.lastSyncedAt)}
+                            </td>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                className="text-sm font-medium text-primary hover:underline"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setSelectedHostGroup(hostGroup);
+                                }}
+                              >
+                                View details
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -3752,11 +3755,11 @@ export default function CloudHealthPage() {
         }}
       />
       <HostGroupDetailSheet
-        hostGroup={selectedHostGroup}
-        open={selectedHostGroupId !== null}
+        hostGroup={selectedHostGroup ?? undefined}
+        open={selectedHostGroup !== null}
         onOpenChange={(open) => {
           if (!open) {
-            setSelectedHostGroupId(null);
+            setSelectedHostGroup(null);
           }
         }}
       />
