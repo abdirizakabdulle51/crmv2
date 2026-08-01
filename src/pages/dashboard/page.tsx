@@ -59,6 +59,16 @@ function tooltipFormatter(value: unknown): string {
   return formatCurrency(Number(value));
 }
 
+function formatMonthLabel(month: string | undefined): string | null {
+  if (!month) return null;
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber) return month;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+  }).format(new Date(year, monthNumber - 1, 1));
+}
+
 function amLabelFormatter(
   label: unknown,
   amChartData: { name: string; fullName: string }[],
@@ -147,6 +157,7 @@ export default function DashboardPage() {
   const openPipelineStages = Object.entries(pipelineStageCounts).filter(
     ([stage]) => stage !== "won" && stage !== "lost",
   );
+  const usageMonthLabel = formatMonthLabel(summary?.usage.month);
 
   return (
     <div className="p-6 md:p-8 space-y-8">
@@ -216,9 +227,9 @@ export default function DashboardPage() {
           onClick={() => navigate("/pipeline")}
         />
         <MetricCard
-          title="Usage This Month"
+          title="Latest Usage Month"
           value={formatCurrency(summary?.usage.total ?? 0)}
-          subtitle={`${summary?.usage.entries ?? 0} entries across ${summary?.usage.companiesWithUsage ?? 0} companies`}
+          subtitle={`${usageMonthLabel ? `${usageMonthLabel} · ` : ""}${summary?.usage.entries ?? 0} entries across ${summary?.usage.companiesWithUsage ?? 0} companies`}
           icon={<DollarSign className="h-4 w-4 text-muted-foreground" />}
           onClick={() => navigate("/usage")}
         />
