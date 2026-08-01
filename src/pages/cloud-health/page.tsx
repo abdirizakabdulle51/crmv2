@@ -147,6 +147,13 @@ function hostGroupRiskSortValue(riskLevel: CloudHostGroup["riskLevel"]) {
   return 2;
 }
 
+function hostUtilizationStatus(cpuPercent: number, memoryPercent: number) {
+  const peak = Math.max(cpuPercent, memoryPercent);
+  if (peak >= 85) return "critical";
+  if (peak >= 70) return "watch";
+  return "healthy";
+}
+
 function getHostGroupSearchText(hostGroup: CloudHostGroup) {
   return [
     hostGroup.hostGroupName,
@@ -1151,48 +1158,80 @@ function HostGroupDetailSheet({
         </SheetHeader>
         {hostGroup ? (
           <div className="space-y-6 px-4 pb-6">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={hostGroupRiskBadgeVariant(hostGroup.riskLevel)}>
-                {hostGroupRiskLabel(hostGroup.riskLevel)}
-              </Badge>
-              <Badge variant="secondary">{hostGroup.hostCount} hosts</Badge>
-              <Badge variant="outline">
-                Synced {formatDateTime(hostGroup.lastSyncedAt)}
-              </Badge>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <AlarmDetailField
-                label="Host Group"
-                value={hostGroup.hostGroupName}
-                className="sm:col-span-2"
-              />
-              <AlarmDetailField
-                label="Host Group ID"
-                value={hostGroup.hostGroupId}
-              />
-              <AlarmDetailField
-                label="Hypervisor"
-                value={hostGroup.hypervisorType}
-              />
-              <AlarmDetailField label="Region" value={hostGroup.regionName} />
-              <AlarmDetailField label="Region ID" value={hostGroup.regionId} />
-              <AlarmDetailField label="AZ" value={hostGroup.azName} />
-              <AlarmDetailField label="AZ ID" value={hostGroup.azId} />
-              <AlarmDetailField
-                label="Resource Pool"
-                value={hostGroup.resourcePoolName}
-              />
-              <AlarmDetailField
-                label="Resource Pool ID"
-                value={hostGroup.resourcePoolId}
-              />
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">CPU Utilization</CardTitle>
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Risk Level
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Badge variant={hostGroupRiskBadgeVariant(hostGroup.riskLevel)}>
+                    {hostGroupRiskLabel(hostGroup.riskLevel)}
+                  </Badge>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Region
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="font-medium">{hostGroup.regionName}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {hostGroup.regionId}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    AZ
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="font-medium">{hostGroup.azName}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {hostGroup.azId}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Resource Pool
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="font-medium">
+                    {hostGroup.resourcePoolName}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {hostGroup.resourcePoolId}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Host Count
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-semibold">
+                    {hostGroup.hostCount}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {hostGroup.hypervisorType}
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">
+                    CPU Avg / Max
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-semibold">
@@ -1205,7 +1244,9 @@ function HostGroupDetailSheet({
               </Card>
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Memory Utilization</CardTitle>
+                  <CardTitle className="text-sm text-muted-foreground">
+                    Memory Avg / Max
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-semibold">
@@ -1216,6 +1257,17 @@ function HostGroupDetailSheet({
                   </p>
                 </CardContent>
               </Card>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <AlarmDetailField
+                label="Host Group ID"
+                value={hostGroup.hostGroupId}
+              />
+              <AlarmDetailField
+                label="Last Synced"
+                value={formatDateTime(hostGroup.lastSyncedAt)}
+              />
             </div>
 
             <div className="rounded-lg border bg-muted/20 p-4">
@@ -1302,28 +1354,53 @@ function HostGroupDetailSheet({
                       .slice()
                       .sort(
                         (a, b) =>
-                          Math.max(b.cpuPercent, b.memoryPercent) -
-                          Math.max(a.cpuPercent, a.memoryPercent),
+                          b.memoryPercent - a.memoryPercent ||
+                          b.cpuPercent - a.cpuPercent,
                       )
-                      .map((host) => (
-                        <tr key={host.hostId} className="border-t">
-                          <td className="px-3 py-2">
-                            <div className="font-medium">{host.hostName}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {host.hostId}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2">
-                            {host.manageIp ?? "-"}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {formatNumber(host.cpuPercent, "%")}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {formatNumber(host.memoryPercent, "%")}
-                          </td>
-                        </tr>
-                      ))}
+                      .map((host) => {
+                        const status = hostUtilizationStatus(
+                          host.cpuPercent,
+                          host.memoryPercent,
+                        );
+
+                        return (
+                          <tr
+                            key={host.hostId}
+                            className={`border-t ${
+                              status === "critical"
+                                ? "bg-destructive/5"
+                                : status === "watch"
+                                  ? "bg-amber-500/5"
+                                  : ""
+                            }`}
+                          >
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-medium">
+                                  {host.hostName}
+                                </span>
+                                <Badge
+                                  variant={hostGroupRiskBadgeVariant(status)}
+                                >
+                                  {hostGroupRiskLabel(status)}
+                                </Badge>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {host.hostId}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              {host.manageIp ?? "-"}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {formatNumber(host.cpuPercent, "%")}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {formatNumber(host.memoryPercent, "%")}
+                            </td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
               </div>
