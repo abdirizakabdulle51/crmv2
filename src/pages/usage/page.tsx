@@ -63,6 +63,14 @@ export default function UsagePage() {
   const [deleteId, setDeleteId] = useState<Id<"consumption"> | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const handleBulkMonthChange = (value: string) => {
+    setBulkMonth(value);
+    if (value) {
+      setMonthFilter(value);
+      setCurrentPage(1);
+    }
+  };
+
   if (!companies || !consumption) {
     return (
       <div className="p-6 md:p-8 space-y-4">
@@ -248,7 +256,7 @@ export default function UsagePage() {
         <Input
           type="month"
           value={bulkMonth}
-          onChange={(event) => setBulkMonth(event.target.value)}
+          onChange={(event) => handleBulkMonthChange(event.target.value)}
           className="w-[160px]"
         />
         <Button

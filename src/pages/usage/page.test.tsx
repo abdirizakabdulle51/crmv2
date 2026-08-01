@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -199,6 +199,32 @@ describe("UsagePage company filter indicators", () => {
 });
 
 describe("UsagePage pagination", () => {
+  it("syncs the month input to the month filter used by summary totals", () => {
+    const aicc = company("company-1", "AICC");
+    const waafi = company("company-2", "WAAFI");
+    mocks.companies = [aicc, waafi];
+    mocks.consumption = [
+      usage("july-1", aicc._id, "2026-07", "ECS", 100),
+      usage("july-2", waafi._id, "2026-07", "EVS", 200),
+      usage("august-1", aicc._id, "2026-08", "EIP", 300),
+    ];
+
+    const { container } = renderUsagePage();
+
+    expect(screen.getByText("$600.00")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+
+    const monthInput = container.querySelector('input[type="month"]');
+    expect(monthInput).toBeInstanceOf(HTMLInputElement);
+    fireEvent.change(monthInput as HTMLInputElement, {
+      target: { value: "2026-07" },
+    });
+
+    expect(screen.getByText("$300.00")).toBeInTheDocument();
+    expect(screen.getAllByText("Showing 1-2 of 2 entries")).toHaveLength(2);
+    expect(screen.queryByText("$600.00")).not.toBeInTheDocument();
+  });
+
   it("changes page size and navigates usage entry pages", async () => {
     const user = userEvent.setup();
     const aicc = company("company-1", "AICC");
