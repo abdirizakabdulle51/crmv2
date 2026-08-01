@@ -113,6 +113,13 @@ function currentMonth() {
   return new Date().toISOString().slice(0, 7);
 }
 
+function latestUsageMonth(consumption: Doc<"consumption">[]) {
+  const latestMonth = [...new Set(consumption.map((entry) => entry.month))]
+    .sort()
+    .at(-1);
+  return latestMonth ?? currentMonth();
+}
+
 function monthlyTotalsForCompany(
   consumption: Doc<"consumption">[],
   companyId: Id<"companies">,
@@ -181,7 +188,7 @@ export const summary = query({
       sectors,
       catalog,
     );
-    const month = currentMonth();
+    const month = latestUsageMonth(consumption);
 
     const activeCompanies = companies.filter(
       (company) => company.contractStatus === "active",
@@ -213,9 +220,13 @@ export const summary = query({
       .filter((lead) => lead.stage !== "won" && lead.stage !== "lost")
       .reduce((sum, lead) => sum + lead.potentialValue, 0);
 
-    const thisMonthUsageTotal = consumption
-      .filter((entry) => entry.month === month)
-      .reduce((sum, entry) => sum + entry.amount, 0);
+    const usageEntriesForMonth = consumption.filter(
+      (entry) => entry.month === month,
+    );
+    const thisMonthUsageTotal = usageEntriesForMonth.reduce(
+      (sum, entry) => sum + entry.amount,
+      0,
+    );
 
     const quotesSummary = {
       total: quotes.length,
@@ -389,11 +400,9 @@ export const summary = query({
       usage: {
         month,
         total: thisMonthUsageTotal,
-        entries: consumption.filter((entry) => entry.month === month).length,
+        entries: usageEntriesForMonth.length,
         companiesWithUsage: new Set(
-          consumption
-            .filter((entry) => entry.month === month)
-            .map((entry) => entry.companyId),
+          usageEntriesForMonth.map((entry) => entry.companyId),
         ).size,
       },
       quotes: quotesSummary,
