@@ -1584,6 +1584,7 @@ export default function CloudHealthPage() {
   const [name, setName] = useState("");
   const [ip, setIp] = useState("");
   const [notes, setNotes] = useState("");
+  const [showAddPingTargetForm, setShowAddPingTargetForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [alarmSeverityFilter, setAlarmSeverityFilter] = useState("all");
   const [alarmRegionFilter, setAlarmRegionFilter] = useState("all");
@@ -2149,6 +2150,7 @@ export default function CloudHealthPage() {
       setName("");
       setIp("");
       setNotes("");
+      setShowAddPingTargetForm(false);
       toast.success("Ping target added");
     } catch (error) {
       toast.error("Failed to add ping target", {
@@ -3547,51 +3549,6 @@ export default function CloudHealthPage() {
             </Card>
 
             <div className="space-y-4">
-              {canManage ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Add Ping Target</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="target-name">Name</Label>
-                      <Input
-                        id="target-name"
-                        value={name}
-                        onChange={(event) => setName(event.target.value)}
-                        placeholder="Upstream ISP"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="target-ip">IP Address</Label>
-                      <Input
-                        id="target-ip"
-                        value={ip}
-                        onChange={(event) => setIp(event.target.value)}
-                        placeholder="196.201.0.1"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="target-notes">Notes</Label>
-                      <Input
-                        id="target-notes"
-                        value={notes}
-                        onChange={(event) => setNotes(event.target.value)}
-                        placeholder="Optional"
-                      />
-                    </div>
-                    <Button
-                      className="w-full"
-                      onClick={handleCreateTarget}
-                      disabled={submitting}
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add Target
-                    </Button>
-                  </CardContent>
-                </Card>
-              ) : null}
-
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">Latency Trend</CardTitle>
@@ -3684,6 +3641,66 @@ export default function CloudHealthPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {canManage ? (
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between gap-3">
+                      <CardTitle className="text-base">
+                        Add Ping Target
+                      </CardTitle>
+                      {!showAddPingTargetForm ? (
+                        <Button
+                          size="sm"
+                          onClick={() => setShowAddPingTargetForm(true)}
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          Add Target
+                        </Button>
+                      ) : null}
+                    </div>
+                  </CardHeader>
+                  {showAddPingTargetForm ? (
+                    <CardContent className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="target-name">Name</Label>
+                        <Input
+                          id="target-name"
+                          value={name}
+                          onChange={(event) => setName(event.target.value)}
+                          placeholder="Upstream ISP"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="target-ip">IP Address</Label>
+                        <Input
+                          id="target-ip"
+                          value={ip}
+                          onChange={(event) => setIp(event.target.value)}
+                          placeholder="196.201.0.1"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="target-notes">Notes</Label>
+                        <Input
+                          id="target-notes"
+                          value={notes}
+                          onChange={(event) => setNotes(event.target.value)}
+                          placeholder="Optional"
+                        />
+                      </div>
+                      <Button
+                        className="w-full"
+                        onClick={handleCreateTarget}
+                        disabled={submitting}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        Add Target
+                      </Button>
+                    </CardContent>
+                  ) : null}
+                </Card>
+              ) : null}
             </div>
           </section>
 
