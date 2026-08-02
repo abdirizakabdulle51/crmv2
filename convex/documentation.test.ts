@@ -166,6 +166,7 @@ describe("documentation", () => {
       "page-activities",
       "page-manageone",
       "page-cloud-health",
+      "page-tasks",
       "page-team",
       "page-settings",
     ]);
@@ -174,7 +175,7 @@ describe("documentation", () => {
       api.documentation.list,
       {},
     );
-    expect(amSections.map((section) => section.slug).slice(0, 17)).toEqual([
+    expect(amSections.map((section) => section.slug).slice(0, 18)).toEqual([
       "roles-and-access",
       ...firstRun.inserted,
       "common-workflows",
@@ -186,7 +187,7 @@ describe("documentation", () => {
     const commonWorkflows = amSections.find(
       (section) => section.slug === "common-workflows",
     );
-    expect(commonWorkflows?.order).toBe(17);
+    expect(commonWorkflows?.order).toBe(18);
 
     const dashboard = await asUser(t, users.am).query(
       api.documentation.getBySlug,
@@ -195,6 +196,14 @@ describe("documentation", () => {
     expect(dashboard.group).toBe("Team Guide");
     expect(dashboard.visibility).toBe("public");
     expect(dashboard.content).toContain("The Dashboard is your personal");
+
+    const tasks = await asUser(t, users.am).query(api.documentation.getBySlug, {
+      slug: "page-tasks",
+    });
+    expect(tasks.group).toBe("Team Guide");
+    expect(tasks.visibility).toBe("public");
+    expect(tasks.order).toBe(15);
+    expect(tasks.content).toContain("Tasks helps the team");
 
     const secondRun = await t.mutation(
       internal.documentation.replaceNavigationSection,

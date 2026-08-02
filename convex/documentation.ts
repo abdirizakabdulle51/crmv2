@@ -597,10 +597,244 @@ Cloud Health is the internal operations dashboard for monitored cloud regions. I
 Cloud Health is for catching alarm, network, capacity, and host-pressure issues early — before customers notice impact.`,
   },
   {
+    slug: "page-tasks",
+    title: "Tasks",
+    group: "Team Guide",
+    order: 15,
+    visibility: "public",
+    content: `Tasks helps the team create, assign, track, and discuss internal CRM work without using a separate project-management tool.
+
+Use it for follow-ups, handoffs, operational work, customer tasks, quote preparation, cloud investigations, and anything that needs an owner and visible progress.
+
+## Dashboard Tasks Card
+
+The main Dashboard includes a **Tasks** summary card.
+
+It shows:
+- Your open active tasks.
+- How many are overdue.
+- How many are due this week.
+- Blocked count, when any blocked tasks exist.
+
+Click the card to open the Tasks page.
+
+## Tasks Page
+
+The Tasks page is the main work queue.
+
+By default, it opens in **Board** view. You can switch between:
+
+- **Board** - Kanban-style columns by status.
+- **List** - flat task list with the same tasks and controls.
+
+Both views use the same filters.
+
+## Summary Cards and Quick Filters
+
+At the top of the Tasks page, summary cards help you quickly focus:
+
+- **My Open Tasks** - tasks assigned to you that are still active.
+- **Overdue** - active tasks past their due date.
+- **Due This Week** - active tasks due within the next week.
+- **Blocked** - tasks currently marked Blocked.
+
+Clicking a summary card applies the relevant filters automatically.
+
+## Ownership Filters
+
+The ownership dropdown controls whose tasks you are viewing:
+
+| Filter | Meaning |
+|---|---|
+| My Tasks | Tasks assigned to you |
+| Reported to Me | Tasks where you are the Report To person |
+| Created by Me | Tasks you created |
+| All Visible | Every task you are allowed to see |
+
+These combine with the status and priority filters.
+
+## Status and Priority Filters
+
+Status filters:
+- All Active
+- To Do
+- In Progress
+- Blocked
+- Done
+- Canceled
+
+Priority filters:
+- All Priorities
+- Low
+- Medium
+- High
+- Urgent
+
+Active tasks exclude Done and Canceled.
+
+## Board View
+
+Board view groups tasks into columns:
+
+- To Do
+- In Progress
+- Blocked
+- Done
+- Canceled
+
+Each task card shows:
+- Title
+- Priority
+- Assignee
+- Report To
+- Due date
+- Company, if linked
+- Comment count, if comments exist
+- Attachment count, if files exist
+
+Use the status dropdown on a card to move it between columns. Drag-and-drop is not enabled yet.
+
+Click the task card or Open button to go to the task detail page.
+
+## List View
+
+List view shows the same tasks in rows.
+
+Each row shows:
+- Title
+- Description preview
+- Status
+- Priority
+- Assignee
+- Report To
+- Created by
+- Due date
+- Company, if linked
+- Updated date
+- Comment and attachment counts, when present
+
+Click the row or title to open the task detail page.
+
+Use the inline controls to change status, assignee, or Report To without opening the task.
+
+## Creating a Task
+
+Click **New Task**.
+
+Fields:
+- **Title** - required.
+- **Description** - optional context.
+- **Assignee** - the person responsible for doing the work.
+- **Report To** - the person who should receive updates or review progress.
+- **Priority** - Low, Medium, High, or Urgent.
+- **Due date** - optional.
+- **Company** - optional company link.
+
+Use Company when the task is related to a customer/account.
+
+## Assignee vs Report To
+
+**Assignee** means the person responsible for completing the task.
+
+**Report To** means the person who should be informed, review progress, or receive updates.
+
+Example:
+- Assignee: Account Manager doing the work.
+- Report To: Country GM or Head of Business reviewing completion.
+
+## Task Detail Page
+
+Click a task to open its detail page.
+
+The detail page shows:
+- Task title
+- Status
+- Priority
+- Assignee
+- Report To
+- Due date
+- Company
+- Description
+- Attachments
+- Comments
+
+Use **Back to Tasks** to return to the Tasks page.
+
+## Editing a Task
+
+On the task detail page, click **Edit Task**.
+
+You can update:
+- Title
+- Description
+- Priority
+- Due date
+- Company
+
+Status, Assignee, and Report To can still be changed from the Tasks list/board controls.
+
+## Comments
+
+Use comments for progress updates, handoffs, or discussion.
+
+Comments show:
+- Comment body
+- Comment author
+- Created date/time
+
+You can add comments from the task detail page.
+
+Comment authors can edit/remove their own comments. CEO and Head of Business can moderate comments.
+
+## Attachments
+
+Use attachments for supporting files such as:
+- PDF invoices
+- Screenshots/images
+- Excel or CSV files
+- Word documents
+- Text files
+
+Attachments appear on the task detail page.
+
+Each attachment shows:
+- File name
+- File type
+- File size
+- Uploaded by
+- Uploaded date/time
+
+Actions:
+- **Download** opens the file.
+- **Remove** removes the attachment from the task.
+
+Removing an attachment uses a soft archive. It does not change the task itself.
+
+## Remove / Archive Behavior
+
+Tasks and attachments use safe removal behavior.
+
+- Removing a task archives it instead of hard-deleting it.
+- Removing an attachment archives the attachment metadata instead of hard-deleting the task.
+- Done and Canceled tasks are not counted as active.
+
+## Permissions
+
+Tasks follow CRM role access rules.
+
+In simple terms:
+- Account Managers can see tasks assigned to them, created by them, reported to them, or linked to their companies.
+- Country GMs can see tasks for users and companies in their country.
+- Head of Business and CEO can see all tasks.
+- Assignment and Report To choices are validated by the backend.
+
+If you cannot see or assign a task, it is usually because it is outside your role/country/company scope.`,
+  },
+  {
     slug: "page-team",
     title: "Team",
     group: "Team Guide",
-    order: 15,
+    order: 16,
     visibility: "public",
     content: `*Leadership only (CEO / Head of Business) can make changes here — other roles can view team members' roles and country assignments, but can't edit anything.*
 
@@ -616,7 +850,7 @@ Cloud Health is for catching alarm, network, capacity, and host-pressure issues 
     slug: "page-settings",
     title: "Settings",
     group: "Team Guide",
-    order: 16,
+    order: 17,
     visibility: "public",
     content: `**Profile** (everyone) — update your own display name here.
 
@@ -809,7 +1043,7 @@ export const replaceNavigationSection = internalMutation({
       .unique();
 
     if (commonWorkflows) {
-      await ctx.db.patch(commonWorkflows._id, { order: 17 });
+      await ctx.db.patch(commonWorkflows._id, { order: 18 });
     }
 
     return { removed, inserted };
