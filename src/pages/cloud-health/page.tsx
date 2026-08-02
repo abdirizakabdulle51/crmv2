@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -214,6 +220,7 @@ const LATENCY_LINE_COLORS = [
 const SHOW_SERVICE_DNS_HEALTH = false;
 const ALARM_PAGE_SIZE = 50;
 const MONITORED_ALARM_REGIONS = ["Hoa-Mogadishu-2", "Mogadishu-region-hq3"];
+const AUTO_ROTATE_INTERVAL_SECONDS = 60;
 const CLOUD_HEALTH_TABS: CloudHealthTab[] = [
   "overview",
   "alarms",
@@ -221,9 +228,21 @@ const CLOUD_HEALTH_TABS: CloudHealthTab[] = [
   "network",
   "host-groups",
 ];
+const CLOUD_HEALTH_TAB_LABELS: Record<CloudHealthTab, string> = {
+  overview: "Overview",
+  alarms: "Alarms",
+  capacity: "Capacity",
+  network: "Network",
+  "host-groups": "Host Groups",
+};
 
 function isCloudHealthTab(value: string | null): value is CloudHealthTab {
   return CLOUD_HEALTH_TABS.includes(value as CloudHealthTab);
+}
+
+function getNextCloudHealthTab(tab: CloudHealthTab) {
+  const index = CLOUD_HEALTH_TABS.indexOf(tab);
+  return CLOUD_HEALTH_TABS[(index + 1) % CLOUD_HEALTH_TABS.length];
 }
 
 const PRIMARY_ALARM_VIEW_OPTIONS: Array<{ value: AlarmView; label: string }> = [
@@ -1607,6 +1626,10 @@ export default function CloudHealthPage() {
   const [activeTab, setActiveTab] = useState<CloudHealthTab>(
     isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview",
   );
+  const [autoRotateEnabled, setAutoRotateEnabled] = useState(false);
+  const [autoRotateRemainingSeconds, setAutoRotateRemainingSeconds] = useState(
+    AUTO_ROTATE_INTERVAL_SECONDS,
+  );
   const [alarmPage, setAlarmPage] = useState(1);
   const [serviceName, setServiceName] = useState("");
   const [serviceCheckType, setServiceCheckType] =
@@ -2004,12 +2027,43 @@ export default function CloudHealthPage() {
     setActiveTab(isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview");
   }, [tabFromQuery]);
 
-  const updateActiveTab = (tab: CloudHealthTab) => {
-    setActiveTab(tab);
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.set("tab", tab);
-    setSearchParams(nextParams, { replace: true });
-  };
+  const updateActiveTab = useCallback(
+    (tab: CloudHealthTab, options: { manual?: boolean } = {}) => {
+      if (options.manual) {
+        setAutoRotateEnabled(false);
+      }
+      setActiveTab(tab);
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set("tab", tab);
+      setSearchParams(nextParams, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+
+  useEffect(() => {
+    if (!autoRotateEnabled) {
+      setAutoRotateRemainingSeconds(AUTO_ROTATE_INTERVAL_SECONDS);
+      return;
+    }
+
+    const startedAt = Date.now();
+    setAutoRotateRemainingSeconds(AUTO_ROTATE_INTERVAL_SECONDS);
+
+    const interval = window.setInterval(() => {
+      const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+      const remainingSeconds = Math.max(
+        0,
+        AUTO_ROTATE_INTERVAL_SECONDS - elapsedSeconds,
+      );
+      setAutoRotateRemainingSeconds(remainingSeconds);
+
+      if (remainingSeconds === 0) {
+        updateActiveTab(getNextCloudHealthTab(activeTab));
+      }
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [activeTab, autoRotateEnabled, updateActiveTab]);
 
   const applyAlarmShortcut = (shortcut: AlarmShortcut) => {
     updateActiveTab("alarms");
@@ -2284,86 +2338,112 @@ export default function CloudHealthPage() {
         value={activeTab}
         onValueChange={(value) => {
           if (isCloudHealthTab(value)) {
-            updateActiveTab(value);
+            updateActiveTab(value, { manual: true });
           }
         }}
         className="space-y-4"
       >
-        <div
-          role="tablist"
-          aria-label="Cloud Health sections"
-          className="grid w-full max-w-[620px] grid-cols-2 rounded-lg border bg-muted/40 p-1 sm:grid-cols-5"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "overview"}
-            onClick={() => updateActiveTab("overview")}
-            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
-              activeTab === "overview"
-                ? "bg-primary/10 font-medium text-primary"
-                : ""
-            }`}
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div
+            role="tablist"
+            aria-label="Cloud Health sections"
+            className="grid w-full max-w-[620px] grid-cols-2 rounded-lg border bg-muted/40 p-1 sm:grid-cols-5"
           >
-            <LayoutDashboard className="h-3.5 w-3.5 opacity-80" />
-            Overview
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "alarms"}
-            onClick={() => updateActiveTab("alarms")}
-            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
-              activeTab === "alarms"
-                ? "bg-primary/10 font-medium text-primary"
-                : ""
-            }`}
-          >
-            <BellRing className="h-3.5 w-3.5 opacity-80" />
-            Alarms
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "capacity"}
-            onClick={() => updateActiveTab("capacity")}
-            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
-              activeTab === "capacity"
-                ? "bg-primary/10 font-medium text-primary"
-                : ""
-            }`}
-          >
-            <Activity className="h-3.5 w-3.5 opacity-80" />
-            Capacity
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "network"}
-            onClick={() => updateActiveTab("network")}
-            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
-              activeTab === "network"
-                ? "bg-primary/10 font-medium text-primary"
-                : ""
-            }`}
-          >
-            <Wifi className="h-3.5 w-3.5 opacity-80" />
-            Network
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "host-groups"}
-            onClick={() => updateActiveTab("host-groups")}
-            className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
-              activeTab === "host-groups"
-                ? "bg-primary/10 font-medium text-primary"
-                : ""
-            }`}
-          >
-            <Server className="h-3.5 w-3.5 opacity-80" />
-            Host Groups
-          </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "overview"}
+              onClick={() => updateActiveTab("overview", { manual: true })}
+              className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+                activeTab === "overview"
+                  ? "bg-primary/10 font-medium text-primary"
+                  : ""
+              }`}
+            >
+              <LayoutDashboard className="h-3.5 w-3.5 opacity-80" />
+              Overview
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "alarms"}
+              onClick={() => updateActiveTab("alarms", { manual: true })}
+              className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+                activeTab === "alarms"
+                  ? "bg-primary/10 font-medium text-primary"
+                  : ""
+              }`}
+            >
+              <BellRing className="h-3.5 w-3.5 opacity-80" />
+              Alarms
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "capacity"}
+              onClick={() => updateActiveTab("capacity", { manual: true })}
+              className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+                activeTab === "capacity"
+                  ? "bg-primary/10 font-medium text-primary"
+                  : ""
+              }`}
+            >
+              <Activity className="h-3.5 w-3.5 opacity-80" />
+              Capacity
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "network"}
+              onClick={() => updateActiveTab("network", { manual: true })}
+              className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+                activeTab === "network"
+                  ? "bg-primary/10 font-medium text-primary"
+                  : ""
+              }`}
+            >
+              <Wifi className="h-3.5 w-3.5 opacity-80" />
+              Network
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "host-groups"}
+              onClick={() =>
+                updateActiveTab("host-groups", { manual: true })
+              }
+              className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
+                activeTab === "host-groups"
+                  ? "bg-primary/10 font-medium text-primary"
+                  : ""
+              }`}
+            >
+              <Server className="h-3.5 w-3.5 opacity-80" />
+              Host Groups
+            </button>
+          </div>
+          <div className="flex flex-col gap-1 rounded-lg border bg-card px-3 py-2 sm:flex-row sm:items-center sm:gap-3">
+            <Button
+              type="button"
+              variant={autoRotateEnabled ? "default" : "outline"}
+              size="sm"
+              onClick={() => setAutoRotateEnabled((enabled) => !enabled)}
+            >
+              {autoRotateEnabled ? (
+                <Pause className="mr-2 h-4 w-4" />
+              ) : (
+                <Play className="mr-2 h-4 w-4" />
+              )}
+              Auto Rotate {autoRotateEnabled ? "On" : "Off"}
+            </Button>
+            {autoRotateEnabled ? (
+              <span className="text-xs font-medium text-muted-foreground">
+                Auto Rotate On · Next:{" "}
+                {CLOUD_HEALTH_TAB_LABELS[getNextCloudHealthTab(activeTab)]} in{" "}
+                {autoRotateRemainingSeconds}s
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <TabsContent value="overview" className="space-y-6">
