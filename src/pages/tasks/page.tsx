@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { useCrm } from "@/lib/crm-context.tsx";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import {
@@ -39,15 +40,11 @@ import {
   LayoutGrid,
   List,
   MessageSquare,
-  Pencil,
   Plus,
-  Send,
-  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
 type Task = Doc<"tasks">;
-type TaskComment = Doc<"taskComments">;
 type TaskStatus = Task["status"];
 type TaskPriority = Task["priority"];
 type ViewFilter = "my" | "created" | "all";
@@ -107,19 +104,6 @@ function formatDate(timestamp?: number) {
   });
 }
 
-function formatDateTime(timestamp?: number) {
-  if (!timestamp) {
-    return "No date";
-  }
-  return new Date(timestamp).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 function dateInputToTimestamp(value: string) {
   if (!value) {
     return undefined;
@@ -161,36 +145,17 @@ function statusAccentClass(status: TaskStatus) {
   return "border-t-slate-400";
 }
 
-function canManageComment(
-  currentUser: Doc<"users"> | null | undefined,
-  comment: TaskComment,
-) {
-  if (!currentUser) return false;
-  return (
-    comment.createdBy === currentUser._id ||
-    currentUser.role === "ceo" ||
-    currentUser.role === "head_of_business"
-  );
-}
-
 export default function TasksPage() {
   const { currentUser } = useCrm();
+  const navigate = useNavigate();
   const tasks = useQuery(api.tasks.list, {});
   const reportToCandidates = useQuery(api.tasks.listReportToCandidates, {});
   const users = useQuery(api.users.listAll, {});
   const companies = useQuery(api.companies.list, {});
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const selectedTaskComments = useQuery(
-    api.tasks.listComments,
-    selectedTask ? { taskId: selectedTask._id } : "skip",
-  );
   const createTask = useMutation(api.tasks.create);
   const updateTask = useMutation(api.tasks.update);
   const updateStatus = useMutation(api.tasks.updateStatus);
   const archiveTask = useMutation(api.tasks.archive);
-  const createComment = useMutation(api.tasks.createComment);
-  const updateComment = useMutation(api.tasks.updateComment);
-  const archiveComment = useMutation(api.tasks.archiveComment);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
@@ -328,18 +293,9 @@ export default function TasksPage() {
     }
   };
 
-  const selectedTaskAssignee = selectedTask?.assigneeId
-    ? userMap.get(selectedTask.assigneeId)
-    : null;
-  const selectedTaskReportTo = selectedTask?.reportToId
-    ? userMap.get(selectedTask.reportToId)
-    : undefined;
-  const selectedTaskCreator = selectedTask
-    ? userMap.get(selectedTask.createdBy)
-    : undefined;
-  const selectedTaskCompany = selectedTask?.companyId
-    ? companyMap.get(selectedTask.companyId)
-    : null;
+  const openTaskDetail = (task: Task) => {
+    void navigate(`/tasks/${task._id}`);
+  };
 
   return (
     <div className="space-y-6 p-6 md:p-8">
@@ -498,7 +454,7 @@ export default function TasksPage() {
               companyMap={companyMap}
               pendingAction={pendingAction}
               onStatusChange={handleStatusChange}
-              onOpenDetails={setSelectedTask}
+              onOpenDetails={openTaskDetail}
             />
           ) : (
             <div className="space-y-3">
@@ -519,7 +475,7 @@ export default function TasksPage() {
                   onAssigneeChange={handleAssigneeChange}
                   onReportToChange={handleReportToChange}
                   onArchive={handleArchive}
-                  onOpenDetails={setSelectedTask}
+                  onOpenDetails={openTaskDetail}
                 />
               ))}
             </div>
@@ -535,25 +491,6 @@ export default function TasksPage() {
         reportToCandidates={reportToCandidates}
         companies={companies}
         onCreate={createTask}
-      />
-      <TaskDetailDialog
-        task={selectedTask}
-        open={selectedTask !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedTask(null);
-          }
-        }}
-        comments={selectedTaskComments}
-        currentUser={currentUser}
-        userMap={userMap}
-        assignee={selectedTaskAssignee}
-        reportTo={selectedTaskReportTo}
-        creator={selectedTaskCreator}
-        company={selectedTaskCompany}
-        onCreateComment={createComment}
-        onUpdateComment={updateComment}
-        onArchiveComment={archiveComment}
       />
     </div>
   );
@@ -660,7 +597,19 @@ function TaskBoardCard({
     (task.reportToId ? "Unknown" : creator?.name || creator?.email || "Not set");
 
   return (
-    <Card className="border bg-background shadow-sm transition-colors hover:border-primary/30">
+    <Card
+      className="cursor-pointer border bg-background shadow-sm transition-colors hover:border-primary/30"
+      role="button"
+      tabIndex={0}
+      data-testid={`task-card-${task._id}`}
+      onClick={() => onOpenDetails(task)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpenDetails(task);
+        }
+      }}
+    >
       <CardContent className="space-y-3 p-3">
         <div className="space-y-2">
           <div className="font-medium leading-snug">{task.title}</div>
@@ -694,6 +643,7 @@ function TaskBoardCard({
           <SelectTrigger
             className="h-8 text-xs"
             aria-label={`Move task ${task.title}`}
+            onClick={(event) => event.stopPropagation()}
           >
             <SelectValue />
           </SelectTrigger>
@@ -710,10 +660,13 @@ function TaskBoardCard({
           variant="secondary"
           size="sm"
           className="h-8 w-full text-xs"
-          onClick={() => onOpenDetails(task)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenDetails(task);
+          }}
         >
           <MessageSquare className="mr-2 h-3.5 w-3.5" />
-          Comments
+          Details
         </Button>
       </CardContent>
     </Card>
@@ -787,7 +740,13 @@ function TaskRow({
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-semibold">{task.title}</h3>
+            <button
+              type="button"
+              className="text-left font-semibold transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => onOpenDetails(task)}
+            >
+              {task.title}
+            </button>
             <Badge className={statusBadgeClass(task.status)}>
               {statusLabel(task.status)}
             </Badge>
@@ -896,7 +855,7 @@ function TaskRow({
             onClick={() => onOpenDetails(task)}
           >
             <MessageSquare className="mr-2 h-4 w-4" />
-            Comments
+            Details
           </Button>
 
           <Button
@@ -912,335 +871,6 @@ function TaskRow({
         </div>
       </div>
     </div>
-  );
-}
-
-function TaskDetailDialog({
-  task,
-  open,
-  onOpenChange,
-  comments,
-  currentUser,
-  userMap,
-  assignee,
-  reportTo,
-  creator,
-  company,
-  onCreateComment,
-  onUpdateComment,
-  onArchiveComment,
-}: {
-  task: Task | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  comments: TaskComment[] | undefined;
-  currentUser: Doc<"users"> | null | undefined;
-  userMap: Map<Id<"users">, Doc<"users">>;
-  assignee: Doc<"users"> | null | undefined;
-  reportTo: Doc<"users"> | undefined;
-  creator: Doc<"users"> | undefined;
-  company: Doc<"companies"> | null | undefined;
-  onCreateComment: (args: {
-    taskId: Id<"tasks">;
-    body: string;
-  }) => Promise<unknown>;
-  onUpdateComment: (args: {
-    commentId: Id<"taskComments">;
-    body: string;
-  }) => Promise<unknown>;
-  onArchiveComment: (args: {
-    commentId: Id<"taskComments">;
-  }) => Promise<unknown>;
-}) {
-  const [newComment, setNewComment] = useState("");
-  const [editingCommentId, setEditingCommentId] =
-    useState<Id<"taskComments"> | null>(null);
-  const [editingBody, setEditingBody] = useState("");
-  const [pendingCommentAction, setPendingCommentAction] = useState<string | null>(
-    null,
-  );
-
-  useEffect(() => {
-    if (!open) {
-      setNewComment("");
-      setEditingCommentId(null);
-      setEditingBody("");
-      setPendingCommentAction(null);
-    }
-  }, [open, task?._id]);
-
-  if (!task) {
-    return null;
-  }
-
-  const reportToLabel =
-    reportTo?.name ||
-    reportTo?.email ||
-    (task.reportToId ? "Unknown" : creator?.name || creator?.email || "Not set");
-
-  const handleCreateComment = async (event: FormEvent) => {
-    event.preventDefault();
-    const body = newComment.trim();
-    if (!body) {
-      return;
-    }
-
-    setPendingCommentAction("create");
-    try {
-      await onCreateComment({ taskId: task._id, body });
-      setNewComment("");
-      toast.success("Comment added");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to add comment",
-      );
-    } finally {
-      setPendingCommentAction(null);
-    }
-  };
-
-  const handleUpdateComment = async (commentId: Id<"taskComments">) => {
-    const body = editingBody.trim();
-    if (!body) {
-      return;
-    }
-
-    setPendingCommentAction(`${commentId}:update`);
-    try {
-      await onUpdateComment({ commentId, body });
-      setEditingCommentId(null);
-      setEditingBody("");
-      toast.success("Comment updated");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to update comment",
-      );
-    } finally {
-      setPendingCommentAction(null);
-    }
-  };
-
-  const handleArchiveComment = async (commentId: Id<"taskComments">) => {
-    setPendingCommentAction(`${commentId}:archive`);
-    try {
-      await onArchiveComment({ commentId });
-      toast.success("Comment archived");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to archive comment",
-      );
-    } finally {
-      setPendingCommentAction(null);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{task.title}</DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-5">
-          <div className="flex flex-wrap gap-2">
-            <Badge className={statusBadgeClass(task.status)}>
-              {statusLabel(task.status)}
-            </Badge>
-            <Badge className={priorityBadgeClass(task.priority)}>
-              {priorityLabel(task.priority)}
-            </Badge>
-          </div>
-
-          <div className="grid gap-3 rounded-lg border bg-muted/30 p-4 text-sm sm:grid-cols-2">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Assignee
-              </p>
-              <p>{assignee?.name || assignee?.email || "Unassigned"}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Report To
-              </p>
-              <p>
-                {reportToLabel}
-                {!task.reportToId && creator ? " (created by)" : ""}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Due Date
-              </p>
-              <p>{formatDate(task.dueDate)}</p>
-            </div>
-            {company ? (
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Company
-                </p>
-                <p>{company.name}</p>
-              </div>
-            ) : null}
-          </div>
-
-          {task.description ? (
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold">Description</h3>
-              <p className="whitespace-pre-wrap rounded-lg border bg-card p-3 text-sm text-muted-foreground">
-                {task.description}
-              </p>
-            </div>
-          ) : null}
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Comments</h3>
-              <Badge variant="secondary" className="text-xs">
-                {comments?.length ?? 0}
-              </Badge>
-            </div>
-
-            {comments === undefined ? (
-              <div className="space-y-2">
-                <Skeleton className="h-20" />
-                <Skeleton className="h-20" />
-              </div>
-            ) : comments.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
-                No comments yet.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {comments.map((comment) => {
-                  const commenter = userMap.get(comment.createdBy);
-                  const canEdit = canManageComment(currentUser, comment);
-                  const isEditing = editingCommentId === comment._id;
-
-                  return (
-                    <div
-                      key={comment._id}
-                      className="rounded-lg border bg-card p-3"
-                    >
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="text-sm font-medium">
-                            {commenter?.name ||
-                              commenter?.email ||
-                              "Team member"}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatDateTime(comment.createdAt)}
-                            {comment.updatedAt ? " · edited" : ""}
-                          </p>
-                        </div>
-                        {canEdit ? (
-                          <div className="flex gap-1">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setEditingCommentId(comment._id);
-                                setEditingBody(comment.body);
-                              }}
-                            >
-                              <Pencil className="mr-2 h-3.5 w-3.5" />
-                              Edit
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-muted-foreground"
-                              disabled={
-                                pendingCommentAction ===
-                                `${comment._id}:archive`
-                              }
-                              onClick={() =>
-                                void handleArchiveComment(comment._id)
-                              }
-                            >
-                              <Trash2 className="mr-2 h-3.5 w-3.5" />
-                              Archive
-                            </Button>
-                          </div>
-                        ) : null}
-                      </div>
-
-                      {isEditing ? (
-                        <div className="mt-3 space-y-2">
-                          <Textarea
-                            value={editingBody}
-                            maxLength={2000}
-                            onChange={(event) =>
-                              setEditingBody(event.target.value)
-                            }
-                            aria-label={`Edit comment ${comment._id}`}
-                          />
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setEditingCommentId(null);
-                                setEditingBody("");
-                              }}
-                            >
-                              Cancel
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              disabled={
-                                !editingBody.trim() ||
-                                pendingCommentAction ===
-                                  `${comment._id}:update`
-                              }
-                              onClick={() => void handleUpdateComment(comment._id)}
-                            >
-                              Save
-                            </Button>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
-                          {comment.body}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <form className="space-y-2" onSubmit={handleCreateComment}>
-              <Label htmlFor="task-comment">Add comment</Label>
-              <Textarea
-                id="task-comment"
-                value={newComment}
-                maxLength={2000}
-                onChange={(event) => setNewComment(event.target.value)}
-                placeholder="Share an update or ask a question..."
-                rows={3}
-              />
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground">
-                  {newComment.length}/2000 characters
-                </p>
-                <Button
-                  type="submit"
-                  disabled={!newComment.trim() || pendingCommentAction === "create"}
-                >
-                  <Send className="mr-2 h-4 w-4" />
-                  Add Comment
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }
 

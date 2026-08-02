@@ -27,6 +27,7 @@ import CloudHealthHostGroupPage from "./pages/cloud-health/host-group-page.tsx";
 import CloudHealthRegionPage from "./pages/cloud-health/region-page.tsx";
 import DocumentationPage from "./pages/documentation/page.tsx";
 import TasksPage from "./pages/tasks/page.tsx";
+import TaskDetailPage from "./pages/tasks/detail-page.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 export default function App() {
@@ -84,6 +85,7 @@ export default function App() {
             <Route path="/documentation" element={<DocumentationPage />} />
             <Route path="/documentation/:slug" element={<DocumentationPage />} />
             <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
             <Route path="/team" element={<TeamPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>

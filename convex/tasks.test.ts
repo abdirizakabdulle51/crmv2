@@ -361,6 +361,38 @@ describe("tasks", () => {
     expect(titles).not.toContain("Outside AM A scope");
   });
 
+  it("gets a visible task by id", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await asUser(t, s.amA).mutation(api.tasks.create, {
+      title: "Readable task",
+      assigneeId: s.amA._id,
+      companyId: s.companyA,
+    });
+
+    const task = await asUser(t, s.amA).query(api.tasks.get, { taskId });
+
+    expect(task).toMatchObject({
+      _id: taskId,
+      title: "Readable task",
+      assigneeId: s.amA._id,
+    });
+  });
+
+  it("blocks get for out-of-scope tasks", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const hiddenTaskId = await asUser(t, s.amB).mutation(api.tasks.create, {
+      title: "Hidden task",
+      assigneeId: s.amB._id,
+      companyId: s.companyB,
+    });
+
+    await expect(
+      asUser(t, s.amA).query(api.tasks.get, { taskId: hiddenTaskId }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
   it("validates Report To changes on update", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

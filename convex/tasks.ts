@@ -411,6 +411,21 @@ export const list = query({
   },
 });
 
+export const get = query({
+  args: {
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      return null;
+    }
+    await assertCanViewTask(ctx, user, task);
+    return task;
+  },
+});
+
 export const listReportToCandidates = query({
   args: {},
   handler: async (ctx) => {

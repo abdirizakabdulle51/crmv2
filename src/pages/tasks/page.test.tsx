@@ -1,7 +1,7 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import TasksPage from "./page.tsx";
 
@@ -28,10 +28,6 @@ vi.mock("@/convex/_generated/api.js", () => ({
       update: "tasks.update",
       updateStatus: "tasks.updateStatus",
       archive: "tasks.archive",
-      listComments: "tasks.listComments",
-      createComment: "tasks.createComment",
-      updateComment: "tasks.updateComment",
-      archiveComment: "tasks.archiveComment",
     },
     users: { listAll: "users.listAll" },
   },
@@ -43,27 +39,19 @@ const mocks = vi.hoisted(() => ({
   reportToCandidates: [] as Doc<"users">[],
   users: [] as Doc<"users">[],
   companies: [] as Doc<"companies">[],
-  commentsByTask: {} as Record<string, Doc<"taskComments">[]>,
   createTask: vi.fn(),
   updateTask: vi.fn(),
   updateStatus: vi.fn(),
   archiveTask: vi.fn(),
-  createComment: vi.fn(),
-  updateComment: vi.fn(),
-  archiveComment: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
-  useQuery: (query: string, args?: { taskId?: string } | "skip") => {
+  useQuery: (query: string) => {
     if (query === "tasks.list") return mocks.tasks;
     if (query === "tasks.listReportToCandidates")
       return mocks.reportToCandidates;
-    if (query === "tasks.listComments") {
-      if (args === "skip" || !args?.taskId) return undefined;
-      return mocks.commentsByTask[args.taskId] ?? [];
-    }
     if (query === "users.listAll") return mocks.users;
     if (query === "companies.list") return mocks.companies;
     return undefined;
@@ -73,9 +61,6 @@ vi.mock("convex/react", () => ({
     if (mutation === "tasks.update") return mocks.updateTask;
     if (mutation === "tasks.updateStatus") return mocks.updateStatus;
     if (mutation === "tasks.archive") return mocks.archiveTask;
-    if (mutation === "tasks.createComment") return mocks.createComment;
-    if (mutation === "tasks.updateComment") return mocks.updateComment;
-    if (mutation === "tasks.archiveComment") return mocks.archiveComment;
     return vi.fn();
   },
 }));
@@ -132,21 +117,6 @@ function task(
   };
 }
 
-function comment(
-  id: string,
-  overrides: Partial<Doc<"taskComments">> = {},
-): Doc<"taskComments"> {
-  return {
-    _id: id as Id<"taskComments">,
-    _creationTime: 1,
-    taskId: "task-1" as Id<"tasks">,
-    body: "Checked with NOC and waiting for confirmation.",
-    createdBy: "user-1" as Id<"users">,
-    createdAt: 1785600000000,
-    ...overrides,
-  };
-}
-
 function seed() {
   const currentUser = user("user-1", "Amina Ali");
   const otherUser = user("user-2", "Omar Hassan");
@@ -186,16 +156,11 @@ function seed() {
       assigneeId: "user-1" as Id<"users">,
     }),
   ];
-  mocks.commentsByTask = {
-    "task-1": [
-      comment("comment-1"),
-      comment("comment-2", {
-        body: "Second update from Omar.",
-        createdBy: "user-2" as Id<"users">,
-        createdAt: 1785603600000,
-      }),
-    ],
-  };
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname}</div>;
 }
 
 function renderTasksPage() {
@@ -203,6 +168,7 @@ function renderTasksPage() {
     <MemoryRouter initialEntries={["/tasks"]}>
       <Routes>
         <Route path="/tasks" element={<TasksPage />} />
+        <Route path="/tasks/:taskId" element={<LocationProbe />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -222,9 +188,6 @@ describe("TasksPage", () => {
     mocks.updateTask.mockResolvedValue(undefined);
     mocks.updateStatus.mockResolvedValue(undefined);
     mocks.archiveTask.mockResolvedValue(undefined);
-    mocks.createComment.mockResolvedValue("comment-new");
-    mocks.updateComment.mockResolvedValue(undefined);
-    mocks.archiveComment.mockResolvedValue(undefined);
   });
 
   it("renders the /tasks page and visible task list", () => {
@@ -280,110 +243,34 @@ describe("TasksPage", () => {
     });
   });
 
-  it("opens task details and renders existing comments", async () => {
+  it("opens task detail page from a list title", async () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getAllByRole("button", { name: "Comments" })[0]);
-    const dialog = screen.getByRole("dialog");
-
-    expect(within(dialog).getByText("Follow up with customer")).toBeInTheDocument();
-    expect(within(dialog).getByText("To Do")).toBeInTheDocument();
-    expect(within(dialog).getByText("Medium")).toBeInTheDocument();
-    expect(within(dialog).getByText("Confirm the implementation plan.")).toBeInTheDocument();
-    expect(within(dialog).getByText("Assignee")).toBeInTheDocument();
-    expect(within(dialog).getByText("Report To")).toBeInTheDocument();
-    expect(within(dialog).getByText("AICC")).toBeInTheDocument();
-    expect(
-      within(dialog).getByText("Checked with NOC and waiting for confirmation."),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText("Second update from Omar.")).toBeInTheDocument();
-    expect(within(dialog).getAllByText("Amina Ali").length).toBeGreaterThan(0);
-    expect(within(dialog).getByText("Omar Hassan")).toBeInTheDocument();
-  });
-
-  it("adds a valid task comment", async () => {
-    const user = userEvent.setup();
-    renderTasksPage();
-
-    await user.click(screen.getAllByRole("button", { name: "Comments" })[0]);
-    const dialog = screen.getByRole("dialog");
-    await user.type(
-      within(dialog).getByLabelText("Add comment"),
-      "Customer confirmed the rollout.",
+    await user.click(
+      screen.getByRole("button", { name: "Follow up with customer" }),
     );
-    await user.click(within(dialog).getByRole("button", { name: "Add Comment" }));
 
-    await waitFor(() => {
-      expect(mocks.createComment).toHaveBeenCalledWith({
-        taskId: "task-1",
-        body: "Customer confirmed the rollout.",
-      });
-    });
+    expect(screen.getByTestId("location")).toHaveTextContent("/tasks/task-1");
   });
 
-  it("does not submit a blank task comment", async () => {
+  it("opens task detail page from a list Details action", async () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getAllByRole("button", { name: "Comments" })[0]);
-    const dialog = screen.getByRole("dialog");
-    await user.type(within(dialog).getByLabelText("Add comment"), "   ");
+    await user.click(screen.getAllByRole("button", { name: "Details" })[0]);
 
-    expect(
-      within(dialog).getByRole("button", { name: "Add Comment" }),
-    ).toBeDisabled();
-    expect(mocks.createComment).not.toHaveBeenCalled();
+    expect(screen.getByTestId("location")).toHaveTextContent("/tasks/task-1");
   });
 
-  it("edits a task comment", async () => {
+  it("opens task detail page from a board card", async () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getAllByRole("button", { name: "Comments" })[0]);
-    const dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getAllByRole("button", { name: "Edit" })[0]);
-    const editBox = within(dialog).getByLabelText(/Edit comment comment-1/i);
-    await user.clear(editBox);
-    await user.type(editBox, "Edited progress update.");
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: /Board/i }));
+    await user.click(screen.getByTestId("task-card-task-1"));
 
-    await waitFor(() => {
-      expect(mocks.updateComment).toHaveBeenCalledWith({
-        commentId: "comment-1",
-        body: "Edited progress update.",
-      });
-    });
-  });
-
-  it("archives a task comment", async () => {
-    const user = userEvent.setup();
-    renderTasksPage();
-
-    await user.click(screen.getAllByRole("button", { name: "Comments" })[0]);
-    const dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getAllByRole("button", { name: "Archive" })[0]);
-
-    await waitFor(() => {
-      expect(mocks.archiveComment).toHaveBeenCalledWith({
-        commentId: "comment-1",
-      });
-    });
-  });
-
-  it("shows backend denial errors from comment actions", async () => {
-    const user = userEvent.setup();
-    mocks.createComment.mockRejectedValue(new Error("FORBIDDEN"));
-    renderTasksPage();
-
-    await user.click(screen.getAllByRole("button", { name: "Comments" })[0]);
-    const dialog = screen.getByRole("dialog");
-    await user.type(within(dialog).getByLabelText("Add comment"), "No access");
-    await user.click(within(dialog).getByRole("button", { name: "Add Comment" }));
-
-    await waitFor(() => {
-      expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");
-    });
+    expect(screen.getByTestId("location")).toHaveTextContent("/tasks/task-1");
   });
 
   it("renders a board view grouped by task status", async () => {
