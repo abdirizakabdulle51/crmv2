@@ -86,6 +86,17 @@ function getAdvisorCategory(rule: string): AdvisorCategory {
   return RULE_CATEGORIES[rule] ?? "Sales Opportunities";
 }
 
+function getRecommendationTitle(recommendation: Recommendation) {
+  const ruleLabel = RULE_LABELS[recommendation.rule] ?? "Recommendation";
+  return `${ruleLabel}: ${recommendation.recommendedService}`;
+}
+
+function formatRecommendationValue(recommendation: Recommendation) {
+  return typeof recommendation.estimatedMonthlyValue === "number"
+    ? `${formatCurrency(recommendation.estimatedMonthlyValue)}/mo`
+    : recommendation.estimatedValue;
+}
+
 function PriorityBadge({ priority }: { priority: Recommendation["priority"] }) {
   switch (priority) {
     case "high":
@@ -411,54 +422,86 @@ export default function RecommendationsPage() {
               </Card>
             ) : (
               <Card key={`${row.rec.companyId}-${row.rec.rule}-${row.idx}`}>
-                <CardContent className="p-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary/10 text-primary">
+                <CardContent className="space-y-4 p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                         {RULE_ICONS[row.rec.rule] || (
                           <Lightbulb className="h-4 w-4" />
                         )}
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm">
-                            {row.rec.companyName}
-                          </span>
-                          <PriorityBadge priority={row.rec.priority} />
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-0.5">
-                          {getAdvisorCategory(row.rec.rule)} -{" "}
+                      <div className="min-w-0">
+                        <h3 className="text-base font-semibold leading-6 text-foreground">
+                          {getRecommendationTitle(row.rec)}
+                        </h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {row.rec.companyName} · Source rule:{" "}
                           {RULE_LABELS[row.rec.rule] || row.rec.rule}
-                        </div>
+                        </p>
                       </div>
                     </div>
-                    <div className="flex-1 min-w-0 sm:ml-4">
-                      <p className="text-sm text-foreground">
-                        {row.rec.triggerReason}
+                    <div className="flex flex-wrap gap-2 lg:justify-end">
+                      <PriorityBadge priority={row.rec.priority} />
+                      <Badge variant="outline">
+                        {getAdvisorCategory(row.rec.rule)}
+                      </Badge>
+                      <Badge variant="secondary">
+                        {formatRecommendationValue(row.rec)}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/20 p-3">
+                    <div className="text-xs font-medium uppercase text-muted-foreground">
+                      Reason
+                    </div>
+                    <p className="mt-1 text-sm text-foreground">
+                      {row.rec.triggerReason}
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                    <div>
+                      <div className="text-xs font-medium uppercase text-muted-foreground">
+                        Evidence
+                      </div>
+                      <p className="mt-1 text-muted-foreground">
+                        {row.rec.estimateBasis ?? "Rule-based usage signal"}
                       </p>
-                      <div className="flex flex-wrap gap-3 mt-1.5 text-xs">
-                        <span className="text-muted-foreground">
-                          <span className="font-medium text-foreground">
-                            Recommend:
-                          </span>{" "}
-                          {row.rec.recommendedService}
-                        </span>
-                        <span className="text-muted-foreground">
-                          <span className="font-medium text-foreground">
-                            Est. value:
-                          </span>{" "}
-                          {row.rec.estimatedValue}
-                        </span>
-                        {row.rec.estimateBasis ? (
-                          <span className="text-muted-foreground">
-                            <span className="font-medium text-foreground">
-                              Basis:
-                            </span>{" "}
-                            {row.rec.estimateBasis}
-                          </span>
-                        ) : null}
-                      </div>
                     </div>
+                    <div>
+                      <div className="text-xs font-medium uppercase text-muted-foreground">
+                        Catalog Item
+                      </div>
+                      <p className="mt-1 text-muted-foreground">
+                        {row.rec.estimateCatalogItemName ?? "Not specified"}
+                      </p>
+                    </div>
+                    <div>
+                      <div className="text-xs font-medium uppercase text-muted-foreground">
+                        Source Rule
+                      </div>
+                      <p className="mt-1 text-muted-foreground">
+                        {row.rec.rule}
+                      </p>
+                    </div>
+                    <div>
+                      <div className="text-xs font-medium uppercase text-muted-foreground">
+                        Service
+                      </div>
+                      <p className="mt-1 text-muted-foreground">
+                        {row.rec.recommendedService}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
+                    <span className="font-medium text-foreground">
+                      Recommended action:
+                    </span>{" "}
+                    <span className="text-muted-foreground">
+                      Add/Review {row.rec.recommendedService}.
+                    </span>
                   </div>
                 </CardContent>
               </Card>

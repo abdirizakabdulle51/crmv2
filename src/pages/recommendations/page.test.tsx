@@ -104,6 +104,9 @@ describe("RecommendationsPage pagination", () => {
         companyName: "Security Co",
         rule: "waf",
         triggerReason: "Needs WAF",
+        recommendedService: "WAF",
+        estimateBasis: "Growing usage trend",
+        estimateCatalogItemName: "Basic WAF",
       },
     ];
     mocks.aiRecommendations = [];
@@ -119,8 +122,13 @@ describe("RecommendationsPage pagination", () => {
 
     await user.click(screen.getByRole("button", { name: "Security" }));
 
-    expect(screen.getByText("Security Co")).toBeInTheDocument();
-    expect(screen.queryByText("Backup Co")).not.toBeInTheDocument();
+    expect(screen.getByText(/Security Co/)).toBeInTheDocument();
+    expect(screen.getByText("WAF: WAF")).toBeInTheDocument();
+    expect(screen.getByText("Recommended action:")).toBeInTheDocument();
+    expect(screen.getByText("Add/Review WAF.")).toBeInTheDocument();
+    expect(screen.getByText("Growing usage trend")).toBeInTheDocument();
+    expect(screen.getByText("Basic WAF")).toBeInTheDocument();
+    expect(screen.queryByText(/Backup Co/)).not.toBeInTheDocument();
   });
 
   it("changes page size and navigates recommendation pages", async () => {
@@ -130,8 +138,8 @@ describe("RecommendationsPage pagination", () => {
     render(<RecommendationsPage />);
 
     expect(screen.getAllByText("Showing 1-50 of 60")).toHaveLength(2);
-    expect(screen.getByText("Company 01")).toBeInTheDocument();
-    expect(screen.queryByText("Company 51")).not.toBeInTheDocument();
+    expect(screen.getByText(/Company 01/)).toBeInTheDocument();
+    expect(screen.queryByText(/Company 51/)).not.toBeInTheDocument();
 
     await user.click(
       screen.getByRole("combobox", { name: "Recommendations per page" }),
@@ -139,13 +147,13 @@ describe("RecommendationsPage pagination", () => {
     await user.click(screen.getByRole("option", { name: "25 per page" }));
 
     expect(screen.getAllByText("Showing 1-25 of 60")).toHaveLength(2);
-    expect(screen.queryByText("Company 26")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Company 26/)).not.toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "Next" })[0]);
 
     expect(screen.getAllByText("Showing 26-50 of 60")).toHaveLength(2);
-    expect(screen.queryByText("Company 01")).not.toBeInTheDocument();
-    expect(screen.getByText("Company 26")).toBeInTheDocument();
+    expect(screen.queryByText(/Company 01/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Company 26/)).toBeInTheDocument();
   });
 
   it("resets to page 1 when an existing filter changes", async () => {
@@ -161,7 +169,7 @@ describe("RecommendationsPage pagination", () => {
     await user.click(screen.getByRole("option", { name: "Low" }));
 
     expect(screen.getAllByText("Showing 1-5 of 5")).toHaveLength(2);
-    expect(screen.getByText("Company 56")).toBeInTheDocument();
+    expect(screen.getByText(/Company 56/)).toBeInTheDocument();
   });
 
   it("shows stored AI narrative above the company's first visible rule", () => {
