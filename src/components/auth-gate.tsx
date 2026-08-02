@@ -19,8 +19,7 @@ function LoginPage() {
       <div className="text-center space-y-6 max-w-md px-6">
         <BrandLogo
           className="justify-center"
-          iconClassName="h-12 w-12"
-          textClassName="text-3xl text-foreground"
+          iconClassName="h-12 w-auto max-w-[240px]"
         />
         <p className="text-muted-foreground">
           Sign in to access the CRM platform

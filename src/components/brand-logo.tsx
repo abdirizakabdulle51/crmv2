@@ -1,25 +1,19 @@
 type BrandLogoProps = {
   className?: string;
   iconClassName?: string;
-  textClassName?: string;
 };
 
 export function BrandLogo({
   className = "",
-  iconClassName = "h-9 w-9",
-  textClassName = "text-lg",
+  iconClassName = "h-9 w-auto",
 }: BrandLogoProps) {
   return (
-    <div className={`flex items-center gap-2.5 ${className}`}>
+    <div className={`flex items-center ${className}`}>
       <img
-        src="/htgclouds-icon.svg"
-        alt=""
-        aria-hidden="true"
-        className={`${iconClassName} shrink-0`}
+        src="/Logo.svg"
+        alt="HTGCLOUDS"
+        className={`${iconClassName} shrink-0 object-contain`}
       />
-      <span className={`font-bold tracking-tight ${textClassName}`}>
-        HTGCLOUDS
-      </span>
     </div>
   );
 }

@@ -103,8 +103,7 @@ export default function AppLayout() {
       <aside className="hidden md:flex md:w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
         <div className="p-5 border-b border-sidebar-border">
           <BrandLogo
-            iconClassName="h-8 w-8"
-            textClassName="text-lg text-sidebar-foreground"
+            iconClassName="h-8 w-auto max-w-[170px]"
           />
           <p className="text-xs text-sidebar-foreground/60 mt-0.5">
             One System. Every Team. Total Control.
