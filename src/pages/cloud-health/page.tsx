@@ -2343,7 +2343,7 @@ export default function CloudHealthPage() {
         }}
         className="space-y-4"
       >
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
           <div
             role="tablist"
             aria-label="Cloud Health sections"
@@ -2422,25 +2422,29 @@ export default function CloudHealthPage() {
               Host Groups
             </button>
           </div>
-          <div className="flex flex-col gap-1 rounded-lg border bg-card px-3 py-2 sm:flex-row sm:items-center sm:gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
-              variant={autoRotateEnabled ? "default" : "outline"}
+              variant="outline"
               size="sm"
+              className={`h-10 rounded-full border px-3 text-xs font-medium ${
+                autoRotateEnabled
+                  ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted/60"
+              }`}
               onClick={() => setAutoRotateEnabled((enabled) => !enabled)}
             >
               {autoRotateEnabled ? (
-                <Pause className="mr-2 h-4 w-4" />
+                <Pause className="mr-2 h-3.5 w-3.5" />
               ) : (
-                <Play className="mr-2 h-4 w-4" />
+                <Play className="mr-2 h-3.5 w-3.5" />
               )}
               Auto Rotate {autoRotateEnabled ? "On" : "Off"}
             </Button>
             {autoRotateEnabled ? (
-              <span className="text-xs font-medium text-muted-foreground">
-                Auto Rotate On · Next:{" "}
-                {CLOUD_HEALTH_TAB_LABELS[getNextCloudHealthTab(activeTab)]} in{" "}
-                {autoRotateRemainingSeconds}s
+              <span className="inline-flex h-10 items-center rounded-full border bg-muted/40 px-3 text-xs font-medium text-muted-foreground">
+                Next: {CLOUD_HEALTH_TAB_LABELS[getNextCloudHealthTab(activeTab)]}{" "}
+                in {autoRotateRemainingSeconds}s
               </span>
             ) : null}
           </div>
