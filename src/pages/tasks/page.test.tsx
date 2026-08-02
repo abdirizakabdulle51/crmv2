@@ -35,7 +35,9 @@ vi.mock("@/convex/_generated/api.js", () => ({
 
 const mocks = vi.hoisted(() => ({
   currentUser: null as Doc<"users"> | null,
-  tasks: [] as Doc<"tasks">[],
+  tasks: [] as Array<
+    Doc<"tasks"> & { commentCount?: number; attachmentCount?: number }
+  >,
   reportToCandidates: [] as Doc<"users">[],
   users: [] as Doc<"users">[],
   companies: [] as Doc<"companies">[],
@@ -101,8 +103,10 @@ function company(id: string, name: string): Doc<"companies"> {
 
 function task(
   id: string,
-  overrides: Partial<Doc<"tasks">> = {},
-): Doc<"tasks"> {
+  overrides: Partial<
+    Doc<"tasks"> & { commentCount?: number; attachmentCount?: number }
+  > = {},
+): Doc<"tasks"> & { commentCount?: number; attachmentCount?: number } {
   return {
     _id: id as Id<"tasks">,
     _creationTime: 1,
@@ -138,6 +142,8 @@ function seed() {
       reportToId: "user-1" as Id<"users">,
       companyId: "company-1" as Id<"companies">,
       dueDate: today + 24 * 60 * 60 * 1000,
+      commentCount: 1,
+      attachmentCount: 2,
     }),
     task("task-2", {
       title: "Created by me but assigned elsewhere",
@@ -369,6 +375,27 @@ describe("TasksPage", () => {
       "aria-pressed",
       "true",
     );
+  });
+
+  it("shows non-zero comment and attachment counts on board cards", () => {
+    renderTasksPage();
+
+    expect(screen.getByLabelText("1 comment")).toBeInTheDocument();
+    expect(screen.getByLabelText("2 attachments")).toBeInTheDocument();
+    expect(screen.queryByLabelText("0 comments")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("0 attachments")).not.toBeInTheDocument();
+  });
+
+  it("shows non-zero comment and attachment counts on list rows", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /List/i }));
+
+    expect(screen.getByLabelText("1 comment")).toBeInTheDocument();
+    expect(screen.getByLabelText("2 attachments")).toBeInTheDocument();
+    expect(screen.queryByLabelText("0 comments")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("0 attachments")).not.toBeInTheDocument();
   });
 
   it("applies existing filters in board view", async () => {

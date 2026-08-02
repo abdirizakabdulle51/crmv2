@@ -482,6 +482,39 @@ function taskMatchesFilters(
   return true;
 }
 
+async function countActiveTaskComments(ctx: Ctx, taskId: Id<"tasks">) {
+  const comments = await ctx.db
+    .query("taskComments")
+    .withIndex("by_task", (q) => q.eq("taskId", taskId))
+    .collect();
+
+  return comments.filter((comment) => comment.archivedAt === undefined).length;
+}
+
+async function countActiveTaskAttachments(ctx: Ctx, taskId: Id<"tasks">) {
+  const attachments = await ctx.db
+    .query("taskAttachments")
+    .withIndex("by_task", (q) => q.eq("taskId", taskId))
+    .collect();
+
+  return attachments.filter(
+    (attachment) => attachment.archivedAt === undefined,
+  ).length;
+}
+
+async function withTaskActivityCounts(ctx: Ctx, task: Doc<"tasks">) {
+  const [commentCount, attachmentCount] = await Promise.all([
+    countActiveTaskComments(ctx, task._id),
+    countActiveTaskAttachments(ctx, task._id),
+  ]);
+
+  return {
+    ...task,
+    commentCount,
+    attachmentCount,
+  };
+}
+
 export const list = query({
   args: {
     status: v.optional(statusValidator),
@@ -504,7 +537,10 @@ export const list = query({
       }
     }
 
-    return visibleTasks.sort((a, b) => b.updatedAt - a.updatedAt);
+    const sortedTasks = visibleTasks.sort((a, b) => b.updatedAt - a.updatedAt);
+    return await Promise.all(
+      sortedTasks.map((task) => withTaskActivityCounts(ctx, task)),
+    );
   },
 });
 

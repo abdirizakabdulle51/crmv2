@@ -39,12 +39,16 @@ import {
   LayoutGrid,
   List,
   MessageSquare,
+  Paperclip,
   Plus,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
-type Task = Doc<"tasks">;
+type Task = Doc<"tasks"> & {
+  commentCount?: number;
+  attachmentCount?: number;
+};
 type TaskStatus = Task["status"];
 type TaskPriority = Task["priority"];
 type ViewFilter = "my" | "created" | "all";
@@ -148,6 +152,42 @@ function statusAccentClass(status: TaskStatus) {
 
 function stopTaskNavigation(event: SyntheticEvent) {
   event.stopPropagation();
+}
+
+function TaskActivityCounts({ task }: { task: Task }) {
+  const commentCount = task.commentCount ?? 0;
+  const attachmentCount = task.attachmentCount ?? 0;
+
+  if (commentCount === 0 && attachmentCount === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      {commentCount > 0 ? (
+        <span
+          className="inline-flex items-center gap-1"
+          aria-label={`${commentCount} ${
+            commentCount === 1 ? "comment" : "comments"
+          }`}
+        >
+          <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>{commentCount}</span>
+        </span>
+      ) : null}
+      {attachmentCount > 0 ? (
+        <span
+          className="inline-flex items-center gap-1"
+          aria-label={`${attachmentCount} ${
+            attachmentCount === 1 ? "attachment" : "attachments"
+          }`}
+        >
+          <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>{attachmentCount}</span>
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 export default function TasksPage() {
@@ -692,6 +732,8 @@ function TaskBoardCard({
           {company ? <p>Company: {company.name}</p> : null}
         </div>
 
+        <TaskActivityCounts task={task} />
+
         <div
           onClick={stopTaskNavigation}
           onMouseDown={stopTaskNavigation}
@@ -875,6 +917,7 @@ function TaskRow({
             <span>Due: {formatDate(task.dueDate)}</span>
             {company ? <span>Company: {company.name}</span> : null}
             <span>Updated: {formatDate(task.updatedAt)}</span>
+            <TaskActivityCounts task={task} />
           </div>
         </div>
 

@@ -371,6 +371,98 @@ describe("tasks", () => {
     expect(titles).not.toContain("Outside AM A scope");
   });
 
+  it("returns non-archived comment and attachment counts for visible tasks only", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const [visibleStorageId, archivedStorageId, hiddenStorageId] =
+      await Promise.all([
+        storeTestFile(t, "visible"),
+        storeTestFile(t, "archived"),
+        storeTestFile(t, "hidden"),
+      ]);
+
+    const { visibleTaskId, hiddenTaskId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const visibleTaskId = await ctx.db.insert("tasks", {
+        title: "Visible counted task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.amB._id,
+        companyId: s.companyA,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const hiddenTaskId = await ctx.db.insert("tasks", {
+        title: "Hidden counted task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.amB._id,
+        companyId: s.companyB,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("taskComments", {
+        taskId: visibleTaskId,
+        body: "Visible comment",
+        createdBy: s.amA._id,
+        createdAt: now,
+      });
+      await ctx.db.insert("taskComments", {
+        taskId: visibleTaskId,
+        body: "Archived comment",
+        createdBy: s.amA._id,
+        createdAt: now,
+        archivedAt: now + 1,
+      });
+      await ctx.db.insert("taskComments", {
+        taskId: hiddenTaskId,
+        body: "Hidden comment",
+        createdBy: s.amB._id,
+        createdAt: now,
+      });
+      await ctx.db.insert("taskAttachments", {
+        taskId: visibleTaskId,
+        storageId: visibleStorageId,
+        fileName: "visible.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+        uploadedBy: s.amA._id,
+        uploadedAt: now,
+      });
+      await ctx.db.insert("taskAttachments", {
+        taskId: visibleTaskId,
+        storageId: archivedStorageId,
+        fileName: "archived.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+        uploadedBy: s.amA._id,
+        uploadedAt: now,
+        archivedAt: now + 1,
+      });
+      await ctx.db.insert("taskAttachments", {
+        taskId: hiddenTaskId,
+        storageId: hiddenStorageId,
+        fileName: "hidden.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+        uploadedBy: s.amB._id,
+        uploadedAt: now,
+      });
+
+      return { visibleTaskId, hiddenTaskId };
+    });
+
+    const tasks = await asUser(t, s.amA).query(api.tasks.list, {});
+    const visibleTask = tasks.find((task) => task._id === visibleTaskId);
+
+    expect(visibleTask).toMatchObject({
+      commentCount: 1,
+      attachmentCount: 1,
+    });
+    expect(tasks.map((task) => task._id)).not.toContain(hiddenTaskId);
+  });
+
   it("gets a visible task by id", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
