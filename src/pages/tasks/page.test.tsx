@@ -285,18 +285,36 @@ describe("TasksPage", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/tasks/task-1");
   });
 
-  it("does not navigate when clicking list row controls", async () => {
+  it("does not navigate when changing list row status assignee or report-to", async () => {
     const user = userEvent.setup();
     renderTasksPage();
 
     await user.click(screen.getByRole("button", { name: /List/i }));
-    await user.click(
-      screen.getByRole("combobox", {
-        name: /Change status for Follow up with customer/i,
-      }),
+    await chooseSelectOption(/Change status for Follow up with customer/i, "Done");
+    await chooseSelectOption(
+      /Change assignee for Follow up with customer/i,
+      "Omar Hassan",
+    );
+    await chooseSelectOption(
+      /Change report to for Follow up with customer/i,
+      "Omar Hassan",
     );
 
-    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mocks.updateStatus).toHaveBeenCalledWith({
+        taskId: "task-1",
+        status: "done",
+      });
+    });
+    expect(mocks.updateTask).toHaveBeenCalledWith({
+      taskId: "task-1",
+      assigneeId: "user-2",
+    });
+    expect(mocks.updateTask).toHaveBeenCalledWith({
+      taskId: "task-1",
+      reportToId: "user-2",
+    });
+    expect(screen.getByRole("heading", { name: "Tasks" })).toBeInTheDocument();
     expect(screen.queryByTestId("location")).not.toBeInTheDocument();
   });
 
@@ -307,6 +325,21 @@ describe("TasksPage", () => {
     await user.click(screen.getByTestId("task-card-task-1"));
 
     expect(screen.getByTestId("location")).toHaveTextContent("/tasks/task-1");
+  });
+
+  it("does not navigate when changing status from a board card", async () => {
+    renderTasksPage();
+
+    await chooseSelectOption(/Move task Follow up with customer/i, "Done");
+
+    await waitFor(() => {
+      expect(mocks.updateStatus).toHaveBeenCalledWith({
+        taskId: "task-1",
+        status: "done",
+      });
+    });
+    expect(screen.getByRole("heading", { name: "Tasks" })).toBeInTheDocument();
+    expect(screen.queryByTestId("location")).not.toBeInTheDocument();
   });
 
   it("defaults to board view grouped by task status", async () => {

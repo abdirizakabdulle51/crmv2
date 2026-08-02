@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent, ReactNode, SyntheticEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
@@ -144,6 +144,10 @@ function statusAccentClass(status: TaskStatus) {
   if (status === "canceled") return "border-t-muted-foreground/40";
   if (status === "in_progress") return "border-t-cyan-500";
   return "border-t-slate-400";
+}
+
+function stopTaskNavigation(event: SyntheticEvent) {
+  event.stopPropagation();
 }
 
 export default function TasksPage() {
@@ -688,38 +692,57 @@ function TaskBoardCard({
           {company ? <p>Company: {company.name}</p> : null}
         </div>
 
-        <Select
-          value={task.status}
-          onValueChange={(value) =>
-            void onStatusChange(task._id, value as TaskStatus)
-          }
-          disabled={pendingAction === `${task._id}:status`}
+        <div
+          onClick={stopTaskNavigation}
+          onMouseDown={stopTaskNavigation}
+          onPointerDown={stopTaskNavigation}
         >
-          <SelectTrigger
-            className="h-8 text-xs"
-            aria-label={`Move task ${task.title}`}
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
+          <Select
+            value={task.status}
+            onValueChange={(value) =>
+              void onStatusChange(task._id, value as TaskStatus)
+            }
+            disabled={pendingAction === `${task._id}:status`}
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {STATUS_OPTIONS.map((status) => (
-              <SelectItem key={status.value} value={status.value}>
-                {status.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <SelectTrigger
+              className="h-8 text-xs"
+              aria-label={`Move task ${task.title}`}
+              onClick={stopTaskNavigation}
+              onMouseDown={stopTaskNavigation}
+              onPointerDown={stopTaskNavigation}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent
+              onClick={stopTaskNavigation}
+              onMouseDown={stopTaskNavigation}
+              onPointerDown={stopTaskNavigation}
+            >
+              {STATUS_OPTIONS.map((status) => (
+                <SelectItem
+                  key={status.value}
+                  value={status.value}
+                  onClick={stopTaskNavigation}
+                  onMouseDown={stopTaskNavigation}
+                  onPointerDown={stopTaskNavigation}
+                >
+                  {status.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <Button
           type="button"
           variant="secondary"
           size="sm"
           className="h-8 w-full text-xs"
           onClick={(event) => {
-            event.stopPropagation();
+            stopTaskNavigation(event);
             onOpenDetails(task);
           }}
+          onMouseDown={stopTaskNavigation}
+          onPointerDown={stopTaskNavigation}
         >
           <MessageSquare className="mr-2 h-3.5 w-3.5" />
           Open
@@ -856,95 +879,160 @@ function TaskRow({
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row xl:justify-end">
-          <Select
-            value={task.status}
-            onValueChange={(value) =>
-              void onStatusChange(task._id, value as TaskStatus)
-            }
-            disabled={pendingAction === `${task._id}:status`}
+          <div
+            onClick={stopTaskNavigation}
+            onMouseDown={stopTaskNavigation}
+            onPointerDown={stopTaskNavigation}
           >
-            <SelectTrigger
-              className="w-full sm:w-[150px]"
-              aria-label={`Change status for ${task.title}`}
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {STATUS_OPTIONS.map((status) => (
-                <SelectItem key={status.value} value={status.value}>
-                  {status.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
-            value={task.assigneeId ?? "unassigned"}
-            onValueChange={(value) => {
-              if (value !== "unassigned") {
-                void onAssigneeChange(task._id, value as Id<"users">);
+            <Select
+              value={task.status}
+              onValueChange={(value) =>
+                void onStatusChange(task._id, value as TaskStatus)
               }
-            }}
-            disabled={pendingAction === `${task._id}:assignee`}
-          >
-            <SelectTrigger
-              className="w-full sm:w-[170px]"
-              aria-label={`Change assignee for ${task.title}`}
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
+              disabled={pendingAction === `${task._id}:status`}
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="unassigned">Unassigned</SelectItem>
-              {users.map((user) => (
-                <SelectItem key={user._id} value={user._id}>
-                  {user.name || user.email || "Unknown"}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              <SelectTrigger
+                className="w-full sm:w-[150px]"
+                aria-label={`Change status for ${task.title}`}
+                onClick={stopTaskNavigation}
+                onMouseDown={stopTaskNavigation}
+                onPointerDown={stopTaskNavigation}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent
+                onClick={stopTaskNavigation}
+                onMouseDown={stopTaskNavigation}
+                onPointerDown={stopTaskNavigation}
+              >
+                {STATUS_OPTIONS.map((status) => (
+                  <SelectItem
+                    key={status.value}
+                    value={status.value}
+                    onClick={stopTaskNavigation}
+                    onMouseDown={stopTaskNavigation}
+                    onPointerDown={stopTaskNavigation}
+                  >
+                    {status.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-          <Select
-            value={task.reportToId ?? "fallback-creator"}
-            onValueChange={(value) => {
-              if (value !== "fallback-creator") {
-                void onReportToChange(task._id, value as Id<"users">);
-              }
-            }}
-            disabled={pendingAction === `${task._id}:reportTo`}
+          <div
+            onClick={stopTaskNavigation}
+            onMouseDown={stopTaskNavigation}
+            onPointerDown={stopTaskNavigation}
           >
-            <SelectTrigger
-              className="w-full sm:w-[170px]"
-              aria-label={`Change report to for ${task.title}`}
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
+            <Select
+              value={task.assigneeId ?? "unassigned"}
+              onValueChange={(value) => {
+                if (value !== "unassigned") {
+                  void onAssigneeChange(task._id, value as Id<"users">);
+                }
+              }}
+              disabled={pendingAction === `${task._id}:assignee`}
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {!task.reportToId ? (
-                <SelectItem value="fallback-creator">
-                  {creator?.name || creator?.email || "Not set"} (created by)
+              <SelectTrigger
+                className="w-full sm:w-[170px]"
+                aria-label={`Change assignee for ${task.title}`}
+                onClick={stopTaskNavigation}
+                onMouseDown={stopTaskNavigation}
+                onPointerDown={stopTaskNavigation}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent
+                onClick={stopTaskNavigation}
+                onMouseDown={stopTaskNavigation}
+                onPointerDown={stopTaskNavigation}
+              >
+                <SelectItem
+                  value="unassigned"
+                  onClick={stopTaskNavigation}
+                  onMouseDown={stopTaskNavigation}
+                  onPointerDown={stopTaskNavigation}
+                >
+                  Unassigned
                 </SelectItem>
-              ) : null}
-              {reportToCandidates.map((user) => (
-                <SelectItem key={user._id} value={user._id}>
-                  {user.name || user.email || "Unknown"}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+                {users.map((user) => (
+                  <SelectItem
+                    key={user._id}
+                    value={user._id}
+                    onClick={stopTaskNavigation}
+                    onMouseDown={stopTaskNavigation}
+                    onPointerDown={stopTaskNavigation}
+                  >
+                    {user.name || user.email || "Unknown"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div
+            onClick={stopTaskNavigation}
+            onMouseDown={stopTaskNavigation}
+            onPointerDown={stopTaskNavigation}
+          >
+            <Select
+              value={task.reportToId ?? "fallback-creator"}
+              onValueChange={(value) => {
+                if (value !== "fallback-creator") {
+                  void onReportToChange(task._id, value as Id<"users">);
+                }
+              }}
+              disabled={pendingAction === `${task._id}:reportTo`}
+            >
+              <SelectTrigger
+                className="w-full sm:w-[170px]"
+                aria-label={`Change report to for ${task.title}`}
+                onClick={stopTaskNavigation}
+                onMouseDown={stopTaskNavigation}
+                onPointerDown={stopTaskNavigation}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent
+                onClick={stopTaskNavigation}
+                onMouseDown={stopTaskNavigation}
+                onPointerDown={stopTaskNavigation}
+              >
+                {!task.reportToId ? (
+                  <SelectItem
+                    value="fallback-creator"
+                    onClick={stopTaskNavigation}
+                    onMouseDown={stopTaskNavigation}
+                    onPointerDown={stopTaskNavigation}
+                  >
+                    {creator?.name || creator?.email || "Not set"} (created by)
+                  </SelectItem>
+                ) : null}
+                {reportToCandidates.map((user) => (
+                  <SelectItem
+                    key={user._id}
+                    value={user._id}
+                    onClick={stopTaskNavigation}
+                    onMouseDown={stopTaskNavigation}
+                    onPointerDown={stopTaskNavigation}
+                  >
+                    {user.name || user.email || "Unknown"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
           <Button
             variant="secondary"
             size="sm"
             onClick={(event) => {
-              event.stopPropagation();
+              stopTaskNavigation(event);
               onOpenDetails(task);
             }}
+            onMouseDown={stopTaskNavigation}
+            onPointerDown={stopTaskNavigation}
           >
             <MessageSquare className="mr-2 h-4 w-4" />
             Open
@@ -955,9 +1043,11 @@ function TaskRow({
             size="sm"
             className="text-muted-foreground"
             onClick={(event) => {
-              event.stopPropagation();
+              stopTaskNavigation(event);
               void onArchive(task._id);
             }}
+            onMouseDown={stopTaskNavigation}
+            onPointerDown={stopTaskNavigation}
             disabled={pendingAction === `${task._id}:archive`}
           >
             <Trash2 className="mr-2 h-4 w-4" />
