@@ -347,6 +347,9 @@ describe("RecommendationsPage pagination", () => {
     expect(
       screen.getByRole("button", { name: "Acknowledge" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Start Progress" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
 
@@ -359,6 +362,93 @@ describe("RecommendationsPage pagination", () => {
       recommendedService: "Managed service",
       status: "acknowledged",
     });
+  });
+
+  it("starts progress from open and acknowledged recommendations", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [
+      company("company-1", "Open Co"),
+      company("company-2", "Acknowledged Co"),
+    ];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Open Co",
+        status: "open",
+      },
+      {
+        ...recommendation(2, "medium"),
+        companyName: "Acknowledged Co",
+        status: "acknowledged",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    expect(screen.getAllByRole("button", { name: "Start Progress" })).toHaveLength(
+      2,
+    );
+
+    await user.click(screen.getAllByRole("button", { name: "Start Progress" })[0]);
+
+    expect(mocks.setRecommendationStatus).toHaveBeenCalledWith({
+      recommendationKey: "company-1:waf:managed%20service",
+      companyId: "company-1",
+      rule: "waf",
+      recommendedService: "Managed service",
+      status: "in_progress",
+    });
+  });
+
+  it("shows the correct actions for in progress recommendations", () => {
+    mocks.companies = [company("company-1", "Progress Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Progress Co",
+        status: "in_progress",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    expect(screen.queryByRole("button", { name: "Acknowledge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start Progress" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+  });
+
+  it("shows in progress recommendations through the In Progress status filter", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [
+      company("company-1", "Open Co"),
+      company("company-2", "Progress Co"),
+    ];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Open Co",
+        status: "open",
+      },
+      {
+        ...recommendation(2, "medium"),
+        companyName: "Progress Co",
+        status: "in_progress",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    await user.click(screen.getByRole("combobox", { name: "Status" }));
+    await user.click(screen.getByRole("option", { name: "In Progress" }));
+
+    expect(screen.getAllByText("Showing 1-1 of 1")).toHaveLength(2);
+    expect(screen.getByText(/Progress Co/)).toBeInTheDocument();
+    expect(screen.queryByText(/Open Co/)).not.toBeInTheDocument();
   });
 
   it("dismisses and resolves with the selected status", async () => {

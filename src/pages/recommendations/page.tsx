@@ -67,7 +67,12 @@ type AdvisorRecommendation = Recommendation & {
   snoozedUntil?: number;
 };
 
-type StatusAction = "acknowledged" | "dismissed" | "resolved" | "reopen";
+type StatusAction =
+  | "acknowledged"
+  | "in_progress"
+  | "dismissed"
+  | "resolved"
+  | "reopen";
 
 const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: "active", label: "Active" },
@@ -170,9 +175,12 @@ function formatStatusDate(timestamp: number) {
 
 function getStatusActions(status: RecommendationStatus): StatusAction[] {
   if (status === "open") {
-    return ["acknowledged", "dismissed", "resolved"];
+    return ["acknowledged", "in_progress", "dismissed", "resolved"];
   }
   if (status === "acknowledged") {
+    return ["in_progress", "resolved", "dismissed", "reopen"];
+  }
+  if (status === "in_progress") {
     return ["resolved", "dismissed", "reopen"];
   }
   return ["reopen"];
@@ -180,6 +188,7 @@ function getStatusActions(status: RecommendationStatus): StatusAction[] {
 
 function getActionLabel(action: StatusAction) {
   if (action === "acknowledged") return "Acknowledge";
+  if (action === "in_progress") return "Start Progress";
   if (action === "dismissed") return "Dismiss";
   if (action === "resolved") return "Resolve";
   return "Reopen";
@@ -187,6 +196,7 @@ function getActionLabel(action: StatusAction) {
 
 function getActionSuccessMessage(action: StatusAction) {
   if (action === "acknowledged") return "Recommendation acknowledged";
+  if (action === "in_progress") return "Recommendation marked in progress";
   if (action === "dismissed") return "Recommendation dismissed";
   if (action === "resolved") return "Recommendation resolved";
   return "Recommendation reopened";
