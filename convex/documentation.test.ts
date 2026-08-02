@@ -45,10 +45,10 @@ describe("documentation", () => {
       {},
     );
     expect(firstSeed).toEqual({
-      inserted: 11,
+      inserted: 12,
       byGroup: {
         "Team Guide": 3,
-        "Technical Reference": 8,
+        "Technical Reference": 9,
       },
     });
 
@@ -74,7 +74,7 @@ describe("documentation", () => {
       api.documentation.list,
       {},
     );
-    expect(hobSections).toHaveLength(11);
+    expect(hobSections).toHaveLength(12);
     expect(
       hobSections.some(
         (section) =>
