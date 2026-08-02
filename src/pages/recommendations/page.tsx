@@ -37,20 +37,17 @@ import { useState } from "react";
 import type { Doc } from "@/convex/_generated/dataModel.d.ts";
 import type { Recommendation } from "./_lib/recommendation-engine.ts";
 import { formatCurrency } from "@/lib/format.ts";
+import {
+  ADVISOR_CATEGORY_OPTIONS,
+  getAdvisorCategory,
+  getAdvisorRecommendationTitle,
+  getAdvisorRecommendedAction,
+  getAdvisorRuleLabel,
+  formatAdvisorEstimatedValue,
+  type AdvisorCategory,
+} from "@/lib/recommendations/advisorPresentation.ts";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
-const CATEGORY_OPTIONS = [
-  "All",
-  "Cost Optimization",
-  "Security",
-  "Reliability",
-  "Performance",
-  "Backup & Recovery",
-  "Capacity / Limits",
-  "Sales Opportunities",
-] as const;
-
-type AdvisorCategory = (typeof CATEGORY_OPTIONS)[number];
 
 const RULE_ICONS: Record<string, React.ReactNode> = {
   backup: <Database className="h-4 w-4" />,
@@ -61,41 +58,6 @@ const RULE_ICONS: Record<string, React.ReactNode> = {
   payment_risk: <DollarSign className="h-4 w-4" />,
   compliance: <AlertTriangle className="h-4 w-4" />,
 };
-
-const RULE_LABELS: Record<string, string> = {
-  backup: "Backup",
-  object_storage: "Object Storage",
-  log_management: "Log Management",
-  secure_connectivity: "Connectivity",
-  waf: "WAF",
-  payment_risk: "Payment Risk",
-  compliance: "Compliance",
-};
-
-const RULE_CATEGORIES: Record<string, AdvisorCategory> = {
-  backup: "Backup & Recovery",
-  object_storage: "Cost Optimization",
-  log_management: "Reliability",
-  secure_connectivity: "Security",
-  waf: "Security",
-  payment_risk: "Sales Opportunities",
-  compliance: "Security",
-};
-
-function getAdvisorCategory(rule: string): AdvisorCategory {
-  return RULE_CATEGORIES[rule] ?? "Sales Opportunities";
-}
-
-function getRecommendationTitle(recommendation: Recommendation) {
-  const ruleLabel = RULE_LABELS[recommendation.rule] ?? "Recommendation";
-  return `${ruleLabel}: ${recommendation.recommendedService}`;
-}
-
-function formatRecommendationValue(recommendation: Recommendation) {
-  return typeof recommendation.estimatedMonthlyValue === "number"
-    ? `${formatCurrency(recommendation.estimatedMonthlyValue)}/mo`
-    : recommendation.estimatedValue;
-}
 
 function PriorityBadge({ priority }: { priority: Recommendation["priority"] }) {
   switch (priority) {
@@ -246,7 +208,7 @@ export default function RecommendationsPage() {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {CATEGORY_OPTIONS.map((category) => (
+        {ADVISOR_CATEGORY_OPTIONS.map((category) => (
           <Button
             key={category}
             type="button"
@@ -297,7 +259,7 @@ export default function RecommendationsPage() {
             <SelectItem value="all">All Rules</SelectItem>
             {availableRules.map((rule) => (
               <SelectItem key={rule} value={rule}>
-                {RULE_LABELS[rule] || rule}
+                {getAdvisorRuleLabel(rule)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -432,11 +394,11 @@ export default function RecommendationsPage() {
                       </div>
                       <div className="min-w-0">
                         <h3 className="text-base font-semibold leading-6 text-foreground">
-                          {getRecommendationTitle(row.rec)}
+                          {getAdvisorRecommendationTitle(row.rec)}
                         </h3>
                         <p className="mt-1 text-sm text-muted-foreground">
                           {row.rec.companyName} · Source rule:{" "}
-                          {RULE_LABELS[row.rec.rule] || row.rec.rule}
+                          {getAdvisorRuleLabel(row.rec.rule)}
                         </p>
                       </div>
                     </div>
@@ -446,7 +408,7 @@ export default function RecommendationsPage() {
                         {getAdvisorCategory(row.rec.rule)}
                       </Badge>
                       <Badge variant="secondary">
-                        {formatRecommendationValue(row.rec)}
+                        {formatAdvisorEstimatedValue(row.rec)}
                       </Badge>
                     </div>
                   </div>
@@ -500,7 +462,7 @@ export default function RecommendationsPage() {
                       Recommended action:
                     </span>{" "}
                     <span className="text-muted-foreground">
-                      Add/Review {row.rec.recommendedService}.
+                      {getAdvisorRecommendedAction(row.rec)}
                     </span>
                   </div>
                 </CardContent>
