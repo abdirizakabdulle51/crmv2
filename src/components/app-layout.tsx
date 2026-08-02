@@ -17,6 +17,7 @@ import {
   Cloud,
   CloudSun,
   BookOpen,
+  ClipboardList,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -48,6 +49,7 @@ const NAV_ITEMS = [
     cloudHealthOnly: true,
   },
   { to: "/documentation", label: "Documentation", icon: BookOpen },
+  { to: "/tasks", label: "Tasks", icon: ClipboardList },
   { to: "/team", label: "Team", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -74,7 +76,7 @@ const NAV_GROUPS = [
   },
   {
     label: "System",
-    items: ["/documentation", "/team", "/settings"],
+    items: ["/documentation", "/tasks", "/team", "/settings"],
   },
 ];
 
