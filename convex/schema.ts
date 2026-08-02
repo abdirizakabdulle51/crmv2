@@ -431,6 +431,27 @@ export default defineSchema({
     .index("by_uploaded_by", ["uploadedBy"])
     .index("by_storage_id", ["storageId"]),
 
+  notifications: defineTable({
+    recipientId: v.id("users"),
+    actorId: v.optional(v.id("users")),
+    type: v.union(
+      v.literal("task_assigned"),
+      v.literal("task_report_to"),
+      v.literal("task_status_changed"),
+      v.literal("task_commented"),
+    ),
+    title: v.string(),
+    body: v.optional(v.string()),
+    entityType: v.literal("task"),
+    entityId: v.id("tasks"),
+    href: v.string(),
+    readAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_recipient_created", ["recipientId", "createdAt"])
+    .index("by_recipient_read", ["recipientId", "readAt"])
+    .index("by_entity", ["entityType", "entityId"]),
+
   consumption: defineTable({
     companyId: v.id("companies"),
     month: v.string(), // YYYY-MM format
