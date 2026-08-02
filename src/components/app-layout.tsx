@@ -23,6 +23,7 @@ import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
 import { ThemeToggle } from "@/components/theme-toggle.tsx";
 import { BrandLogo } from "@/components/brand-logo.tsx";
+import { NotificationBell } from "@/components/notification-bell.tsx";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -153,6 +154,7 @@ export default function AppLayout() {
                 </div>
               </div>
               <ThemeToggle />
+              <NotificationBell />
               <button
                 onClick={() => signout()}
                 className="shrink-0 p-1.5 rounded-md text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors cursor-pointer"

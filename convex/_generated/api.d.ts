@@ -28,6 +28,7 @@ import type * as http from "../http.js";
 import type * as leads from "../leads.js";
 import type * as leadsImport from "../leadsImport.js";
 import type * as manageOneTenants from "../manageOneTenants.js";
+import type * as notifications from "../notifications.js";
 import type * as pingResults from "../pingResults.js";
 import type * as pingTargets from "../pingTargets.js";
 import type * as quotes from "../quotes.js";
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   leads: typeof leads;
   leadsImport: typeof leadsImport;
   manageOneTenants: typeof manageOneTenants;
+  notifications: typeof notifications;
   pingResults: typeof pingResults;
   pingTargets: typeof pingTargets;
   quotes: typeof quotes;
