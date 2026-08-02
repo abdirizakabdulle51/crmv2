@@ -367,6 +367,40 @@ export default defineSchema({
     .index("by_lead", ["leadId"])
     .index("by_date", ["date"]),
 
+  tasks: defineTable({
+    title: v.string(),
+    description: v.optional(v.string()),
+    status: v.union(
+      v.literal("todo"),
+      v.literal("in_progress"),
+      v.literal("blocked"),
+      v.literal("done"),
+      v.literal("canceled"),
+    ),
+    priority: v.union(
+      v.literal("low"),
+      v.literal("medium"),
+      v.literal("high"),
+      v.literal("urgent"),
+    ),
+    createdBy: v.id("users"),
+    assigneeId: v.optional(v.id("users")),
+    companyId: v.optional(v.id("companies")),
+    leadId: v.optional(v.id("leads")),
+    quoteId: v.optional(v.id("quotes")),
+    dueDate: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    archivedAt: v.optional(v.number()),
+  })
+    .index("by_assignee_status", ["assigneeId", "status"])
+    .index("by_creator", ["createdBy"])
+    .index("by_company", ["companyId"])
+    .index("by_status", ["status"])
+    .index("by_due_date", ["dueDate"])
+    .index("by_updated_at", ["updatedAt"]),
+
   consumption: defineTable({
     companyId: v.id("companies"),
     month: v.string(), // YYYY-MM format
