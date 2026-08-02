@@ -6,6 +6,7 @@ import { canManageUser, isCeoOrHob } from "./authorization";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 
 type LeadStage = Doc<"leads">["stage"];
+type Task = Doc<"tasks">;
 
 const LEAD_STAGES: LeadStage[] = [
   "new_lead",
@@ -160,6 +161,88 @@ function canViewCloudHealth(user: Doc<"users">) {
   );
 }
 
+function isActiveTask(task: Task) {
+  return (
+    task.archivedAt === undefined &&
+    task.status !== "done" &&
+    task.status !== "canceled"
+  );
+}
+
+function startOfToday() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function endOfThisWeek() {
+  const date = new Date();
+  date.setHours(23, 59, 59, 999);
+  date.setDate(date.getDate() + 7);
+  return date.getTime();
+}
+
+async function getVisibleTasks(
+  ctx: QueryCtx,
+  user: Doc<"users">,
+  visibleCompanyIds: Set<Id<"companies">>,
+) {
+  const tasks = await ctx.db.query("tasks").collect();
+
+  if (isCeoOrHob(user)) {
+    return tasks;
+  }
+
+  if (user.role === "country_gm" && user.countryId) {
+    const countryUsers = await ctx.db
+      .query("users")
+      .withIndex("by_country", (q) => q.eq("countryId", user.countryId!))
+      .collect();
+    const visibleUserIds = new Set([
+      user._id,
+      ...countryUsers.map((countryUser) => countryUser._id),
+    ]);
+
+    return tasks.filter(
+      (task) =>
+        visibleUserIds.has(task.createdBy) ||
+        (task.assigneeId !== undefined && visibleUserIds.has(task.assigneeId)) ||
+        (task.reportToId !== undefined && visibleUserIds.has(task.reportToId)) ||
+        (task.companyId !== undefined && visibleCompanyIds.has(task.companyId)),
+    );
+  }
+
+  return tasks.filter(
+    (task) =>
+      task.createdBy === user._id ||
+      task.assigneeId === user._id ||
+      task.reportToId === user._id ||
+      (task.companyId !== undefined && visibleCompanyIds.has(task.companyId)),
+  );
+}
+
+function buildTasksSummary(tasks: Task[], user: Doc<"users">) {
+  const today = startOfToday();
+  const weekEnd = endOfThisWeek();
+  const myActiveTasks = tasks.filter(
+    (task) => task.assigneeId === user._id && isActiveTask(task),
+  );
+
+  return {
+    myOpen: myActiveTasks.length,
+    overdue: myActiveTasks.filter(
+      (task) => task.dueDate !== undefined && task.dueDate < today,
+    ).length,
+    dueThisWeek: myActiveTasks.filter(
+      (task) =>
+        task.dueDate !== undefined &&
+        task.dueDate >= today &&
+        task.dueDate <= weekEnd,
+    ).length,
+    blocked: myActiveTasks.filter((task) => task.status === "blocked").length,
+  };
+}
+
 export const summary = query({
   args: { year: v.number() },
   handler: async (ctx, args) => {
@@ -179,6 +262,7 @@ export const summary = query({
     const quotes = (await ctx.db.query("quotes").collect()).filter((quote) =>
       visibleCompanyIds.has(quote.companyId),
     );
+    const tasks = await getVisibleTasks(ctx, user, visibleCompanyIds);
     const sectors = await ctx.db.query("sectors").collect();
     const catalog = await ctx.db.query("serviceCatalog").collect();
     const recommendations = generateRecommendations(
@@ -409,6 +493,7 @@ export const summary = query({
       atRisk: {
         count: atRiskCount,
       },
+      tasks: buildTasksSummary(tasks, user),
       cloudHealth,
       charts: {
         accountManagers: amChartData,

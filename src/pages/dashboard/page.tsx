@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Brain,
   Building2,
+  ClipboardList,
   Cloud,
   DollarSign,
   FileText,
@@ -158,6 +159,13 @@ export default function DashboardPage() {
     ([stage]) => stage !== "won" && stage !== "lost",
   );
   const usageMonthLabel = formatMonthLabel(summary?.usage.month);
+  const taskSubtitle = `${summary?.tasks.overdue ?? 0} overdue · ${
+    summary?.tasks.dueThisWeek ?? 0
+  } due this week${
+    (summary?.tasks.blocked ?? 0) > 0
+      ? ` · ${summary?.tasks.blocked ?? 0} blocked`
+      : ""
+  }`;
 
   return (
     <div className="p-6 md:p-8 space-y-8">
@@ -242,13 +250,20 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-4">
         <MetricCard
           title="AI Opportunities"
           value={summary?.aiRecommendations.openOpportunityCount ?? "-"}
           subtitle={`${formatCurrency(summary?.aiRecommendations.estimatedMonthlyValue ?? 0)} estimated monthly value`}
           icon={<Brain className="h-4 w-4 text-muted-foreground" />}
           onClick={() => navigate("/recommendations")}
+        />
+        <MetricCard
+          title="Tasks"
+          value={summary?.tasks.myOpen ?? "-"}
+          subtitle={taskSubtitle}
+          icon={<ClipboardList className="h-4 w-4 text-muted-foreground" />}
+          onClick={() => navigate("/tasks")}
         />
         <MetricCard
           title="At-Risk Companies"

@@ -226,6 +226,92 @@ async function seed(t: ReturnType<typeof convexTest>) {
       checkedAt: Date.now(),
     });
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = today.getTime() + 24 * 60 * 60 * 1000;
+    const yesterday = today.getTime() - 24 * 60 * 60 * 1000;
+    await ctx.db.insert("tasks", {
+      title: "CEO dashboard task",
+      status: "todo",
+      priority: "medium",
+      createdBy: ceoId,
+      assigneeId: ceoId,
+      dueDate: tomorrow,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await ctx.db.insert("tasks", {
+      title: "AM due task",
+      status: "todo",
+      priority: "medium",
+      createdBy: amAId,
+      assigneeId: amAId,
+      dueDate: tomorrow,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await ctx.db.insert("tasks", {
+      title: "AM overdue task",
+      status: "todo",
+      priority: "high",
+      createdBy: amAId,
+      assigneeId: amAId,
+      dueDate: yesterday,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await ctx.db.insert("tasks", {
+      title: "AM blocked task",
+      status: "blocked",
+      priority: "urgent",
+      createdBy: amAId,
+      assigneeId: amAId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await ctx.db.insert("tasks", {
+      title: "Done task excluded",
+      status: "done",
+      priority: "medium",
+      createdBy: amAId,
+      assigneeId: amAId,
+      dueDate: yesterday,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    await ctx.db.insert("tasks", {
+      title: "Canceled task excluded",
+      status: "canceled",
+      priority: "medium",
+      createdBy: amAId,
+      assigneeId: amAId,
+      dueDate: tomorrow,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await ctx.db.insert("tasks", {
+      title: "Archived task excluded",
+      status: "todo",
+      priority: "medium",
+      createdBy: amAId,
+      assigneeId: amAId,
+      dueDate: tomorrow,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      archivedAt: Date.now(),
+    });
+    await ctx.db.insert("tasks", {
+      title: "Out of scope task",
+      status: "todo",
+      priority: "medium",
+      createdBy: amBId,
+      assigneeId: amBId,
+      dueDate: tomorrow,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
     return {
       ceo: (await ctx.db.get(ceoId))!,
       gm: (await ctx.db.get(gmId))!,
@@ -271,6 +357,12 @@ describe("dashboard.summary", () => {
     expect(summary.aiRecommendations.openOpportunityCount).toBeGreaterThan(0);
     expect(summary.aiRecommendations.estimatedMonthlyValue).toBeGreaterThan(0);
     expect(summary.atRisk.count).toBe(1);
+    expect(summary.tasks).toEqual({
+      myOpen: 1,
+      overdue: 0,
+      dueThisWeek: 1,
+      blocked: 0,
+    });
     expect(summary.cloudHealth).toMatchObject({
       regions: 1,
       criticalRegions: 1,
@@ -302,6 +394,12 @@ describe("dashboard.summary", () => {
     expect(summary.pipeline.value).toBe(5000);
     expect(summary.usage.total).toBe(100);
     expect(summary.quotes.total).toBe(1);
+    expect(summary.tasks).toEqual({
+      myOpen: 0,
+      overdue: 0,
+      dueThisWeek: 0,
+      blocked: 0,
+    });
     expect(summary.cloudHealth?.regions).toBe(1);
   });
 
@@ -327,6 +425,12 @@ describe("dashboard.summary", () => {
     expect(summary.pipeline.value).toBe(5000);
     expect(summary.usage.total).toBe(100);
     expect(summary.quotes.total).toBe(1);
+    expect(summary.tasks).toEqual({
+      myOpen: 3,
+      overdue: 1,
+      dueThisWeek: 1,
+      blocked: 1,
+    });
     expect(summary.cloudHealth).toBeNull();
   });
 });

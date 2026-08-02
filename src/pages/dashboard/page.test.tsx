@@ -50,6 +50,12 @@ const mocks = vi.hoisted(() => ({
       companiesWithOpportunities: 12,
     },
     atRisk: { count: 5 },
+    tasks: {
+      myOpen: 3,
+      overdue: 1,
+      dueThisWeek: 1,
+      blocked: 1,
+    },
     cloudHealth: {
       regions: 2,
       healthyRegions: 1,
@@ -148,8 +154,20 @@ describe("DashboardPage", () => {
     expect(
       screen.getByText("$4,000 estimated monthly value"),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Tasks/i })).toBeInTheDocument();
+    expect(
+      screen.getByText("1 overdue · 1 due this week · 1 blocked"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("link", { name: /Quotes/i }));
     expect(screen.getByTestId("location")).toHaveTextContent("/quotes");
+  });
+
+  it("navigates the Tasks card to the tasks page", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await user.click(screen.getByRole("link", { name: /Tasks/i }));
+    expect(screen.getByTestId("location")).toHaveTextContent("/tasks");
   });
 });
