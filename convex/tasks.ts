@@ -103,6 +103,37 @@ async function getVisibleUserIds(ctx: Ctx, user: Doc<"users">) {
   return new Set([user._id]);
 }
 
+function isLeadership(user: Doc<"users">) {
+  return (
+    user.role === "ceo" ||
+    user.role === "head_of_business" ||
+    user.role === "country_gm"
+  );
+}
+
+function canReportToUser(actor: Doc<"users">, target: Doc<"users">) {
+  if (isCeoOrHob(actor)) {
+    return true;
+  }
+  if (actor._id === target._id) {
+    return true;
+  }
+  if (target.role === "ceo" || target.role === "head_of_business") {
+    return true;
+  }
+  if (actor.role === "country_gm" && actor.countryId) {
+    return target.countryId === actor.countryId;
+  }
+  if (actor.role === "account_manager") {
+    return (
+      target.role === "country_gm" &&
+      !!actor.countryId &&
+      target.countryId === actor.countryId
+    );
+  }
+  return false;
+}
+
 async function canViewTask(ctx: Ctx, user: Doc<"users">, task: Doc<"tasks">) {
   if (isCeoOrHob(user)) {
     return true;
@@ -112,7 +143,8 @@ async function canViewTask(ctx: Ctx, user: Doc<"users">, task: Doc<"tasks">) {
     const visibleUserIds = await getVisibleUserIds(ctx, user);
     if (
       visibleUserIds.has(task.createdBy) ||
-      (task.assigneeId && visibleUserIds.has(task.assigneeId))
+      (task.assigneeId && visibleUserIds.has(task.assigneeId)) ||
+      (task.reportToId && visibleUserIds.has(task.reportToId))
     ) {
       return true;
     }
@@ -123,7 +155,11 @@ async function canViewTask(ctx: Ctx, user: Doc<"users">, task: Doc<"tasks">) {
     return false;
   }
 
-  if (task.createdBy === user._id || task.assigneeId === user._id) {
+  if (
+    task.createdBy === user._id ||
+    task.assigneeId === user._id ||
+    task.reportToId === user._id
+  ) {
     return true;
   }
   if (task.companyId) {
@@ -181,6 +217,33 @@ async function assertCanAssignTaskTo(
   throw new ConvexError({
     code: "FORBIDDEN",
     message: "You do not have permission to assign this task to that user",
+  });
+}
+
+async function assertCanReportTaskTo(
+  ctx: Ctx,
+  actor: Doc<"users">,
+  reportToId: Id<"users"> | undefined,
+) {
+  if (!reportToId) {
+    return;
+  }
+
+  const reportTo = await ctx.db.get(reportToId);
+  if (!reportTo) {
+    throw new ConvexError({
+      code: "NOT_FOUND",
+      message: "Report To user not found",
+    });
+  }
+
+  if (canReportToUser(actor, reportTo)) {
+    return;
+  }
+
+  throw new ConvexError({
+    code: "FORBIDDEN",
+    message: "You do not have permission to report this task to that user",
   });
 }
 
@@ -306,12 +369,32 @@ export const list = query({
   },
 });
 
+export const listReportToCandidates = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const users = await ctx.db.query("users").collect();
+
+    return users
+      .filter((candidate) => canReportToUser(user, candidate))
+      .sort((a, b) => {
+        const aLeadership = isLeadership(a);
+        const bLeadership = isLeadership(b);
+        if (aLeadership !== bLeadership) {
+          return aLeadership ? -1 : 1;
+        }
+        return (a.name || a.email || "").localeCompare(b.name || b.email || "");
+      });
+  },
+});
+
 export const create = mutation({
   args: {
     title: v.string(),
     description: v.optional(v.string()),
     priority: v.optional(priorityValidator),
     assigneeId: v.optional(v.id("users")),
+    reportToId: v.optional(v.id("users")),
     companyId: v.optional(v.id("companies")),
     leadId: v.optional(v.id("leads")),
     quoteId: v.optional(v.id("quotes")),
@@ -327,6 +410,8 @@ export const create = mutation({
       });
     }
     await assertCanAssignTaskTo(ctx, user, args.assigneeId);
+    const reportToId = args.reportToId ?? user._id;
+    await assertCanReportTaskTo(ctx, user, reportToId);
     const companyId = await assertLinkedRecordsAreInScope(ctx, user, args);
 
     const now = Date.now();
@@ -337,6 +422,7 @@ export const create = mutation({
       priority: args.priority ?? "medium",
       createdBy: user._id,
       assigneeId: args.assigneeId,
+      reportToId,
       companyId,
       leadId: args.leadId,
       quoteId: args.quoteId,
@@ -354,6 +440,7 @@ export const update = mutation({
     description: v.optional(v.string()),
     priority: v.optional(priorityValidator),
     assigneeId: v.optional(v.id("users")),
+    reportToId: v.optional(v.id("users")),
     companyId: v.optional(v.id("companies")),
     leadId: v.optional(v.id("leads")),
     quoteId: v.optional(v.id("quotes")),
@@ -366,6 +453,9 @@ export const update = mutation({
 
     if (args.assigneeId !== undefined) {
       await assertCanAssignTaskTo(ctx, user, args.assigneeId);
+    }
+    if (args.reportToId !== undefined) {
+      await assertCanReportTaskTo(ctx, user, args.reportToId);
     }
     const companyId = await assertLinkedRecordsAreInScope(ctx, user, {
       companyId: args.companyId ?? task.companyId,
@@ -392,6 +482,9 @@ export const update = mutation({
     }
     if (args.assigneeId !== undefined) {
       patch.assigneeId = args.assigneeId;
+    }
+    if (args.reportToId !== undefined) {
+      patch.reportToId = args.reportToId;
     }
     if (
       args.companyId !== undefined ||

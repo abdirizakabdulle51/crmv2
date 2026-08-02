@@ -155,8 +155,56 @@ describe("tasks", () => {
       priority: "medium",
       createdBy: s.amA._id,
       assigneeId: s.amA._id,
+      reportToId: s.amA._id,
       companyId: s.companyA,
     });
+  });
+
+  it("creates tasks with explicit valid Report To users", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const taskId = await asUser(t, s.amA).mutation(api.tasks.create, {
+      title: "Report to GM",
+      assigneeId: s.amA._id,
+      reportToId: s.gmA._id,
+    });
+
+    const task = await t.run(async (ctx) => await ctx.db.get(taskId));
+    expect(task?.reportToId).toBe(s.gmA._id);
+  });
+
+  it("allows Account Managers to report to self their GM HOB and CEO", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    for (const reportTo of [s.amA, s.gmA, s.hob, s.ceo]) {
+      await asUser(t, s.amA).mutation(api.tasks.create, {
+        title: `Report to ${reportTo.name}`,
+        assigneeId: s.amA._id,
+        reportToId: reportTo._id,
+      });
+    }
+  });
+
+  it("blocks Account Managers from reporting to unrelated users", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.create, {
+        title: "Report outside scope",
+        assigneeId: s.amA._id,
+        reportToId: s.amB._id,
+      }),
+    ).rejects.toThrow(/report|FORBIDDEN/i);
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.create, {
+        title: "Report to other GM",
+        assigneeId: s.amA._id,
+        reportToId: s.gmB._id,
+      }),
+    ).rejects.toThrow(/report|FORBIDDEN/i);
   });
 
   it("blocks Account Managers from assigning tasks to another user", async () => {
@@ -188,6 +236,34 @@ describe("tasks", () => {
     ).rejects.toThrow(/assign|FORBIDDEN/i);
   });
 
+  it("allows Country GMs to report to in-country users HOB and CEO but not unrelated users", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    for (const reportTo of [s.gmA, s.amA, s.hob, s.ceo]) {
+      await asUser(t, s.gmA).mutation(api.tasks.create, {
+        title: `GM reports to ${reportTo.name}`,
+        assigneeId: s.amA._id,
+        reportToId: reportTo._id,
+      });
+    }
+
+    await expect(
+      asUser(t, s.gmA).mutation(api.tasks.create, {
+        title: "GM reports outside country",
+        assigneeId: s.amA._id,
+        reportToId: s.amB._id,
+      }),
+    ).rejects.toThrow(/report|FORBIDDEN/i);
+    await expect(
+      asUser(t, s.gmA).mutation(api.tasks.create, {
+        title: "GM reports to other GM",
+        assigneeId: s.amA._id,
+        reportToId: s.gmB._id,
+      }),
+    ).rejects.toThrow(/report|FORBIDDEN/i);
+  });
+
   it("allows CEO and Head of Business to assign broadly", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -205,6 +281,20 @@ describe("tasks", () => {
     expect(tasks.map((task) => task.title)).toEqual(
       expect.arrayContaining(["CEO assigned task", "HOB assigned task"]),
     );
+  });
+
+  it("allows CEO and Head of Business to report to anyone", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await asUser(t, s.ceo).mutation(api.tasks.create, {
+      title: "CEO reports to AM B",
+      reportToId: s.amB._id,
+    });
+    await asUser(t, s.hob).mutation(api.tasks.create, {
+      title: "HOB reports to GM B",
+      reportToId: s.gmB._id,
+    });
   });
 
   it("scopes Account Manager task visibility to assigned, created, and own-company tasks", async () => {
@@ -239,6 +329,15 @@ describe("tasks", () => {
         updatedAt: now,
       });
       await ctx.db.insert("tasks", {
+        title: "Reported to AM A",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.amB._id,
+        reportToId: s.amA._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("tasks", {
         title: "Outside AM A scope",
         status: "todo",
         priority: "medium",
@@ -256,9 +355,78 @@ describe("tasks", () => {
         "Assigned to AM A",
         "Created by AM A",
         "Linked to AM A company",
+        "Reported to AM A",
       ]),
     );
     expect(titles).not.toContain("Outside AM A scope");
+  });
+
+  it("validates Report To changes on update", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await asUser(t, s.amA).mutation(api.tasks.create, {
+      title: "Update report target",
+      assigneeId: s.amA._id,
+    });
+
+    await asUser(t, s.amA).mutation(api.tasks.update, {
+      taskId,
+      reportToId: s.gmA._id,
+    });
+    let task = await t.run(async (ctx) => await ctx.db.get(taskId));
+    expect(task?.reportToId).toBe(s.gmA._id);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.update, {
+        taskId,
+        reportToId: s.amB._id,
+      }),
+    ).rejects.toThrow(/report|FORBIDDEN/i);
+
+    task = await t.run(async (ctx) => await ctx.db.get(taskId));
+    expect(task?.reportToId).toBe(s.gmA._id);
+  });
+
+  it("lists Report To candidates by role scope", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const amCandidates = await asUser(t, s.amA).query(
+      api.tasks.listReportToCandidates,
+      {},
+    );
+    expect(amCandidates.map((user) => user._id)).toEqual(
+      expect.arrayContaining([s.amA._id, s.gmA._id, s.hob._id, s.ceo._id]),
+    );
+    expect(amCandidates.map((user) => user._id)).not.toEqual(
+      expect.arrayContaining([s.amB._id, s.gmB._id]),
+    );
+
+    const gmCandidates = await asUser(t, s.gmA).query(
+      api.tasks.listReportToCandidates,
+      {},
+    );
+    expect(gmCandidates.map((user) => user._id)).toEqual(
+      expect.arrayContaining([s.gmA._id, s.amA._id, s.hob._id, s.ceo._id]),
+    );
+    expect(gmCandidates.map((user) => user._id)).not.toEqual(
+      expect.arrayContaining([s.amB._id, s.gmB._id]),
+    );
+
+    const hobCandidates = await asUser(t, s.hob).query(
+      api.tasks.listReportToCandidates,
+      {},
+    );
+    expect(hobCandidates.map((user) => user._id)).toEqual(
+      expect.arrayContaining([
+        s.ceo._id,
+        s.hob._id,
+        s.gmA._id,
+        s.gmB._id,
+        s.amA._id,
+        s.amB._id,
+      ]),
+    );
   });
 
   it("sets and clears completedAt when task status changes", async () => {

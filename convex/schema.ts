@@ -385,6 +385,7 @@ export default defineSchema({
     ),
     createdBy: v.id("users"),
     assigneeId: v.optional(v.id("users")),
+    reportToId: v.optional(v.id("users")),
     companyId: v.optional(v.id("companies")),
     leadId: v.optional(v.id("leads")),
     quoteId: v.optional(v.id("quotes")),
@@ -395,6 +396,7 @@ export default defineSchema({
     archivedAt: v.optional(v.number()),
   })
     .index("by_assignee_status", ["assigneeId", "status"])
+    .index("by_report_to_status", ["reportToId", "status"])
     .index("by_creator", ["createdBy"])
     .index("by_company", ["companyId"])
     .index("by_status", ["status"])
