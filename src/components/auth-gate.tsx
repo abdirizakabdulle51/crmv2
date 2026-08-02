@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { toast } from "sonner";
 import { BrandLogo } from "@/components/brand-logo.tsx";
+import { InactivityLogout } from "@/components/inactivity-logout.tsx";
 
 function LoginPage() {
   return (
@@ -193,7 +194,12 @@ function AuthenticatedCrm({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <CrmProvider>{children}</CrmProvider>;
+  return (
+    <CrmProvider>
+      <InactivityLogout />
+      {children}
+    </CrmProvider>
+  );
 }
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
