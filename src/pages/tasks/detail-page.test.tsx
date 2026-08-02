@@ -31,6 +31,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
       getAttachmentDownloadUrl: "tasks.getAttachmentDownloadUrl",
       archiveAttachment: "tasks.archiveAttachment",
       update: "tasks.update",
+      updateStatus: "tasks.updateStatus",
       createComment: "tasks.createComment",
       updateComment: "tasks.updateComment",
       archiveComment: "tasks.archiveComment",
@@ -52,6 +53,7 @@ const mocks = vi.hoisted(() => ({
   archiveAttachment: vi.fn(),
   convexQuery: vi.fn(),
   updateTask: vi.fn(),
+  updateTaskStatus: vi.fn(),
   createComment: vi.fn(),
   updateComment: vi.fn(),
   archiveComment: vi.fn(),
@@ -80,6 +82,7 @@ vi.mock("convex/react", () => ({
       return mocks.saveAttachmentMetadata;
     if (mutation === "tasks.archiveAttachment") return mocks.archiveAttachment;
     if (mutation === "tasks.update") return mocks.updateTask;
+    if (mutation === "tasks.updateStatus") return mocks.updateTaskStatus;
     if (mutation === "tasks.createComment") return mocks.createComment;
     if (mutation === "tasks.updateComment") return mocks.updateComment;
     if (mutation === "tasks.archiveComment") return mocks.archiveComment;
@@ -214,6 +217,7 @@ describe("TaskDetailPage", () => {
     mocks.saveAttachmentMetadata.mockResolvedValue("attachment-new");
     mocks.archiveAttachment.mockResolvedValue(undefined);
     mocks.updateTask.mockResolvedValue(undefined);
+    mocks.updateTaskStatus.mockResolvedValue(undefined);
     mocks.convexQuery.mockResolvedValue("https://download.example/invoice.pdf");
     vi.stubGlobal(
       "fetch",
@@ -231,8 +235,10 @@ describe("TaskDetailPage", () => {
     expect(
       screen.getByRole("heading", { name: "Follow up with customer" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("To Do")).toBeInTheDocument();
+    expect(screen.getAllByText("To Do").length).toBeGreaterThan(0);
     expect(screen.getByText("Medium")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Task status" }))
+      .toHaveTextContent("To Do");
     expect(screen.getByText("Confirm the implementation plan.")).toBeInTheDocument();
     expect(screen.getByText("Assignee")).toBeInTheDocument();
     expect(screen.getByText("Report To")).toBeInTheDocument();
@@ -245,6 +251,35 @@ describe("TaskDetailPage", () => {
     expect(screen.getByText("Second update from Omar.")).toBeInTheDocument();
     expect(screen.getAllByText("Amina Ali").length).toBeGreaterThan(0);
     expect(screen.getByText("Omar Hassan")).toBeInTheDocument();
+  });
+
+  it("updates task status from the detail page", async () => {
+    const user = userEvent.setup();
+    renderTaskDetailPage();
+
+    await user.click(screen.getByRole("combobox", { name: "Task status" }));
+    await user.click(await screen.findByRole("option", { name: "In Progress" }));
+
+    await waitFor(() => {
+      expect(mocks.updateTaskStatus).toHaveBeenCalledWith({
+        taskId: "task-1",
+        status: "in_progress",
+      });
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Task status updated");
+  });
+
+  it("shows an error when task status update fails", async () => {
+    const user = userEvent.setup();
+    mocks.updateTaskStatus.mockRejectedValue(new Error("FORBIDDEN"));
+    renderTaskDetailPage();
+
+    await user.click(screen.getByRole("combobox", { name: "Task status" }));
+    await user.click(await screen.findByRole("option", { name: "Blocked" }));
+
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");
+    });
   });
 
   it("shows an Edit Task button and opens with existing values", async () => {

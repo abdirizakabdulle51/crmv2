@@ -69,6 +69,14 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   canceled: "Canceled",
 };
 
+const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
+  { value: "todo", label: "To Do" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "blocked", label: "Blocked" },
+  { value: "done", label: "Done" },
+  { value: "canceled", label: "Canceled" },
+];
+
 const PRIORITY_LABELS: Record<TaskPriority, string> = {
   low: "Low",
   medium: "Medium",
@@ -188,6 +196,7 @@ export default function TaskDetailPage() {
   const saveAttachmentMetadata = useMutation(api.tasks.saveAttachmentMetadata);
   const archiveAttachment = useMutation(api.tasks.archiveAttachment);
   const updateTask = useMutation(api.tasks.update);
+  const updateTaskStatus = useMutation(api.tasks.updateStatus);
   const createComment = useMutation(api.tasks.createComment);
   const updateComment = useMutation(api.tasks.updateComment);
   const archiveComment = useMutation(api.tasks.archiveComment);
@@ -204,6 +213,7 @@ export default function TaskDetailPage() {
   const [pendingCommentAction, setPendingCommentAction] = useState<string | null>(
     null,
   );
+  const [pendingStatus, setPendingStatus] = useState(false);
 
   const userMap = useMemo(
     () =>
@@ -366,6 +376,22 @@ export default function TaskDetailPage() {
     }
   };
 
+  const handleStatusChange = async (status: TaskStatus) => {
+    if (!task || status === task.status) return;
+
+    setPendingStatus(true);
+    try {
+      await updateTaskStatus({ taskId: task._id, status });
+      toast.success("Task status updated");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update task status",
+      );
+    } finally {
+      setPendingStatus(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6 p-6 md:p-8">
@@ -432,13 +458,36 @@ export default function TaskDetailPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex flex-wrap gap-2">
-            <Badge className={statusBadgeClass(task.status)}>
-              {STATUS_LABELS[task.status]}
-            </Badge>
-            <Badge className={priorityBadgeClass(task.priority)}>
-              {PRIORITY_LABELS[task.priority]}
-            </Badge>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <Badge className={statusBadgeClass(task.status)}>
+                {STATUS_LABELS[task.status]}
+              </Badge>
+              <Badge className={priorityBadgeClass(task.priority)}>
+                {PRIORITY_LABELS[task.priority]}
+              </Badge>
+            </div>
+            <div className="w-full space-y-2 sm:w-56">
+              <Label>Status</Label>
+              <Select
+                value={task.status}
+                onValueChange={(value) =>
+                  void handleStatusChange(value as TaskStatus)
+                }
+                disabled={pendingStatus}
+              >
+                <SelectTrigger aria-label="Task status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
