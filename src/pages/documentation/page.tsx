@@ -242,10 +242,10 @@ export default function DocumentationPage() {
               Documentation
             </div>
             <h1 className="mt-1 text-2xl font-bold tracking-tight">
-              HTGCLOUDS CRM Docs
+              CRM Documentation
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Team workflows and internal technical reference for the CRM.
+              Team workflows and internal technical reference.
             </p>
           </div>
           {canEdit ? (
