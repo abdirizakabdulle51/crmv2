@@ -149,6 +149,7 @@ function seed() {
       title: "Created by me but assigned elsewhere",
       assigneeId: "user-2" as Id<"users">,
       priority: "high",
+      reportToId: "user-2" as Id<"users">,
       dueDate: today - 24 * 60 * 60 * 1000,
     }),
     task("task-3", {
@@ -168,6 +169,13 @@ function seed() {
       status: "canceled",
       priority: "low",
       assigneeId: "user-1" as Id<"users">,
+    }),
+    task("task-6", {
+      title: "Reported blocker",
+      status: "blocked",
+      priority: "urgent",
+      assigneeId: "user-2" as Id<"users">,
+      reportToId: "user-1" as Id<"users">,
     }),
   ];
 }
@@ -419,6 +427,53 @@ describe("TasksPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows Reported to Me in the ownership dropdown", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("combobox", { name: "View filter" }));
+
+    expect(
+      await screen.findByRole("option", { name: "Reported to Me" }),
+    ).toBeInTheDocument();
+  });
+
+  it("filters tasks reported to the current user", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("combobox", { name: "View filter" }));
+    await user.click(await screen.findByRole("option", { name: "Reported to Me" }));
+
+    expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
+    expect(screen.getByText("Reported blocker")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Created by me but assigned elsewhere"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "View filter" })).toHaveTextContent(
+      "Reported to Me",
+    );
+  });
+
+  it("combines Reported to Me with status and priority filters", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("combobox", { name: "View filter" }));
+    await user.click(await screen.findByRole("option", { name: "Reported to Me" }));
+    await user.click(screen.getByRole("combobox", { name: "Status filter" }));
+    await user.click(await screen.findByRole("option", { name: "Blocked" }));
+
+    expect(screen.getByText("Reported blocker")).toBeInTheDocument();
+    expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "Priority filter" }));
+    await user.click(await screen.findByRole("option", { name: "Medium" }));
+
+    expect(screen.queryByText("Reported blocker")).not.toBeInTheDocument();
+    expect(screen.getByText("No tasks match these filters.")).toBeInTheDocument();
+  });
+
   it("applies My Open Tasks summary shortcut", async () => {
     const user = userEvent.setup();
     renderTasksPage();
@@ -470,7 +525,7 @@ describe("TasksPage", () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getByRole("button", { name: /Blocked\s+1/i }));
+    await user.click(screen.getByRole("button", { name: /Blocked\s+2/i }));
 
     expect(screen.getByText("Blocked migration")).toBeInTheDocument();
     expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();

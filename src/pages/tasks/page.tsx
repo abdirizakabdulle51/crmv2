@@ -51,7 +51,7 @@ type Task = Doc<"tasks"> & {
 };
 type TaskStatus = Task["status"];
 type TaskPriority = Task["priority"];
-type ViewFilter = "my" | "created" | "all";
+type ViewFilter = "my" | "reported" | "created" | "all";
 type ViewMode = "list" | "board";
 type StatusFilter = "active" | TaskStatus;
 type PriorityFilter = "all" | TaskPriority;
@@ -267,6 +267,9 @@ export default function TasksPage() {
       return false;
     }
     if (viewFilter === "created" && task.createdBy !== currentUser?._id) {
+      return false;
+    }
+    if (viewFilter === "reported" && task.reportToId !== currentUser?._id) {
       return false;
     }
     if (statusFilter === "active" && !isOpenTask(task)) {
@@ -487,6 +490,7 @@ export default function TasksPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="my">My Tasks</SelectItem>
+                  <SelectItem value="reported">Reported to Me</SelectItem>
                   <SelectItem value="created">Created by Me</SelectItem>
                   <SelectItem value="all">All Visible</SelectItem>
                 </SelectContent>
