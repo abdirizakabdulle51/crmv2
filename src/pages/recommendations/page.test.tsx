@@ -16,6 +16,7 @@ type TestRecommendation = Recommendation & {
     | "resolved";
   statusUpdatedAt?: number;
   snoozedUntil?: number;
+  note?: string;
 };
 
 Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
@@ -515,6 +516,73 @@ describe("RecommendationsPage pagination", () => {
     expect(screen.queryByRole("combobox", { name: "Snooze" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resolve" })).not.toBeInTheDocument();
+  });
+
+  it("displays an existing workflow note and saves note updates", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [company("company-1", "Acknowledged Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Acknowledged Co",
+        status: "acknowledged",
+        note: "Waiting for customer approval.",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    expect(screen.getByText("Workflow note")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for customer approval.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit note" }));
+    await user.clear(screen.getByPlaceholderText("Add a short workflow note..."));
+    await user.type(
+      screen.getByPlaceholderText("Add a short workflow note..."),
+      "Customer requested a follow-up next week.",
+    );
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    expect(mocks.setRecommendationStatus).toHaveBeenCalledWith({
+      recommendationKey: "company-1:waf:managed%20service",
+      companyId: "company-1",
+      rule: "waf",
+      recommendedService: "Managed service",
+      status: "acknowledged",
+      note: "Customer requested a follow-up next week.",
+    });
+  });
+
+  it("adds a workflow note for an in progress recommendation", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [company("company-1", "Progress Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Progress Co",
+        status: "in_progress",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    await user.click(screen.getByRole("button", { name: "Add note" }));
+    await user.type(
+      screen.getByPlaceholderText("Add a short workflow note..."),
+      "Team is validating backup sizing.",
+    );
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    expect(mocks.setRecommendationStatus).toHaveBeenCalledWith({
+      recommendationKey: "company-1:waf:managed%20service",
+      companyId: "company-1",
+      rule: "waf",
+      recommendedService: "Managed service",
+      status: "in_progress",
+      note: "Team is validating backup sizing.",
+    });
   });
 
   it("shows in progress recommendations through the In Progress status filter", async () => {

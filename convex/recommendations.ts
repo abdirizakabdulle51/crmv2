@@ -98,6 +98,7 @@ export const listComputed = query({
         overlay.snoozedUntil !== undefined
           ? { snoozedUntil: overlay.snoozedUntil }
           : {}),
+        ...(overlay?.note ? { note: overlay.note } : {}),
       };
     });
   },

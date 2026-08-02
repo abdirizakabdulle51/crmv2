@@ -12,6 +12,7 @@ const statusValidator = v.union(
   v.literal("dismissed"),
   v.literal("resolved"),
 );
+const MAX_NOTE_LENGTH = 300;
 
 async function getCurrentUserOrThrow(ctx: MutationCtx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
@@ -73,6 +74,7 @@ export const setRecommendationStatus = mutation({
     recommendedService: v.string(),
     status: statusValidator,
     snoozedUntil: v.optional(v.number()),
+    note: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -103,6 +105,14 @@ export const setRecommendationStatus = mutation({
       now,
       args.snoozedUntil,
     );
+    const trimmedNote =
+      args.note === undefined ? undefined : args.note.trim();
+    if (trimmedNote && trimmedNote.length > MAX_NOTE_LENGTH) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Note must be ${MAX_NOTE_LENGTH} characters or fewer`,
+      });
+    }
     const existing = await ctx.db
       .query("cloudAdvisorStatuses")
       .withIndex("by_key", (q) => q.eq("recommendationKey", args.recommendationKey))
@@ -116,6 +126,7 @@ export const setRecommendationStatus = mutation({
       status: args.status,
       updatedAt: now,
       updatedBy: user._id,
+      ...(args.note !== undefined ? { note: trimmedNote || undefined } : {}),
       ...statusFields,
     };
 

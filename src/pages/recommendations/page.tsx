@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import { Textarea } from "@/components/ui/textarea.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import {
   Select,
@@ -65,6 +66,7 @@ type AdvisorRecommendation = Recommendation & {
   status?: string;
   statusUpdatedAt?: number;
   snoozedUntil?: number;
+  note?: string;
 };
 
 type StatusAction =
@@ -231,6 +233,8 @@ export default function RecommendationsPage() {
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [editingNoteKey, setEditingNoteKey] = useState<string | null>(null);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
 
   const handleStatusAction = async (
     recommendation: AdvisorRecommendation,
@@ -261,6 +265,48 @@ export default function RecommendationsPage() {
       toast.success(getActionSuccessMessage(action));
     } catch {
       toast.error("Failed to update recommendation status");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const startEditingNote = (recommendation: AdvisorRecommendation) => {
+    setNoteDrafts((drafts) => ({
+      ...drafts,
+      [recommendation.recommendationKey]: recommendation.note ?? "",
+    }));
+    setEditingNoteKey(recommendation.recommendationKey);
+  };
+
+  const handleSaveNote = async (recommendation: AdvisorRecommendation) => {
+    const status = getRecommendationStatus(recommendation);
+    if (status === "open") {
+      toast.error("Set a status before adding a note");
+      return;
+    }
+    if (status === "snoozed" && recommendation.snoozedUntil === undefined) {
+      toast.error("Snoozed recommendations need a snooze date");
+      return;
+    }
+
+    const actionKey = `${recommendation.recommendationKey}:note`;
+    setPendingAction(actionKey);
+    try {
+      await setRecommendationStatus({
+        recommendationKey: recommendation.recommendationKey,
+        companyId: recommendation.companyId,
+        rule: recommendation.rule,
+        recommendedService: recommendation.recommendedService,
+        status,
+        ...(status === "snoozed"
+          ? { snoozedUntil: recommendation.snoozedUntil }
+          : {}),
+        note: noteDrafts[recommendation.recommendationKey] ?? "",
+      });
+      toast.success("Recommendation note saved");
+      setEditingNoteKey(null);
+    } catch {
+      toast.error("Failed to save recommendation note");
     } finally {
       setPendingAction(null);
     }
@@ -680,6 +726,84 @@ export default function RecommendationsPage() {
                       {getAdvisorRecommendedAction(row.rec)}
                     </span>
                   </div>
+
+                  {getRecommendationStatus(row.rec) !== "open" ||
+                  row.rec.note ? (
+                    <div className="rounded-lg border bg-muted/10 p-3 text-sm">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-medium uppercase text-muted-foreground">
+                          Workflow note
+                        </span>
+                        {editingNoteKey !== row.rec.recommendationKey ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2"
+                            onClick={() => startEditingNote(row.rec)}
+                          >
+                            {row.rec.note ? "Edit note" : "Add note"}
+                          </Button>
+                        ) : null}
+                      </div>
+                      {editingNoteKey === row.rec.recommendationKey ? (
+                        <div className="space-y-2">
+                          <Textarea
+                            value={
+                              noteDrafts[row.rec.recommendationKey] ?? ""
+                            }
+                            maxLength={300}
+                            rows={3}
+                            placeholder="Add a short workflow note..."
+                            onChange={(event) =>
+                              setNoteDrafts((drafts) => ({
+                                ...drafts,
+                                [row.rec.recommendationKey]:
+                                  event.target.value,
+                              }))
+                            }
+                          />
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs text-muted-foreground">
+                              {(noteDrafts[row.rec.recommendationKey] ?? "")
+                                .length}
+                              /300
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setEditingNoteKey(null)}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={
+                                  pendingAction ===
+                                  `${row.rec.recommendationKey}:note`
+                                }
+                                onClick={() => void handleSaveNote(row.rec)}
+                              >
+                                {pendingAction ===
+                                `${row.rec.recommendationKey}:note`
+                                  ? "Saving..."
+                                  : "Save note"}
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : row.rec.note ? (
+                        <p className="text-muted-foreground">{row.rec.note}</p>
+                      ) : (
+                        <p className="text-muted-foreground">
+                          No workflow note yet.
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
 
                   <div className="flex flex-wrap items-center gap-2 border-t pt-3">
                     <span className="text-xs font-medium uppercase text-muted-foreground">

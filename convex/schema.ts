@@ -435,6 +435,7 @@ export default defineSchema({
     inProgressAt: v.optional(v.number()),
     dismissedAt: v.optional(v.number()),
     resolvedAt: v.optional(v.number()),
+    note: v.optional(v.string()),
     updatedAt: v.number(),
     updatedBy: v.optional(v.id("users")),
   })

@@ -265,6 +265,63 @@ describe("recommendations", () => {
     });
   });
 
+  it("stores trims and clears Cloud Advisor status notes", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+    const recommendation = await getAiccBackupRecommendation(t, seeded.ceo);
+
+    await asUser(t, seeded.ceo).mutation(
+      api.cloudAdvisorStatuses.setRecommendationStatus,
+      {
+        recommendationKey: recommendation.recommendationKey,
+        companyId: recommendation.companyId,
+        rule: recommendation.rule,
+        recommendedService: recommendation.recommendedService,
+        status: "acknowledged",
+        note: "  Waiting for customer confirmation.  ",
+      },
+    );
+    expect(await getAiccBackupRecommendation(t, seeded.ceo)).toMatchObject({
+      status: "acknowledged",
+      note: "Waiting for customer confirmation.",
+    });
+
+    await asUser(t, seeded.ceo).mutation(
+      api.cloudAdvisorStatuses.setRecommendationStatus,
+      {
+        recommendationKey: recommendation.recommendationKey,
+        companyId: recommendation.companyId,
+        rule: recommendation.rule,
+        recommendedService: recommendation.recommendedService,
+        status: "acknowledged",
+        note: "   ",
+      },
+    );
+    expect("note" in (await getAiccBackupRecommendation(t, seeded.ceo))).toBe(
+      false,
+    );
+  });
+
+  it("rejects Cloud Advisor status notes longer than 300 characters", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+    const recommendation = await getAiccBackupRecommendation(t, seeded.ceo);
+
+    await expect(
+      asUser(t, seeded.ceo).mutation(
+        api.cloudAdvisorStatuses.setRecommendationStatus,
+        {
+          recommendationKey: recommendation.recommendationKey,
+          companyId: recommendation.companyId,
+          rule: recommendation.rule,
+          recommendedService: recommendation.recommendedService,
+          status: "acknowledged",
+          note: "x".repeat(301),
+        },
+      ),
+    ).rejects.toThrow(/300/);
+  });
+
   it("reopens recommendations by deleting the overlay", async () => {
     const t = convexTest(schema, modules);
     const seeded = await seed(t);
@@ -352,6 +409,7 @@ describe("recommendations", () => {
         status: _status,
         statusUpdatedAt: _statusUpdatedAt,
         snoozedUntil: _snoozedUntil,
+        note: _note,
         ...recommendation
       }) => recommendation,
     );
