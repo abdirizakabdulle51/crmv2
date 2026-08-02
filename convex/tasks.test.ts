@@ -37,15 +37,10 @@ async function storeTestFile(
 
 async function listNotificationsFor(
   t: ReturnType<typeof convexTest>,
-  recipientId: Id<"users">,
+  recipient: Doc<"users">,
 ) {
-  return await t.run(async (ctx) => {
-    return await ctx.db
-      .query("notifications")
-      .withIndex("by_recipient_created", (q) =>
-        q.eq("recipientId", recipientId),
-      )
-      .collect();
+  return await asUser(t, recipient).query(api.notifications.listMine, {
+    limit: 50,
   });
 }
 
@@ -317,9 +312,9 @@ describe("tasks", () => {
       reportToId: s.amB._id,
     });
 
-    const assigneeNotifications = await listNotificationsFor(t, s.amA._id);
-    const reportToNotifications = await listNotificationsFor(t, s.amB._id);
-    const actorNotifications = await listNotificationsFor(t, s.ceo._id);
+    const assigneeNotifications = await listNotificationsFor(t, s.amA);
+    const reportToNotifications = await listNotificationsFor(t, s.amB);
+    const actorNotifications = await listNotificationsFor(t, s.ceo);
     expect(assigneeNotifications).toMatchObject([
       {
         type: "task_assigned",
@@ -347,7 +342,7 @@ describe("tasks", () => {
       reportToId: s.amA._id,
     });
 
-    const notifications = await listNotificationsFor(t, s.amA._id);
+    const notifications = await listNotificationsFor(t, s.amA);
     expect(notifications).toHaveLength(1);
     expect(notifications[0]).toMatchObject({
       type: "task_assigned",
@@ -365,7 +360,7 @@ describe("tasks", () => {
       reportToId: s.ceo._id,
     });
 
-    expect(await listNotificationsFor(t, s.ceo._id)).toEqual([]);
+    expect(await listNotificationsFor(t, s.ceo)).toEqual([]);
   });
 
   it("notifies new assignee and Report To users when task assignment fields change", async () => {
@@ -388,14 +383,14 @@ describe("tasks", () => {
       reportToId: s.amB._id,
     });
 
-    expect(await listNotificationsFor(t, s.amA._id)).toMatchObject([
+    expect(await listNotificationsFor(t, s.amA)).toMatchObject([
       {
         type: "task_assigned",
         title: "Task assigned to you",
         body: "Reassigned task",
       },
     ]);
-    expect(await listNotificationsFor(t, s.amB._id)).toMatchObject([
+    expect(await listNotificationsFor(t, s.amB)).toMatchObject([
       {
         type: "task_report_to",
         title: "You were set as Report To",
@@ -424,14 +419,14 @@ describe("tasks", () => {
       status: "blocked",
     });
 
-    expect(await listNotificationsFor(t, s.amA._id)).toMatchObject([
+    expect(await listNotificationsFor(t, s.amA)).toMatchObject([
       {
         type: "task_status_changed",
         title: "Task status changed",
         body: "Status task: To Do -> Blocked",
       },
     ]);
-    expect(await listNotificationsFor(t, s.ceo._id)).toEqual([]);
+    expect(await listNotificationsFor(t, s.ceo)).toEqual([]);
   });
 
   it("notifies task assignee and Report To when a comment is created with dedupe and actor exclusion", async () => {
@@ -455,21 +450,21 @@ describe("tasks", () => {
       body: "Please review.",
     });
 
-    expect(await listNotificationsFor(t, s.amA._id)).toMatchObject([
+    expect(await listNotificationsFor(t, s.amA)).toMatchObject([
       {
         type: "task_commented",
         title: "New comment on task",
         body: "Commented task",
       },
     ]);
-    expect(await listNotificationsFor(t, s.amB._id)).toMatchObject([
+    expect(await listNotificationsFor(t, s.amB)).toMatchObject([
       {
         type: "task_commented",
         title: "New comment on task",
         body: "Commented task",
       },
     ]);
-    expect(await listNotificationsFor(t, s.ceo._id)).toEqual([]);
+    expect(await listNotificationsFor(t, s.ceo)).toEqual([]);
   });
 
   it("dedupes comment notifications when assignee and Report To are the same user", async () => {
@@ -493,7 +488,7 @@ describe("tasks", () => {
       body: "One notification only.",
     });
 
-    expect(await listNotificationsFor(t, s.amA._id)).toHaveLength(1);
+    expect(await listNotificationsFor(t, s.amA)).toHaveLength(1);
   });
 
   it("allows CEO and Head of Business to report to anyone", async () => {
