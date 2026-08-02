@@ -36,6 +36,8 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock,
+  LayoutGrid,
+  List,
   Plus,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -44,6 +46,7 @@ type Task = Doc<"tasks">;
 type TaskStatus = Task["status"];
 type TaskPriority = Task["priority"];
 type ViewFilter = "my" | "created" | "all";
+type ViewMode = "list" | "board";
 type StatusFilter = "active" | TaskStatus;
 type PriorityFilter = "all" | TaskPriority;
 type CreateTaskArgs = {
@@ -132,6 +135,14 @@ function priorityBadgeClass(priority: TaskPriority) {
   return "bg-muted text-muted-foreground";
 }
 
+function statusAccentClass(status: TaskStatus) {
+  if (status === "done") return "border-t-emerald-500";
+  if (status === "blocked") return "border-t-amber-500";
+  if (status === "canceled") return "border-t-muted-foreground/40";
+  if (status === "in_progress") return "border-t-cyan-500";
+  return "border-t-slate-400";
+}
+
 export default function TasksPage() {
   const { currentUser } = useCrm();
   const tasks = useQuery(api.tasks.list, {});
@@ -144,6 +155,7 @@ export default function TasksPage() {
   const archiveTask = useMutation(api.tasks.archive);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [viewFilter, setViewFilter] = useState<ViewFilter>("my");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
@@ -325,7 +337,42 @@ export default function TasksPage() {
                 Showing {filteredTasks.length} of {tasks.length} visible tasks.
               </p>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div
+                className="grid grid-cols-2 rounded-lg border bg-muted/40 p-1"
+                aria-label="Task view"
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={
+                    viewMode === "list"
+                      ? "h-8 bg-background text-foreground shadow-sm"
+                      : "h-8 text-muted-foreground"
+                  }
+                  onClick={() => setViewMode("list")}
+                  aria-pressed={viewMode === "list"}
+                >
+                  <List className="mr-2 h-4 w-4" />
+                  List
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={
+                    viewMode === "board"
+                      ? "h-8 bg-background text-foreground shadow-sm"
+                      : "h-8 text-muted-foreground"
+                  }
+                  onClick={() => setViewMode("board")}
+                  aria-pressed={viewMode === "board"}
+                >
+                  <LayoutGrid className="mr-2 h-4 w-4" />
+                  Board
+                </Button>
+              </div>
               <Select
                 value={viewFilter}
                 onValueChange={(value) => setViewFilter(value as ViewFilter)}
@@ -393,6 +440,14 @@ export default function TasksPage() {
                 Create a task or adjust the filters to see more work.
               </p>
             </div>
+          ) : viewMode === "board" ? (
+            <TaskBoard
+              tasks={filteredTasks}
+              userMap={userMap}
+              companyMap={companyMap}
+              pendingAction={pendingAction}
+              onStatusChange={handleStatusChange}
+            />
           ) : (
             <div className="space-y-3">
               {filteredTasks.map((task) => (
@@ -429,6 +484,152 @@ export default function TasksPage() {
         onCreate={createTask}
       />
     </div>
+  );
+}
+
+function TaskBoard({
+  tasks,
+  userMap,
+  companyMap,
+  pendingAction,
+  onStatusChange,
+}: {
+  tasks: Task[];
+  userMap: Map<Id<"users">, Doc<"users">>;
+  companyMap: Map<Id<"companies">, Doc<"companies">>;
+  pendingAction: string | null;
+  onStatusChange: (taskId: Id<"tasks">, status: TaskStatus) => Promise<void>;
+}) {
+  return (
+    <div className="overflow-x-auto pb-2">
+      <div className="grid min-w-[980px] grid-cols-5 gap-3 xl:min-w-0">
+        {STATUS_OPTIONS.map((status) => {
+          const statusTasks = tasks.filter((task) => task.status === status.value);
+
+          return (
+            <section key={status.value} aria-labelledby={`tasks-${status.value}`}>
+              <div
+                className={`rounded-lg border border-t-4 bg-card p-3 ${statusAccentClass(
+                  status.value,
+                )}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3
+                    id={`tasks-${status.value}`}
+                    className="text-sm font-semibold"
+                  >
+                    {status.label}
+                  </h3>
+                  <Badge variant="secondary" className="text-xs">
+                    {statusTasks.length}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="mt-3 space-y-2 rounded-lg bg-muted/30 p-2 min-h-[160px]">
+                {statusTasks.length === 0 ? (
+                  <div className="rounded-md border border-dashed bg-background/70 p-3 text-center text-xs text-muted-foreground">
+                    No tasks
+                  </div>
+                ) : (
+                  statusTasks.map((task) => (
+                    <TaskBoardCard
+                      key={task._id}
+                      task={task}
+                      assignee={
+                        task.assigneeId ? userMap.get(task.assigneeId) : null
+                      }
+                      reportTo={
+                        task.reportToId ? userMap.get(task.reportToId) : undefined
+                      }
+                      creator={userMap.get(task.createdBy)}
+                      company={
+                        task.companyId ? companyMap.get(task.companyId) : null
+                      }
+                      pendingAction={pendingAction}
+                      onStatusChange={onStatusChange}
+                    />
+                  ))
+                )}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TaskBoardCard({
+  task,
+  assignee,
+  reportTo,
+  creator,
+  company,
+  pendingAction,
+  onStatusChange,
+}: {
+  task: Task;
+  assignee: Doc<"users"> | null | undefined;
+  reportTo: Doc<"users"> | undefined;
+  creator: Doc<"users"> | undefined;
+  company: Doc<"companies"> | null | undefined;
+  pendingAction: string | null;
+  onStatusChange: (taskId: Id<"tasks">, status: TaskStatus) => Promise<void>;
+}) {
+  const reportToLabel =
+    reportTo?.name ||
+    reportTo?.email ||
+    (task.reportToId ? "Unknown" : creator?.name || creator?.email || "Not set");
+
+  return (
+    <Card className="border bg-background shadow-sm transition-colors hover:border-primary/30">
+      <CardContent className="space-y-3 p-3">
+        <div className="space-y-2">
+          <div className="font-medium leading-snug">{task.title}</div>
+          <div className="flex flex-wrap gap-1.5">
+            <Badge className={priorityBadgeClass(task.priority)}>
+              {priorityLabel(task.priority)}
+            </Badge>
+            <Badge className={statusBadgeClass(task.status)}>
+              {statusLabel(task.status)}
+            </Badge>
+          </div>
+        </div>
+
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>Assignee: {assignee?.name || assignee?.email || "Unassigned"}</p>
+          <p>
+            Report To: {reportToLabel}
+            {!task.reportToId && creator ? " (created by)" : ""}
+          </p>
+          <p>Due: {formatDate(task.dueDate)}</p>
+          {company ? <p>Company: {company.name}</p> : null}
+        </div>
+
+        <Select
+          value={task.status}
+          onValueChange={(value) =>
+            void onStatusChange(task._id, value as TaskStatus)
+          }
+          disabled={pendingAction === `${task._id}:status`}
+        >
+          <SelectTrigger
+            className="h-8 text-xs"
+            aria-label={`Move task ${task.title}`}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUS_OPTIONS.map((status) => (
+              <SelectItem key={status.value} value={status.value}>
+                {status.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </CardContent>
+    </Card>
   );
 }
 

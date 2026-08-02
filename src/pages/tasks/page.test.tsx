@@ -149,6 +149,12 @@ function seed() {
       priority: "low",
       completedAt: 1785600000000,
     }),
+    task("task-5", {
+      title: "Canceled cleanup",
+      status: "canceled",
+      priority: "low",
+      assigneeId: "user-1" as Id<"users">,
+    }),
   ];
 }
 
@@ -228,6 +234,96 @@ describe("TasksPage", () => {
         taskId: "task-1",
         status: "done",
       });
+    });
+  });
+
+  it("renders a board view grouped by task status", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    expect(screen.getByRole("button", { name: /List/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await user.click(screen.getByRole("button", { name: /Board/i }));
+
+    expect(screen.getByRole("button", { name: /Board/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "To Do" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "In Progress" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Blocked" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Canceled" })).toBeInTheDocument();
+    expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
+    expect(screen.getByText("Blocked migration")).toBeInTheDocument();
+  });
+
+  it("applies existing filters in board view", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /Board/i }));
+    await user.click(screen.getByRole("combobox", { name: "View filter" }));
+    await user.click(await screen.findByRole("option", { name: "All Visible" }));
+    expect(screen.getByText("Created by me but assigned elsewhere")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "Status filter" }));
+    await user.click(await screen.findByRole("option", { name: "Blocked" }));
+    expect(screen.getByText("Blocked migration")).toBeInTheDocument();
+    expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "Priority filter" }));
+    await user.click(await screen.findByRole("option", { name: "Urgent" }));
+    expect(screen.getByText("Blocked migration")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Created by me but assigned elsewhere"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows task metadata on board cards", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /Board/i }));
+
+    expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
+    expect(screen.getByText("Medium")).toBeInTheDocument();
+    expect(screen.getAllByText("Assignee: Amina Ali").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Report To: Amina Ali").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Due: Aug/)).toBeInTheDocument();
+    expect(screen.getByText("Company: AICC")).toBeInTheDocument();
+  });
+
+  it("updates status from a board card", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /Board/i }));
+    await chooseSelectOption(/Move task Follow up with customer/i, "Done");
+
+    await waitFor(() => {
+      expect(mocks.updateStatus).toHaveBeenCalledWith({
+        taskId: "task-1",
+        status: "done",
+      });
+    });
+  });
+
+  it("shows backend denial errors from board status updates", async () => {
+    const user = userEvent.setup();
+    mocks.updateStatus.mockRejectedValue(new Error("FORBIDDEN"));
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /Board/i }));
+    await chooseSelectOption(/Move task Follow up with customer/i, "Done");
+
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");
     });
   });
 
