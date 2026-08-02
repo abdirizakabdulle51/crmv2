@@ -154,7 +154,6 @@ export default function AppLayout() {
                 </div>
               </div>
               <ThemeToggle />
-              <NotificationBell />
               <button
                 onClick={() => signout()}
                 className="shrink-0 p-1.5 rounded-md text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors cursor-pointer"
@@ -169,6 +168,16 @@ export default function AppLayout() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto pb-16 md:pb-0">
+        {currentUser ? (
+          <div
+            className="sticky top-0 z-40 flex justify-end px-4 pt-4 sm:px-6 md:px-8"
+            data-testid="app-top-notification-area"
+          >
+            <div className="rounded-lg border bg-background/95 p-1 shadow-sm backdrop-blur">
+              <NotificationBell />
+            </div>
+          </div>
+        ) : null}
         <Outlet />
       </main>
 

@@ -34,15 +34,15 @@ vi.mock("@/components/brand-logo.tsx", () => ({
 
 vi.mock("@/components/notification-bell.tsx", () => ({
   NotificationBell: () => (
-    <button type="button" aria-label="Notifications">
+    <button type="button" aria-label="Notifications" data-testid="mock-bell">
       Notifications
     </button>
   ),
 }));
 
 describe("AppLayout", () => {
-  it("renders the notification bell in the authenticated sidebar footer", () => {
-    render(
+  it("renders the notification bell in the top-right app content area", () => {
+    const { container } = render(
       <MemoryRouter initialEntries={["/dashboard"]}>
         <Routes>
           <Route path="/" element={<AppLayout />}>
@@ -53,6 +53,13 @@ describe("AppLayout", () => {
     );
 
     expect(screen.getByText("Amina Yusuf")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
+    const topNotificationArea = screen.getByTestId(
+      "app-top-notification-area",
+    );
+    const bell = screen.getByRole("button", { name: "Notifications" });
+    expect(topNotificationArea).toContainElement(bell);
+    expect(container.querySelector("aside")).not.toContainElement(bell);
+    expect(screen.getByRole("button", { name: "Theme" })).toBeInTheDocument();
+    expect(screen.getByTitle("Sign out")).toBeInTheDocument();
   });
 });
