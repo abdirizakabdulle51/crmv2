@@ -25,6 +25,16 @@ function asUser(t: ReturnType<typeof convexTest>, user: Doc<"users">) {
   return t.withIdentity({ tokenIdentifier: user.tokenIdentifier });
 }
 
+async function storeTestFile(
+  t: ReturnType<typeof convexTest>,
+  body = "test file",
+  type = "application/pdf",
+) {
+  return await t.run(async (ctx) => {
+    return await ctx.storage.store(new Blob([body], { type }));
+  });
+}
+
 async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
   return await t.run(async (ctx) => {
     const countryA = await ctx.db.insert("countries", {
@@ -680,6 +690,386 @@ describe("tasks", () => {
     });
     expect(comments.ceo?.body).toBe("CEO edited");
     expect(comments.hob?.archivedAt).toEqual(expect.any(Number));
+  });
+
+  it("requires auth before generating attachment upload URLs", async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+
+    await expect(
+      t.mutation(api.tasks.generateAttachmentUploadUrl, {}),
+    ).rejects.toThrow(/logged in|UNAUTHENTICATED/i);
+  });
+
+  it("saves attachment metadata for visible tasks", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await asUser(t, s.amA).mutation(api.tasks.create, {
+      title: "Attachment task",
+      assigneeId: s.amA._id,
+    });
+    const storageId = await storeTestFile(t);
+
+    const attachmentId = await asUser(t, s.amA).mutation(
+      api.tasks.saveAttachmentMetadata,
+      {
+        taskId,
+        storageId,
+        fileName: "  invoice.pdf  ",
+        mimeType: "application/pdf",
+        size: 1024,
+      },
+    );
+
+    const attachment = await t.run(
+      async (ctx) => await ctx.db.get(attachmentId),
+    );
+    expect(attachment).toMatchObject({
+      taskId,
+      storageId,
+      fileName: "invoice.pdf",
+      mimeType: "application/pdf",
+      size: 1024,
+      uploadedBy: s.amA._id,
+      uploadedAt: expect.any(Number),
+    });
+  });
+
+  it("rejects attachment metadata for hidden tasks", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await asUser(t, s.amB).mutation(api.tasks.create, {
+      title: "Hidden attachment task",
+      assigneeId: s.amB._id,
+      companyId: s.companyB,
+    });
+    const storageId = await storeTestFile(t);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.saveAttachmentMetadata, {
+        taskId,
+        storageId,
+        fileName: "invoice.pdf",
+        mimeType: "application/pdf",
+        size: 1024,
+      }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
+  it("rejects disallowed attachment MIME types and oversized files", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await asUser(t, s.amA).mutation(api.tasks.create, {
+      title: "Attachment validation task",
+      assigneeId: s.amA._id,
+    });
+    const storageId = await storeTestFile(t);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.saveAttachmentMetadata, {
+        taskId,
+        storageId,
+        fileName: "danger.svg",
+        mimeType: "image/svg+xml",
+        size: 1024,
+      }),
+    ).rejects.toThrow(/file type|BAD_REQUEST/i);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.saveAttachmentMetadata, {
+        taskId,
+        storageId,
+        fileName: "large.pdf",
+        mimeType: "application/pdf",
+        size: 10 * 1024 * 1024 + 1,
+      }),
+    ).rejects.toThrow(/10 MB|BAD_REQUEST/i);
+  });
+
+  it("lists only non-archived attachments for visible tasks", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await asUser(t, s.amA).mutation(api.tasks.create, {
+      title: "List attachments task",
+      assigneeId: s.amA._id,
+    });
+    const [firstStorageId, secondStorageId, archivedStorageId] =
+      await Promise.all([
+        storeTestFile(t, "first"),
+        storeTestFile(t, "second"),
+        storeTestFile(t, "archived"),
+      ]);
+
+    await asUser(t, s.amA).mutation(api.tasks.saveAttachmentMetadata, {
+      taskId,
+      storageId: firstStorageId,
+      fileName: "first.pdf",
+      mimeType: "application/pdf",
+      size: 100,
+    });
+    await asUser(t, s.amA).mutation(api.tasks.saveAttachmentMetadata, {
+      taskId,
+      storageId: archivedStorageId,
+      fileName: "archived.pdf",
+      mimeType: "application/pdf",
+      size: 100,
+    });
+    const secondAttachmentId = await asUser(t, s.amA).mutation(
+      api.tasks.saveAttachmentMetadata,
+      {
+        taskId,
+        storageId: secondStorageId,
+        fileName: "second.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+    await asUser(t, s.amA).mutation(api.tasks.archiveAttachment, {
+      attachmentId: secondAttachmentId,
+    });
+
+    const attachments = await asUser(t, s.amA).query(
+      api.tasks.listAttachments,
+      { taskId },
+    );
+    expect(attachments.map((attachment) => attachment.fileName)).toEqual([
+      "first.pdf",
+      "archived.pdf",
+    ]);
+
+    await expect(
+      asUser(t, s.amB).query(api.tasks.listAttachments, { taskId }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
+  it("requires task access before returning attachment download URLs", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await asUser(t, s.amA).mutation(api.tasks.create, {
+      title: "Download attachment task",
+      assigneeId: s.amA._id,
+    });
+    const storageId = await storeTestFile(t);
+    const attachmentId = await asUser(t, s.amA).mutation(
+      api.tasks.saveAttachmentMetadata,
+      {
+        taskId,
+        storageId,
+        fileName: "invoice.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+
+    const url = await asUser(t, s.amA).query(
+      api.tasks.getAttachmentDownloadUrl,
+      { attachmentId },
+    );
+    expect(url).toContain("/api/storage/");
+
+    await expect(
+      asUser(t, s.amB).query(api.tasks.getAttachmentDownloadUrl, {
+        attachmentId,
+      }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
+  it("archives attachments for uploaders HOB and CEO but not unrelated Account Managers", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("tasks", {
+        title: "Archive attachments task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.amA._id,
+        reportToId: s.amB._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const [uploaderStorageId, hobStorageId, ceoStorageId, otherStorageId] =
+      await Promise.all([
+        storeTestFile(t, "uploader"),
+        storeTestFile(t, "hob"),
+        storeTestFile(t, "ceo"),
+        storeTestFile(t, "other"),
+      ]);
+
+    const uploaderAttachmentId = await asUser(t, s.amA).mutation(
+      api.tasks.saveAttachmentMetadata,
+      {
+        taskId,
+        storageId: uploaderStorageId,
+        fileName: "uploader.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+    const hobAttachmentId = await asUser(t, s.amA).mutation(
+      api.tasks.saveAttachmentMetadata,
+      {
+        taskId,
+        storageId: hobStorageId,
+        fileName: "hob.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+    const ceoAttachmentId = await asUser(t, s.amA).mutation(
+      api.tasks.saveAttachmentMetadata,
+      {
+        taskId,
+        storageId: ceoStorageId,
+        fileName: "ceo.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+    const otherAttachmentId = await asUser(t, s.amA).mutation(
+      api.tasks.saveAttachmentMetadata,
+      {
+        taskId,
+        storageId: otherStorageId,
+        fileName: "other.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+
+    await asUser(t, s.amA).mutation(api.tasks.archiveAttachment, {
+      attachmentId: uploaderAttachmentId,
+    });
+    await asUser(t, s.hob).mutation(api.tasks.archiveAttachment, {
+      attachmentId: hobAttachmentId,
+    });
+    await asUser(t, s.ceo).mutation(api.tasks.archiveAttachment, {
+      attachmentId: ceoAttachmentId,
+    });
+    await expect(
+      asUser(t, s.amB).mutation(api.tasks.archiveAttachment, {
+        attachmentId: otherAttachmentId,
+      }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+
+    const archived = await t.run(async (ctx) => ({
+      uploader: await ctx.db.get(uploaderAttachmentId),
+      hob: await ctx.db.get(hobAttachmentId),
+      ceo: await ctx.db.get(ceoAttachmentId),
+      other: await ctx.db.get(otherAttachmentId),
+    }));
+    expect(archived.uploader?.archivedBy).toBe(s.amA._id);
+    expect(archived.hob?.archivedBy).toBe(s.hob._id);
+    expect(archived.ceo?.archivedBy).toBe(s.ceo._id);
+    expect(archived.other?.archivedAt).toBeUndefined();
+  });
+
+  it("requires comment attachments to target a live comment on the same task", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const { taskId, otherTaskId, commentId, otherCommentId, archivedCommentId } =
+      await t.run(async (ctx) => {
+        const now = Date.now();
+        const taskId = await ctx.db.insert("tasks", {
+          title: "Comment attachment task",
+          status: "todo",
+          priority: "medium",
+          createdBy: s.amA._id,
+          assigneeId: s.amA._id,
+          createdAt: now,
+          updatedAt: now,
+        });
+        const otherTaskId = await ctx.db.insert("tasks", {
+          title: "Other task",
+          status: "todo",
+          priority: "medium",
+          createdBy: s.amA._id,
+          assigneeId: s.amA._id,
+          createdAt: now,
+          updatedAt: now,
+        });
+        const commentId = await ctx.db.insert("taskComments", {
+          taskId,
+          body: "Live comment",
+          createdBy: s.amA._id,
+          createdAt: now,
+        });
+        const otherCommentId = await ctx.db.insert("taskComments", {
+          taskId: otherTaskId,
+          body: "Wrong task comment",
+          createdBy: s.amA._id,
+          createdAt: now,
+        });
+        const archivedCommentId = await ctx.db.insert("taskComments", {
+          taskId,
+          body: "Archived comment",
+          createdBy: s.amA._id,
+          createdAt: now,
+          archivedAt: now + 1,
+        });
+        return {
+          taskId,
+          otherTaskId,
+          commentId,
+          otherCommentId,
+          archivedCommentId,
+        };
+      });
+    const [validStorageId, wrongStorageId, archivedStorageId] =
+      await Promise.all([
+        storeTestFile(t, "valid"),
+        storeTestFile(t, "wrong"),
+        storeTestFile(t, "archived"),
+      ]);
+
+    const attachmentId = await asUser(t, s.amA).mutation(
+      api.tasks.saveAttachmentMetadata,
+      {
+        taskId,
+        commentId,
+        storageId: validStorageId,
+        fileName: "comment.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+    const commentAttachments = await asUser(t, s.amA).query(
+      api.tasks.listAttachments,
+      { taskId, commentId },
+    );
+    expect(commentAttachments.map((attachment) => attachment._id)).toEqual([
+      attachmentId,
+    ]);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.saveAttachmentMetadata, {
+        taskId,
+        commentId: otherCommentId,
+        storageId: wrongStorageId,
+        fileName: "wrong.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      }),
+    ).rejects.toThrow(/same task|BAD_REQUEST/i);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.saveAttachmentMetadata, {
+        taskId,
+        commentId: archivedCommentId,
+        storageId: archivedStorageId,
+        fileName: "archived.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      }),
+    ).rejects.toThrow(/archived comment|BAD_REQUEST/i);
+
+    await expect(
+      asUser(t, s.amA).query(api.tasks.listAttachments, {
+        taskId: otherTaskId,
+        commentId,
+      }),
+    ).rejects.toThrow(/same task|BAD_REQUEST/i);
   });
 
   it("sets and clears completedAt when task status changes", async () => {

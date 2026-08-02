@@ -414,6 +414,23 @@ export default defineSchema({
     .index("by_task", ["taskId"])
     .index("by_created_by", ["createdBy"]),
 
+  taskAttachments: defineTable({
+    taskId: v.id("tasks"),
+    commentId: v.optional(v.id("taskComments")),
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+    uploadedBy: v.id("users"),
+    uploadedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+    archivedBy: v.optional(v.id("users")),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_comment", ["commentId"])
+    .index("by_uploaded_by", ["uploadedBy"])
+    .index("by_storage_id", ["storageId"]),
+
   consumption: defineTable({
     companyId: v.id("companies"),
     month: v.string(), // YYYY-MM format

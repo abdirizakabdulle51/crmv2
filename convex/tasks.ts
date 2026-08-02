@@ -8,6 +8,20 @@ type Ctx = QueryCtx | MutationCtx;
 type TaskStatus = Doc<"tasks">["status"];
 type TaskPriority = Doc<"tasks">["priority"];
 const MAX_COMMENT_LENGTH = 2000;
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "text/plain",
+  "text/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
 
 const statusValidator = v.union(
   v.literal("todo"),
@@ -67,6 +81,20 @@ async function getCommentOrThrow(ctx: Ctx, commentId: Id<"taskComments">) {
     });
   }
   return comment;
+}
+
+async function getAttachmentOrThrow(
+  ctx: Ctx,
+  attachmentId: Id<"taskAttachments">,
+) {
+  const attachment = await ctx.db.get(attachmentId);
+  if (!attachment) {
+    throw new ConvexError({
+      code: "NOT_FOUND",
+      message: "Task attachment not found",
+    });
+  }
+  return attachment;
 }
 
 async function getVisibleCompanyIds(ctx: Ctx, user: Doc<"users">) {
@@ -208,6 +236,19 @@ function assertCanModerateComment(
   });
 }
 
+function assertCanArchiveAttachment(
+  user: Doc<"users">,
+  attachment: Doc<"taskAttachments">,
+) {
+  if (attachment.uploadedBy === user._id || isCeoOrHob(user)) {
+    return;
+  }
+  throw new ConvexError({
+    code: "FORBIDDEN",
+    message: "You do not have permission to archive this attachment",
+  });
+}
+
 function normalizeCommentBody(body: string) {
   const trimmed = body.trim();
   if (!trimmed) {
@@ -223,6 +264,62 @@ function normalizeCommentBody(body: string) {
     });
   }
   return trimmed;
+}
+
+function normalizeAttachmentFileName(fileName: string) {
+  const trimmed = fileName.trim();
+  if (!trimmed) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Attachment file name is required",
+    });
+  }
+  return trimmed;
+}
+
+function assertAllowedAttachment(mimeType: string, size: number) {
+  if (!ALLOWED_ATTACHMENT_MIME_TYPES.has(mimeType)) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Attachment file type is not allowed",
+    });
+  }
+  if (!Number.isFinite(size) || size < 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Attachment file size is invalid",
+    });
+  }
+  if (size > MAX_ATTACHMENT_SIZE_BYTES) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Attachment file size must be 10 MB or less",
+    });
+  }
+}
+
+async function assertCommentBelongsToTask(
+  ctx: Ctx,
+  taskId: Id<"tasks">,
+  commentId: Id<"taskComments"> | undefined,
+) {
+  if (!commentId) {
+    return;
+  }
+
+  const comment = await getCommentOrThrow(ctx, commentId);
+  if (comment.taskId !== taskId) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Attachment comment must belong to the same task",
+    });
+  }
+  if (comment.archivedAt !== undefined) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Cannot attach files to an archived comment",
+    });
+  }
 }
 
 async function assertCanAssignTaskTo(
@@ -671,6 +768,100 @@ export const archiveComment = mutation({
 
     await ctx.db.patch(args.commentId, {
       archivedAt: Date.now(),
+    });
+  },
+});
+
+export const generateAttachmentUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await getCurrentUserOrThrow(ctx);
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+export const saveAttachmentMetadata = mutation({
+  args: {
+    taskId: v.id("tasks"),
+    commentId: v.optional(v.id("taskComments")),
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+    await assertCanViewTask(ctx, user, task);
+    await assertCommentBelongsToTask(ctx, args.taskId, args.commentId);
+    assertAllowedAttachment(args.mimeType, args.size);
+
+    return await ctx.db.insert("taskAttachments", {
+      taskId: args.taskId,
+      commentId: args.commentId,
+      storageId: args.storageId,
+      fileName: normalizeAttachmentFileName(args.fileName),
+      mimeType: args.mimeType,
+      size: args.size,
+      uploadedBy: user._id,
+      uploadedAt: Date.now(),
+    });
+  },
+});
+
+export const listAttachments = query({
+  args: {
+    taskId: v.id("tasks"),
+    commentId: v.optional(v.id("taskComments")),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+    await assertCanViewTask(ctx, user, task);
+    await assertCommentBelongsToTask(ctx, args.taskId, args.commentId);
+
+    const attachments = await ctx.db
+      .query("taskAttachments")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .collect();
+
+    return attachments
+      .filter((attachment) => attachment.archivedAt === undefined)
+      .filter((attachment) =>
+        args.commentId ? attachment.commentId === args.commentId : true,
+      )
+      .sort((a, b) => a.uploadedAt - b.uploadedAt);
+  },
+});
+
+export const getAttachmentDownloadUrl = query({
+  args: {
+    attachmentId: v.id("taskAttachments"),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const attachment = await getAttachmentOrThrow(ctx, args.attachmentId);
+    const task = await getTaskOrThrow(ctx, attachment.taskId);
+    await assertCanViewTask(ctx, user, task);
+
+    return await ctx.storage.getUrl(attachment.storageId);
+  },
+});
+
+export const archiveAttachment = mutation({
+  args: {
+    attachmentId: v.id("taskAttachments"),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const attachment = await getAttachmentOrThrow(ctx, args.attachmentId);
+    const task = await getTaskOrThrow(ctx, attachment.taskId);
+    await assertCanViewTask(ctx, user, task);
+    assertCanArchiveAttachment(user, attachment);
+
+    await ctx.db.patch(args.attachmentId, {
+      archivedAt: Date.now(),
+      archivedBy: user._id,
     });
   },
 });
