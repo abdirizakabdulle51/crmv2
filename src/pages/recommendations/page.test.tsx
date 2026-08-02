@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import RecommendationsPage from "./page.tsx";
 import type { Recommendation } from "./_lib/recommendation-engine.ts";
@@ -36,6 +36,10 @@ vi.mock("@/convex/_generated/api.js", () => ({
     companies: { list: "companies.list" },
     recommendations: { listComputed: "recommendations.listComputed" },
     aiRecommendations: { listVisible: "aiRecommendations.listVisible" },
+    cloudAdvisorStatuses: {
+      setRecommendationStatus: "cloudAdvisorStatuses.setRecommendationStatus",
+      reopenRecommendation: "cloudAdvisorStatuses.reopenRecommendation",
+    },
   },
 }));
 
@@ -43,6 +47,8 @@ const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
   recommendations: [] as TestRecommendation[],
   aiRecommendations: [] as Doc<"aiRecommendations">[],
+  setRecommendationStatus: vi.fn(),
+  reopenRecommendation: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -52,6 +58,22 @@ vi.mock("convex/react", () => ({
     if (query === "aiRecommendations.listVisible")
       return mocks.aiRecommendations;
     return undefined;
+  },
+  useMutation: (mutation: string) => {
+    if (mutation === "cloudAdvisorStatuses.setRecommendationStatus") {
+      return mocks.setRecommendationStatus;
+    }
+    if (mutation === "cloudAdvisorStatuses.reopenRecommendation") {
+      return mocks.reopenRecommendation;
+    }
+    return vi.fn();
+  },
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
   },
 }));
 
@@ -77,6 +99,9 @@ function recommendation(index: number, priority: Recommendation["priority"]) {
     estimatedValue: "$10.00/mo",
     estimatedMonthlyValue: 10,
     priority,
+    recommendationKey: `company-${index}:${
+      index % 2 === 0 ? "backup" : "waf"
+    }:managed%20service`,
   } satisfies TestRecommendation;
 }
 
@@ -99,6 +124,12 @@ function seedRecommendations() {
 }
 
 describe("RecommendationsPage pagination", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.setRecommendationStatus.mockResolvedValue("status-id");
+    mocks.reopenRecommendation.mockResolvedValue({ deleted: true });
+  });
+
   it("presents the page as Cloud Advisor with category filtering", async () => {
     const user = userEvent.setup();
     mocks.companies = [
@@ -297,6 +328,122 @@ describe("RecommendationsPage pagination", () => {
     expect(screen.getAllByText("Snoozed").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Snoozed until/)).toBeInTheDocument();
     expect(screen.queryByText(/Open Co/)).not.toBeInTheDocument();
+  });
+
+  it("shows open recommendation actions and acknowledges with the correct payload", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [company("company-1", "Open Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Open Co",
+        status: "open",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    expect(
+      screen.getByRole("button", { name: "Acknowledge" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Acknowledge" }));
+
+    expect(mocks.setRecommendationStatus).toHaveBeenCalledWith({
+      recommendationKey: "company-1:waf:managed%20service",
+      companyId: "company-1",
+      rule: "waf",
+      recommendedService: "Managed service",
+      status: "acknowledged",
+    });
+  });
+
+  it("dismisses and resolves with the selected status", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [company("company-1", "Open Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Open Co",
+        status: "open",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    await user.click(screen.getByRole("button", { name: "Resolve" }));
+
+    expect(mocks.setRecommendationStatus).toHaveBeenNthCalledWith(1, {
+      recommendationKey: "company-1:waf:managed%20service",
+      companyId: "company-1",
+      rule: "waf",
+      recommendedService: "Managed service",
+      status: "dismissed",
+    });
+    expect(mocks.setRecommendationStatus).toHaveBeenNthCalledWith(2, {
+      recommendationKey: "company-1:waf:managed%20service",
+      companyId: "company-1",
+      rule: "waf",
+      recommendedService: "Managed service",
+      status: "resolved",
+    });
+  });
+
+  it("reopens inactive recommendations with the recommendation key", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [company("company-1", "Resolved Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Resolved Co",
+        status: "resolved",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    await user.click(screen.getByRole("combobox", { name: "Status" }));
+    await user.click(screen.getByRole("option", { name: "Resolved" }));
+    await user.click(screen.getByRole("button", { name: "Reopen" }));
+
+    expect(mocks.reopenRecommendation).toHaveBeenCalledWith({
+      recommendationKey: "company-1:waf:managed%20service",
+    });
+  });
+
+  it("hides resolved cards from Active when reactive data updates", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [company("company-1", "Open Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Open Co",
+        status: "open",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    const { rerender } = render(<RecommendationsPage />);
+    expect(screen.getByText(/Open Co/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Resolve" }));
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Open Co",
+        status: "resolved",
+      },
+    ];
+    rerender(<RecommendationsPage />);
+
+    expect(screen.queryByText(/Open Co/)).not.toBeInTheDocument();
+    expect(screen.getByText("No matching results")).toBeInTheDocument();
   });
 
   it("shows stored AI narrative above the company's first visible rule", () => {

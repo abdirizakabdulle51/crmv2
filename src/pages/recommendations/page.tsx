@@ -1,4 +1,4 @@
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import {
   Card,
@@ -34,6 +34,7 @@ import {
   DollarSign,
 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import type { Doc } from "@/convex/_generated/dataModel.d.ts";
 import type { Recommendation } from "./_lib/recommendation-engine.ts";
 import { formatCurrency } from "@/lib/format.ts";
@@ -60,11 +61,13 @@ type RecommendationStatus =
 type StatusFilter = "active" | RecommendationStatus | "all";
 
 type AdvisorRecommendation = Recommendation & {
-  recommendationKey?: string;
+  recommendationKey: string;
   status?: string;
   statusUpdatedAt?: number;
   snoozedUntil?: number;
 };
+
+type StatusAction = "acknowledged" | "dismissed" | "resolved" | "reopen";
 
 const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: "active", label: "Active" },
@@ -165,10 +168,40 @@ function formatStatusDate(timestamp: number) {
   return new Date(timestamp).toLocaleDateString();
 }
 
+function getStatusActions(status: RecommendationStatus): StatusAction[] {
+  if (status === "open") {
+    return ["acknowledged", "dismissed", "resolved"];
+  }
+  if (status === "acknowledged") {
+    return ["resolved", "dismissed", "reopen"];
+  }
+  return ["reopen"];
+}
+
+function getActionLabel(action: StatusAction) {
+  if (action === "acknowledged") return "Acknowledge";
+  if (action === "dismissed") return "Dismiss";
+  if (action === "resolved") return "Resolve";
+  return "Reopen";
+}
+
+function getActionSuccessMessage(action: StatusAction) {
+  if (action === "acknowledged") return "Recommendation acknowledged";
+  if (action === "dismissed") return "Recommendation dismissed";
+  if (action === "resolved") return "Recommendation resolved";
+  return "Recommendation reopened";
+}
+
 export default function RecommendationsPage() {
   const companies = useQuery(api.companies.list, {});
   const recommendations = useQuery(api.recommendations.listComputed, {});
   const aiRecommendations = useQuery(api.aiRecommendations.listVisible, {});
+  const setRecommendationStatus = useMutation(
+    api.cloudAdvisorStatuses.setRecommendationStatus,
+  );
+  const reopenRecommendation = useMutation(
+    api.cloudAdvisorStatuses.reopenRecommendation,
+  );
 
   const [companyFilter, setCompanyFilter] = useState("all");
   const [ruleFilter, setRuleFilter] = useState("all");
@@ -177,6 +210,35 @@ export default function RecommendationsPage() {
   const [categoryFilter, setCategoryFilter] = useState<AdvisorCategory>("All");
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+
+  const handleStatusAction = async (
+    recommendation: AdvisorRecommendation,
+    action: StatusAction,
+  ) => {
+    const actionKey = `${recommendation.recommendationKey}:${action}`;
+    setPendingAction(actionKey);
+    try {
+      if (action === "reopen") {
+        await reopenRecommendation({
+          recommendationKey: recommendation.recommendationKey,
+        });
+      } else {
+        await setRecommendationStatus({
+          recommendationKey: recommendation.recommendationKey,
+          companyId: recommendation.companyId,
+          rule: recommendation.rule,
+          recommendedService: recommendation.recommendedService,
+          status: action,
+        });
+      }
+      toast.success(getActionSuccessMessage(action));
+    } catch {
+      toast.error("Failed to update recommendation status");
+    } finally {
+      setPendingAction(null);
+    }
+  };
 
   if (!companies || !recommendations || !aiRecommendations) {
     return (
@@ -591,6 +653,30 @@ export default function RecommendationsPage() {
                     <span className="text-muted-foreground">
                       {getAdvisorRecommendedAction(row.rec)}
                     </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+                    <span className="text-xs font-medium uppercase text-muted-foreground">
+                      Status actions
+                    </span>
+                    {getStatusActions(getRecommendationStatus(row.rec)).map(
+                      (action) => {
+                        const actionKey = `${row.rec.recommendationKey}:${action}`;
+                        const isPending = pendingAction === actionKey;
+                        return (
+                          <Button
+                            key={action}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isPending}
+                            onClick={() => void handleStatusAction(row.rec, action)}
+                          >
+                            {isPending ? "Saving..." : getActionLabel(action)}
+                          </Button>
+                        );
+                      },
+                    )}
                   </div>
                 </CardContent>
               </Card>
