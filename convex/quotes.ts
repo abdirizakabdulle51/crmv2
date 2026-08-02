@@ -3,6 +3,8 @@ import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { assertCanManageCompany, canViewCompany } from "./authorization";
+import { buildCloudAdvisorRecommendationKey } from "./cloudAdvisorKeys";
+import { generateRecommendations } from "../src/lib/recommendations/rules";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -56,6 +58,50 @@ const lineItemValidator = v.object({
   monthlyTotal: v.number(),
   yearlyTotal: v.number(),
 });
+
+function normalizeCatalogName(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function isSafeQuantityOneRecommendation(
+  recommendation: {
+    estimateBasis?: string;
+  },
+  catalogItem: Doc<"serviceCatalog">,
+) {
+  const billingUnit = catalogItem.billingUnit.trim().toLowerCase();
+  return (
+    recommendation.estimateBasis?.startsWith("Flat catalog rate:") ||
+    billingUnit.includes("flat")
+  );
+}
+
+function findAdvisorCatalogMatch(
+  catalog: Doc<"serviceCatalog">[],
+  recommendation: {
+    recommendedService: string;
+    estimateCatalogItemName?: string;
+  },
+) {
+  if (recommendation.estimateCatalogItemName) {
+    const matches = catalog.filter(
+      (item) => item.itemName === recommendation.estimateCatalogItemName,
+    );
+    return {
+      matches,
+      source: `estimate catalog item "${recommendation.estimateCatalogItemName}"`,
+    };
+  }
+
+  const serviceName = normalizeCatalogName(recommendation.recommendedService);
+  const matches = catalog.filter(
+    (item) => normalizeCatalogName(item.itemName) === serviceName,
+  );
+  return {
+    matches,
+    source: `recommended service "${recommendation.recommendedService}"`,
+  };
+}
 
 /** List quotes by company */
 export const listByCompany = query({
@@ -187,6 +233,120 @@ export const buildQuotePreviewFromUsage = query({
             status: existingQuote.status,
           }
         : null,
+    };
+  },
+});
+
+/** Build a draft quote preview from one computed Cloud Advisor recommendation. */
+export const buildQuotePreviewFromAdvisor = query({
+  args: { recommendationKey: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const companies = (await ctx.db.query("companies").collect()).filter(
+      (company) => canViewCompany(user, company),
+    );
+    const companyIds = new Set(companies.map((company) => company._id));
+    const consumption = (await ctx.db.query("consumption").collect()).filter(
+      (entry) => companyIds.has(entry.companyId),
+    );
+    const sectors = await ctx.db.query("sectors").collect();
+    const catalog = await ctx.db.query("serviceCatalog").collect();
+    const recommendations = generateRecommendations(
+      companies,
+      consumption,
+      sectors,
+      catalog,
+    );
+
+    const recommendation = recommendations.find(
+      (candidate) =>
+        buildCloudAdvisorRecommendationKey(
+          candidate.companyId,
+          candidate.rule,
+          candidate.recommendedService,
+        ) === args.recommendationKey,
+    );
+
+    if (!recommendation) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Cloud Advisor recommendation not found",
+      });
+    }
+
+    const company = await getCompanyOrThrow(ctx, recommendation.companyId);
+    assertCanManageCompany(user, company);
+
+    const warnings: string[] = [];
+    const { matches, source } = findAdvisorCatalogMatch(
+      catalog,
+      recommendation,
+    );
+    const matchedCatalogItem = matches.length === 1 ? matches[0] : undefined;
+    let lineItemPreview:
+      | {
+          catalogItemId: Id<"serviceCatalog">;
+          itemName: string;
+          serviceCategory: string;
+          billingUnit: string;
+          quantity: number;
+          monthlyUnitPrice: number;
+          monthlyTotal: number;
+          yearlyTotal: number;
+        }
+      | undefined;
+
+    if (matches.length === 0) {
+      warnings.push(
+        `No service catalog item matched the recommendation ${source}.`,
+      );
+    } else if (matches.length > 1) {
+      warnings.push(
+        `Multiple service catalog items matched the recommendation ${source}; select a catalog item manually.`,
+      );
+    } else if (matchedCatalogItem) {
+      if (isSafeQuantityOneRecommendation(recommendation, matchedCatalogItem)) {
+        const quantity = 1;
+        const monthlyTotal = quantity * matchedCatalogItem.monthlyPrice;
+        lineItemPreview = {
+          catalogItemId: matchedCatalogItem._id,
+          itemName: matchedCatalogItem.itemName,
+          serviceCategory: matchedCatalogItem.serviceCategory,
+          billingUnit: matchedCatalogItem.billingUnit,
+          quantity,
+          monthlyUnitPrice: matchedCatalogItem.monthlyPrice,
+          monthlyTotal,
+          yearlyTotal: matchedCatalogItem.yearlyPrice
+            ? quantity * matchedCatalogItem.yearlyPrice
+            : monthlyTotal * 12,
+        };
+      } else {
+        warnings.push(
+          "A service catalog item matched, but the recommendation does not expose a quote-safe quantity; review the quantity manually before creating a quote.",
+        );
+      }
+    }
+
+    return {
+      companyId: recommendation.companyId,
+      companyName: recommendation.companyName,
+      recommendationKey: args.recommendationKey,
+      recommendedService: recommendation.recommendedService,
+      sourceRule: recommendation.rule,
+      triggerReason: recommendation.triggerReason,
+      estimateBasis: recommendation.estimateBasis,
+      estimatedMonthlyValue: recommendation.estimatedMonthlyValue,
+      matchedCatalogItem: matchedCatalogItem
+        ? {
+            catalogItemId: matchedCatalogItem._id,
+            itemName: matchedCatalogItem.itemName,
+            serviceCategory: matchedCatalogItem.serviceCategory,
+            billingUnit: matchedCatalogItem.billingUnit,
+            monthlyUnitPrice: matchedCatalogItem.monthlyPrice,
+          }
+        : undefined,
+      lineItemPreview,
+      warnings,
     };
   },
 });
