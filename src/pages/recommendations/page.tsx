@@ -70,9 +70,17 @@ type AdvisorRecommendation = Recommendation & {
 type StatusAction =
   | "acknowledged"
   | "in_progress"
+  | "snoozed"
   | "dismissed"
   | "resolved"
   | "reopen";
+
+const SNOOZE_OPTIONS = [
+  { days: 7, label: "Snooze 7 days" },
+  { days: 30, label: "Snooze 30 days" },
+  { days: 90, label: "Snooze 90 days" },
+];
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: "active", label: "Active" },
@@ -175,13 +183,13 @@ function formatStatusDate(timestamp: number) {
 
 function getStatusActions(status: RecommendationStatus): StatusAction[] {
   if (status === "open") {
-    return ["acknowledged", "in_progress", "dismissed", "resolved"];
+    return ["acknowledged", "in_progress", "snoozed", "dismissed", "resolved"];
   }
   if (status === "acknowledged") {
-    return ["in_progress", "resolved", "dismissed", "reopen"];
+    return ["in_progress", "snoozed", "resolved", "dismissed", "reopen"];
   }
   if (status === "in_progress") {
-    return ["resolved", "dismissed", "reopen"];
+    return ["snoozed", "resolved", "dismissed", "reopen"];
   }
   return ["reopen"];
 }
@@ -189,6 +197,7 @@ function getStatusActions(status: RecommendationStatus): StatusAction[] {
 function getActionLabel(action: StatusAction) {
   if (action === "acknowledged") return "Acknowledge";
   if (action === "in_progress") return "Start Progress";
+  if (action === "snoozed") return "Snooze";
   if (action === "dismissed") return "Dismiss";
   if (action === "resolved") return "Resolve";
   return "Reopen";
@@ -197,6 +206,7 @@ function getActionLabel(action: StatusAction) {
 function getActionSuccessMessage(action: StatusAction) {
   if (action === "acknowledged") return "Recommendation acknowledged";
   if (action === "in_progress") return "Recommendation marked in progress";
+  if (action === "snoozed") return "Recommendation snoozed";
   if (action === "dismissed") return "Recommendation dismissed";
   if (action === "resolved") return "Recommendation resolved";
   return "Recommendation reopened";
@@ -225,8 +235,11 @@ export default function RecommendationsPage() {
   const handleStatusAction = async (
     recommendation: AdvisorRecommendation,
     action: StatusAction,
+    snoozeDays?: number,
   ) => {
-    const actionKey = `${recommendation.recommendationKey}:${action}`;
+    const actionKey = `${recommendation.recommendationKey}:${action}${
+      snoozeDays ? `:${snoozeDays}` : ""
+    }`;
     setPendingAction(actionKey);
     try {
       if (action === "reopen") {
@@ -240,6 +253,9 @@ export default function RecommendationsPage() {
           rule: recommendation.rule,
           recommendedService: recommendation.recommendedService,
           status: action,
+          ...(action === "snoozed" && snoozeDays
+            ? { snoozedUntil: Date.now() + snoozeDays * DAY_IN_MS }
+            : {}),
         });
       }
       toast.success(getActionSuccessMessage(action));
@@ -671,6 +687,47 @@ export default function RecommendationsPage() {
                     </span>
                     {getStatusActions(getRecommendationStatus(row.rec)).map(
                       (action) => {
+                        if (action === "snoozed") {
+                          const isSnoozing = pendingAction?.startsWith(
+                            `${row.rec.recommendationKey}:snoozed`,
+                          );
+                          return (
+                            <Select
+                              key={action}
+                              value=""
+                              onValueChange={(value) =>
+                                void handleStatusAction(
+                                  row.rec,
+                                  "snoozed",
+                                  Number(value),
+                                )
+                              }
+                              disabled={isSnoozing}
+                            >
+                              <SelectTrigger
+                                className="h-8 w-[132px]"
+                                aria-label="Snooze"
+                              >
+                                <SelectValue
+                                  placeholder={
+                                    isSnoozing ? "Saving..." : "Snooze"
+                                  }
+                                />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {SNOOZE_OPTIONS.map((option) => (
+                                  <SelectItem
+                                    key={option.days}
+                                    value={String(option.days)}
+                                  >
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          );
+                        }
+
                         const actionKey = `${row.rec.recommendationKey}:${action}`;
                         const isPending = pendingAction === actionKey;
                         return (

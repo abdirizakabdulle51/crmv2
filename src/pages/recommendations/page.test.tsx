@@ -350,6 +350,7 @@ describe("RecommendationsPage pagination", () => {
     expect(
       screen.getByRole("button", { name: "Start Progress" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Snooze" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
 
@@ -362,6 +363,72 @@ describe("RecommendationsPage pagination", () => {
       recommendedService: "Managed service",
       status: "acknowledged",
     });
+  });
+
+  it("shows Snooze for open, acknowledged, and in progress recommendations", () => {
+    mocks.companies = [
+      company("company-1", "Open Co"),
+      company("company-2", "Acknowledged Co"),
+      company("company-3", "Progress Co"),
+    ];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Open Co",
+        status: "open",
+      },
+      {
+        ...recommendation(2, "medium"),
+        companyName: "Acknowledged Co",
+        status: "acknowledged",
+      },
+      {
+        ...recommendation(3, "medium"),
+        companyName: "Progress Co",
+        status: "in_progress",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    expect(screen.getAllByRole("combobox", { name: "Snooze" })).toHaveLength(
+      3,
+    );
+  });
+
+  it("snoozes for seven days with a future snoozedUntil timestamp", async () => {
+    const user = userEvent.setup();
+    const now = Date.UTC(2026, 7, 2, 9, 0, 0);
+    const dateSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    mocks.companies = [company("company-1", "Open Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Open Co",
+        status: "open",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    await user.click(screen.getByRole("combobox", { name: "Snooze" }));
+    await user.click(screen.getByRole("option", { name: "Snooze 7 days" }));
+
+    expect(mocks.setRecommendationStatus).toHaveBeenCalledWith({
+      recommendationKey: "company-1:waf:managed%20service",
+      companyId: "company-1",
+      rule: "waf",
+      recommendedService: "Managed service",
+      status: "snoozed",
+      snoozedUntil: now + 7 * 24 * 60 * 60 * 1000,
+    });
+    expect(
+      mocks.setRecommendationStatus.mock.calls[0][0].snoozedUntil,
+    ).toBeGreaterThan(now);
+
+    dateSpy.mockRestore();
   });
 
   it("starts progress from open and acknowledged recommendations", async () => {
@@ -416,9 +483,38 @@ describe("RecommendationsPage pagination", () => {
 
     expect(screen.queryByRole("button", { name: "Acknowledge" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start Progress" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Snooze" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Resolve" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+  });
+
+  it("shows Reopen only for snoozed recommendations", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [company("company-1", "Snoozed Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Snoozed Co",
+        status: "snoozed",
+        snoozedUntil: Date.UTC(2026, 7, 15),
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    await user.click(screen.getByRole("combobox", { name: "Status" }));
+    await user.click(screen.getByRole("option", { name: "Snoozed" }));
+
+    expect(screen.getByText(/Snoozed Co/)).toBeInTheDocument();
+    expect(screen.getByText(/Snoozed until/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Acknowledge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start Progress" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Snooze" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resolve" })).not.toBeInTheDocument();
   });
 
   it("shows in progress recommendations through the In Progress status filter", async () => {
