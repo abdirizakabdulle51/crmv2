@@ -19,7 +19,22 @@ import {
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog.tsx";
+import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
@@ -61,6 +76,13 @@ const PRIORITY_LABELS: Record<TaskPriority, string> = {
   urgent: "Urgent",
 };
 
+const PRIORITY_OPTIONS: { value: TaskPriority; label: string }[] = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "urgent", label: "Urgent" },
+];
+
 function formatDate(timestamp?: number) {
   if (!timestamp) return "No date";
   return new Date(timestamp).toLocaleDateString(undefined, {
@@ -85,6 +107,20 @@ function formatFileSize(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function timestampToDateInput(timestamp?: number) {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dateInputToTimestamp(value: string) {
+  if (!value) return undefined;
+  return new Date(`${value}T00:00:00`).getTime();
 }
 
 function statusBadgeClass(status: TaskStatus) {
@@ -151,11 +187,13 @@ export default function TaskDetailPage() {
   );
   const saveAttachmentMetadata = useMutation(api.tasks.saveAttachmentMetadata);
   const archiveAttachment = useMutation(api.tasks.archiveAttachment);
+  const updateTask = useMutation(api.tasks.update);
   const createComment = useMutation(api.tasks.createComment);
   const updateComment = useMutation(api.tasks.updateComment);
   const archiveComment = useMutation(api.tasks.archiveComment);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const [newComment, setNewComment] = useState("");
   const [editingCommentId, setEditingCommentId] =
     useState<Id<"taskComments"> | null>(null);
@@ -374,10 +412,22 @@ export default function TaskDetailPage() {
       </Button>
 
       <div className="space-y-2">
-        <h1 className="text-2xl font-bold tracking-tight">{task.title}</h1>
-        <p className="text-muted-foreground">
-          Task details, ownership, and team discussion.
-        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">{task.title}</h1>
+            <p className="mt-2 text-muted-foreground">
+              Task details, ownership, and team discussion.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setEditOpen(true)}
+          >
+            <Pencil className="mr-2 h-4 w-4" />
+            Edit Task
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -681,6 +731,14 @@ export default function TaskDetailPage() {
           </form>
         </CardContent>
       </Card>
+
+      <EditTaskDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        task={task}
+        companies={companies}
+        onUpdate={updateTask}
+      />
     </div>
   );
 }
@@ -693,5 +751,166 @@ function DetailField({ label, value }: { label: string; value: string }) {
       </p>
       <p>{value}</p>
     </div>
+  );
+}
+
+function EditTaskDialog({
+  open,
+  onOpenChange,
+  task,
+  companies,
+  onUpdate,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  task: Task;
+  companies: Doc<"companies">[];
+  onUpdate: (args: {
+    taskId: Id<"tasks">;
+    title: string;
+    description?: string;
+    priority: TaskPriority;
+    dueDate?: number;
+    companyId?: Id<"companies">;
+  }) => Promise<unknown>;
+}) {
+  const initialCompanyId = task.companyId ?? "none";
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description ?? "");
+  const [priority, setPriority] = useState<TaskPriority>(task.priority);
+  const [dueDate, setDueDate] = useState(timestampToDateInput(task.dueDate));
+  const [companyId, setCompanyId] = useState<string>(initialCompanyId);
+  const [saving, setSaving] = useState(false);
+
+  const reset = () => {
+    setTitle(task.title);
+    setDescription(task.description ?? "");
+    setPriority(task.priority);
+    setDueDate(timestampToDateInput(task.dueDate));
+    setCompanyId(task.companyId ?? "none");
+  };
+
+  const handleOpenChange = (isOpen: boolean) => {
+    if (isOpen) {
+      reset();
+    }
+    if (!isOpen) {
+      reset();
+    }
+    onOpenChange(isOpen);
+  };
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return;
+
+    setSaving(true);
+    try {
+      await onUpdate({
+        taskId: task._id,
+        title: trimmedTitle,
+        description: description.trim() || undefined,
+        priority,
+        dueDate: dateInputToTimestamp(dueDate),
+        ...(companyId !== "none"
+          ? { companyId: companyId as Id<"companies"> }
+          : {}),
+      });
+      toast.success("Task updated");
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update task");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit Task</DialogTitle>
+        </DialogHeader>
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          <div className="space-y-2">
+            <Label htmlFor="edit-task-title">Title</Label>
+            <Input
+              id="edit-task-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-task-description">Description</Label>
+            <Textarea
+              id="edit-task-description"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={3}
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Priority</Label>
+              <Select
+                value={priority}
+                onValueChange={(value) => setPriority(value as TaskPriority)}
+              >
+                <SelectTrigger aria-label="Edit task priority">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRIORITY_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-task-due-date">Due date</Label>
+              <Input
+                id="edit-task-due-date"
+                type="date"
+                value={dueDate}
+                onChange={(event) => setDueDate(event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Company</Label>
+            <Select value={companyId} onValueChange={setCompanyId}>
+              <SelectTrigger aria-label="Edit task company">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {!task.companyId ? (
+                  <SelectItem value="none">No company</SelectItem>
+                ) : null}
+                {companies.map((company) => (
+                  <SelectItem key={company._id} value={company._id}>
+                    {company.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => handleOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!title.trim() || saving}>
+              {saving ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

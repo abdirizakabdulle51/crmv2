@@ -30,6 +30,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
       saveAttachmentMetadata: "tasks.saveAttachmentMetadata",
       getAttachmentDownloadUrl: "tasks.getAttachmentDownloadUrl",
       archiveAttachment: "tasks.archiveAttachment",
+      update: "tasks.update",
       createComment: "tasks.createComment",
       updateComment: "tasks.updateComment",
       archiveComment: "tasks.archiveComment",
@@ -50,6 +51,7 @@ const mocks = vi.hoisted(() => ({
   saveAttachmentMetadata: vi.fn(),
   archiveAttachment: vi.fn(),
   convexQuery: vi.fn(),
+  updateTask: vi.fn(),
   createComment: vi.fn(),
   updateComment: vi.fn(),
   archiveComment: vi.fn(),
@@ -77,6 +79,7 @@ vi.mock("convex/react", () => ({
     if (mutation === "tasks.saveAttachmentMetadata")
       return mocks.saveAttachmentMetadata;
     if (mutation === "tasks.archiveAttachment") return mocks.archiveAttachment;
+    if (mutation === "tasks.update") return mocks.updateTask;
     if (mutation === "tasks.createComment") return mocks.createComment;
     if (mutation === "tasks.updateComment") return mocks.updateComment;
     if (mutation === "tasks.archiveComment") return mocks.archiveComment;
@@ -210,6 +213,7 @@ describe("TaskDetailPage", () => {
     mocks.generateAttachmentUploadUrl.mockResolvedValue("https://upload.example");
     mocks.saveAttachmentMetadata.mockResolvedValue("attachment-new");
     mocks.archiveAttachment.mockResolvedValue(undefined);
+    mocks.updateTask.mockResolvedValue(undefined);
     mocks.convexQuery.mockResolvedValue("https://download.example/invoice.pdf");
     vi.stubGlobal(
       "fetch",
@@ -241,6 +245,98 @@ describe("TaskDetailPage", () => {
     expect(screen.getByText("Second update from Omar.")).toBeInTheDocument();
     expect(screen.getAllByText("Amina Ali").length).toBeGreaterThan(0);
     expect(screen.getByText("Omar Hassan")).toBeInTheDocument();
+  });
+
+  it("shows an Edit Task button and opens with existing values", async () => {
+    const user = userEvent.setup();
+    renderTaskDetailPage();
+
+    expect(screen.getByRole("button", { name: "Edit Task" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit Task" }));
+
+    expect(screen.getByRole("dialog", { name: "Edit Task" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Title")).toHaveValue("Follow up with customer");
+    expect(screen.getByLabelText("Description")).toHaveValue(
+      "Confirm the implementation plan.",
+    );
+    expect(screen.getByRole("combobox", { name: "Edit task priority" }))
+      .toHaveTextContent("Medium");
+    expect(screen.getByLabelText("Due date")).toHaveValue("2026-08-02");
+    expect(screen.getByRole("combobox", { name: "Edit task company" }))
+      .toHaveTextContent("AICC");
+  });
+
+  it("saves edited task details", async () => {
+    const user = userEvent.setup();
+    renderTaskDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Edit Task" }));
+    await user.clear(screen.getByLabelText("Title"));
+    await user.type(screen.getByLabelText("Title"), "Updated customer follow-up");
+    await user.clear(screen.getByLabelText("Description"));
+    await user.type(screen.getByLabelText("Description"), "Updated description.");
+    await user.click(screen.getByRole("combobox", { name: "Edit task priority" }));
+    await user.click(await screen.findByRole("option", { name: "High" }));
+    await user.clear(screen.getByLabelText("Due date"));
+    await user.type(screen.getByLabelText("Due date"), "2026-08-05");
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => {
+      expect(mocks.updateTask).toHaveBeenCalledWith({
+        taskId: "task-1",
+        title: "Updated customer follow-up",
+        description: "Updated description.",
+        priority: "high",
+        dueDate: new Date("2026-08-05T00:00:00").getTime(),
+        companyId: "company-1",
+      });
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Task updated");
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Edit Task" }))
+        .not.toBeInTheDocument();
+    });
+  });
+
+  it("does not save an empty task title", async () => {
+    const user = userEvent.setup();
+    renderTaskDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Edit Task" }));
+    await user.clear(screen.getByLabelText("Title"));
+
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
+    expect(mocks.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("cancels task editing without saving and resets next open", async () => {
+    const user = userEvent.setup();
+    renderTaskDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Edit Task" }));
+    await user.clear(screen.getByLabelText("Title"));
+    await user.type(screen.getByLabelText("Title"), "Unsaved title");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(mocks.updateTask).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Edit Task" }));
+    expect(screen.getByLabelText("Title")).toHaveValue("Follow up with customer");
+  });
+
+  it("keeps the edit dialog open when update is rejected", async () => {
+    const user = userEvent.setup();
+    mocks.updateTask.mockRejectedValue(new Error("FORBIDDEN"));
+    renderTaskDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Edit Task" }));
+    await user.clear(screen.getByLabelText("Title"));
+    await user.type(screen.getByLabelText("Title"), "Rejected update");
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");
+    });
+    expect(screen.getByRole("dialog", { name: "Edit Task" })).toBeInTheDocument();
   });
 
   it("validates attachment file type before upload", async () => {
