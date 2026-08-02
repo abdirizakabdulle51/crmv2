@@ -385,6 +385,34 @@ describe("TasksPage", () => {
     );
   });
 
+  it("shows clear board count wording with plural task counts", () => {
+    renderTasksPage();
+
+    expect(
+      screen.getByText("Showing 2 board tasks. 6 total accessible tasks."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows clear board count wording with singular task counts", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByText("Due This Week"));
+
+    expect(
+      screen.getByText("Showing 1 board task. 6 total accessible tasks."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows clear list count wording", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /List/i }));
+
+    expect(screen.getByText("Showing 2 visible tasks.")).toBeInTheDocument();
+  });
+
   it("shows non-zero comment and attachment counts on board cards", () => {
     renderTasksPage();
 

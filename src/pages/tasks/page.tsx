@@ -109,6 +109,10 @@ function formatDate(timestamp?: number) {
   });
 }
 
+function taskCountLabel(count: number, noun = "task") {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 function dateInputToTimestamp(value: string) {
   if (!value) {
     return undefined;
@@ -436,7 +440,9 @@ export default function TasksPage() {
             <div>
               <CardTitle>Task List</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                Showing {filteredTasks.length} of {tasks.length} visible tasks.
+                {viewMode === "board"
+                  ? `Showing ${taskCountLabel(filteredTasks.length, "board task")}. ${taskCountLabel(tasks.length, "total accessible task")}.`
+                  : `Showing ${taskCountLabel(filteredTasks.length, "visible task")}.`}
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
