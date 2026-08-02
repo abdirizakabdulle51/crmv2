@@ -2,7 +2,14 @@ import { useEffect, useRef } from "react";
 import { useAuth } from "@/hooks/use-auth.ts";
 
 export const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
+export const MONITORING_MODE_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 export const LAST_ACTIVITY_STORAGE_KEY = "crm:lastActivityAt";
+export const MONITORING_MODE_EVENT = "crm:monitoringModeChange";
+
+type MonitoringModeEventDetail = {
+  enabled: boolean;
+  timeoutMs?: number;
+};
 
 const MOUSEMOVE_THROTTLE_MS = 1000;
 
@@ -27,6 +34,7 @@ function writeLastActivity(timestamp: number) {
 export function InactivityLogout() {
   const { signout } = useAuth();
   const timeoutRef = useRef<number | null>(null);
+  const idleTimeoutRef = useRef(INACTIVITY_TIMEOUT_MS);
   const signedOutRef = useRef(false);
   const lastMousemoveRef = useRef(0);
 
@@ -41,7 +49,7 @@ export function InactivityLogout() {
     function scheduleLogoutCheck() {
       clearLogoutTimer();
       const elapsed = Date.now() - readLastActivity();
-      const remaining = INACTIVITY_TIMEOUT_MS - elapsed;
+      const remaining = idleTimeoutRef.current - elapsed;
 
       if (remaining <= 0) {
         if (!signedOutRef.current) {
@@ -83,6 +91,15 @@ export function InactivityLogout() {
       }
     }
 
+    function handleMonitoringMode(event: Event) {
+      const detail = (event as CustomEvent<MonitoringModeEventDetail>).detail;
+      idleTimeoutRef.current =
+        detail?.enabled === true
+          ? (detail.timeoutMs ?? MONITORING_MODE_TIMEOUT_MS)
+          : INACTIVITY_TIMEOUT_MS;
+      scheduleLogoutCheck();
+    }
+
     recordActivity();
 
     window.addEventListener("mousedown", recordActivity);
@@ -93,6 +110,7 @@ export function InactivityLogout() {
     window.addEventListener("focus", recordActivity);
     window.addEventListener("mousemove", recordMousemoveActivity);
     window.addEventListener("storage", handleStorage);
+    window.addEventListener(MONITORING_MODE_EVENT, handleMonitoringMode);
     document.addEventListener("visibilitychange", recordVisibleActivity);
 
     return () => {
@@ -105,6 +123,7 @@ export function InactivityLogout() {
       window.removeEventListener("focus", recordActivity);
       window.removeEventListener("mousemove", recordMousemoveActivity);
       window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(MONITORING_MODE_EVENT, handleMonitoringMode);
       document.removeEventListener("visibilitychange", recordVisibleActivity);
     };
   }, [signout]);

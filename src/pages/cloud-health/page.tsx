@@ -18,10 +18,15 @@ import {
   YAxis,
 } from "recharts";
 import {
+  MONITORING_MODE_EVENT,
+  MONITORING_MODE_TIMEOUT_MS,
+} from "@/components/inactivity-logout.tsx";
+import {
   Activity,
   BellRing,
   Globe2,
   LayoutDashboard,
+  MonitorCheck,
   Pause,
   Play,
   Plus,
@@ -1630,6 +1635,7 @@ export default function CloudHealthPage() {
   const [autoRotateRemainingSeconds, setAutoRotateRemainingSeconds] = useState(
     AUTO_ROTATE_INTERVAL_SECONDS,
   );
+  const [monitoringModeEnabled, setMonitoringModeEnabled] = useState(false);
   const [alarmPage, setAlarmPage] = useState(1);
   const [serviceName, setServiceName] = useState("");
   const [serviceCheckType, setServiceCheckType] =
@@ -2065,6 +2071,25 @@ export default function CloudHealthPage() {
     return () => window.clearInterval(interval);
   }, [activeTab, autoRotateEnabled, updateActiveTab]);
 
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent(MONITORING_MODE_EVENT, {
+        detail: {
+          enabled: monitoringModeEnabled,
+          timeoutMs: MONITORING_MODE_TIMEOUT_MS,
+        },
+      }),
+    );
+
+    return () => {
+      window.dispatchEvent(
+        new CustomEvent(MONITORING_MODE_EVENT, {
+          detail: { enabled: false },
+        }),
+      );
+    };
+  }, [monitoringModeEnabled]);
+
   const applyAlarmShortcut = (shortcut: AlarmShortcut) => {
     updateActiveTab("alarms");
     setAlarmView("all");
@@ -2445,6 +2470,25 @@ export default function CloudHealthPage() {
               <span className="inline-flex h-10 items-center rounded-full border bg-muted/40 px-3 text-xs font-medium text-muted-foreground">
                 Next: {CLOUD_HEALTH_TAB_LABELS[getNextCloudHealthTab(activeTab)]}{" "}
                 in {autoRotateRemainingSeconds}s
+              </span>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={`h-10 rounded-full border px-3 text-xs font-medium ${
+                monitoringModeEnabled
+                  ? "border-primary/60 bg-primary/10 text-primary hover:bg-primary/15"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted/60"
+              }`}
+              onClick={() => setMonitoringModeEnabled((enabled) => !enabled)}
+            >
+              <MonitorCheck className="mr-2 h-3.5 w-3.5" />
+              Monitoring Mode {monitoringModeEnabled ? "On" : "Off"}
+            </Button>
+            {monitoringModeEnabled ? (
+              <span className="inline-flex h-10 items-center rounded-full border border-primary/30 bg-primary/5 px-3 text-xs font-medium text-primary">
+                Monitoring Mode On · Extended session
               </span>
             ) : null}
           </div>

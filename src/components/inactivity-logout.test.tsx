@@ -4,6 +4,8 @@ import {
   InactivityLogout,
   INACTIVITY_TIMEOUT_MS,
   LAST_ACTIVITY_STORAGE_KEY,
+  MONITORING_MODE_EVENT,
+  MONITORING_MODE_TIMEOUT_MS,
 } from "./inactivity-logout.tsx";
 
 const signout = vi.fn();
@@ -107,6 +109,58 @@ describe("InactivityLogout", () => {
     expect(signout).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(1);
+    expect(signout).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat unrelated automatic page updates as activity", () => {
+    render(<InactivityLogout />);
+
+    window.dispatchEvent(new CustomEvent("cloud-health:autoRotateTick"));
+
+    vi.advanceTimersByTime(INACTIVITY_TIMEOUT_MS);
+    expect(signout).toHaveBeenCalledTimes(1);
+  });
+
+  it("extends the idle timeout while monitoring mode is active", () => {
+    render(<InactivityLogout />);
+
+    window.dispatchEvent(
+      new CustomEvent(MONITORING_MODE_EVENT, {
+        detail: {
+          enabled: true,
+          timeoutMs: MONITORING_MODE_TIMEOUT_MS,
+        },
+      }),
+    );
+
+    vi.advanceTimersByTime(INACTIVITY_TIMEOUT_MS);
+    expect(signout).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(MONITORING_MODE_TIMEOUT_MS - INACTIVITY_TIMEOUT_MS);
+    expect(signout).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns to the five-minute timeout when monitoring mode is disabled", () => {
+    render(<InactivityLogout />);
+
+    window.dispatchEvent(
+      new CustomEvent(MONITORING_MODE_EVENT, {
+        detail: {
+          enabled: true,
+          timeoutMs: MONITORING_MODE_TIMEOUT_MS,
+        },
+      }),
+    );
+
+    vi.advanceTimersByTime(INACTIVITY_TIMEOUT_MS + 1);
+    expect(signout).not.toHaveBeenCalled();
+
+    window.dispatchEvent(
+      new CustomEvent(MONITORING_MODE_EVENT, {
+        detail: { enabled: false },
+      }),
+    );
+
     expect(signout).toHaveBeenCalledTimes(1);
   });
 
