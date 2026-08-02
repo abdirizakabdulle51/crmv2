@@ -35,6 +35,20 @@ async function storeTestFile(
   });
 }
 
+async function listNotificationsFor(
+  t: ReturnType<typeof convexTest>,
+  recipientId: Id<"users">,
+) {
+  return await t.run(async (ctx) => {
+    return await ctx.db
+      .query("notifications")
+      .withIndex("by_recipient_created", (q) =>
+        q.eq("recipientId", recipientId),
+      )
+      .collect();
+  });
+}
+
 async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
   return await t.run(async (ctx) => {
     const countryA = await ctx.db.insert("countries", {
@@ -291,6 +305,195 @@ describe("tasks", () => {
     expect(tasks.map((task) => task.title)).toEqual(
       expect.arrayContaining(["CEO assigned task", "HOB assigned task"]),
     );
+  });
+
+  it("creates task notifications for assignee and Report To while excluding the actor", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await asUser(t, s.ceo).mutation(api.tasks.create, {
+      title: "Notify task recipients",
+      assigneeId: s.amA._id,
+      reportToId: s.amB._id,
+    });
+
+    const assigneeNotifications = await listNotificationsFor(t, s.amA._id);
+    const reportToNotifications = await listNotificationsFor(t, s.amB._id);
+    const actorNotifications = await listNotificationsFor(t, s.ceo._id);
+    expect(assigneeNotifications).toMatchObject([
+      {
+        type: "task_assigned",
+        title: "Task assigned to you",
+        body: "Notify task recipients",
+      },
+    ]);
+    expect(reportToNotifications).toMatchObject([
+      {
+        type: "task_report_to",
+        title: "You were set as Report To",
+        body: "Notify task recipients",
+      },
+    ]);
+    expect(actorNotifications).toEqual([]);
+  });
+
+  it("dedupes task creation notifications when assignee and Report To are the same user", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await asUser(t, s.ceo).mutation(api.tasks.create, {
+      title: "Single recipient task",
+      assigneeId: s.amA._id,
+      reportToId: s.amA._id,
+    });
+
+    const notifications = await listNotificationsFor(t, s.amA._id);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      type: "task_assigned",
+      title: "Task assigned to you",
+    });
+  });
+
+  it("does not notify the task creator about their own assignment or report-to", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await asUser(t, s.ceo).mutation(api.tasks.create, {
+      title: "Self-owned task",
+      assigneeId: s.ceo._id,
+      reportToId: s.ceo._id,
+    });
+
+    expect(await listNotificationsFor(t, s.ceo._id)).toEqual([]);
+  });
+
+  it("notifies new assignee and Report To users when task assignment fields change", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await t.run(async (ctx) => {
+      return await ctx.db.insert("tasks", {
+        title: "Reassigned task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.ceo._id,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await asUser(t, s.ceo).mutation(api.tasks.update, {
+      taskId,
+      assigneeId: s.amA._id,
+      reportToId: s.amB._id,
+    });
+
+    expect(await listNotificationsFor(t, s.amA._id)).toMatchObject([
+      {
+        type: "task_assigned",
+        title: "Task assigned to you",
+        body: "Reassigned task",
+      },
+    ]);
+    expect(await listNotificationsFor(t, s.amB._id)).toMatchObject([
+      {
+        type: "task_report_to",
+        title: "You were set as Report To",
+        body: "Reassigned task",
+      },
+    ]);
+  });
+
+  it("notifies the assignee when task status changes and excludes the actor", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await t.run(async (ctx) => {
+      return await ctx.db.insert("tasks", {
+        title: "Status task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.ceo._id,
+        assigneeId: s.amA._id,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await asUser(t, s.ceo).mutation(api.tasks.updateStatus, {
+      taskId,
+      status: "blocked",
+    });
+
+    expect(await listNotificationsFor(t, s.amA._id)).toMatchObject([
+      {
+        type: "task_status_changed",
+        title: "Task status changed",
+        body: "Status task: To Do -> Blocked",
+      },
+    ]);
+    expect(await listNotificationsFor(t, s.ceo._id)).toEqual([]);
+  });
+
+  it("notifies task assignee and Report To when a comment is created with dedupe and actor exclusion", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await t.run(async (ctx) => {
+      return await ctx.db.insert("tasks", {
+        title: "Commented task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.ceo._id,
+        assigneeId: s.amA._id,
+        reportToId: s.amB._id,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await asUser(t, s.ceo).mutation(api.tasks.createComment, {
+      taskId,
+      body: "Please review.",
+    });
+
+    expect(await listNotificationsFor(t, s.amA._id)).toMatchObject([
+      {
+        type: "task_commented",
+        title: "New comment on task",
+        body: "Commented task",
+      },
+    ]);
+    expect(await listNotificationsFor(t, s.amB._id)).toMatchObject([
+      {
+        type: "task_commented",
+        title: "New comment on task",
+        body: "Commented task",
+      },
+    ]);
+    expect(await listNotificationsFor(t, s.ceo._id)).toEqual([]);
+  });
+
+  it("dedupes comment notifications when assignee and Report To are the same user", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await t.run(async (ctx) => {
+      return await ctx.db.insert("tasks", {
+        title: "Deduped comment task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.ceo._id,
+        assigneeId: s.amA._id,
+        reportToId: s.amA._id,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await asUser(t, s.ceo).mutation(api.tasks.createComment, {
+      taskId,
+      body: "One notification only.",
+    });
+
+    expect(await listNotificationsFor(t, s.amA._id)).toHaveLength(1);
   });
 
   it("allows CEO and Head of Business to report to anyone", async () => {

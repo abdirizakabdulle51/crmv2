@@ -7,6 +7,7 @@ import { canViewCompany, isCeoOrHob } from "./authorization";
 type Ctx = QueryCtx | MutationCtx;
 type TaskStatus = Doc<"tasks">["status"];
 type TaskPriority = Doc<"tasks">["priority"];
+type TaskNotificationType = Doc<"notifications">["type"];
 const MAX_COMMENT_LENGTH = 2000;
 const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
@@ -482,6 +483,72 @@ function taskMatchesFilters(
   return true;
 }
 
+function statusLabel(status: TaskStatus) {
+  if (status === "todo") return "To Do";
+  if (status === "in_progress") return "In Progress";
+  if (status === "blocked") return "Blocked";
+  if (status === "done") return "Done";
+  return "Canceled";
+}
+
+async function createTaskNotification(
+  ctx: MutationCtx,
+  args: {
+    recipientId: Id<"users"> | undefined;
+    actorId: Id<"users">;
+    type: TaskNotificationType;
+    title: string;
+    body?: string;
+    taskId: Id<"tasks">;
+  },
+) {
+  if (!args.recipientId || args.recipientId === args.actorId) {
+    return;
+  }
+
+  await ctx.db.insert("notifications", {
+    recipientId: args.recipientId,
+    actorId: args.actorId,
+    type: args.type,
+    title: args.title,
+    body: args.body,
+    entityType: "task",
+    entityId: args.taskId,
+    href: `/tasks/${args.taskId}`,
+    createdAt: Date.now(),
+  });
+}
+
+async function notifyTaskRecipients(
+  ctx: MutationCtx,
+  args: {
+    actorId: Id<"users">;
+    taskId: Id<"tasks">;
+    recipients: Array<{
+      recipientId: Id<"users"> | undefined;
+      type: TaskNotificationType;
+      title: string;
+      body?: string;
+    }>;
+  },
+) {
+  const seen = new Set<Id<"users">>();
+  for (const recipient of args.recipients) {
+    if (!recipient.recipientId || seen.has(recipient.recipientId)) {
+      continue;
+    }
+    seen.add(recipient.recipientId);
+    await createTaskNotification(ctx, {
+      recipientId: recipient.recipientId,
+      actorId: args.actorId,
+      type: recipient.type,
+      title: recipient.title,
+      body: recipient.body,
+      taskId: args.taskId,
+    });
+  }
+}
+
 async function countActiveTaskComments(ctx: Ctx, taskId: Id<"tasks">) {
   const comments = await ctx.db
     .query("taskComments")
@@ -605,7 +672,7 @@ export const create = mutation({
     const companyId = await assertLinkedRecordsAreInScope(ctx, user, args);
 
     const now = Date.now();
-    return await ctx.db.insert("tasks", {
+    const taskId = await ctx.db.insert("tasks", {
       title,
       description: args.description?.trim() || undefined,
       status: "todo",
@@ -620,6 +687,26 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await notifyTaskRecipients(ctx, {
+      actorId: user._id,
+      taskId,
+      recipients: [
+        {
+          recipientId: args.assigneeId,
+          type: "task_assigned",
+          title: "Task assigned to you",
+          body: title,
+        },
+        {
+          recipientId: reportToId,
+          type: "task_report_to",
+          title: "You were set as Report To",
+          body: title,
+        },
+      ],
+    });
+
+    return taskId;
   },
 });
 
@@ -694,6 +781,37 @@ export const update = mutation({
     }
 
     await ctx.db.patch(args.taskId, patch);
+
+    await notifyTaskRecipients(ctx, {
+      actorId: user._id,
+      taskId: args.taskId,
+      recipients: [
+        args.assigneeId !== undefined && args.assigneeId !== task.assigneeId
+          ? {
+              recipientId: args.assigneeId,
+              type: "task_assigned",
+              title: "Task assigned to you",
+              body: patch.title ?? task.title,
+            }
+          : {
+              recipientId: undefined,
+              type: "task_assigned",
+              title: "",
+            },
+        args.reportToId !== undefined && args.reportToId !== task.reportToId
+          ? {
+              recipientId: args.reportToId,
+              type: "task_report_to",
+              title: "You were set as Report To",
+              body: patch.title ?? task.title,
+            }
+          : {
+              recipientId: undefined,
+              type: "task_report_to",
+              title: "",
+            },
+      ],
+    });
   },
 });
 
@@ -713,6 +831,19 @@ export const updateStatus = mutation({
       updatedAt: now,
       completedAt: args.status === "done" ? now : undefined,
     });
+
+    if (args.status !== task.status) {
+      await createTaskNotification(ctx, {
+        recipientId: task.assigneeId,
+        actorId: user._id,
+        type: "task_status_changed",
+        title: "Task status changed",
+        body: `${task.title}: ${statusLabel(task.status)} -> ${statusLabel(
+          args.status,
+        )}`,
+        taskId: args.taskId,
+      });
+    }
   },
 });
 
@@ -763,12 +894,32 @@ export const createComment = mutation({
     const task = await getTaskOrThrow(ctx, args.taskId);
     await assertCanViewTask(ctx, user, task);
 
-    return await ctx.db.insert("taskComments", {
+    const commentId = await ctx.db.insert("taskComments", {
       taskId: args.taskId,
       body: normalizeCommentBody(args.body),
       createdBy: user._id,
       createdAt: Date.now(),
     });
+    await notifyTaskRecipients(ctx, {
+      actorId: user._id,
+      taskId: args.taskId,
+      recipients: [
+        {
+          recipientId: task.assigneeId,
+          type: "task_commented",
+          title: "New comment on task",
+          body: task.title,
+        },
+        {
+          recipientId: task.reportToId,
+          type: "task_commented",
+          title: "New comment on task",
+          body: task.title,
+        },
+      ],
+    });
+
+    return commentId;
   },
 });
 
