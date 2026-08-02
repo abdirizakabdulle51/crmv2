@@ -23,8 +23,13 @@ vi.mock("@/convex/_generated/api.js", () => ({
     companies: { list: "companies.list" },
     tasks: {
       get: "tasks.get",
+      listAttachments: "tasks.listAttachments",
       listComments: "tasks.listComments",
       listReportToCandidates: "tasks.listReportToCandidates",
+      generateAttachmentUploadUrl: "tasks.generateAttachmentUploadUrl",
+      saveAttachmentMetadata: "tasks.saveAttachmentMetadata",
+      getAttachmentDownloadUrl: "tasks.getAttachmentDownloadUrl",
+      archiveAttachment: "tasks.archiveAttachment",
       createComment: "tasks.createComment",
       updateComment: "tasks.updateComment",
       archiveComment: "tasks.archiveComment",
@@ -36,10 +41,15 @@ vi.mock("@/convex/_generated/api.js", () => ({
 const mocks = vi.hoisted(() => ({
   currentUser: null as Doc<"users"> | null,
   task: null as Doc<"tasks"> | null,
+  attachments: [] as Doc<"taskAttachments">[],
   comments: [] as Doc<"taskComments">[],
   reportToCandidates: [] as Doc<"users">[],
   users: [] as Doc<"users">[],
   companies: [] as Doc<"companies">[],
+  generateAttachmentUploadUrl: vi.fn(),
+  saveAttachmentMetadata: vi.fn(),
+  archiveAttachment: vi.fn(),
+  convexQuery: vi.fn(),
   createComment: vi.fn(),
   updateComment: vi.fn(),
   archiveComment: vi.fn(),
@@ -48,8 +58,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({
+    query: mocks.convexQuery,
+  }),
   useQuery: (query: string) => {
     if (query === "tasks.get") return mocks.task;
+    if (query === "tasks.listAttachments") return mocks.attachments;
     if (query === "tasks.listComments") return mocks.comments;
     if (query === "tasks.listReportToCandidates")
       return mocks.reportToCandidates;
@@ -58,6 +72,11 @@ vi.mock("convex/react", () => ({
     return undefined;
   },
   useMutation: (mutation: string) => {
+    if (mutation === "tasks.generateAttachmentUploadUrl")
+      return mocks.generateAttachmentUploadUrl;
+    if (mutation === "tasks.saveAttachmentMetadata")
+      return mocks.saveAttachmentMetadata;
+    if (mutation === "tasks.archiveAttachment") return mocks.archiveAttachment;
     if (mutation === "tasks.createComment") return mocks.createComment;
     if (mutation === "tasks.updateComment") return mocks.updateComment;
     if (mutation === "tasks.archiveComment") return mocks.archiveComment;
@@ -133,6 +152,24 @@ function comment(
   };
 }
 
+function attachment(
+  id: string,
+  overrides: Partial<Doc<"taskAttachments">> = {},
+): Doc<"taskAttachments"> {
+  return {
+    _id: id as Id<"taskAttachments">,
+    _creationTime: 1,
+    taskId: "task-1" as Id<"tasks">,
+    storageId: `storage-${id}` as Id<"_storage">,
+    fileName: "invoice.pdf",
+    mimeType: "application/pdf",
+    size: 2048,
+    uploadedBy: "user-1" as Id<"users">,
+    uploadedAt: 1785600000000,
+    ...overrides,
+  };
+}
+
 function seed() {
   const currentUser = user("user-1", "Amina Ali");
   const otherUser = user("user-2", "Omar Hassan");
@@ -141,6 +178,7 @@ function seed() {
   mocks.reportToCandidates = [currentUser, otherUser];
   mocks.companies = [company("company-1", "AICC")];
   mocks.task = task();
+  mocks.attachments = [];
   mocks.comments = [
     comment("comment-1"),
     comment("comment-2", {
@@ -169,6 +207,18 @@ describe("TaskDetailPage", () => {
     mocks.createComment.mockResolvedValue("comment-new");
     mocks.updateComment.mockResolvedValue(undefined);
     mocks.archiveComment.mockResolvedValue(undefined);
+    mocks.generateAttachmentUploadUrl.mockResolvedValue("https://upload.example");
+    mocks.saveAttachmentMetadata.mockResolvedValue("attachment-new");
+    mocks.archiveAttachment.mockResolvedValue(undefined);
+    mocks.convexQuery.mockResolvedValue("https://download.example/invoice.pdf");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ storageId: "storage-new" }),
+      }),
+    );
+    vi.stubGlobal("open", vi.fn());
   });
 
   it("renders task details and existing comments", () => {
@@ -183,12 +233,142 @@ describe("TaskDetailPage", () => {
     expect(screen.getByText("Assignee")).toBeInTheDocument();
     expect(screen.getByText("Report To")).toBeInTheDocument();
     expect(screen.getByText("AICC")).toBeInTheDocument();
+    expect(screen.getByText("Attachments")).toBeInTheDocument();
+    expect(screen.getByText("No attachments yet.")).toBeInTheDocument();
     expect(
       screen.getByText("Checked with NOC and waiting for confirmation."),
     ).toBeInTheDocument();
     expect(screen.getByText("Second update from Omar.")).toBeInTheDocument();
     expect(screen.getAllByText("Amina Ali").length).toBeGreaterThan(0);
     expect(screen.getByText("Omar Hassan")).toBeInTheDocument();
+  });
+
+  it("validates attachment file type before upload", async () => {
+    const user = userEvent.setup({ applyAccept: false });
+    renderTaskDetailPage();
+
+    const input = screen.getByLabelText("Upload task attachment");
+    await user.upload(
+      input,
+      new File(["<svg></svg>"], "danger.svg", { type: "image/svg+xml" }),
+    );
+
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "This file type is not allowed for task attachments",
+    );
+    expect(mocks.generateAttachmentUploadUrl).not.toHaveBeenCalled();
+  });
+
+  it("validates attachment file size before upload", async () => {
+    const user = userEvent.setup();
+    renderTaskDetailPage();
+
+    const input = screen.getByLabelText("Upload task attachment");
+    await user.upload(
+      input,
+      new File([new Uint8Array(10 * 1024 * 1024 + 1)], "large.pdf", {
+        type: "application/pdf",
+      }),
+    );
+
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "Attachments must be 10 MB or less",
+    );
+    expect(mocks.generateAttachmentUploadUrl).not.toHaveBeenCalled();
+  });
+
+  it("uploads a valid attachment and saves metadata", async () => {
+    const user = userEvent.setup();
+    renderTaskDetailPage();
+
+    const input = screen.getByLabelText("Upload task attachment");
+    await user.upload(
+      input,
+      new File(["invoice"], "invoice.pdf", { type: "application/pdf" }),
+    );
+
+    await waitFor(() => {
+      expect(mocks.generateAttachmentUploadUrl).toHaveBeenCalledWith({});
+    });
+    expect(fetch).toHaveBeenCalledWith("https://upload.example", {
+      method: "POST",
+      headers: { "Content-Type": "application/pdf" },
+      body: expect.any(File),
+    });
+    await waitFor(() => {
+      expect(mocks.saveAttachmentMetadata).toHaveBeenCalledWith({
+        taskId: "task-1",
+        storageId: "storage-new",
+        fileName: "invoice.pdf",
+        mimeType: "application/pdf",
+        size: 7,
+      });
+    });
+  });
+
+  it("renders attachments with metadata", () => {
+    mocks.attachments = [
+      attachment("attachment-1", {
+        fileName: "evidence.csv",
+        mimeType: "text/csv",
+        size: 1536,
+        uploadedBy: "user-2" as Id<"users">,
+        uploadedAt: 1785603600000,
+      }),
+    ];
+    renderTaskDetailPage();
+
+    expect(screen.getByText("evidence.csv")).toBeInTheDocument();
+    expect(screen.getByText(/text\/csv/)).toBeInTheDocument();
+    expect(screen.getByText(/1.5 KB/)).toBeInTheDocument();
+    expect(screen.getByText(/Uploaded by Omar Hassan/)).toBeInTheDocument();
+  });
+
+  it("downloads an attachment through the backend URL query", async () => {
+    const user = userEvent.setup();
+    mocks.attachments = [attachment("attachment-1")];
+    renderTaskDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Download" }));
+
+    await waitFor(() => {
+      expect(mocks.convexQuery).toHaveBeenCalledWith(
+        "tasks.getAttachmentDownloadUrl",
+        { attachmentId: "attachment-1" },
+      );
+    });
+    expect(open).toHaveBeenCalledWith(
+      "https://download.example/invoice.pdf",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("archives an attachment", async () => {
+    const user = userEvent.setup();
+    mocks.attachments = [attachment("attachment-1")];
+    renderTaskDetailPage();
+
+    await user.click(screen.getAllByRole("button", { name: "Archive" })[0]);
+
+    await waitFor(() => {
+      expect(mocks.archiveAttachment).toHaveBeenCalledWith({
+        attachmentId: "attachment-1",
+      });
+    });
+  });
+
+  it("shows attachment backend errors", async () => {
+    const user = userEvent.setup();
+    mocks.attachments = [attachment("attachment-1")];
+    mocks.archiveAttachment.mockRejectedValue(new Error("FORBIDDEN"));
+    renderTaskDetailPage();
+
+    await user.click(screen.getAllByRole("button", { name: "Archive" })[0]);
+
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");
+    });
   });
 
   it("shows an unavailable state when a task is missing", () => {

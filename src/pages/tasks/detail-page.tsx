@@ -1,7 +1,7 @@
-import { useMemo, useState, type FormEvent } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Pencil, Send, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Paperclip, Pencil, Send, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
@@ -15,8 +15,25 @@ import { useCrm } from "@/lib/crm-context.tsx";
 
 type Task = Doc<"tasks">;
 type TaskComment = Doc<"taskComments">;
+type TaskAttachment = Doc<"taskAttachments">;
 type TaskStatus = Task["status"];
 type TaskPriority = Task["priority"];
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "text/plain",
+  "text/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+const ATTACHMENT_ACCEPT =
+  ".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.csv,.xls,.xlsx,.doc,.docx";
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   todo: "To Do",
@@ -53,6 +70,12 @@ function formatDateTime(timestamp?: number) {
   });
 }
 
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function statusBadgeClass(status: TaskStatus) {
   if (status === "done") return "bg-emerald-100 text-emerald-800";
   if (status === "blocked") return "bg-amber-100 text-amber-800";
@@ -80,8 +103,21 @@ function canManageComment(
   );
 }
 
+function canArchiveAttachment(
+  currentUser: Doc<"users"> | null | undefined,
+  attachment: TaskAttachment,
+) {
+  if (!currentUser) return false;
+  return (
+    attachment.uploadedBy === currentUser._id ||
+    currentUser.role === "ceo" ||
+    currentUser.role === "head_of_business"
+  );
+}
+
 export default function TaskDetailPage() {
   const navigate = useNavigate();
+  const convex = useConvex();
   const { taskId } = useParams();
   const { currentUser } = useCrm();
   const task = useQuery(
@@ -92,17 +128,30 @@ export default function TaskDetailPage() {
     api.tasks.listComments,
     task ? { taskId: task._id } : "skip",
   );
+  const attachments = useQuery(
+    api.tasks.listAttachments,
+    task ? { taskId: task._id } : "skip",
+  );
   const users = useQuery(api.users.listAll, {});
   const reportToCandidates = useQuery(api.tasks.listReportToCandidates, {});
   const companies = useQuery(api.companies.list, {});
+  const generateAttachmentUploadUrl = useMutation(
+    api.tasks.generateAttachmentUploadUrl,
+  );
+  const saveAttachmentMetadata = useMutation(api.tasks.saveAttachmentMetadata);
+  const archiveAttachment = useMutation(api.tasks.archiveAttachment);
   const createComment = useMutation(api.tasks.createComment);
   const updateComment = useMutation(api.tasks.updateComment);
   const archiveComment = useMutation(api.tasks.archiveComment);
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [newComment, setNewComment] = useState("");
   const [editingCommentId, setEditingCommentId] =
     useState<Id<"taskComments"> | null>(null);
   const [editingBody, setEditingBody] = useState("");
+  const [pendingAttachmentAction, setPendingAttachmentAction] = useState<
+    string | null
+  >(null);
   const [pendingCommentAction, setPendingCommentAction] = useState<string | null>(
     null,
   );
@@ -147,6 +196,91 @@ export default function TaskDetailPage() {
       );
     } finally {
       setPendingCommentAction(null);
+    }
+  };
+
+  const validateAttachmentFile = (file: File) => {
+    if (!ALLOWED_ATTACHMENT_MIME_TYPES.has(file.type)) {
+      toast.error("This file type is not allowed for task attachments");
+      return false;
+    }
+    if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      toast.error("Attachments must be 10 MB or less");
+      return false;
+    }
+    return true;
+  };
+
+  const handleUploadAttachment = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!task || !file || !validateAttachmentFile(file)) return;
+
+    setPendingAttachmentAction("upload");
+    try {
+      const uploadUrl = await generateAttachmentUploadUrl({});
+      const uploadResponse = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      if (!uploadResponse.ok) {
+        throw new Error("File upload failed");
+      }
+      const { storageId } = (await uploadResponse.json()) as {
+        storageId: Id<"_storage">;
+      };
+      await saveAttachmentMetadata({
+        taskId: task._id,
+        storageId,
+        fileName: file.name,
+        mimeType: file.type,
+        size: file.size,
+      });
+      toast.success("Attachment uploaded");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to upload attachment",
+      );
+    } finally {
+      setPendingAttachmentAction(null);
+    }
+  };
+
+  const handleDownloadAttachment = async (
+    attachmentId: Id<"taskAttachments">,
+  ) => {
+    setPendingAttachmentAction(`${attachmentId}:download`);
+    try {
+      const url = await convex.query(api.tasks.getAttachmentDownloadUrl, {
+        attachmentId,
+      });
+      if (!url) {
+        throw new Error("Attachment download URL is unavailable");
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to download attachment",
+      );
+    } finally {
+      setPendingAttachmentAction(null);
+    }
+  };
+
+  const handleArchiveAttachment = async (
+    attachmentId: Id<"taskAttachments">,
+  ) => {
+    setPendingAttachmentAction(`${attachmentId}:archive`);
+    try {
+      await archiveAttachment({ attachmentId });
+      toast.success("Attachment archived");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to archive attachment",
+      );
+    } finally {
+      setPendingAttachmentAction(null);
     }
   };
 
@@ -273,6 +407,109 @@ export default function TaskDetailPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="flex items-center gap-2">
+              <Paperclip className="h-4 w-4" />
+              Attachments
+              <Badge variant="secondary" className="text-xs">
+                {attachments?.length ?? 0}
+              </Badge>
+            </span>
+            <div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ATTACHMENT_ACCEPT}
+                className="hidden"
+                onChange={(event) => void handleUploadAttachment(event)}
+                aria-label="Upload task attachment"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={pendingAttachmentAction === "upload"}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                {pendingAttachmentAction === "upload" ? "Uploading..." : "Upload File"}
+              </Button>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {attachments === undefined ? (
+            <div className="space-y-2">
+              <Skeleton className="h-16" />
+              <Skeleton className="h-16" />
+            </div>
+          ) : attachments.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+              No attachments yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {attachments.map((attachment) => {
+                const uploader = userMap.get(attachment.uploadedBy);
+                const canArchive = canArchiveAttachment(currentUser, attachment);
+
+                return (
+                  <div
+                    key={attachment._id}
+                    className="flex flex-col gap-3 rounded-lg border bg-card p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <p className="truncate text-sm font-medium">
+                        {attachment.fileName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {attachment.mimeType} - {formatFileSize(attachment.size)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Uploaded by{" "}
+                        {uploader?.name || uploader?.email || "Team member"} -{" "}
+                        {formatDateTime(attachment.uploadedAt)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={
+                          pendingAttachmentAction === `${attachment._id}:download`
+                        }
+                        onClick={() => void handleDownloadAttachment(attachment._id)}
+                      >
+                        <Download className="mr-2 h-3.5 w-3.5" />
+                        Download
+                      </Button>
+                      {canArchive ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-muted-foreground"
+                          disabled={
+                            pendingAttachmentAction === `${attachment._id}:archive`
+                          }
+                          onClick={() => void handleArchiveAttachment(attachment._id)}
+                        >
+                          <Trash2 className="mr-2 h-3.5 w-3.5" />
+                          Archive
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <span>Comments</span>
             <Badge variant="secondary" className="text-xs">
@@ -306,7 +543,7 @@ export default function TaskDetailPage() {
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {formatDateTime(comment.createdAt)}
-                          {comment.updatedAt ? " · edited" : ""}
+                          {comment.updatedAt ? " - edited" : ""}
                         </p>
                       </div>
                       {canEdit ? (
