@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   Building2,
@@ -18,6 +19,8 @@ import {
   CloudSun,
   BookOpen,
   ClipboardList,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -81,9 +84,35 @@ const NAV_GROUPS = [
   },
 ];
 
+const COLLAPSIBLE_GROUPS = new Set(["Sales", "Revenue"]);
+const SIDEBAR_GROUP_STORAGE_KEY = "crm.sidebar.collapsedGroups";
+
+function loadCollapsedGroups() {
+  if (typeof window === "undefined") {
+    return new Set<string>();
+  }
+
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(SIDEBAR_GROUP_STORAGE_KEY) ?? "[]",
+    );
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === "string")
+        : [],
+    );
+  } catch {
+    return new Set<string>();
+  }
+}
+
 export default function AppLayout() {
   const { currentUser } = useCrm();
   const { signout } = useAuth();
+  const location = useLocation();
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => loadCollapsedGroups(),
+  );
   const visibleNavItems = NAV_ITEMS.filter(
     (item) =>
       !item.adminOnly ||
@@ -99,6 +128,25 @@ export default function AppLayout() {
   const dashboardItem = visibleNavItems.find(
     (item) => item.to === "/dashboard",
   );
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      SIDEBAR_GROUP_STORAGE_KEY,
+      JSON.stringify([...collapsedGroups]),
+    );
+  }, [collapsedGroups]);
+
+  const toggleGroup = (label: string) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(label)) {
+        next.delete(label);
+      } else {
+        next.add(label);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="flex h-screen">
@@ -126,17 +174,44 @@ export default function AppLayout() {
             if (groupItems.length === 0) {
               return null;
             }
+            const isCollapsible = COLLAPSIBLE_GROUPS.has(group.label);
+            const hasActiveItem = groupItems.some((item) =>
+              location.pathname.startsWith(item.to),
+            );
+            const isOpen =
+              !isCollapsible ||
+              hasActiveItem ||
+              !collapsedGroups.has(group.label);
 
             return (
               <div key={group.label}>
-                <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {group.label}
-                </div>
-                <div className="space-y-1">
-                  {groupItems.map((item) => (
-                    <SidebarNavLink key={item.to} item={item} />
-                  ))}
-                </div>
+                {isCollapsible ? (
+                  <button
+                    type="button"
+                    className="mb-2 flex w-full items-center justify-between rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:bg-sidebar-accent/40 hover:text-sidebar-foreground"
+                    aria-expanded={isOpen}
+                    aria-label={`${isOpen ? "Collapse" : "Expand"} ${group.label}`}
+                    onClick={() => toggleGroup(group.label)}
+                  >
+                    <span>{group.label}</span>
+                    {isOpen ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                ) : (
+                  <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {group.label}
+                  </div>
+                )}
+                {isOpen ? (
+                  <div className="space-y-1">
+                    {groupItems.map((item) => (
+                      <SidebarNavLink key={item.to} item={item} />
+                    ))}
+                  </div>
+                ) : null}
               </div>
             );
           })}
