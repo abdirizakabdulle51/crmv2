@@ -49,6 +49,34 @@ import {
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
 
+type RecommendationStatus =
+  | "open"
+  | "acknowledged"
+  | "in_progress"
+  | "snoozed"
+  | "dismissed"
+  | "resolved";
+
+type StatusFilter = "active" | RecommendationStatus | "all";
+
+type AdvisorRecommendation = Recommendation & {
+  recommendationKey?: string;
+  status?: string;
+  statusUpdatedAt?: number;
+  snoozedUntil?: number;
+};
+
+const STATUS_FILTER_OPTIONS: { value: StatusFilter; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "open", label: "Open" },
+  { value: "acknowledged", label: "Acknowledged" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "snoozed", label: "Snoozed" },
+  { value: "dismissed", label: "Dismissed" },
+  { value: "resolved", label: "Resolved" },
+  { value: "all", label: "All" },
+];
+
 const RULE_ICONS: Record<string, React.ReactNode> = {
   backup: <Database className="h-4 w-4" />,
   object_storage: <Cloud className="h-4 w-4" />,
@@ -78,6 +106,65 @@ function PriorityBadge({ priority }: { priority: Recommendation["priority"] }) {
   }
 }
 
+function getRecommendationStatus(
+  recommendation: AdvisorRecommendation,
+): RecommendationStatus {
+  if (
+    recommendation.status === "open" ||
+    recommendation.status === "acknowledged" ||
+    recommendation.status === "in_progress" ||
+    recommendation.status === "snoozed" ||
+    recommendation.status === "dismissed" ||
+    recommendation.status === "resolved"
+  ) {
+    return recommendation.status;
+  }
+  return "open";
+}
+
+function isActiveStatus(status: RecommendationStatus) {
+  return (
+    status === "open" ||
+    status === "acknowledged" ||
+    status === "in_progress"
+  );
+}
+
+function StatusBadge({ status }: { status: RecommendationStatus }) {
+  if (status === "open") {
+    return <Badge className="bg-primary/10 text-primary">Open</Badge>;
+  }
+  if (status === "acknowledged") {
+    return <Badge variant="outline">Acknowledged</Badge>;
+  }
+  if (status === "in_progress") {
+    return (
+      <Badge className="bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300">
+        In Progress
+      </Badge>
+    );
+  }
+  if (status === "snoozed") {
+    return (
+      <Badge className="bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+        Snoozed
+      </Badge>
+    );
+  }
+  if (status === "dismissed") {
+    return <Badge variant="secondary">Dismissed</Badge>;
+  }
+  return (
+    <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+      Resolved
+    </Badge>
+  );
+}
+
+function formatStatusDate(timestamp: number) {
+  return new Date(timestamp).toLocaleDateString();
+}
+
 export default function RecommendationsPage() {
   const companies = useQuery(api.companies.list, {});
   const recommendations = useQuery(api.recommendations.listComputed, {});
@@ -86,6 +173,7 @@ export default function RecommendationsPage() {
   const [companyFilter, setCompanyFilter] = useState("all");
   const [ruleFilter, setRuleFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [categoryFilter, setCategoryFilter] = useState<AdvisorCategory>("All");
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
@@ -109,10 +197,15 @@ export default function RecommendationsPage() {
   );
 
   // Apply filters
-  const filtered = recommendations.filter((r) => {
+  const filtered = recommendations.filter((r: AdvisorRecommendation) => {
+    const status = getRecommendationStatus(r);
     if (companyFilter !== "all" && r.companyId !== companyFilter) return false;
     if (ruleFilter !== "all" && r.rule !== ruleFilter) return false;
     if (priorityFilter !== "all" && r.priority !== priorityFilter) return false;
+    if (statusFilter === "active" && !isActiveStatus(status)) return false;
+    if (statusFilter !== "active" && statusFilter !== "all") {
+      return status === statusFilter;
+    }
     if (
       categoryFilter !== "All" &&
       getAdvisorCategory(r.rule) !== categoryFilter
@@ -282,6 +375,24 @@ export default function RecommendationsPage() {
           </SelectContent>
         </Select>
         <Select
+          value={statusFilter}
+          onValueChange={(value) => {
+            setStatusFilter(value as StatusFilter);
+            setCurrentPage(1);
+          }}
+        >
+          <SelectTrigger className="w-[170px]" aria-label="Status">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUS_FILTER_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
           value={String(pageSize)}
           onValueChange={(value) => {
             setPageSize(Number(value));
@@ -400,9 +511,25 @@ export default function RecommendationsPage() {
                           {row.rec.companyName} · Source rule:{" "}
                           {getAdvisorRuleLabel(row.rec.rule)}
                         </p>
+                        {row.rec.statusUpdatedAt || row.rec.snoozedUntil ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {row.rec.statusUpdatedAt
+                              ? `Updated ${formatStatusDate(row.rec.statusUpdatedAt)}`
+                              : null}
+                            {row.rec.statusUpdatedAt && row.rec.snoozedUntil
+                              ? " · "
+                              : null}
+                            {row.rec.snoozedUntil
+                              ? `Snoozed until ${formatStatusDate(row.rec.snoozedUntil)}`
+                              : null}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2 lg:justify-end">
+                      <StatusBadge
+                        status={getRecommendationStatus(row.rec)}
+                      />
                       <PriorityBadge priority={row.rec.priority} />
                       <Badge variant="outline">
                         {getAdvisorCategory(row.rec.rule)}

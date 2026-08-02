@@ -5,6 +5,19 @@ import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import RecommendationsPage from "./page.tsx";
 import type { Recommendation } from "./_lib/recommendation-engine.ts";
 
+type TestRecommendation = Recommendation & {
+  recommendationKey?: string;
+  status?:
+    | "open"
+    | "acknowledged"
+    | "in_progress"
+    | "snoozed"
+    | "dismissed"
+    | "resolved";
+  statusUpdatedAt?: number;
+  snoozedUntil?: number;
+};
+
 Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
   value: vi.fn(() => false),
 });
@@ -28,7 +41,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
 
 const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
-  recommendations: [] as Recommendation[],
+  recommendations: [] as TestRecommendation[],
   aiRecommendations: [] as Doc<"aiRecommendations">[],
 }));
 
@@ -64,7 +77,7 @@ function recommendation(index: number, priority: Recommendation["priority"]) {
     estimatedValue: "$10.00/mo",
     estimatedMonthlyValue: 10,
     priority,
-  };
+  } satisfies TestRecommendation;
 }
 
 function seedRecommendations() {
@@ -170,6 +183,120 @@ describe("RecommendationsPage pagination", () => {
 
     expect(screen.getAllByText("Showing 1-5 of 5")).toHaveLength(2);
     expect(screen.getByText(/Company 56/)).toBeInTheDocument();
+  });
+
+  it("shows status badges and subtle status timing text", () => {
+    mocks.companies = [company("company-1", "Company 01")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        status: "in_progress",
+        statusUpdatedAt: Date.UTC(2026, 6, 29),
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    expect(screen.getByText("In Progress")).toBeInTheDocument();
+    expect(screen.getByText(/Updated/)).toBeInTheDocument();
+    expect(screen.getByText(/Company 01/)).toBeInTheDocument();
+  });
+
+  it("defaults to Active status recommendations and hides inactive statuses", () => {
+    mocks.companies = [
+      company("company-1", "Open Co"),
+      company("company-2", "Acknowledged Co"),
+      company("company-3", "Progress Co"),
+      company("company-4", "Snoozed Co"),
+      company("company-5", "Dismissed Co"),
+      company("company-6", "Resolved Co"),
+    ];
+    mocks.recommendations = [
+      { ...recommendation(1, "high"), companyName: "Open Co", status: "open" },
+      {
+        ...recommendation(2, "high"),
+        companyName: "Acknowledged Co",
+        status: "acknowledged",
+      },
+      {
+        ...recommendation(3, "high"),
+        companyName: "Progress Co",
+        status: "in_progress",
+      },
+      {
+        ...recommendation(4, "high"),
+        companyName: "Snoozed Co",
+        status: "snoozed",
+      },
+      {
+        ...recommendation(5, "high"),
+        companyName: "Dismissed Co",
+        status: "dismissed",
+      },
+      {
+        ...recommendation(6, "high"),
+        companyName: "Resolved Co",
+        status: "resolved",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    expect(screen.getAllByText("Showing 1-3 of 3")).toHaveLength(2);
+    expect(screen.getByText(/Open Co/)).toBeInTheDocument();
+    expect(screen.getByText(/Acknowledged Co/)).toBeInTheDocument();
+    expect(screen.getByText(/Progress Co/)).toBeInTheDocument();
+    expect(screen.queryByText(/Snoozed Co/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Dismissed Co/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Resolved Co/)).not.toBeInTheDocument();
+  });
+
+  it("offers status filters and shows specific inactive statuses", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [
+      company("company-1", "Open Co"),
+      company("company-2", "Snoozed Co"),
+    ];
+    mocks.recommendations = [
+      { ...recommendation(1, "high"), companyName: "Open Co", status: "open" },
+      {
+        ...recommendation(2, "high"),
+        companyName: "Snoozed Co",
+        status: "snoozed",
+        snoozedUntil: Date.UTC(2026, 7, 15),
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    await user.click(screen.getByRole("combobox", { name: "Status" }));
+    expect(screen.getByRole("option", { name: "Active" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Open" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Acknowledged" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "In Progress" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Snoozed" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Dismissed" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Resolved" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "All" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("option", { name: "Snoozed" }));
+
+    expect(screen.getAllByText("Showing 1-1 of 1")).toHaveLength(2);
+    expect(screen.getByText(/Snoozed Co/)).toBeInTheDocument();
+    expect(screen.getAllByText("Snoozed").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Snoozed until/)).toBeInTheDocument();
+    expect(screen.queryByText(/Open Co/)).not.toBeInTheDocument();
   });
 
   it("shows stored AI narrative above the company's first visible rule", () => {
