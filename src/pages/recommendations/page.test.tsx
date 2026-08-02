@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import RecommendationsPage from "./page.tsx";
 import type { Recommendation } from "./_lib/recommendation-engine.ts";
@@ -124,6 +125,40 @@ function seedRecommendations() {
   mocks.aiRecommendations = [];
 }
 
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <div data-testid="location">{location.pathname + location.search}</div>
+  );
+}
+
+function renderRecommendationsPage() {
+  return render(
+    <MemoryRouter initialEntries={["/recommendations"]}>
+      <Routes>
+        <Route
+          path="/recommendations"
+          element={
+            <>
+              <RecommendationsPage />
+              <LocationProbe />
+            </>
+          }
+        />
+        <Route
+          path="/quotes/from-advisor"
+          element={
+            <>
+              <div>Advisor Quote Review</div>
+              <LocationProbe />
+            </>
+          }
+        />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
 describe("RecommendationsPage pagination", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -156,7 +191,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(
       screen.getByRole("heading", { name: "Cloud Advisor" }),
@@ -176,11 +211,34 @@ describe("RecommendationsPage pagination", () => {
     expect(screen.queryByText(/Backup Co/)).not.toBeInTheDocument();
   });
 
+  it("shows Create Quote and navigates to the advisor quote review page", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [company("company-1", "Open Co")];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Open Co",
+        status: "open",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    renderRecommendationsPage();
+
+    await user.click(screen.getByRole("link", { name: /Create Quote/ }));
+
+    expect(screen.getByText("Advisor Quote Review")).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/quotes/from-advisor?recommendationKey=company-1%3Awaf%3Amanaged%2520service",
+    );
+    expect(mocks.setRecommendationStatus).not.toHaveBeenCalled();
+  });
+
   it("changes page size and navigates recommendation pages", async () => {
     const user = userEvent.setup();
     seedRecommendations();
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(screen.getAllByText("Showing 1-50 of 60")).toHaveLength(2);
     expect(screen.getByText(/Company 01/)).toBeInTheDocument();
@@ -205,7 +263,7 @@ describe("RecommendationsPage pagination", () => {
     const user = userEvent.setup();
     seedRecommendations();
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     await user.click(screen.getAllByRole("button", { name: "Next" })[0]);
     expect(screen.getAllByText("Showing 51-60 of 60")).toHaveLength(2);
@@ -228,7 +286,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(screen.getByText("In Progress")).toBeInTheDocument();
     expect(screen.getByText(/Updated/)).toBeInTheDocument();
@@ -274,7 +332,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(screen.getAllByText("Showing 1-3 of 3")).toHaveLength(2);
     expect(screen.getByText(/Open Co/)).toBeInTheDocument();
@@ -302,7 +360,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     await user.click(screen.getByRole("combobox", { name: "Status" }));
     expect(screen.getByRole("option", { name: "Active" })).toBeInTheDocument();
@@ -343,7 +401,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(
       screen.getByRole("button", { name: "Acknowledge" }),
@@ -391,7 +449,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(screen.getAllByRole("combobox", { name: "Snooze" })).toHaveLength(
       3,
@@ -412,7 +470,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     await user.click(screen.getByRole("combobox", { name: "Snooze" }));
     await user.click(screen.getByRole("option", { name: "Snooze 7 days" }));
@@ -452,7 +510,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(screen.getAllByRole("button", { name: "Start Progress" })).toHaveLength(
       2,
@@ -480,7 +538,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(screen.queryByRole("button", { name: "Acknowledge" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start Progress" })).not.toBeInTheDocument();
@@ -503,7 +561,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     await user.click(screen.getByRole("combobox", { name: "Status" }));
     await user.click(screen.getByRole("option", { name: "Snoozed" }));
@@ -531,7 +589,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(screen.getByText("Workflow note")).toBeInTheDocument();
     expect(screen.getByText("Waiting for customer approval.")).toBeInTheDocument();
@@ -566,7 +624,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     await user.click(screen.getByRole("button", { name: "Add note" }));
     await user.type(
@@ -605,7 +663,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     await user.click(screen.getByRole("combobox", { name: "Status" }));
     await user.click(screen.getByRole("option", { name: "In Progress" }));
@@ -627,7 +685,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     await user.click(screen.getByRole("button", { name: "Resolve" }));
@@ -660,7 +718,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     await user.click(screen.getByRole("combobox", { name: "Status" }));
     await user.click(screen.getByRole("option", { name: "Resolved" }));
@@ -683,7 +741,7 @@ describe("RecommendationsPage pagination", () => {
     ];
     mocks.aiRecommendations = [];
 
-    const { rerender } = render(<RecommendationsPage />);
+    const { rerender } = renderRecommendationsPage();
     expect(screen.getByText(/Open Co/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Resolve" }));
@@ -694,7 +752,21 @@ describe("RecommendationsPage pagination", () => {
         status: "resolved",
       },
     ];
-    rerender(<RecommendationsPage />);
+    rerender(
+      <MemoryRouter initialEntries={["/recommendations"]}>
+        <Routes>
+          <Route
+            path="/recommendations"
+            element={
+              <>
+                <RecommendationsPage />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
 
     expect(screen.queryByText(/Open Co/)).not.toBeInTheDocument();
     expect(screen.getByText("No matching results")).toBeInTheDocument();
@@ -717,7 +789,7 @@ describe("RecommendationsPage pagination", () => {
       },
     ];
 
-    render(<RecommendationsPage />);
+    renderRecommendationsPage();
 
     expect(screen.getByText("AI-generated")).toBeInTheDocument();
     expect(

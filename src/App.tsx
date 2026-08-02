@@ -16,6 +16,7 @@ import UsageAutoFillPage from "./pages/usage/auto-fill-page.tsx";
 import AtRiskPage from "./pages/at-risk/page.tsx";
 import QuotesPage from "./pages/quotes/page.tsx";
 import QuoteGenerateFromUsagePage from "./pages/quotes/generate-page.tsx";
+import QuoteFromAdvisorPage from "./pages/quotes/from-advisor-page.tsx";
 import QuoteDetailPage from "./pages/quotes/detail-page.tsx";
 import RecommendationsPage from "./pages/recommendations/page.tsx";
 import CoachPage from "./pages/coach/page.tsx";
@@ -53,6 +54,10 @@ export default function App() {
             <Route
               path="/quotes/generate"
               element={<QuoteGenerateFromUsagePage />}
+            />
+            <Route
+              path="/quotes/from-advisor"
+              element={<QuoteFromAdvisorPage />}
             />
             <Route path="/quotes/:id" element={<QuoteDetailPage />} />
             <Route path="/recommendations" element={<RecommendationsPage />} />

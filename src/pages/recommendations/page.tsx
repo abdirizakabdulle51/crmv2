@@ -33,8 +33,10 @@ import {
   Lock,
   FileWarning,
   DollarSign,
+  FileText,
 } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { Doc } from "@/convex/_generated/dataModel.d.ts";
 import type { Recommendation } from "./_lib/recommendation-engine.ts";
@@ -868,6 +870,18 @@ export default function RecommendationsPage() {
                         );
                       },
                     )}
+                    {row.rec.recommendationKey ? (
+                      <Button asChild variant="secondary" size="sm">
+                        <Link
+                          to={`/quotes/from-advisor?recommendationKey=${encodeURIComponent(
+                            row.rec.recommendationKey,
+                          )}`}
+                        >
+                          <FileText className="h-4 w-4" />
+                          Create Quote
+                        </Link>
+                      </Button>
+                    ) : null}
                   </div>
                 </CardContent>
               </Card>
