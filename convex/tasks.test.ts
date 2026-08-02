@@ -429,6 +429,227 @@ describe("tasks", () => {
     );
   });
 
+  it("lists comments for visible tasks and blocks hidden task comments", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const { visibleTaskId, hiddenTaskId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const visibleTaskId = await ctx.db.insert("tasks", {
+        title: "Visible task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.amA._id,
+        assigneeId: s.amA._id,
+        reportToId: s.amA._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const hiddenTaskId = await ctx.db.insert("tasks", {
+        title: "Hidden task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.amB._id,
+        assigneeId: s.amB._id,
+        reportToId: s.amB._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("taskComments", {
+        taskId: visibleTaskId,
+        body: "Second comment",
+        createdBy: s.amA._id,
+        createdAt: now + 2,
+      });
+      await ctx.db.insert("taskComments", {
+        taskId: visibleTaskId,
+        body: "First comment",
+        createdBy: s.amA._id,
+        createdAt: now + 1,
+      });
+      await ctx.db.insert("taskComments", {
+        taskId: visibleTaskId,
+        body: "Archived comment",
+        createdBy: s.amA._id,
+        createdAt: now,
+        archivedAt: now + 3,
+      });
+      return { visibleTaskId, hiddenTaskId };
+    });
+
+    const comments = await asUser(t, s.amA).query(api.tasks.listComments, {
+      taskId: visibleTaskId,
+    });
+    expect(comments.map((comment) => comment.body)).toEqual([
+      "First comment",
+      "Second comment",
+    ]);
+
+    await expect(
+      asUser(t, s.amA).query(api.tasks.listComments, {
+        taskId: hiddenTaskId,
+      }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
+  it("creates comments only on visible tasks and rejects empty or too-long bodies", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await asUser(t, s.amA).mutation(api.tasks.create, {
+      title: "Commentable task",
+      assigneeId: s.amA._id,
+    });
+
+    const commentId = await asUser(t, s.amA).mutation(
+      api.tasks.createComment,
+      {
+        taskId,
+        body: "  Initial progress update.  ",
+      },
+    );
+    const comment = await t.run(async (ctx) => await ctx.db.get(commentId));
+    expect(comment).toMatchObject({
+      taskId,
+      body: "Initial progress update.",
+      createdBy: s.amA._id,
+    });
+
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.createComment, {
+        taskId,
+        body: "   ",
+      }),
+    ).rejects.toThrow(/required|BAD_REQUEST/i);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.tasks.createComment, {
+        taskId,
+        body: "x".repeat(2001),
+      }),
+    ).rejects.toThrow(/2000|BAD_REQUEST/i);
+
+    await expect(
+      asUser(t, s.amB).mutation(api.tasks.createComment, {
+        taskId,
+        body: "I should not see this task.",
+      }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
+  it("lets comment creators edit and archive their own comments", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const taskId = await asUser(t, s.amA).mutation(api.tasks.create, {
+      title: "Own comment task",
+      assigneeId: s.amA._id,
+    });
+    const commentId = await asUser(t, s.amA).mutation(
+      api.tasks.createComment,
+      {
+        taskId,
+        body: "Initial update",
+      },
+    );
+
+    await asUser(t, s.amA).mutation(api.tasks.updateComment, {
+      commentId,
+      body: "  Edited update  ",
+    });
+    let comment = await t.run(async (ctx) => await ctx.db.get(commentId));
+    expect(comment).toMatchObject({
+      body: "Edited update",
+      updatedAt: expect.any(Number),
+    });
+
+    await asUser(t, s.amA).mutation(api.tasks.archiveComment, { commentId });
+    comment = await t.run(async (ctx) => await ctx.db.get(commentId));
+    expect(comment?.archivedAt).toEqual(expect.any(Number));
+    const comments = await asUser(t, s.amA).query(api.tasks.listComments, {
+      taskId,
+    });
+    expect(comments).toHaveLength(0);
+  });
+
+  it("blocks other Account Managers from editing or archiving someone else's visible comment", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const { commentId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const taskId = await ctx.db.insert("tasks", {
+        title: "Reported task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.amA._id,
+        reportToId: s.amB._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const commentId = await ctx.db.insert("taskComments", {
+        taskId,
+        body: "Creator-owned comment",
+        createdBy: s.amA._id,
+        createdAt: now,
+      });
+      return { taskId, commentId };
+    });
+
+    await expect(
+      asUser(t, s.amB).mutation(api.tasks.updateComment, {
+        commentId,
+        body: "Edited by someone else",
+      }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+    await expect(
+      asUser(t, s.amB).mutation(api.tasks.archiveComment, { commentId }),
+    ).rejects.toThrow(/permission|FORBIDDEN/i);
+  });
+
+  it("allows HOB and CEO to edit and archive comments", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const { ceoCommentId, hobCommentId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const taskId = await ctx.db.insert("tasks", {
+        title: "Moderated task",
+        status: "todo",
+        priority: "medium",
+        createdBy: s.amA._id,
+        reportToId: s.amA._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const ceoCommentId = await ctx.db.insert("taskComments", {
+        taskId,
+        body: "Needs CEO moderation",
+        createdBy: s.amA._id,
+        createdAt: now,
+      });
+      const hobCommentId = await ctx.db.insert("taskComments", {
+        taskId,
+        body: "Needs HOB moderation",
+        createdBy: s.amA._id,
+        createdAt: now + 1,
+      });
+      return { ceoCommentId, hobCommentId };
+    });
+
+    await asUser(t, s.ceo).mutation(api.tasks.updateComment, {
+      commentId: ceoCommentId,
+      body: "CEO edited",
+    });
+    await asUser(t, s.hob).mutation(api.tasks.archiveComment, {
+      commentId: hobCommentId,
+    });
+
+    const comments = await t.run(async (ctx) => {
+      return {
+        ceo: await ctx.db.get(ceoCommentId),
+        hob: await ctx.db.get(hobCommentId),
+      };
+    });
+    expect(comments.ceo?.body).toBe("CEO edited");
+    expect(comments.hob?.archivedAt).toEqual(expect.any(Number));
+  });
+
   it("sets and clears completedAt when task status changes", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

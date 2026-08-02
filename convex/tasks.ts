@@ -7,6 +7,7 @@ import { canViewCompany, isCeoOrHob } from "./authorization";
 type Ctx = QueryCtx | MutationCtx;
 type TaskStatus = Doc<"tasks">["status"];
 type TaskPriority = Doc<"tasks">["priority"];
+const MAX_COMMENT_LENGTH = 2000;
 
 const statusValidator = v.union(
   v.literal("todo"),
@@ -55,6 +56,17 @@ async function getTaskOrThrow(ctx: Ctx, taskId: Id<"tasks">) {
     throw new ConvexError({ code: "NOT_FOUND", message: "Task not found" });
   }
   return task;
+}
+
+async function getCommentOrThrow(ctx: Ctx, commentId: Id<"taskComments">) {
+  const comment = await ctx.db.get(commentId);
+  if (!comment) {
+    throw new ConvexError({
+      code: "NOT_FOUND",
+      message: "Task comment not found",
+    });
+  }
+  return comment;
 }
 
 async function getVisibleCompanyIds(ctx: Ctx, user: Doc<"users">) {
@@ -181,6 +193,36 @@ async function assertCanViewTask(
     code: "FORBIDDEN",
     message: "You do not have permission to manage this task",
   });
+}
+
+function assertCanModerateComment(
+  user: Doc<"users">,
+  comment: Doc<"taskComments">,
+) {
+  if (comment.createdBy === user._id || isCeoOrHob(user)) {
+    return;
+  }
+  throw new ConvexError({
+    code: "FORBIDDEN",
+    message: "You do not have permission to modify this comment",
+  });
+}
+
+function normalizeCommentBody(body: string) {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Comment body is required",
+    });
+  }
+  if (trimmed.length > MAX_COMMENT_LENGTH) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `Comment must be ${MAX_COMMENT_LENGTH} characters or fewer`,
+    });
+  }
+  return trimmed;
 }
 
 async function assertCanAssignTaskTo(
@@ -539,6 +581,81 @@ export const archive = mutation({
     await ctx.db.patch(args.taskId, {
       archivedAt: now,
       updatedAt: now,
+    });
+  },
+});
+
+export const listComments = query({
+  args: {
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+    await assertCanViewTask(ctx, user, task);
+
+    const comments = await ctx.db
+      .query("taskComments")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .collect();
+
+    return comments
+      .filter((comment) => comment.archivedAt === undefined)
+      .sort((a, b) => a.createdAt - b.createdAt);
+  },
+});
+
+export const createComment = mutation({
+  args: {
+    taskId: v.id("tasks"),
+    body: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const task = await getTaskOrThrow(ctx, args.taskId);
+    await assertCanViewTask(ctx, user, task);
+
+    return await ctx.db.insert("taskComments", {
+      taskId: args.taskId,
+      body: normalizeCommentBody(args.body),
+      createdBy: user._id,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const updateComment = mutation({
+  args: {
+    commentId: v.id("taskComments"),
+    body: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const comment = await getCommentOrThrow(ctx, args.commentId);
+    const task = await getTaskOrThrow(ctx, comment.taskId);
+    await assertCanViewTask(ctx, user, task);
+    assertCanModerateComment(user, comment);
+
+    await ctx.db.patch(args.commentId, {
+      body: normalizeCommentBody(args.body),
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const archiveComment = mutation({
+  args: {
+    commentId: v.id("taskComments"),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const comment = await getCommentOrThrow(ctx, args.commentId);
+    const task = await getTaskOrThrow(ctx, comment.taskId);
+    await assertCanViewTask(ctx, user, task);
+    assertCanModerateComment(user, comment);
+
+    await ctx.db.patch(args.commentId, {
+      archivedAt: Date.now(),
     });
   },
 });

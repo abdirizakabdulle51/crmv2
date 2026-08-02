@@ -403,6 +403,17 @@ export default defineSchema({
     .index("by_due_date", ["dueDate"])
     .index("by_updated_at", ["updatedAt"]),
 
+  taskComments: defineTable({
+    taskId: v.id("tasks"),
+    body: v.string(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+    archivedAt: v.optional(v.number()),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_created_by", ["createdBy"]),
+
   consumption: defineTable({
     companyId: v.id("companies"),
     month: v.string(), // YYYY-MM format
