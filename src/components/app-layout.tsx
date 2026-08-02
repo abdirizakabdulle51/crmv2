@@ -34,7 +34,7 @@ const NAV_ITEMS = [
   { to: "/usage", label: "Usage", icon: BarChart3 },
   { to: "/at-risk", label: "At Risk", icon: AlertTriangle },
   { to: "/quotes", label: "Quotes", icon: FileText },
-  { to: "/recommendations", label: "AI Recs", icon: Lightbulb },
+  { to: "/recommendations", label: "Cloud Advisor", icon: Lightbulb },
   {
     to: "/manageone-tenants",
     label: "ManageOne",

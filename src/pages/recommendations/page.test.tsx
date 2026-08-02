@@ -62,6 +62,7 @@ function recommendation(index: number, priority: Recommendation["priority"]) {
     triggerReason: `Recommendation ${index}`,
     recommendedService: "Managed service",
     estimatedValue: "$10.00/mo",
+    estimatedMonthlyValue: 10,
     priority,
   };
 }
@@ -85,6 +86,43 @@ function seedRecommendations() {
 }
 
 describe("RecommendationsPage pagination", () => {
+  it("presents the page as Cloud Advisor with category filtering", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [
+      company("company-1", "Backup Co"),
+      company("company-2", "Security Co"),
+    ];
+    mocks.recommendations = [
+      {
+        ...recommendation(1, "high"),
+        companyName: "Backup Co",
+        rule: "backup",
+        triggerReason: "Needs backup",
+      },
+      {
+        ...recommendation(2, "medium"),
+        companyName: "Security Co",
+        rule: "waf",
+        triggerReason: "Needs WAF",
+      },
+    ];
+    mocks.aiRecommendations = [];
+
+    render(<RecommendationsPage />);
+
+    expect(
+      screen.getByRole("heading", { name: "Cloud Advisor" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Open Recommendations")).toBeInTheDocument();
+    expect(screen.getByText("Estimated Monthly Value")).toBeInTheDocument();
+    expect(screen.getByText("$20.00")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Security" }));
+
+    expect(screen.getByText("Security Co")).toBeInTheDocument();
+    expect(screen.queryByText("Backup Co")).not.toBeInTheDocument();
+  });
+
   it("changes page size and navigates recommendation pages", async () => {
     const user = userEvent.setup();
     seedRecommendations();

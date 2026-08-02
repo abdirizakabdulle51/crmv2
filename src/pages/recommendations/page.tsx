@@ -36,8 +36,21 @@ import {
 import { useState } from "react";
 import type { Doc } from "@/convex/_generated/dataModel.d.ts";
 import type { Recommendation } from "./_lib/recommendation-engine.ts";
+import { formatCurrency } from "@/lib/format.ts";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
+const CATEGORY_OPTIONS = [
+  "All",
+  "Cost Optimization",
+  "Security",
+  "Reliability",
+  "Performance",
+  "Backup & Recovery",
+  "Capacity / Limits",
+  "Sales Opportunities",
+] as const;
+
+type AdvisorCategory = (typeof CATEGORY_OPTIONS)[number];
 
 const RULE_ICONS: Record<string, React.ReactNode> = {
   backup: <Database className="h-4 w-4" />,
@@ -58,6 +71,20 @@ const RULE_LABELS: Record<string, string> = {
   payment_risk: "Payment Risk",
   compliance: "Compliance",
 };
+
+const RULE_CATEGORIES: Record<string, AdvisorCategory> = {
+  backup: "Backup & Recovery",
+  object_storage: "Cost Optimization",
+  log_management: "Reliability",
+  secure_connectivity: "Security",
+  waf: "Security",
+  payment_risk: "Sales Opportunities",
+  compliance: "Security",
+};
+
+function getAdvisorCategory(rule: string): AdvisorCategory {
+  return RULE_CATEGORIES[rule] ?? "Sales Opportunities";
+}
 
 function PriorityBadge({ priority }: { priority: Recommendation["priority"] }) {
   switch (priority) {
@@ -86,6 +113,7 @@ export default function RecommendationsPage() {
   const [companyFilter, setCompanyFilter] = useState("all");
   const [ruleFilter, setRuleFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState<AdvisorCategory>("All");
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -112,6 +140,12 @@ export default function RecommendationsPage() {
     if (companyFilter !== "all" && r.companyId !== companyFilter) return false;
     if (ruleFilter !== "all" && r.rule !== ruleFilter) return false;
     if (priorityFilter !== "all" && r.priority !== priorityFilter) return false;
+    if (
+      categoryFilter !== "All" &&
+      getAdvisorCategory(r.rule) !== categoryFilter
+    ) {
+      return false;
+    }
     return true;
   });
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -134,9 +168,11 @@ export default function RecommendationsPage() {
 
   // Summary stats
   const highCount = recommendations.filter((r) => r.priority === "high").length;
-  const mediumCount = recommendations.filter(
-    (r) => r.priority === "medium",
-  ).length;
+  const estimatedMonthlyValue = recommendations.reduce(
+    (sum, recommendation) =>
+      sum + (recommendation.estimatedMonthlyValue ?? 0),
+    0,
+  );
   const uniqueCompanies = new Set(recommendations.map((r) => r.companyId)).size;
 
   // Available rules for filter
@@ -145,11 +181,10 @@ export default function RecommendationsPage() {
   return (
     <div className="p-6 md:p-8 space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">
-          AI Recommendations
-        </h1>
+        <h1 className="text-2xl font-bold tracking-tight">Cloud Advisor</h1>
         <p className="text-muted-foreground mt-1">
-          Cross-sell opportunities based on usage patterns and company profiles
+          Advisor recommendations are based on usage, catalog, company, and
+          cloud signals. AI narratives summarize the rule-based findings.
         </p>
       </div>
 
@@ -158,7 +193,7 @@ export default function RecommendationsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">
-              Total Recommendations
+              Open Recommendations
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -178,12 +213,12 @@ export default function RecommendationsPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">
-              Medium Priority
+              Estimated Monthly Value
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-amber-600">
-              {mediumCount}
+            <div className="text-2xl font-bold">
+              {formatCurrency(estimatedMonthlyValue)}
             </div>
           </CardContent>
         </Card>
@@ -197,6 +232,23 @@ export default function RecommendationsPage() {
             <div className="text-2xl font-bold">{uniqueCompanies}</div>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {CATEGORY_OPTIONS.map((category) => (
+          <Button
+            key={category}
+            type="button"
+            variant={categoryFilter === category ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setCategoryFilter(category);
+              setCurrentPage(1);
+            }}
+          >
+            {category}
+          </Button>
+        ))}
       </div>
 
       {/* Filters */}
@@ -375,6 +427,7 @@ export default function RecommendationsPage() {
                           <PriorityBadge priority={row.rec.priority} />
                         </div>
                         <div className="text-xs text-muted-foreground mt-0.5">
+                          {getAdvisorCategory(row.rec.rule)} -{" "}
                           {RULE_LABELS[row.rec.rule] || row.rec.rule}
                         </div>
                       </div>
