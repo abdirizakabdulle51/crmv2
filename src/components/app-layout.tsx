@@ -105,7 +105,7 @@ export default function AppLayout() {
           <BrandLogo
             iconClassName="h-8 w-auto max-w-[170px]"
           />
-          <p className="text-xs text-sidebar-foreground/60 mt-0.5">
+          <p className="mt-0.5 whitespace-nowrap text-[11px] text-sidebar-foreground/60">
             One System. Every Team. Total Control.
           </p>
         </div>
