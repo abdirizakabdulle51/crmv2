@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { BookOpen, Lock, Plus, Search } from "lucide-react";
@@ -102,18 +103,29 @@ function emptyDraft(order: number): DraftSection {
 
 export default function DocumentationPage() {
   const { currentUser } = useCrm();
+  const navigate = useNavigate();
+  const { slug: routeSlug } = useParams<{ slug?: string }>();
   const canEdit = isCeoOrHob(currentUser?.role);
   const sections = useQuery(api.documentation.list, {});
   const upsertSection = useMutation(api.documentation.upsert);
   const [filter, setFilter] = useState("");
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [localSelectedSlug, setLocalSelectedSlug] = useState<string | null>(
+    null,
+  );
   const [isEditing, setIsEditing] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [draft, setDraft] = useState<DraftSection>(() => emptyDraft(1));
+  const selectedSlug = routeSlug ?? localSelectedSlug;
+  const hasSelectedSlug = Boolean(selectedSlug);
+  const selectedSlugExists =
+    Boolean(selectedSlug) &&
+    Boolean(sections?.some((section) => section.slug === selectedSlug));
 
   const selectedSection = useQuery(
     api.documentation.getBySlug,
-    selectedSlug && !isAdding ? { slug: selectedSlug } : "skip",
+    selectedSlug && selectedSlugExists && !isAdding
+      ? { slug: selectedSlug }
+      : "skip",
   );
 
   const filteredSections = useMemo(() => {
@@ -141,11 +153,11 @@ export default function DocumentationPage() {
   );
 
   useEffect(() => {
-    if (!sections || sections.length === 0 || selectedSlug) {
+    if (!sections || sections.length === 0 || routeSlug || localSelectedSlug) {
       return;
     }
-    setSelectedSlug(sections[0].slug);
-  }, [sections, selectedSlug]);
+    setLocalSelectedSlug(sections[0].slug);
+  }, [localSelectedSlug, routeSlug, sections]);
 
   useEffect(() => {
     if (!selectedSection || isAdding || !isEditing) {
@@ -207,7 +219,8 @@ export default function DocumentationPage() {
         order,
         visibility: draft.visibility,
       });
-      setSelectedSlug(slug);
+      setLocalSelectedSlug(slug);
+      navigate(`/documentation/${slug}`);
       setIsEditing(false);
       setIsAdding(false);
       toast.success("Documentation saved");
@@ -281,7 +294,8 @@ export default function DocumentationPage() {
                       key={section.slug}
                       type="button"
                       onClick={() => {
-                        setSelectedSlug(section.slug);
+                        setLocalSelectedSlug(section.slug);
+                        navigate(`/documentation/${section.slug}`);
                         setIsEditing(false);
                         setIsAdding(false);
                       }}
@@ -415,6 +429,28 @@ export default function DocumentationPage() {
                   </Button>
                   <Button onClick={saveDraft}>Save</Button>
                 </div>
+              </div>
+            ) : hasSelectedSlug && !selectedSlugExists ? (
+              <div className="rounded-lg border p-8 text-center">
+                <h2 className="text-2xl font-bold tracking-tight">
+                  Documentation article not found
+                </h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  The requested documentation article does not exist or is not
+                  available to your role.
+                </p>
+                <Button
+                  className="mt-5"
+                  variant="outline"
+                  onClick={() => {
+                    setLocalSelectedSlug(sections[0]?.slug ?? null);
+                    setIsEditing(false);
+                    setIsAdding(false);
+                    navigate("/documentation");
+                  }}
+                >
+                  Back to Documentation
+                </Button>
               </div>
             ) : selectedSection ? (
               <>

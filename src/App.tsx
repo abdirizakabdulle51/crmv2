@@ -81,6 +81,7 @@ export default function App() {
               element={<CloudHealthRegionPage />}
             />
             <Route path="/documentation" element={<DocumentationPage />} />
+            <Route path="/documentation/:slug" element={<DocumentationPage />} />
             <Route path="/team" element={<TeamPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
