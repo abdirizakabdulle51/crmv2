@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -344,12 +344,51 @@ describe("TaskDetailPage", () => {
     );
   });
 
-  it("archives an attachment", async () => {
+  it("shows Remove for attachment actions instead of Archive", () => {
+    mocks.attachments = [attachment("attachment-1")];
+    renderTaskDetailPage();
+
+    const attachmentRow = screen.getByText("invoice.pdf").closest(".rounded-lg");
+    expect(attachmentRow).not.toBeNull();
+    expect(
+      within(attachmentRow as HTMLElement).getByRole("button", {
+        name: "Remove",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(attachmentRow as HTMLElement).queryByRole("button", {
+        name: "Archive",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not archive an attachment when remove confirmation is canceled", async () => {
     const user = userEvent.setup();
     mocks.attachments = [attachment("attachment-1")];
     renderTaskDetailPage();
 
-    await user.click(screen.getAllByRole("button", { name: "Archive" })[0]);
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("alertdialog");
+
+    expect(
+      screen.getByRole("heading", { name: "Remove this attachment?" }),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(mocks.archiveAttachment).not.toHaveBeenCalled();
+  });
+
+  it("archives an attachment after remove confirmation", async () => {
+    const user = userEvent.setup();
+    mocks.attachments = [attachment("attachment-1")];
+    renderTaskDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Remove",
+      }),
+    );
 
     await waitFor(() => {
       expect(mocks.archiveAttachment).toHaveBeenCalledWith({
@@ -364,7 +403,12 @@ describe("TaskDetailPage", () => {
     mocks.archiveAttachment.mockRejectedValue(new Error("FORBIDDEN"));
     renderTaskDetailPage();
 
-    await user.click(screen.getAllByRole("button", { name: "Archive" })[0]);
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Remove",
+      }),
+    );
 
     await waitFor(() => {
       expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");

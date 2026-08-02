@@ -5,6 +5,17 @@ import { ArrowLeft, Download, Paperclip, Pencil, Send, Trash2, Upload } from "lu
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
@@ -485,19 +496,43 @@ export default function TaskDetailPage() {
                         Download
                       </Button>
                       {canArchive ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-muted-foreground"
-                          disabled={
-                            pendingAttachmentAction === `${attachment._id}:archive`
-                          }
-                          onClick={() => void handleArchiveAttachment(attachment._id)}
-                        >
-                          <Trash2 className="mr-2 h-3.5 w-3.5" />
-                          Archive
-                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground"
+                              disabled={
+                                pendingAttachmentAction ===
+                                `${attachment._id}:archive`
+                              }
+                            >
+                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                              Remove
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent size="sm">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Remove this attachment?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This removes the attachment from this task.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() =>
+                                  void handleArchiveAttachment(attachment._id)
+                                }
+                              >
+                                Remove
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       ) : null}
                     </div>
                   </div>
