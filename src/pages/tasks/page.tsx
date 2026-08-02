@@ -50,6 +50,7 @@ type CreateTaskArgs = {
   title: string;
   description?: string;
   assigneeId?: Id<"users">;
+  reportToId?: Id<"users">;
   priority: TaskPriority;
   dueDate?: number;
   companyId?: Id<"companies">;
@@ -134,6 +135,7 @@ function priorityBadgeClass(priority: TaskPriority) {
 export default function TasksPage() {
   const { currentUser } = useCrm();
   const tasks = useQuery(api.tasks.list, {});
+  const reportToCandidates = useQuery(api.tasks.listReportToCandidates, {});
   const users = useQuery(api.users.listAll, {});
   const companies = useQuery(api.companies.list, {});
   const createTask = useMutation(api.tasks.create);
@@ -148,15 +150,27 @@ export default function TasksPage() {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const userMap = useMemo(
-    () => new Map((users ?? []).map((user) => [user._id, user])),
-    [users],
+    () =>
+      new Map(
+        [...(users ?? []), ...(reportToCandidates ?? [])].map((user) => [
+          user._id,
+          user,
+        ]),
+      ),
+    [reportToCandidates, users],
   );
   const companyMap = useMemo(
     () => new Map((companies ?? []).map((company) => [company._id, company])),
     [companies],
   );
 
-  if (!tasks || !users || !companies || currentUser === undefined) {
+  if (
+    !tasks ||
+    !reportToCandidates ||
+    !users ||
+    !companies ||
+    currentUser === undefined
+  ) {
     return (
       <div className="space-y-6 p-6 md:p-8">
         <Skeleton className="h-8 w-40" />
@@ -228,6 +242,22 @@ export default function TasksPage() {
     try {
       await updateTask({ taskId, assigneeId });
       toast.success("Task assignee updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update task");
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const handleReportToChange = async (
+    taskId: Id<"tasks">,
+    reportToId: Id<"users">,
+  ) => {
+    const actionKey = `${taskId}:reportTo`;
+    setPendingAction(actionKey);
+    try {
+      await updateTask({ taskId, reportToId });
+      toast.success("Task report-to updated");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update task");
     } finally {
@@ -370,12 +400,17 @@ export default function TasksPage() {
                   key={task._id}
                   task={task}
                   users={users}
+                  reportToCandidates={reportToCandidates}
                   assignee={task.assigneeId ? userMap.get(task.assigneeId) : null}
+                  reportTo={
+                    task.reportToId ? userMap.get(task.reportToId) : undefined
+                  }
                   creator={userMap.get(task.createdBy)}
                   company={task.companyId ? companyMap.get(task.companyId) : null}
                   pendingAction={pendingAction}
                   onStatusChange={handleStatusChange}
                   onAssigneeChange={handleAssigneeChange}
+                  onReportToChange={handleReportToChange}
                   onArchive={handleArchive}
                 />
               ))}
@@ -389,6 +424,7 @@ export default function TasksPage() {
         onOpenChange={setCreateOpen}
         currentUser={currentUser}
         users={users}
+        reportToCandidates={reportToCandidates}
         companies={companies}
         onCreate={createTask}
       />
@@ -421,17 +457,22 @@ function SummaryCard({
 function TaskRow({
   task,
   users,
+  reportToCandidates,
   assignee,
+  reportTo,
   creator,
   company,
   pendingAction,
   onStatusChange,
   onAssigneeChange,
+  onReportToChange,
   onArchive,
 }: {
   task: Task;
   users: Doc<"users">[];
+  reportToCandidates: Doc<"users">[];
   assignee: Doc<"users"> | null | undefined;
+  reportTo: Doc<"users"> | undefined;
   creator: Doc<"users"> | undefined;
   company: Doc<"companies"> | null | undefined;
   pendingAction: string | null;
@@ -440,8 +481,17 @@ function TaskRow({
     taskId: Id<"tasks">,
     assigneeId: Id<"users">,
   ) => Promise<void>;
+  onReportToChange: (
+    taskId: Id<"tasks">,
+    reportToId: Id<"users">,
+  ) => Promise<void>;
   onArchive: (taskId: Id<"tasks">) => Promise<void>;
 }) {
+  const reportToLabel =
+    reportTo?.name ||
+    reportTo?.email ||
+    (task.reportToId ? "Unknown" : creator?.name || creator?.email || "Not set");
+
   return (
     <div className="rounded-lg border bg-card p-4">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -462,6 +512,10 @@ function TaskRow({
           ) : null}
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>Assignee: {assignee?.name || assignee?.email || "Unassigned"}</span>
+            <span>
+              Report To: {reportToLabel}
+              {!task.reportToId && creator ? " (created by)" : ""}
+            </span>
             <span>Created by: {creator?.name || creator?.email || "Unknown"}</span>
             <span>Due: {formatDate(task.dueDate)}</span>
             {company ? <span>Company: {company.name}</span> : null}
@@ -517,6 +571,35 @@ function TaskRow({
             </SelectContent>
           </Select>
 
+          <Select
+            value={task.reportToId ?? "fallback-creator"}
+            onValueChange={(value) => {
+              if (value !== "fallback-creator") {
+                void onReportToChange(task._id, value as Id<"users">);
+              }
+            }}
+            disabled={pendingAction === `${task._id}:reportTo`}
+          >
+            <SelectTrigger
+              className="w-full sm:w-[170px]"
+              aria-label={`Change report to for ${task.title}`}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {!task.reportToId ? (
+                <SelectItem value="fallback-creator">
+                  {creator?.name || creator?.email || "Not set"} (created by)
+                </SelectItem>
+              ) : null}
+              {reportToCandidates.map((user) => (
+                <SelectItem key={user._id} value={user._id}>
+                  {user.name || user.email || "Unknown"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           <Button
             variant="ghost"
             size="sm"
@@ -538,6 +621,7 @@ function CreateTaskDialog({
   onOpenChange,
   currentUser,
   users,
+  reportToCandidates,
   companies,
   onCreate,
 }: {
@@ -545,12 +629,16 @@ function CreateTaskDialog({
   onOpenChange: (open: boolean) => void;
   currentUser: Doc<"users"> | null | undefined;
   users: Doc<"users">[];
+  reportToCandidates: Doc<"users">[];
   companies: Doc<"companies">[];
   onCreate: (args: CreateTaskArgs) => Promise<unknown>;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [assigneeId, setAssigneeId] = useState<string>(
+    currentUser?._id ?? "unassigned",
+  );
+  const [reportToId, setReportToId] = useState<string>(
     currentUser?._id ?? "unassigned",
   );
   const [priority, setPriority] = useState<TaskPriority>("medium");
@@ -562,6 +650,7 @@ function CreateTaskDialog({
     setTitle("");
     setDescription("");
     setAssigneeId(currentUser?._id ?? "unassigned");
+    setReportToId(currentUser?._id ?? "unassigned");
     setPriority("medium");
     setDueDate("");
     setCompanyId("none");
@@ -587,6 +676,8 @@ function CreateTaskDialog({
         description: description.trim() || undefined,
         assigneeId:
           assigneeId !== "unassigned" ? (assigneeId as Id<"users">) : undefined,
+        reportToId:
+          reportToId !== "unassigned" ? (reportToId as Id<"users">) : undefined,
         priority,
         dueDate: dateInputToTimestamp(dueDate),
         companyId:
@@ -631,7 +722,7 @@ function CreateTaskDialog({
             <div className="space-y-2">
               <Label>Assignee</Label>
               <Select value={assigneeId} onValueChange={setAssigneeId}>
-                <SelectTrigger>
+                <SelectTrigger aria-label="Assignee">
                   <SelectValue placeholder="Select assignee" />
                 </SelectTrigger>
                 <SelectContent>
@@ -645,12 +736,30 @@ function CreateTaskDialog({
               </Select>
             </div>
             <div className="space-y-2">
+              <Label>Report To</Label>
+              <Select value={reportToId} onValueChange={setReportToId}>
+                <SelectTrigger aria-label="Report To">
+                  <SelectValue placeholder="Select report-to user" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unassigned">Unassigned</SelectItem>
+                  {reportToCandidates.map((user) => (
+                    <SelectItem key={user._id} value={user._id}>
+                      {user.name || user.email || "Unknown"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
               <Label>Priority</Label>
               <Select
                 value={priority}
                 onValueChange={(value) => setPriority(value as TaskPriority)}
               >
-                <SelectTrigger>
+                <SelectTrigger aria-label="Priority">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -662,8 +771,6 @@ function CreateTaskDialog({
                 </SelectContent>
               </Select>
             </div>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="task-due-date">Due date</Label>
               <Input
@@ -673,22 +780,22 @@ function CreateTaskDialog({
                 onChange={(event) => setDueDate(event.target.value)}
               />
             </div>
-            <div className="space-y-2">
-              <Label>Company</Label>
-              <Select value={companyId} onValueChange={setCompanyId}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No company</SelectItem>
-                  {companies.map((company) => (
-                    <SelectItem key={company._id} value={company._id}>
-                      {company.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Company</Label>
+            <Select value={companyId} onValueChange={setCompanyId}>
+              <SelectTrigger aria-label="Company">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No company</SelectItem>
+                {companies.map((company) => (
+                  <SelectItem key={company._id} value={company._id}>
+                    {company.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <DialogFooter>
             <Button

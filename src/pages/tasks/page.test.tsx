@@ -23,6 +23,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
     companies: { list: "companies.list" },
     tasks: {
       list: "tasks.list",
+      listReportToCandidates: "tasks.listReportToCandidates",
       create: "tasks.create",
       update: "tasks.update",
       updateStatus: "tasks.updateStatus",
@@ -35,6 +36,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
 const mocks = vi.hoisted(() => ({
   currentUser: null as Doc<"users"> | null,
   tasks: [] as Doc<"tasks">[],
+  reportToCandidates: [] as Doc<"users">[],
   users: [] as Doc<"users">[],
   companies: [] as Doc<"companies">[],
   createTask: vi.fn(),
@@ -48,6 +50,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("convex/react", () => ({
   useQuery: (query: string) => {
     if (query === "tasks.list") return mocks.tasks;
+    if (query === "tasks.listReportToCandidates")
+      return mocks.reportToCandidates;
     if (query === "users.listAll") return mocks.users;
     if (query === "companies.list") return mocks.companies;
     return undefined;
@@ -118,11 +122,13 @@ function seed() {
   const otherUser = user("user-2", "Omar Hassan");
   mocks.currentUser = currentUser;
   mocks.users = [currentUser, otherUser];
+  mocks.reportToCandidates = [currentUser, otherUser];
   mocks.companies = [company("company-1", "AICC")];
   mocks.tasks = [
     task("task-1", {
       title: "Follow up with customer",
       description: "Confirm the implementation plan.",
+      reportToId: "user-1" as Id<"users">,
       companyId: "company-1" as Id<"companies">,
       dueDate: 1785686400000,
     }),
@@ -135,6 +141,7 @@ function seed() {
       title: "Blocked migration",
       status: "blocked",
       priority: "urgent",
+      reportToId: "user-2" as Id<"users">,
     }),
     task("task-4", {
       title: "Finished handoff",
@@ -179,6 +186,8 @@ describe("TasksPage", () => {
       screen.getByText("Assign and track internal CRM work."),
     ).toBeInTheDocument();
     expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
+    expect(screen.getByText(/Report To: Amina Ali/)).toBeInTheDocument();
+    expect(screen.getByText(/Report To: Omar Hassan/)).toBeInTheDocument();
     expect(screen.getByText("Blocked migration")).toBeInTheDocument();
     expect(screen.queryByText("Finished handoff")).not.toBeInTheDocument();
   });
@@ -188,6 +197,9 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("button", { name: "New Task" }));
+    expect(screen.getByRole("combobox", { name: "Report To" })).toHaveTextContent(
+      "Amina Ali",
+    );
     await user.type(screen.getByLabelText("Title"), "Prepare rollout checklist");
     await user.type(screen.getByLabelText("Description"), "Coordinate with NOC.");
     await user.click(screen.getByRole("button", { name: "Create Task" }));
@@ -198,6 +210,7 @@ describe("TasksPage", () => {
           title: "Prepare rollout checklist",
           description: "Coordinate with NOC.",
           assigneeId: "user-1",
+          reportToId: "user-1",
           priority: "medium",
         }),
       );
@@ -214,6 +227,19 @@ describe("TasksPage", () => {
       expect(mocks.updateStatus).toHaveBeenCalledWith({
         taskId: "task-1",
         status: "done",
+      });
+    });
+  });
+
+  it("updates Report To from a task row", async () => {
+    renderTasksPage();
+
+    await chooseSelectOption(/Change report to for Follow up with customer/i, "Omar Hassan");
+
+    await waitFor(() => {
+      expect(mocks.updateTask).toHaveBeenCalledWith({
+        taskId: "task-1",
+        reportToId: "user-2",
       });
     });
   });
@@ -256,6 +282,17 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getAllByRole("button", { name: "Archive" })[0]);
+
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");
+    });
+  });
+
+  it("shows backend denial errors from Report To updates", async () => {
+    mocks.updateTask.mockRejectedValue(new Error("FORBIDDEN"));
+    renderTasksPage();
+
+    await chooseSelectOption(/Change report to for Follow up with customer/i, "Omar Hassan");
 
     await waitFor(() => {
       expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");
