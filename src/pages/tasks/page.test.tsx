@@ -117,9 +117,16 @@ function task(
   };
 }
 
+function startOfTodayForTest() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
 function seed() {
   const currentUser = user("user-1", "Amina Ali");
   const otherUser = user("user-2", "Omar Hassan");
+  const today = startOfTodayForTest();
   mocks.currentUser = currentUser;
   mocks.users = [currentUser, otherUser];
   mocks.reportToCandidates = [currentUser, otherUser];
@@ -130,12 +137,13 @@ function seed() {
       description: "Confirm the implementation plan.",
       reportToId: "user-1" as Id<"users">,
       companyId: "company-1" as Id<"companies">,
-      dueDate: 1785686400000,
+      dueDate: today + 24 * 60 * 60 * 1000,
     }),
     task("task-2", {
       title: "Created by me but assigned elsewhere",
       assigneeId: "user-2" as Id<"users">,
       priority: "high",
+      dueDate: today - 24 * 60 * 60 * 1000,
     }),
     task("task-3", {
       title: "Blocked migration",
@@ -200,7 +208,7 @@ describe("TasksPage", () => {
     expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
     expect(screen.getByText(/Report To: Amina Ali/)).toBeInTheDocument();
     expect(screen.getByText(/Report To: Omar Hassan/)).toBeInTheDocument();
-    expect(screen.getByText("Blocked migration")).toBeInTheDocument();
+  expect(screen.getByText("Blocked migration")).toBeInTheDocument();
     expect(screen.queryByText("Finished handoff")).not.toBeInTheDocument();
   });
 
@@ -231,8 +239,10 @@ describe("TasksPage", () => {
   });
 
   it("updates status from a task row", async () => {
+    const user = userEvent.setup();
     renderTasksPage();
 
+    await user.click(screen.getByRole("button", { name: /List/i }));
     await chooseSelectOption(/Change status for Follow up with customer/i, "Done");
 
     await waitFor(() => {
@@ -247,6 +257,7 @@ describe("TasksPage", () => {
     const user = userEvent.setup();
     renderTasksPage();
 
+    await user.click(screen.getByRole("button", { name: /List/i }));
     await user.click(
       screen.getByRole("button", { name: "Follow up with customer" }),
     );
@@ -254,36 +265,58 @@ describe("TasksPage", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/tasks/task-1");
   });
 
-  it("opens task detail page from a list Details action", async () => {
+  it("opens task detail page from a list Open action", async () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getAllByRole("button", { name: "Details" })[0]);
+    await user.click(screen.getByRole("button", { name: /List/i }));
+    await user.click(screen.getAllByRole("button", { name: "Open" })[0]);
 
     expect(screen.getByTestId("location")).toHaveTextContent("/tasks/task-1");
+  });
+
+  it("opens task detail page from the list row body", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /List/i }));
+    await user.click(screen.getByText("Confirm the implementation plan."));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/tasks/task-1");
+  });
+
+  it("does not navigate when clicking list row controls", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /List/i }));
+    await user.click(
+      screen.getByRole("combobox", {
+        name: /Change status for Follow up with customer/i,
+      }),
+    );
+
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.queryByTestId("location")).not.toBeInTheDocument();
   });
 
   it("opens task detail page from a board card", async () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getByRole("button", { name: /Board/i }));
     await user.click(screen.getByTestId("task-card-task-1"));
 
     expect(screen.getByTestId("location")).toHaveTextContent("/tasks/task-1");
   });
 
-  it("renders a board view grouped by task status", async () => {
+  it("defaults to board view grouped by task status", async () => {
     const user = userEvent.setup();
     renderTasksPage();
 
     expect(screen.getByRole("button", { name: /List/i })).toHaveAttribute(
       "aria-pressed",
-      "true",
+      "false",
     );
-
-    await user.click(screen.getByRole("button", { name: /Board/i }));
-
     expect(screen.getByRole("button", { name: /Board/i })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -297,13 +330,18 @@ describe("TasksPage", () => {
     expect(screen.getByRole("heading", { name: "Canceled" })).toBeInTheDocument();
     expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
     expect(screen.getByText("Blocked migration")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /List/i }));
+    expect(screen.getByRole("button", { name: /List/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("applies existing filters in board view", async () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getByRole("button", { name: /Board/i }));
     await user.click(screen.getByRole("combobox", { name: "View filter" }));
     await user.click(await screen.findByRole("option", { name: "All Visible" }));
     expect(screen.getByText("Created by me but assigned elsewhere")).toBeInTheDocument();
@@ -321,11 +359,69 @@ describe("TasksPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows task metadata on board cards", async () => {
+  it("applies My Open Tasks summary shortcut", async () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getByRole("button", { name: /Board/i }));
+    await user.click(screen.getByRole("combobox", { name: "View filter" }));
+    await user.click(await screen.findByRole("option", { name: "All Visible" }));
+    expect(screen.getByText("Created by me but assigned elsewhere")).toBeInTheDocument();
+
+    await user.click(screen.getByText("My Open Tasks"));
+
+    expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
+    expect(screen.getByText("Blocked migration")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Created by me but assigned elsewhere"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "View filter" })).toHaveTextContent(
+      "My Tasks",
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Status filter" }),
+    ).toHaveTextContent("All Active");
+  });
+
+  it("applies Overdue summary shortcut", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByText("Overdue"));
+
+    expect(screen.getByText("Created by me but assigned elsewhere")).toBeInTheDocument();
+    expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();
+    expect(screen.queryByText("Blocked migration")).not.toBeInTheDocument();
+  });
+
+  it("applies Due This Week summary shortcut", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByText("Due This Week"));
+
+    expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Created by me but assigned elsewhere"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Blocked migration")).not.toBeInTheDocument();
+  });
+
+  it("applies Blocked summary shortcut", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /Blocked\s+1/i }));
+
+    expect(screen.getByText("Blocked migration")).toBeInTheDocument();
+    expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Status filter" })).toHaveTextContent(
+      "Blocked",
+    );
+  });
+
+  it("shows task metadata on board cards", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
 
     expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
     expect(screen.getByText("Medium")).toBeInTheDocument();
@@ -339,7 +435,6 @@ describe("TasksPage", () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getByRole("button", { name: /Board/i }));
     await chooseSelectOption(/Move task Follow up with customer/i, "Done");
 
     await waitFor(() => {
@@ -355,7 +450,6 @@ describe("TasksPage", () => {
     mocks.updateStatus.mockRejectedValue(new Error("FORBIDDEN"));
     renderTasksPage();
 
-    await user.click(screen.getByRole("button", { name: /Board/i }));
     await chooseSelectOption(/Move task Follow up with customer/i, "Done");
 
     await waitFor(() => {
@@ -364,8 +458,10 @@ describe("TasksPage", () => {
   });
 
   it("updates Report To from a task row", async () => {
+    const user = userEvent.setup();
     renderTasksPage();
 
+    await user.click(screen.getByRole("button", { name: /List/i }));
     await chooseSelectOption(/Change report to for Follow up with customer/i, "Omar Hassan");
 
     await waitFor(() => {
@@ -380,11 +476,24 @@ describe("TasksPage", () => {
     const user = userEvent.setup();
     renderTasksPage();
 
-    await user.click(screen.getAllByRole("button", { name: "Archive" })[0]);
+    await user.click(screen.getByRole("button", { name: /List/i }));
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
 
     await waitFor(() => {
       expect(mocks.archiveTask).toHaveBeenCalledWith({ taskId: "task-1" });
     });
+  });
+
+  it("uses Remove wording for list archive action", async () => {
+    const user = userEvent.setup();
+    renderTasksPage();
+
+    await user.click(screen.getByRole("button", { name: /List/i }));
+
+    expect(screen.getAllByRole("button", { name: "Remove" }).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
   });
 
   it("filters by status priority and view", async () => {
@@ -413,7 +522,8 @@ describe("TasksPage", () => {
     mocks.archiveTask.mockRejectedValue(new Error("FORBIDDEN"));
     renderTasksPage();
 
-    await user.click(screen.getAllByRole("button", { name: "Archive" })[0]);
+    await user.click(screen.getByRole("button", { name: /List/i }));
+    await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
 
     await waitFor(() => {
       expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");
@@ -421,9 +531,11 @@ describe("TasksPage", () => {
   });
 
   it("shows backend denial errors from Report To updates", async () => {
+    const user = userEvent.setup();
     mocks.updateTask.mockRejectedValue(new Error("FORBIDDEN"));
     renderTasksPage();
 
+    await user.click(screen.getByRole("button", { name: /List/i }));
     await chooseSelectOption(/Change report to for Follow up with customer/i, "Omar Hassan");
 
     await waitFor(() => {

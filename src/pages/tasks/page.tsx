@@ -33,7 +33,6 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 import {
   AlertCircle,
-  Archive,
   CalendarClock,
   CheckCircle2,
   Clock,
@@ -41,6 +40,7 @@ import {
   List,
   MessageSquare,
   Plus,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -51,6 +51,7 @@ type ViewFilter = "my" | "created" | "all";
 type ViewMode = "list" | "board";
 type StatusFilter = "active" | TaskStatus;
 type PriorityFilter = "all" | TaskPriority;
+type DueFilter = "all" | "overdue" | "week";
 type CreateTaskArgs = {
   title: string;
   description?: string;
@@ -158,10 +159,11 @@ export default function TasksPage() {
   const archiveTask = useMutation(api.tasks.archive);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [viewMode, setViewMode] = useState<ViewMode>("board");
   const [viewFilter, setViewFilter] = useState<ViewFilter>("my");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
+  const [dueFilter, setDueFilter] = useState<DueFilter>("all");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const userMap = useMemo(
@@ -232,8 +234,50 @@ export default function TasksPage() {
     if (priorityFilter !== "all" && task.priority !== priorityFilter) {
       return false;
     }
+    if (
+      dueFilter === "overdue" &&
+      (task.dueDate === undefined || task.dueDate >= today || !isOpenTask(task))
+    ) {
+      return false;
+    }
+    if (
+      dueFilter === "week" &&
+      (task.dueDate === undefined ||
+        task.dueDate < today ||
+        task.dueDate > weekEnd ||
+        !isOpenTask(task))
+    ) {
+      return false;
+    }
     return true;
   });
+
+  const applySummaryFilter = (
+    summary: "my-open" | "overdue" | "week" | "blocked",
+  ) => {
+    setPriorityFilter("all");
+    if (summary === "my-open") {
+      setViewFilter("my");
+      setStatusFilter("active");
+      setDueFilter("all");
+      return;
+    }
+    if (summary === "overdue") {
+      setViewFilter("all");
+      setStatusFilter("active");
+      setDueFilter("overdue");
+      return;
+    }
+    if (summary === "week") {
+      setViewFilter("all");
+      setStatusFilter("active");
+      setDueFilter("week");
+      return;
+    }
+    setViewFilter("all");
+    setStatusFilter("blocked");
+    setDueFilter("all");
+  };
 
   const handleStatusChange = async (taskId: Id<"tasks">, status: TaskStatus) => {
     const actionKey = `${taskId}:status`;
@@ -317,21 +361,25 @@ export default function TasksPage() {
           title="My Open Tasks"
           value={myOpenTasks.length}
           icon={<CheckCircle2 className="h-4 w-4 text-primary" />}
+          onClick={() => applySummaryFilter("my-open")}
         />
         <SummaryCard
           title="Overdue"
           value={overdueTasks.length}
           icon={<AlertCircle className="h-4 w-4 text-red-600" />}
+          onClick={() => applySummaryFilter("overdue")}
         />
         <SummaryCard
           title="Due This Week"
           value={dueThisWeekTasks.length}
           icon={<CalendarClock className="h-4 w-4 text-amber-600" />}
+          onClick={() => applySummaryFilter("week")}
         />
         <SummaryCard
           title="Blocked"
           value={blockedTasks.length}
           icon={<Clock className="h-4 w-4 text-amber-700" />}
+          onClick={() => applySummaryFilter("blocked")}
         />
       </div>
 
@@ -382,7 +430,10 @@ export default function TasksPage() {
               </div>
               <Select
                 value={viewFilter}
-                onValueChange={(value) => setViewFilter(value as ViewFilter)}
+                onValueChange={(value) => {
+                  setViewFilter(value as ViewFilter);
+                  setDueFilter("all");
+                }}
               >
                 <SelectTrigger
                   className="w-full sm:w-[160px]"
@@ -398,7 +449,10 @@ export default function TasksPage() {
               </Select>
               <Select
                 value={statusFilter}
-                onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+                onValueChange={(value) => {
+                  setStatusFilter(value as StatusFilter);
+                  setDueFilter("all");
+                }}
               >
                 <SelectTrigger
                   className="w-full sm:w-[160px]"
@@ -417,9 +471,10 @@ export default function TasksPage() {
               </Select>
               <Select
                 value={priorityFilter}
-                onValueChange={(value) =>
-                  setPriorityFilter(value as PriorityFilter)
-                }
+                onValueChange={(value) => {
+                  setPriorityFilter(value as PriorityFilter);
+                  setDueFilter("all");
+                }}
               >
                 <SelectTrigger
                   className="w-full sm:w-[160px]"
@@ -644,6 +699,7 @@ function TaskBoardCard({
             className="h-8 text-xs"
             aria-label={`Move task ${task.title}`}
             onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
           >
             <SelectValue />
           </SelectTrigger>
@@ -666,7 +722,7 @@ function TaskBoardCard({
           }}
         >
           <MessageSquare className="mr-2 h-3.5 w-3.5" />
-          Details
+          Open
         </Button>
       </CardContent>
     </Card>
@@ -677,13 +733,26 @@ function SummaryCard({
   title,
   value,
   icon,
+  onClick,
 }: {
   title: string;
   value: number;
   icon: ReactNode;
+  onClick: () => void;
 }) {
   return (
-    <Card>
+    <Card
+      role="button"
+      tabIndex={0}
+      className="cursor-pointer transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+    >
       <CardContent className="flex items-center justify-between p-5">
         <div>
           <p className="text-sm text-muted-foreground">{title}</p>
@@ -736,14 +805,28 @@ function TaskRow({
     (task.reportToId ? "Unknown" : creator?.name || creator?.email || "Not set");
 
   return (
-    <div className="rounded-lg border bg-card p-4">
+    <div
+      className="cursor-pointer rounded-lg border bg-card p-4 transition-colors hover:border-primary/30 hover:bg-primary/5"
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpenDetails(task)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpenDetails(task);
+        }
+      }}
+    >
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               className="text-left font-semibold transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => onOpenDetails(task)}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenDetails(task);
+              }}
             >
               {task.title}
             </button>
@@ -783,6 +866,8 @@ function TaskRow({
             <SelectTrigger
               className="w-full sm:w-[150px]"
               aria-label={`Change status for ${task.title}`}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
             >
               <SelectValue />
             </SelectTrigger>
@@ -807,6 +892,8 @@ function TaskRow({
             <SelectTrigger
               className="w-full sm:w-[170px]"
               aria-label={`Change assignee for ${task.title}`}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
             >
               <SelectValue />
             </SelectTrigger>
@@ -832,6 +919,8 @@ function TaskRow({
             <SelectTrigger
               className="w-full sm:w-[170px]"
               aria-label={`Change report to for ${task.title}`}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
             >
               <SelectValue />
             </SelectTrigger>
@@ -852,21 +941,27 @@ function TaskRow({
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => onOpenDetails(task)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenDetails(task);
+            }}
           >
             <MessageSquare className="mr-2 h-4 w-4" />
-            Details
+            Open
           </Button>
 
           <Button
             variant="ghost"
             size="sm"
             className="text-muted-foreground"
-            onClick={() => void onArchive(task._id)}
+            onClick={(event) => {
+              event.stopPropagation();
+              void onArchive(task._id);
+            }}
             disabled={pendingAction === `${task._id}:archive`}
           >
-            <Archive className="mr-2 h-4 w-4" />
-            Archive
+            <Trash2 className="mr-2 h-4 w-4" />
+            Remove
           </Button>
         </div>
       </div>
