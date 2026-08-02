@@ -12,6 +12,8 @@ import type * as activities from "../activities.js";
 import type * as aiRecommendations from "../aiRecommendations.js";
 import type * as auth from "../auth.js";
 import type * as authorization from "../authorization.js";
+import type * as cloudAdvisorKeys from "../cloudAdvisorKeys.js";
+import type * as cloudAdvisorStatuses from "../cloudAdvisorStatuses.js";
 import type * as cloudAlarms from "../cloudAlarms.js";
 import type * as cloudCapacity from "../cloudCapacity.js";
 import type * as cloudCapacitySnapshots from "../cloudCapacitySnapshots.js";
@@ -51,6 +53,8 @@ declare const fullApi: ApiFromModules<{
   aiRecommendations: typeof aiRecommendations;
   auth: typeof auth;
   authorization: typeof authorization;
+  cloudAdvisorKeys: typeof cloudAdvisorKeys;
+  cloudAdvisorStatuses: typeof cloudAdvisorStatuses;
   cloudAlarms: typeof cloudAlarms;
   cloudCapacity: typeof cloudCapacity;
   cloudCapacitySnapshots: typeof cloudCapacitySnapshots;

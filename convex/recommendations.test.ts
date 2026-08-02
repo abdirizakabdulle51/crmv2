@@ -120,10 +120,26 @@ async function seed(t: ReturnType<typeof convexTest>) {
     return {
       ceo: (await ctx.db.get(ceoId))!,
       amA: (await ctx.db.get(amAId))!,
+      amB: (await ctx.db.get(amBId))!,
       companyA,
       companyB,
     };
   });
+}
+
+async function getAiccBackupRecommendation(
+  t: ReturnType<typeof convexTest>,
+  user: Doc<"users">,
+) {
+  const recommendations = await asUser(t, user).query(
+    api.recommendations.listComputed,
+    {},
+  );
+  const recommendation = recommendations.find(
+    (rec) => rec.companyName === "AICC" && rec.rule === "backup",
+  );
+  expect(recommendation).toBeDefined();
+  return recommendation!;
 }
 
 describe("recommendations", () => {
@@ -146,6 +162,7 @@ describe("recommendations", () => {
         expect.objectContaining({
           rule: "backup",
           priority: "high",
+          status: "open",
           triggerReason:
             "Uses ECS compute but has no backup service (CSBS/VBS)",
           estimatedMonthlyValue: 100,
@@ -171,6 +188,127 @@ describe("recommendations", () => {
     expect(new Set(amRecommendations.map((rec) => rec.companyName))).toEqual(
       new Set(["AICC"]),
     );
+  });
+
+  it("derives open status when no Cloud Advisor overlay exists", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+
+    const recommendation = await getAiccBackupRecommendation(t, seeded.ceo);
+
+    expect(recommendation).toMatchObject({
+      status: "open",
+      companyId: seeded.companyA,
+      rule: "backup",
+    });
+    expect(recommendation.recommendationKey).toContain(
+      `${seeded.companyA}:backup:`,
+    );
+    expect("statusUpdatedAt" in recommendation).toBe(false);
+  });
+
+  it("merges acknowledged Cloud Advisor overlays onto computed recommendations", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+    const recommendation = await getAiccBackupRecommendation(t, seeded.ceo);
+
+    await asUser(t, seeded.amA).mutation(
+      api.cloudAdvisorStatuses.setRecommendationStatus,
+      {
+        recommendationKey: recommendation.recommendationKey,
+        companyId: recommendation.companyId,
+        rule: recommendation.rule,
+        recommendedService: recommendation.recommendedService,
+        status: "acknowledged",
+      },
+    );
+
+    const updated = await getAiccBackupRecommendation(t, seeded.ceo);
+    expect(updated).toMatchObject({
+      recommendationKey: recommendation.recommendationKey,
+      status: "acknowledged",
+      statusUpdatedAt: expect.any(Number),
+    });
+  });
+
+  it("stores dismissed and resolved overlays as returned statuses", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+    const recommendation = await getAiccBackupRecommendation(t, seeded.ceo);
+
+    await asUser(t, seeded.ceo).mutation(
+      api.cloudAdvisorStatuses.setRecommendationStatus,
+      {
+        recommendationKey: recommendation.recommendationKey,
+        companyId: recommendation.companyId,
+        rule: recommendation.rule,
+        recommendedService: recommendation.recommendedService,
+        status: "dismissed",
+      },
+    );
+    expect(await getAiccBackupRecommendation(t, seeded.ceo)).toMatchObject({
+      status: "dismissed",
+    });
+
+    await asUser(t, seeded.ceo).mutation(
+      api.cloudAdvisorStatuses.setRecommendationStatus,
+      {
+        recommendationKey: recommendation.recommendationKey,
+        companyId: recommendation.companyId,
+        rule: recommendation.rule,
+        recommendedService: recommendation.recommendedService,
+        status: "resolved",
+      },
+    );
+    expect(await getAiccBackupRecommendation(t, seeded.ceo)).toMatchObject({
+      status: "resolved",
+    });
+  });
+
+  it("reopens recommendations by deleting the overlay", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+    const recommendation = await getAiccBackupRecommendation(t, seeded.ceo);
+
+    await asUser(t, seeded.ceo).mutation(
+      api.cloudAdvisorStatuses.setRecommendationStatus,
+      {
+        recommendationKey: recommendation.recommendationKey,
+        companyId: recommendation.companyId,
+        rule: recommendation.rule,
+        recommendedService: recommendation.recommendedService,
+        status: "acknowledged",
+      },
+    );
+    await asUser(t, seeded.ceo).mutation(
+      api.cloudAdvisorStatuses.reopenRecommendation,
+      {
+        recommendationKey: recommendation.recommendationKey,
+      },
+    );
+
+    const reopened = await getAiccBackupRecommendation(t, seeded.ceo);
+    expect(reopened.status).toBe("open");
+    expect("statusUpdatedAt" in reopened).toBe(false);
+  });
+
+  it("enforces company RBAC when setting Cloud Advisor status", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+    const recommendation = await getAiccBackupRecommendation(t, seeded.ceo);
+
+    await expect(
+      asUser(t, seeded.amB).mutation(
+        api.cloudAdvisorStatuses.setRecommendationStatus,
+        {
+          recommendationKey: recommendation.recommendationKey,
+          companyId: recommendation.companyId,
+          rule: recommendation.rule,
+          recommendedService: recommendation.recommendedService,
+          status: "acknowledged",
+        },
+      ),
+    ).rejects.toThrow(/permission/i);
   });
 
   it("returns compact all-company context for the external AI generation job", async () => {
@@ -208,6 +346,15 @@ describe("recommendations", () => {
       api.recommendations.listComputed,
       {},
     );
+    const aiRuleSnapshot = ruleSnapshot.map(
+      ({
+        recommendationKey: _recommendationKey,
+        status: _status,
+        statusUpdatedAt: _statusUpdatedAt,
+        snoozedUntil: _snoozedUntil,
+        ...recommendation
+      }) => recommendation,
+    );
 
     await t.mutation(internal.aiRecommendations.bulkUpsert, {
       items: [
@@ -215,7 +362,7 @@ describe("recommendations", () => {
           companyId: seeded.companyA,
           narrative: "AICC should prioritize backup and secure connectivity.",
           topPriority: "backup",
-          ruleSnapshot: ruleSnapshot.filter(
+          ruleSnapshot: aiRuleSnapshot.filter(
             (rec) => rec.companyId === seeded.companyA,
           ),
           generatedAt: Date.UTC(2026, 6, 29),

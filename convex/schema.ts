@@ -418,6 +418,30 @@ export default defineSchema({
     model: v.string(),
   }).index("by_company", ["companyId"]),
 
+  cloudAdvisorStatuses: defineTable({
+    recommendationKey: v.string(),
+    companyId: v.id("companies"),
+    rule: v.string(),
+    recommendedService: v.string(),
+    status: v.union(
+      v.literal("acknowledged"),
+      v.literal("in_progress"),
+      v.literal("snoozed"),
+      v.literal("dismissed"),
+      v.literal("resolved"),
+    ),
+    snoozedUntil: v.optional(v.number()),
+    acknowledgedAt: v.optional(v.number()),
+    inProgressAt: v.optional(v.number()),
+    dismissedAt: v.optional(v.number()),
+    resolvedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+    updatedBy: v.optional(v.id("users")),
+  })
+    .index("by_key", ["recommendationKey"])
+    .index("by_company", ["companyId"])
+    .index("by_status", ["status"]),
+
   quotes: defineTable({
     companyId: v.id("companies"),
     createdBy: v.id("users"),

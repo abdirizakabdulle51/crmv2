@@ -3,6 +3,7 @@ import { internalQuery, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { isCeoOrHob } from "./authorization";
+import { buildCloudAdvisorRecommendationKey } from "./cloudAdvisorKeys";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 
 async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
@@ -68,7 +69,37 @@ export const listComputed = query({
   handler: async (ctx) => {
     const user = await getCurrentUserOrThrow(ctx);
     const companies = await getVisibleCompanies(ctx, user);
-    return await computeRecommendationsForCompanies(ctx, companies);
+    const recommendations = await computeRecommendationsForCompanies(
+      ctx,
+      companies,
+    );
+    const companyIds = new Set(companies.map((company) => company._id));
+    const overlays = (
+      await ctx.db.query("cloudAdvisorStatuses").collect()
+    ).filter((overlay) => companyIds.has(overlay.companyId));
+    const overlaysByKey = new Map(
+      overlays.map((overlay) => [overlay.recommendationKey, overlay]),
+    );
+
+    return recommendations.map((recommendation) => {
+      const recommendationKey = buildCloudAdvisorRecommendationKey(
+        recommendation.companyId,
+        recommendation.rule,
+        recommendation.recommendedService,
+      );
+      const overlay = overlaysByKey.get(recommendationKey);
+
+      return {
+        ...recommendation,
+        recommendationKey,
+        status: overlay?.status ?? "open",
+        ...(overlay ? { statusUpdatedAt: overlay.updatedAt } : {}),
+        ...(overlay?.status === "snoozed" &&
+        overlay.snoozedUntil !== undefined
+          ? { snoozedUntil: overlay.snoozedUntil }
+          : {}),
+      };
+    });
   },
 });
 
