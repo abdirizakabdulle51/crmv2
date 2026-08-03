@@ -25,6 +25,7 @@ import type * as countries from "../countries.js";
 import type * as dashboard from "../dashboard.js";
 import type * as documentation from "../documentation.js";
 import type * as http from "../http.js";
+import type * as invoices from "../invoices.js";
 import type * as leads from "../leads.js";
 import type * as leadsImport from "../leadsImport.js";
 import type * as manageOneTenants from "../manageOneTenants.js";
@@ -68,6 +69,7 @@ declare const fullApi: ApiFromModules<{
   dashboard: typeof dashboard;
   documentation: typeof documentation;
   http: typeof http;
+  invoices: typeof invoices;
   leads: typeof leads;
   leadsImport: typeof leadsImport;
   manageOneTenants: typeof manageOneTenants;

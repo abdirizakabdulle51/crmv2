@@ -528,6 +528,89 @@ export default defineSchema({
     .index("by_company", ["companyId"])
     .index("by_status", ["status"]),
 
+  invoices: defineTable({
+    companyId: v.id("companies"),
+    sourceQuoteId: v.optional(v.id("quotes")),
+    sourceMonth: v.optional(v.string()),
+    createdBy: v.id("users"),
+    invoiceNumber: v.optional(v.string()),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("issued"),
+      v.literal("sent"),
+      v.literal("partially_paid"),
+      v.literal("paid"),
+      v.literal("overdue"),
+      v.literal("void"),
+      v.literal("cancelled"),
+    ),
+    issueDate: v.optional(v.number()),
+    dueDate: v.optional(v.number()),
+    lockedAt: v.optional(v.number()),
+    sentAt: v.optional(v.number()),
+    companyName: v.string(),
+    contactName: v.optional(v.string()),
+    contactEmail: v.optional(v.string()),
+    billingEmail: v.optional(v.string()),
+    billingAddress: v.optional(v.string()),
+    taxId: v.optional(v.string()),
+    lineItems: v.array(
+      v.object({
+        catalogItemId: v.id("serviceCatalog"),
+        itemName: v.string(),
+        serviceCategory: v.string(),
+        billingUnit: v.string(),
+        quantity: v.number(),
+        monthlyUnitPrice: v.number(),
+        monthlyTotal: v.number(),
+        yearlyTotal: v.number(),
+      }),
+    ),
+    subtotal: v.number(),
+    monthlyTotal: v.number(),
+    yearlyTotal: v.number(),
+    grandTotal: v.number(),
+    amountPaid: v.number(),
+    balanceDue: v.number(),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_company", ["companyId"])
+    .index("by_status", ["status"])
+    .index("by_created_by", ["createdBy"])
+    .index("by_source_quote", ["sourceQuoteId"])
+    .index("by_invoice_number", ["invoiceNumber"]),
+
+  invoicePayments: defineTable({
+    invoiceId: v.id("invoices"),
+    amount: v.number(),
+    paidAt: v.number(),
+    method: v.optional(v.string()),
+    reference: v.optional(v.string()),
+    recordedBy: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_invoice", ["invoiceId"])
+    .index("by_recorded_by", ["recordedBy"]),
+
+  invoiceEvents: defineTable({
+    invoiceId: v.id("invoices"),
+    type: v.union(
+      v.literal("draft_created"),
+      v.literal("draft_updated"),
+      v.literal("issued"),
+      v.literal("voided"),
+      v.literal("sent"),
+      v.literal("payment_recorded"),
+    ),
+    actorId: v.optional(v.id("users")),
+    message: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_invoice", ["invoiceId"])
+    .index("by_type", ["type"]),
+
   quotes: defineTable({
     companyId: v.id("companies"),
     createdBy: v.id("users"),
