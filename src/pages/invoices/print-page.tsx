@@ -109,6 +109,20 @@ function Header() {
   );
 }
 
+function BillTo({ invoice }: { invoice: Invoice }) {
+  const email = invoice.billingEmail?.trim() || invoice.contactEmail?.trim();
+
+  return (
+    <section className="bill-to" aria-label="Bill To">
+      <div className="bill-to-label">Bill To</div>
+      <div className="bill-to-name">{invoice.companyName}</div>
+      {invoice.contactName ? <div>{invoice.contactName}</div> : null}
+      {email ? <div>{email}</div> : null}
+      {invoice.billingAddress ? <div>{invoice.billingAddress}</div> : null}
+    </section>
+  );
+}
+
 function Footer({ page }: { page: 1 | 2 }) {
   return (
     <footer className="invoice-footer">
@@ -278,7 +292,7 @@ function InvoicePrintContent() {
         .invoice-header {
           display: flex;
           justify-content: space-between;
-          min-height: 54mm;
+          min-height: 44mm;
         }
 
         .invoice-logo {
@@ -305,11 +319,29 @@ function InvoicePrintContent() {
           padding-top: 10px;
         }
 
-        .invoice-customer {
-          font-size: 14px;
-          font-weight: 600;
-          margin: 2mm 0 10mm;
-          text-align: center;
+        .bill-to {
+          border-left: 3px solid #07999d;
+          font-size: 13px;
+          line-height: 1.45;
+          margin: 0 0 9mm auto;
+          max-width: 74mm;
+          min-height: 24mm;
+          padding: 4mm 0 4mm 5mm;
+        }
+
+        .bill-to-label {
+          color: #37aeb2;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          margin-bottom: 4px;
+          text-transform: uppercase;
+        }
+
+        .bill-to-name {
+          font-size: 16px;
+          font-weight: 700;
+          margin-bottom: 2px;
         }
 
         .invoice-title {
@@ -474,7 +506,7 @@ function InvoicePrintContent() {
       <main aria-label="Invoice print template">
         <section className="invoice-page" aria-label="Invoice page 1">
           <Header />
-          <div className="invoice-customer">{invoice.companyName}</div>
+          <BillTo invoice={invoice} />
           {invoice.status === "draft" ? (
             <div className="draft-watermark">Draft Preview</div>
           ) : null}

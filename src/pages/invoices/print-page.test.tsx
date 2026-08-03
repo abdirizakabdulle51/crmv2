@@ -135,7 +135,11 @@ describe("InvoicePrintPage", () => {
     expect(
       screen.getByRole("heading", { name: "Invoice INV/2026/00002" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Easysolutions")).toBeInTheDocument();
+    const billTo = screen.getByLabelText("Bill To");
+    expect(within(billTo).getByText("Easysolutions")).toBeInTheDocument();
+    expect(within(billTo).getByText("Amina Yusuf")).toBeInTheDocument();
+    expect(within(billTo).getByText("billing@example.com")).toBeInTheDocument();
+    expect(within(billTo).getByText("Mogadishu")).toBeInTheDocument();
     expect(screen.getByText("S6_48U_160G")).toBeInTheDocument();
     expect(
       screen.getByText("Memory Optimized ECS Machine"),
@@ -228,6 +232,15 @@ describe("InvoicePrintPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("MOGADISHU - SOMALIA")).toBeInTheDocument();
     expect(screen.getByText("All fees are listed in USD")).toBeInTheDocument();
+  });
+
+  it("falls back to contact email when billing email is unavailable", () => {
+    mocks.invoice = invoice({ billingEmail: undefined });
+
+    renderPrintPage();
+
+    const billTo = screen.getByLabelText("Bill To");
+    expect(within(billTo).getByText("amina@example.com")).toBeInTheDocument();
   });
 
   it("returns to the invoice detail page", async () => {
