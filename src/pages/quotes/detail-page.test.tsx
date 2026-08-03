@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import QuoteDetailPage from "./detail-page.tsx";
@@ -13,6 +13,9 @@ vi.mock("@/convex/_generated/api.js", () => ({
       updateStatus: "quotes.updateStatus",
       remove: "quotes.remove",
     },
+    invoices: {
+      createDraftFromQuote: "invoices.createDraftFromQuote",
+    },
   },
 }));
 
@@ -21,6 +24,9 @@ const mocks = vi.hoisted(() => ({
   quote: undefined as Doc<"quotes"> | undefined,
   updateStatus: vi.fn(),
   removeQuote: vi.fn(),
+  createDraftInvoice: vi.fn(),
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -30,6 +36,9 @@ vi.mock("convex/react", () => ({
     }
     if (mutation === "quotes.remove") {
       return mocks.removeQuote;
+    }
+    if (mutation === "invoices.createDraftFromQuote") {
+      return mocks.createDraftInvoice;
     }
     return vi.fn();
   },
@@ -46,8 +55,8 @@ vi.mock("convex/react", () => ({
 
 vi.mock("sonner", () => ({
   toast: {
-    error: vi.fn(),
-    success: vi.fn(),
+    error: mocks.toastError,
+    success: mocks.toastSuccess,
   },
 }));
 
@@ -120,12 +129,25 @@ function renderDetailPage() {
             </>
           }
         />
+        <Route
+          path="/invoices"
+          element={
+            <>
+              <div>Invoices List</div>
+              <LocationProbe />
+            </>
+          }
+        />
       </Routes>
     </MemoryRouter>,
   );
 }
 
 describe("QuoteDetailPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders the quote details as a full page with preserved status colors and notes", () => {
     const aicc = company("company-1", "AICC");
     mocks.companies = [aicc];
@@ -204,5 +226,80 @@ describe("QuoteDetailPage", () => {
       expect(mocks.removeQuote).toHaveBeenCalledWith({ id: "quote-1" });
     });
     expect(screen.getByTestId("location")).toHaveTextContent("/quotes");
+  });
+
+  it("shows Create Invoice only for accepted quotes", () => {
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.quote = quote(aicc._id, "accepted");
+
+    renderDetailPage();
+
+    expect(
+      screen.getByRole("button", { name: "Create Invoice" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show Create Invoice for draft quotes", () => {
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.quote = quote(aicc._id, "draft");
+
+    renderDetailPage();
+
+    expect(
+      screen.queryByRole("button", { name: "Create Invoice" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show Create Invoice for sent quotes", () => {
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.quote = quote(aicc._id, "sent");
+
+    renderDetailPage();
+
+    expect(
+      screen.queryByRole("button", { name: "Create Invoice" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("creates a draft invoice from an accepted quote and navigates to invoices", async () => {
+    const user = userEvent.setup();
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.quote = quote(aicc._id, "accepted");
+    mocks.createDraftInvoice.mockResolvedValue("invoice-1");
+
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Create Invoice" }));
+
+    await waitFor(() => {
+      expect(mocks.createDraftInvoice).toHaveBeenCalledWith({
+        quoteId: "quote-1",
+      });
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Draft invoice created");
+    expect(screen.getByTestId("location")).toHaveTextContent("/invoices");
+  });
+
+  it("shows an error and stays on quote detail when invoice creation fails", async () => {
+    const user = userEvent.setup();
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.quote = quote(aicc._id, "accepted");
+    mocks.createDraftInvoice.mockRejectedValue(new Error("Only accepted quotes can be invoiced"));
+
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Create Invoice" }));
+
+    await waitFor(() => {
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        "Only accepted quotes can be invoiced",
+      );
+    });
+    expect(screen.getByTestId("location")).toHaveTextContent("/quotes/quote-1");
   });
 });

@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
@@ -7,7 +7,15 @@ import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
-import { ArrowLeft, CheckCircle, Printer, Send, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle,
+  FileText,
+  Loader2,
+  Printer,
+  Send,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/format.ts";
 
@@ -38,6 +46,7 @@ export default function QuoteDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const printRef = useRef<HTMLDivElement>(null);
+  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
   const quote = useQuery(
     api.quotes.getById,
     id ? { id: id as Id<"quotes"> } : "skip",
@@ -45,6 +54,7 @@ export default function QuoteDetailPage() {
   const companies = useQuery(api.companies.list, {});
   const updateStatus = useMutation(api.quotes.updateStatus);
   const removeQuote = useMutation(api.quotes.remove);
+  const createDraftInvoice = useMutation(api.invoices.createDraftFromQuote);
 
   const returnToQuotes = () => {
     navigate("/quotes");
@@ -185,6 +195,23 @@ export default function QuoteDetailPage() {
     returnToQuotes();
   };
 
+  const handleCreateInvoice = async () => {
+    setIsCreatingInvoice(true);
+    try {
+      await createDraftInvoice({ quoteId: quote._id });
+      toast.success("Draft invoice created");
+      navigate("/invoices");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Could not create draft invoice";
+      toast.error(message);
+    } finally {
+      setIsCreatingInvoice(false);
+    }
+  };
+
   return (
     <div className="p-6 md:p-8 space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -225,6 +252,20 @@ export default function QuoteDetailPage() {
               onClick={() => handleStatusChange("accepted")}
             >
               <CheckCircle className="h-4 w-4 mr-2" /> Mark as Accepted
+            </Button>
+          )}
+          {quote.status === "accepted" && (
+            <Button
+              className="bg-cyan-600 hover:bg-cyan-700 text-white"
+              onClick={handleCreateInvoice}
+              disabled={isCreatingInvoice}
+            >
+              {isCreatingInvoice ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <FileText className="h-4 w-4 mr-2" />
+              )}
+              {isCreatingInvoice ? "Creating..." : "Create Invoice"}
             </Button>
           )}
           {quote.status !== "draft" && (
