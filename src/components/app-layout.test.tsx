@@ -133,6 +133,8 @@ describe("AppLayout", () => {
       .not.toBeInTheDocument();
     expect(within(sidebar).queryByRole("link", { name: "Quotes" }))
       .not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("link", { name: "Invoices" }))
+      .not.toBeInTheDocument();
     expect(within(sidebar).queryByRole("link", { name: "Cloud Advisor" }))
       .not.toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Companies" }))
@@ -147,6 +149,8 @@ describe("AppLayout", () => {
     );
 
     expect(within(sidebar).getByRole("link", { name: "Usage" }))
+      .toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Invoices" }))
       .toBeInTheDocument();
   });
 

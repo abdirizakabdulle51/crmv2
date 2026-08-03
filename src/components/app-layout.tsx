@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   LogOut,
   FileText,
+  ReceiptText,
   Lightbulb,
   Zap,
   Cloud,
@@ -39,6 +40,7 @@ const NAV_ITEMS = [
   { to: "/usage", label: "Usage", icon: BarChart3 },
   { to: "/at-risk", label: "At Risk", icon: AlertTriangle },
   { to: "/quotes", label: "Quotes", icon: FileText },
+  { to: "/invoices", label: "Invoices", icon: ReceiptText },
   { to: "/recommendations", label: "Cloud Advisor", icon: Lightbulb },
   {
     to: "/manageone-tenants",
@@ -72,7 +74,7 @@ const NAV_GROUPS = [
   },
   {
     label: "Revenue",
-    items: ["/usage", "/at-risk", "/quotes", "/recommendations"],
+    items: ["/usage", "/at-risk", "/quotes", "/invoices", "/recommendations"],
   },
   {
     label: "Infrastructure",
