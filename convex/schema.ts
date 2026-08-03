@@ -548,6 +548,8 @@ export default defineSchema({
     dueDate: v.optional(v.number()),
     lockedAt: v.optional(v.number()),
     sentAt: v.optional(v.number()),
+    sentTo: v.optional(v.string()),
+    sentBy: v.optional(v.id("users")),
     companyName: v.string(),
     contactName: v.optional(v.string()),
     contactEmail: v.optional(v.string()),

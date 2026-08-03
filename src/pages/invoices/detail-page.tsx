@@ -1,7 +1,7 @@
 import { Component, type ReactNode, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, FileText, Loader2, LockKeyhole } from "lucide-react";
+import { useAction, useMutation, useQuery } from "convex/react";
+import { ArrowLeft, FileText, Loader2, LockKeyhole, Send } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
@@ -176,7 +176,9 @@ function InvoiceDetailContent() {
   const { invoiceId } = useParams();
   const navigate = useNavigate();
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
+  const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [isIssuing, setIsIssuing] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const invoice = useQuery(
     api.invoices.getById,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
@@ -186,6 +188,7 @@ function InvoiceDetailContent() {
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
   );
   const issueInvoice = useMutation(api.invoices.issueInvoice);
+  const sendInvoiceEmail = useAction(api.invoices.sendInvoiceEmail);
 
   if (!invoiceId) {
     return <UnavailableState />;
@@ -206,6 +209,8 @@ function InvoiceDetailContent() {
   }
 
   const title = invoice.invoiceNumber ?? "Draft";
+  const sendRecipient =
+    invoice.billingEmail?.trim() || invoice.contactEmail?.trim();
 
   const handleIssueInvoice = async () => {
     setIsIssuing(true);
@@ -219,6 +224,21 @@ function InvoiceDetailContent() {
       toast.error(message);
     } finally {
       setIsIssuing(false);
+    }
+  };
+
+  const handleSendInvoice = async () => {
+    setIsSending(true);
+    try {
+      await sendInvoiceEmail({ invoiceId: invoice._id });
+      toast.success("Invoice sent");
+      setSendDialogOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not send invoice";
+      toast.error(message);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -263,7 +283,9 @@ function InvoiceDetailContent() {
             </Button>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Issue and lock this invoice?</AlertDialogTitle>
+                <AlertDialogTitle>
+                  Issue and lock this invoice?
+                </AlertDialogTitle>
                 <AlertDialogDescription asChild>
                   <div className="space-y-2 text-left">
                     <p>
@@ -298,6 +320,53 @@ function InvoiceDetailContent() {
             </AlertDialogContent>
           </AlertDialog>
         ) : null}
+        {invoice.status === "issued" ? (
+          <AlertDialog
+            open={sendDialogOpen}
+            onOpenChange={(open) => {
+              if (!isSending) setSendDialogOpen(open);
+            }}
+          >
+            <Button
+              className="bg-cyan-600 text-white hover:bg-cyan-700"
+              onClick={() => setSendDialogOpen(true)}
+              disabled={isSending}
+            >
+              {isSending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="mr-2 h-4 w-4" />
+              )}
+              {isSending ? "Sending..." : "Send Invoice"}
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Send this invoice?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will email invoice {title} to{" "}
+                  {sendRecipient || "the customer email on the invoice"}.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={isSending}>
+                  Cancel
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={isSending}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void handleSendInvoice();
+                  }}
+                >
+                  {isSending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  {isSending ? "Sending..." : "Send Invoice"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -323,11 +392,16 @@ function InvoiceDetailContent() {
             <Detail label="Created" value={formatDate(invoice.createdAt)} />
             <Detail label="Issue Date" value={formatDate(invoice.issueDate)} />
             <Detail label="Due Date" value={formatDate(invoice.dueDate)} />
-            <Detail label="Locked At" value={formatDateTime(invoice.lockedAt)} />
+            <Detail
+              label="Locked At"
+              value={formatDateTime(invoice.lockedAt)}
+            />
             <Detail label="Sent At" value={formatDateTime(invoice.sentAt)} />
             <Detail
               label="Source Quote"
-              value={invoice.sourceQuoteId ? String(invoice.sourceQuoteId) : "-"}
+              value={
+                invoice.sourceQuoteId ? String(invoice.sourceQuoteId) : "-"
+              }
             />
             <Detail label="Source Month" value={invoice.sourceMonth} />
           </CardContent>
@@ -354,7 +428,10 @@ function InvoiceDetailContent() {
               </thead>
               <tbody>
                 {invoice.lineItems.map((item, index) => (
-                  <tr key={`${item.catalogItemId}-${index}`} className="border-b last:border-0">
+                  <tr
+                    key={`${item.catalogItemId}-${index}`}
+                    className="border-b last:border-0"
+                  >
                     <td className="p-3 font-medium">{item.itemName}</td>
                     <td className="p-3 text-muted-foreground">
                       {item.serviceCategory}
@@ -442,10 +519,7 @@ function InvoiceDetailContent() {
           ) : (
             <div className="space-y-3">
               {events.map((event) => (
-                <div
-                  key={event._id}
-                  className="rounded-lg border p-3 text-sm"
-                >
+                <div key={event._id} className="rounded-lg border p-3 text-sm">
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                     <span className="font-medium">
                       {eventLabel(event.type)}
@@ -469,13 +543,7 @@ function InvoiceDetailContent() {
   );
 }
 
-function Detail({
-  label,
-  value,
-}: {
-  label: string;
-  value?: string | number;
-}) {
+function Detail({ label, value }: { label: string; value?: string | number }) {
   return (
     <div>
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">

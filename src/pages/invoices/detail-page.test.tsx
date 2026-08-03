@@ -10,6 +10,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
     invoices: {
       getById: "invoices.getById",
       issueInvoice: "invoices.issueInvoice",
+      sendInvoiceEmail: "invoices.sendInvoiceEmail",
       listEvents: "invoices.listEvents",
     },
   },
@@ -19,11 +20,16 @@ const mocks = vi.hoisted(() => ({
   invoice: undefined as Doc<"invoices"> | null | undefined,
   events: undefined as Doc<"invoiceEvents">[] | undefined,
   issueInvoice: vi.fn(),
+  sendInvoiceEmail: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
+  useAction: (action: string) => {
+    if (action === "invoices.sendInvoiceEmail") return mocks.sendInvoiceEmail;
+    return vi.fn();
+  },
   useMutation: (mutation: string) => {
     if (mutation === "invoices.issueInvoice") return mocks.issueInvoice;
     return vi.fn();
@@ -152,6 +158,7 @@ describe("InvoiceDetailPage", () => {
     vi.clearAllMocks();
     mocks.invoice = invoice();
     mocks.issueInvoice.mockResolvedValue(undefined);
+    mocks.sendInvoiceEmail.mockResolvedValue(undefined);
     mocks.events = [
       invoiceEvent("event-1"),
       invoiceEvent("event-2", {
@@ -193,12 +200,16 @@ describe("InvoiceDetailPage", () => {
       screen.getByText("Invoice copied from accepted quote."),
     ).toBeInTheDocument();
 
-    const events = screen.getByText("Invoice Events").closest("[data-slot='card']");
+    const events = screen
+      .getByText("Invoice Events")
+      .closest("[data-slot='card']");
     expect(events).not.toBeNull();
-    expect(within(events as HTMLElement).getByText("Draft created"))
-      .toBeInTheDocument();
-    expect(within(events as HTMLElement).getByText("Invoice issued."))
-      .toBeInTheDocument();
+    expect(
+      within(events as HTMLElement).getByText("Draft created"),
+    ).toBeInTheDocument();
+    expect(
+      within(events as HTMLElement).getByText("Invoice issued."),
+    ).toBeInTheDocument();
   });
 
   it("shows Draft when an invoice has no invoice number", () => {
@@ -238,6 +249,50 @@ describe("InvoiceDetailPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows Send Invoice for issued invoices", () => {
+    renderDetailPage();
+
+    expect(
+      screen.getByRole("button", { name: "Send Invoice" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show Send Invoice for draft or sent invoices", () => {
+    mocks.invoice = invoice({
+      invoiceNumber: undefined,
+      status: "draft",
+      issueDate: undefined,
+      lockedAt: undefined,
+    });
+
+    const { rerender } = renderDetailPage();
+
+    expect(
+      screen.queryByRole("button", { name: "Send Invoice" }),
+    ).not.toBeInTheDocument();
+
+    mocks.invoice = invoice({ status: "sent", sentAt: Date.UTC(2026, 7, 2) });
+    rerender(
+      <MemoryRouter initialEntries={["/invoices/invoice-1"]}>
+        <Routes>
+          <Route
+            path="/invoices/:invoiceId"
+            element={
+              <>
+                <InvoiceDetailPage />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Send Invoice" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("opens confirmation before issuing a draft invoice", async () => {
     const user = userEvent.setup();
     mocks.invoice = invoice({
@@ -256,14 +311,18 @@ describe("InvoiceDetailPage", () => {
         name: "Issue and lock this invoice?",
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Issuing will lock the invoice/i))
-      .toBeInTheDocument();
-    expect(screen.getByText("Locked invoices cannot be edited."))
-      .toBeInTheDocument();
-    expect(screen.getByText("The invoice will receive an invoice number."))
-      .toBeInTheDocument();
-    expect(screen.getByText("This does not send email yet."))
-      .toBeInTheDocument();
+    expect(
+      screen.getByText(/Issuing will lock the invoice/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Locked invoices cannot be edited."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("The invoice will receive an invoice number."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("This does not send email yet."),
+    ).toBeInTheDocument();
   });
 
   it("does not call issueInvoice when confirmation is canceled", async () => {
@@ -304,7 +363,9 @@ describe("InvoiceDetailPage", () => {
     expect(mocks.issueInvoice).toHaveBeenCalledWith({
       invoiceId: "invoice-1",
     });
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("Invoice issued and locked");
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "Invoice issued and locked",
+    );
   });
 
   it("shows an error toast if issuing fails", async () => {
@@ -327,6 +388,62 @@ describe("InvoiceDetailPage", () => {
     );
 
     expect(mocks.toastError).toHaveBeenCalledWith("Invoice must be draft");
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/invoices/invoice-1",
+    );
+  });
+
+  it("opens confirmation with invoice number and recipient before sending", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Send Invoice" }));
+
+    expect(
+      screen.getByRole("alertdialog", { name: "Send this invoice?" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This will email invoice INV-2026-00001 to billing@example.com.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("confirms sending and shows a success toast", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Send Invoice" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Send Invoice",
+      }),
+    );
+
+    expect(mocks.sendInvoiceEmail).toHaveBeenCalledWith({
+      invoiceId: "invoice-1",
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Invoice sent");
+  });
+
+  it("shows an error toast if sending fails", async () => {
+    const user = userEvent.setup();
+    mocks.sendInvoiceEmail.mockRejectedValue(
+      new Error("Invoice email delivery failed"),
+    );
+
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Send Invoice" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Send Invoice",
+      }),
+    );
+
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "Invoice email delivery failed",
+    );
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/invoices/invoice-1",
     );

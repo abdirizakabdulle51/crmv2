@@ -1,5 +1,5 @@
 import { convexTest } from "convex-test";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import schema from "./schema";
@@ -176,7 +176,42 @@ async function createDraftForA(t: ReturnType<typeof convexTest>, s: Seed) {
   });
 }
 
+async function issueDraftForA(t: ReturnType<typeof convexTest>, s: Seed) {
+  const invoiceId = await createDraftForA(t, s);
+  await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+  return invoiceId;
+}
+
+function mockRelaySuccess() {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function configureRelayEnv() {
+  vi.stubEnv(
+    "HTGWEB_MAIL_RELAY_URL",
+    "https://htgweb.example/internal/send-email",
+  );
+  vi.stubEnv("MAIL_RELAY_SECRET", "relay-secret");
+}
+
 describe("invoices", () => {
+  beforeEach(() => {
+    configureRelayEnv();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
   it("scopes invoice visibility by AM, Country GM, HOB, and CEO company access", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -425,5 +460,159 @@ describe("invoices", () => {
     expect(invoice.contactEmail).toBe("billing-a@example.com");
     expect(invoice.grandTotal).toBe(20);
     expect(invoice.lineItems[0].itemName).toBe("ECS Small");
+  });
+
+  it("rejects sending a draft invoice", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await createDraftForA(t, s);
+    const fetchMock = mockRelaySuccess();
+
+    await expect(
+      asUser(t, s.amA).action(api.invoices.sendInvoiceEmail, { invoiceId }),
+    ).rejects.toThrow("Only issued invoices can be sent");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends an issued invoice through the relay", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    const fetchMock = mockRelaySuccess();
+
+    await asUser(t, s.amA).action(api.invoices.sendInvoiceEmail, {
+      invoiceId,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://htgweb.example/internal/send-email",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          "X-Mail-Relay-Secret": "relay-secret",
+        }),
+      }),
+    );
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      to: string;
+      subject: string;
+      html: string;
+      text: string;
+    };
+    expect(payload.to).toBe("billing-a@example.com");
+    expect(payload.subject).toMatch(/^HTGClouds invoice INV-/);
+    expect(payload.html).toContain("Company A");
+    expect(payload.html).toContain("ECS Small");
+    expect(payload.text).toContain("Balance due: $20.00");
+  });
+
+  it("prefers billingEmail over contactEmail when sending", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(invoiceId, {
+        billingEmail: "accounts-payable@example.com",
+        contactEmail: "contact@example.com",
+      });
+    });
+    const fetchMock = mockRelaySuccess();
+
+    await asUser(t, s.amA).action(api.invoices.sendInvoiceEmail, {
+      invoiceId,
+    });
+
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      to: string;
+    };
+    expect(payload.to).toBe("accounts-payable@example.com");
+  });
+
+  it("rejects sending when no recipient email exists", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(invoiceId, {
+        billingEmail: undefined,
+        contactEmail: undefined,
+      });
+    });
+    const fetchMock = mockRelaySuccess();
+
+    await expect(
+      asUser(t, s.amA).action(api.invoices.sendInvoiceEmail, { invoiceId }),
+    ).rejects.toThrow("Invoice has no billing or contact email");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not mark an invoice sent when the relay fails", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: false, error: "SMTP down" }), {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      asUser(t, s.amA).action(api.invoices.sendInvoiceEmail, { invoiceId }),
+    ).rejects.toThrow("SMTP down");
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.status).toBe("issued");
+    expect(invoice.sentAt).toBeUndefined();
+    expect(invoice.sentTo).toBeUndefined();
+    expect(invoice.sentBy).toBeUndefined();
+  });
+
+  it("records sent status, audit fields, and a sent event on relay success", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    mockRelaySuccess();
+
+    await asUser(t, s.amA).action(api.invoices.sendInvoiceEmail, {
+      invoiceId,
+    });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice).toMatchObject({
+      status: "sent",
+      sentTo: "billing-a@example.com",
+      sentBy: s.amA._id,
+    });
+    expect(invoice.sentAt).toEqual(expect.any(Number));
+
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(events[events.length - 1]).toMatchObject({
+      type: "sent",
+      actorId: s.amA._id,
+      message: expect.stringContaining("billing-a@example.com"),
+    });
+  });
+
+  it("blocks out-of-scope users from sending invoices", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    const fetchMock = mockRelaySuccess();
+
+    await expect(
+      asUser(t, s.amB).action(api.invoices.sendInvoiceEmail, { invoiceId }),
+    ).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
