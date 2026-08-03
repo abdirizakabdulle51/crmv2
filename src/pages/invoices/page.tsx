@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc } from "@/convex/_generated/dataModel.d.ts";
@@ -27,7 +28,7 @@ import {
 } from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { formatCurrency } from "@/lib/format.ts";
-import { FileText } from "lucide-react";
+import { FileText, Eye } from "lucide-react";
 
 type Invoice = Doc<"invoices">;
 type InvoiceStatus = Invoice["status"];
@@ -98,6 +99,7 @@ function statusBadge(status: InvoiceStatus) {
 }
 
 export default function InvoicesPage() {
+  const navigate = useNavigate();
   const invoices = useQuery(api.invoices.list, {});
   const companies = useQuery(api.companies.list, {});
   const [statusFilter, setStatusFilter] = useState<"all" | InvoiceStatus>(
@@ -314,32 +316,57 @@ export default function InvoicesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredInvoices.map((invoice) => (
-                  <tr key={invoice._id} className="border-b last:border-0">
-                    <td className="p-3 font-medium">
-                      {invoice.invoiceNumber ?? "Draft"}
-                    </td>
-                    <td className="p-3 text-muted-foreground">
-                      {formatDate(invoice.issueDate ?? invoice.createdAt)}
-                    </td>
-                    <td className="p-3">{invoice.companyName}</td>
-                    <td className="p-3 text-right">
-                      {formatCurrency(invoice.grandTotal)}
-                    </td>
-                    <td className="p-3 text-right">
-                      {formatCurrency(invoice.balanceDue)}
-                    </td>
-                    <td className="p-3">{statusBadge(invoice.status)}</td>
-                    <td className="p-3 text-muted-foreground">
-                      {formatDate(invoice.dueDate)}
-                    </td>
-                    <td className="p-3 text-right">
-                      <Button variant="ghost" size="sm" disabled>
-                        Detail coming next
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+                {filteredInvoices.map((invoice) => {
+                  const invoiceHref = `/invoices/${invoice._id}`;
+                  const openInvoice = () => navigate(invoiceHref);
+
+                  return (
+                    <tr
+                      key={invoice._id}
+                      role="button"
+                      tabIndex={0}
+                      className="cursor-pointer border-b transition-colors last:border-0 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={openInvoice}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openInvoice();
+                        }
+                      }}
+                    >
+                      <td className="p-3 font-medium">
+                        {invoice.invoiceNumber ?? "Draft"}
+                      </td>
+                      <td className="p-3 text-muted-foreground">
+                        {formatDate(invoice.issueDate ?? invoice.createdAt)}
+                      </td>
+                      <td className="p-3">{invoice.companyName}</td>
+                      <td className="p-3 text-right">
+                        {formatCurrency(invoice.grandTotal)}
+                      </td>
+                      <td className="p-3 text-right">
+                        {formatCurrency(invoice.balanceDue)}
+                      </td>
+                      <td className="p-3">{statusBadge(invoice.status)}</td>
+                      <td className="p-3 text-muted-foreground">
+                        {formatDate(invoice.dueDate)}
+                      </td>
+                      <td className="p-3 text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openInvoice();
+                          }}
+                        >
+                          <Eye className="mr-2 h-4 w-4" />
+                          Open
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -19,6 +19,7 @@ import QuoteGenerateFromUsagePage from "./pages/quotes/generate-page.tsx";
 import QuoteFromAdvisorPage from "./pages/quotes/from-advisor-page.tsx";
 import QuoteDetailPage from "./pages/quotes/detail-page.tsx";
 import InvoicesPage from "./pages/invoices/page.tsx";
+import InvoiceDetailPage from "./pages/invoices/detail-page.tsx";
 import RecommendationsPage from "./pages/recommendations/page.tsx";
 import CoachPage from "./pages/coach/page.tsx";
 import ManageOneTenantsPage from "./pages/manageone-tenants/page.tsx";
@@ -55,6 +56,7 @@ export default function App() {
             <Route path="/at-risk" element={<AtRiskPage />} />
             <Route path="/quotes" element={<QuotesPage />} />
             <Route path="/invoices" element={<InvoicesPage />} />
+            <Route path="/invoices/:invoiceId" element={<InvoiceDetailPage />} />
             <Route
               path="/quotes/generate"
               element={<QuoteGenerateFromUsagePage />}

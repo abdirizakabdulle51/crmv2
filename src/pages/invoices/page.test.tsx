@@ -106,6 +106,15 @@ function renderInvoicesPage() {
             </>
           }
         />
+        <Route
+          path="/invoices/:invoiceId"
+          element={
+            <>
+              <div>Invoice Detail</div>
+              <LocationProbe />
+            </>
+          }
+        />
       </Routes>
     </MemoryRouter>,
   );
@@ -175,8 +184,31 @@ describe("InvoicesPage", () => {
     expect(screen.getByText("Hormuud")).toBeInTheDocument();
     expect(screen.getByText("INV-2026-00002")).toBeInTheDocument();
     expect(screen.getByText("Telesom")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Detail coming next" }))
-      .toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: "Open" })).toHaveLength(3);
+  });
+
+  it("opens an invoice from the clickable row", async () => {
+    const user = userEvent.setup();
+    renderInvoicesPage();
+
+    await user.click(
+      screen.getByRole("button", { name: /INV-2026-00001/i }),
+    );
+
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/invoices/invoice-1",
+    );
+  });
+
+  it("opens an invoice from the action button", async () => {
+    const user = userEvent.setup();
+    renderInvoicesPage();
+
+    await user.click(screen.getAllByRole("button", { name: "Open" })[1]);
+
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/invoices/invoice-2",
+    );
   });
 
   it("filters rows by status", async () => {
