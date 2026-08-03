@@ -1,9 +1,20 @@
-import { Component, type ReactNode } from "react";
+import { Component, type ReactNode, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "convex/react";
-import { ArrowLeft, FileText } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import { ArrowLeft, FileText, Loader2, LockKeyhole } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -164,6 +175,8 @@ class InvoiceDetailErrorBoundary extends Component<
 function InvoiceDetailContent() {
   const { invoiceId } = useParams();
   const navigate = useNavigate();
+  const [issueDialogOpen, setIssueDialogOpen] = useState(false);
+  const [isIssuing, setIsIssuing] = useState(false);
   const invoice = useQuery(
     api.invoices.getById,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
@@ -172,6 +185,7 @@ function InvoiceDetailContent() {
     api.invoices.listEvents,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
   );
+  const issueInvoice = useMutation(api.invoices.issueInvoice);
 
   if (!invoiceId) {
     return <UnavailableState />;
@@ -193,6 +207,21 @@ function InvoiceDetailContent() {
 
   const title = invoice.invoiceNumber ?? "Draft";
 
+  const handleIssueInvoice = async () => {
+    setIsIssuing(true);
+    try {
+      await issueInvoice({ invoiceId: invoice._id });
+      toast.success("Invoice issued and locked");
+      setIssueDialogOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not issue invoice";
+      toast.error(message);
+    } finally {
+      setIsIssuing(false);
+    }
+  };
+
   return (
     <div className="space-y-6 p-6 md:p-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -213,6 +242,62 @@ function InvoiceDetailContent() {
             Read-only invoice snapshot and history.
           </p>
         </div>
+        {invoice.status === "draft" ? (
+          <AlertDialog
+            open={issueDialogOpen}
+            onOpenChange={(open) => {
+              if (!isIssuing) setIssueDialogOpen(open);
+            }}
+          >
+            <Button
+              className="bg-cyan-600 text-white hover:bg-cyan-700"
+              onClick={() => setIssueDialogOpen(true)}
+              disabled={isIssuing}
+            >
+              {isIssuing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <LockKeyhole className="mr-2 h-4 w-4" />
+              )}
+              {isIssuing ? "Issuing..." : "Issue Invoice"}
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Issue and lock this invoice?</AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-2 text-left">
+                    <p>
+                      Issuing will lock the invoice and finalize the current
+                      snapshot.
+                    </p>
+                    <ul className="list-disc space-y-1 pl-5">
+                      <li>Locked invoices cannot be edited.</li>
+                      <li>The invoice will receive an invoice number.</li>
+                      <li>This does not send email yet.</li>
+                    </ul>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={isIssuing}>
+                  Cancel
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={isIssuing}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void handleIssueInvoice();
+                  }}
+                >
+                  {isIssuing ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  {isIssuing ? "Issuing..." : "Issue Invoice"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">

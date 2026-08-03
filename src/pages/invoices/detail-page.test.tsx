@@ -9,6 +9,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
   api: {
     invoices: {
       getById: "invoices.getById",
+      issueInvoice: "invoices.issueInvoice",
       listEvents: "invoices.listEvents",
     },
   },
@@ -17,15 +18,42 @@ vi.mock("@/convex/_generated/api.js", () => ({
 const mocks = vi.hoisted(() => ({
   invoice: undefined as Doc<"invoices"> | null | undefined,
   events: undefined as Doc<"invoiceEvents">[] | undefined,
+  issueInvoice: vi.fn(),
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
+  useMutation: (mutation: string) => {
+    if (mutation === "invoices.issueInvoice") return mocks.issueInvoice;
+    return vi.fn();
+  },
   useQuery: (query: string) => {
     if (query === "invoices.getById") return mocks.invoice;
     if (query === "invoices.listEvents") return mocks.events;
     return undefined;
   },
 }));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: mocks.toastError,
+    success: mocks.toastSuccess,
+  },
+}));
+
+Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+  value: vi.fn(() => false),
+});
+Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+  value: vi.fn(),
+});
+Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+  value: vi.fn(),
+});
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  value: vi.fn(),
+});
 
 function invoice(overrides: Partial<Doc<"invoices">> = {}): Doc<"invoices"> {
   return {
@@ -121,7 +149,9 @@ function renderDetailPage(initialEntry = "/invoices/invoice-1") {
 
 describe("InvoiceDetailPage", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     mocks.invoice = invoice();
+    mocks.issueInvoice.mockResolvedValue(undefined);
     mocks.events = [
       invoiceEvent("event-1"),
       invoiceEvent("event-2", {
@@ -183,6 +213,123 @@ describe("InvoiceDetailPage", () => {
 
     expect(screen.getByRole("heading", { name: "Draft" })).toBeInTheDocument();
     expect(screen.getAllByText("Draft").length).toBeGreaterThan(0);
+  });
+
+  it("shows Issue Invoice for draft invoices", () => {
+    mocks.invoice = invoice({
+      invoiceNumber: undefined,
+      status: "draft",
+      issueDate: undefined,
+      lockedAt: undefined,
+    });
+
+    renderDetailPage();
+
+    expect(
+      screen.getByRole("button", { name: "Issue Invoice" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show Issue Invoice for issued invoices", () => {
+    renderDetailPage();
+
+    expect(
+      screen.queryByRole("button", { name: "Issue Invoice" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens confirmation before issuing a draft invoice", async () => {
+    const user = userEvent.setup();
+    mocks.invoice = invoice({
+      invoiceNumber: undefined,
+      status: "draft",
+      issueDate: undefined,
+      lockedAt: undefined,
+    });
+
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Issue Invoice" }));
+
+    expect(
+      screen.getByRole("alertdialog", {
+        name: "Issue and lock this invoice?",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Issuing will lock the invoice/i))
+      .toBeInTheDocument();
+    expect(screen.getByText("Locked invoices cannot be edited."))
+      .toBeInTheDocument();
+    expect(screen.getByText("The invoice will receive an invoice number."))
+      .toBeInTheDocument();
+    expect(screen.getByText("This does not send email yet."))
+      .toBeInTheDocument();
+  });
+
+  it("does not call issueInvoice when confirmation is canceled", async () => {
+    const user = userEvent.setup();
+    mocks.invoice = invoice({
+      invoiceNumber: undefined,
+      status: "draft",
+      issueDate: undefined,
+      lockedAt: undefined,
+    });
+
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Issue Invoice" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(mocks.issueInvoice).not.toHaveBeenCalled();
+  });
+
+  it("confirms issuing and shows a success toast", async () => {
+    const user = userEvent.setup();
+    mocks.invoice = invoice({
+      invoiceNumber: undefined,
+      status: "draft",
+      issueDate: undefined,
+      lockedAt: undefined,
+    });
+
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Issue Invoice" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Issue Invoice",
+      }),
+    );
+
+    expect(mocks.issueInvoice).toHaveBeenCalledWith({
+      invoiceId: "invoice-1",
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Invoice issued and locked");
+  });
+
+  it("shows an error toast if issuing fails", async () => {
+    const user = userEvent.setup();
+    mocks.invoice = invoice({
+      invoiceNumber: undefined,
+      status: "draft",
+      issueDate: undefined,
+      lockedAt: undefined,
+    });
+    mocks.issueInvoice.mockRejectedValue(new Error("Invoice must be draft"));
+
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Issue Invoice" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Issue Invoice",
+      }),
+    );
+
+    expect(mocks.toastError).toHaveBeenCalledWith("Invoice must be draft");
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/invoices/invoice-1",
+    );
   });
 
   it("shows an unavailable state for a missing invoice", () => {
