@@ -319,14 +319,18 @@ function InvoicePrintContent() {
           padding-top: 10px;
         }
 
+        .invoice-title-row {
+          align-items: flex-start;
+          display: grid;
+          gap: 16mm;
+          grid-template-columns: minmax(0, 1fr) 74mm;
+          margin-bottom: 6mm;
+        }
+
         .bill-to {
-          border-left: 3px solid #07999d;
           font-size: 13px;
           line-height: 1.45;
-          margin: 0 0 9mm auto;
-          max-width: 74mm;
-          min-height: 24mm;
-          padding: 4mm 0 4mm 5mm;
+          padding-top: 1mm;
         }
 
         .bill-to-label {
@@ -349,7 +353,7 @@ function InvoicePrintContent() {
           font-size: 26px;
           font-weight: 500;
           letter-spacing: 0;
-          margin: 0 0 6mm;
+          margin: 0;
         }
 
         .invoice-meta {
@@ -506,11 +510,15 @@ function InvoicePrintContent() {
       <main aria-label="Invoice print template">
         <section className="invoice-page" aria-label="Invoice page 1">
           <Header />
-          <BillTo invoice={invoice} />
-          {invoice.status === "draft" ? (
-            <div className="draft-watermark">Draft Preview</div>
-          ) : null}
-          <h1 className="invoice-title">{title}</h1>
+          <div className="invoice-title-row">
+            <div>
+              {invoice.status === "draft" ? (
+                <div className="draft-watermark">Draft Preview</div>
+              ) : null}
+              <h1 className="invoice-title">{title}</h1>
+            </div>
+            <BillTo invoice={invoice} />
+          </div>
 
           <dl className="invoice-meta">
             <div>
