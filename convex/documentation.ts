@@ -421,18 +421,92 @@ If no companies exist yet, you'll see an empty state with an Add Company prompt.
     group: "Team Guide",
     order: 4,
     visibility: "public",
-    content: `Pipeline tracks sales deals ("leads") as they move toward closing.
+    content: `Pipeline is where sales opportunities are tracked from first lead to final outcome.
 
-The subtitle shows your total lead count and the active pipeline value — the sum of every open deal's potential value (deals marked Won or Lost don't count toward this).
+Use Pipeline to understand what deals are open, which stage each opportunity is in, who owns it, and how much potential revenue is in progress.
 
-**Two views, switchable by tab:**
-- **Board** (default) — a Kanban-style board with a column per stage: New Lead, Qualified, Discovery, Proposal, Negotiation, Won, Lost. Drag a deal between columns to change its stage.
-- **List** — the same leads as a flat, sortable table instead of a board.
+## Pipeline Stages
 
-**Actions:**
-- **Add Lead** — create a new deal, tied to a company and an account manager.
-- **Import CSV** — bulk-create leads from a spreadsheet.
-- Click any lead (in either view) to edit its details.`,
+Pipeline uses these stages:
+
+- New Lead - a new opportunity has been identified.
+- Qualified - the opportunity looks real and worth pursuing.
+- Discovery - the team is gathering requirements and understanding the customer need.
+- Proposal - a proposal or offer is being prepared or has been shared.
+- Negotiation - commercial or technical details are being finalized.
+- Won - the deal has been successfully closed.
+- Lost - the opportunity did not close.
+
+## Board and List Views
+
+Pipeline has two views:
+
+- Board - Kanban-style columns by stage.
+- List - a table view of the same opportunities.
+
+Use Board view for stage movement and quick pipeline scanning. Use List view when you want a flatter table.
+
+## What Each Lead Shows
+
+Each lead/opportunity includes:
+
+- Title
+- Company
+- Account Manager
+- Stage
+- Potential value
+- Expected close date
+- Next action
+- Notes
+
+## What Users Can Do
+
+Users can:
+
+- Add a lead
+- Import leads from CSV
+- Edit an existing lead
+- Move a lead between stages
+- Mark a lead Won or Lost
+- Delete a lead if they have permission
+- View lead value and expected close date
+
+## How to Move a Deal Forward
+
+Update the stage as the opportunity progresses.
+
+Example:
+
+New Lead -> Qualified -> Discovery -> Proposal -> Negotiation -> Won
+
+If the opportunity is no longer valid, move it to Lost.
+
+## Permissions
+
+Pipeline access follows CRM role scope:
+
+- Account Managers see and manage their own leads.
+- Country GMs see and manage leads for companies in their country.
+- Head of Business and CEO see and manage all leads.
+
+Permissions are enforced by the backend.
+
+## Relationship to Dashboard, Targets, Pace, and Coach
+
+Pipeline affects several CRM areas:
+
+- Dashboard pipeline value comes from open deals.
+- Won deals contribute to sales achievement.
+- Targets and Pace use Won deal value to compare performance against target.
+- Coach uses Proposal and Negotiation deals to suggest daily priorities.
+
+## Important Notes
+
+Pipeline is not a task manager, quote builder, or activity log.
+
+Use Tasks for internal work assignment.
+Use Quotes to create customer quotes.
+Use Activities to log calls, meetings, and proposals sent.`,
   },
   {
     slug: "page-targets",
@@ -440,16 +514,80 @@ The subtitle shows your total lead count and the active pipeline value — the s
     group: "Team Guide",
     order: 5,
     visibility: "public",
-    content: `*Leadership only (CEO / Head of Business) — everyone else sees a restricted-access notice here.*
+    content: `Targets is where quarterly sales goals are set for Account Managers.
 
-Targets is where quarterly sales goals are set per account manager.
+Targets are used by Dashboard, Pace, and Coach to compare actual won deals against expected performance.
 
-- A year selector switches which year you're viewing/editing.
-- One card per account manager, showing their yearly total (sum of all four quarters) and a Q1–Q4 grid of target amounts.
-- Click directly into any quarter's cell to edit that number inline (press Enter to save, Escape to cancel).
-- **Set Target** button — a dialog to pick an account manager, a quarter, and a dollar amount, for setting a target from scratch rather than editing an existing cell.
+## Who Uses Targets
 
-If no account managers have been assigned roles yet, you'll see a prompt to assign roles from the Team page first.`,
+Targets are managed by leadership.
+
+Account Managers use Targets indirectly through Dashboard, Pace, and Coach.
+
+## What Targets Shows
+
+For each Account Manager, Targets shows:
+
+- Q1 target
+- Q2 target
+- Q3 target
+- Q4 target
+- Annual target total
+- Achievement against won Pipeline deals
+
+## Year Selector
+
+Use the year selector to view or manage targets for a specific year.
+
+Targets are stored by Account Manager, year, and quarter.
+
+## Quarterly Targets
+
+Quarters are calendar quarters:
+
+- Q1: January to March
+- Q2: April to June
+- Q3: July to September
+- Q4: October to December
+
+The annual target is the sum of Q1, Q2, Q3, and Q4.
+
+## Setting or Editing Targets
+
+Leadership can set a target for:
+
+- Account Manager
+- Year
+- Quarter
+- Target amount
+
+Existing quarter values can be updated. The updated value is immediately reflected wherever target calculations are used.
+
+## How Achievement Is Calculated
+
+Achievement is based on Pipeline deals marked Won.
+
+Open or Lost deals do not count as achieved revenue.
+
+## Relationship to Pace
+
+Pace uses quarterly targets to calculate whether the team is ahead, on track, or behind for the current period.
+
+Pace compares:
+
+- Target expected by today
+- Actual won deal value
+- Remaining target gap
+
+## Relationship to Dashboard
+
+Dashboard uses Targets to show target achievement and sales progress.
+
+## Important Notes
+
+Targets does not create deals or change Pipeline stages.
+
+To update actual sales progress, update Pipeline deals. To update goals, use Targets.`,
   },
   {
     slug: "page-pace",
@@ -457,11 +595,68 @@ If no account managers have been assigned roles yet, you'll see a prompt to assi
     group: "Team Guide",
     order: 6,
     visibility: "public",
-    content: `*Labeled "Performance Pace" on the page itself.*
+    content: `Pace shows whether sales performance is moving fast enough to hit target.
 
-Pace answers one question: are we on track to hit this quarter's target?
+It is a read-only performance view based on Targets and Won Pipeline deals.
 
-It shows year-to-date progress against the yearly and current-quarter targets, along with how many working days have elapsed in the quarter out of the total — so you can judge whether current performance is ahead of, on, or behind where it needs to be by this point in the quarter. This is a read-only view; targets themselves are set on the Targets page.`,
+## What Pace Shows
+
+Pace shows:
+
+- Annual target
+- Current quarter target
+- Expected progress by today
+- Achieved amount
+- Gap
+- Remaining working days
+- Daily pace needed
+- Ahead / On Track / Behind status
+
+## How Pace Works
+
+Pace uses quarterly targets and compares them with actual won deal value.
+
+Expected progress is calculated using working days in the current quarter. Working days are Monday to Friday.
+
+The page answers:
+
+Are we ahead, on track, or behind compared with where we should be today?
+
+## Status Meaning
+
+- Ahead - achieved value is above expected progress.
+- On Track - achieved value is close to expected progress.
+- Behind - achieved value is below expected progress.
+
+## What Counts as Achieved
+
+Only Pipeline deals marked Won count as achieved revenue.
+
+Open deals and Lost deals do not count toward achievement.
+
+## Relationship to Targets
+
+Targets provides the quarterly and annual goals used by Pace.
+
+If targets are missing, Pace cannot calculate meaningful progress.
+
+## Relationship to Pipeline
+
+Pipeline provides the Won deal value used as achieved revenue.
+
+To improve Pace, move real closed deals to Won in Pipeline.
+
+## What Users Can Do
+
+Users can view pace, change the selected year/quarter if controls are available, and use the result to decide where attention is needed.
+
+Users do not edit targets or deals directly from Pace.
+
+## Important Notes
+
+Pace is not a forecasting tool and does not guess future deals.
+
+It compares current target expectations with actual closed sales.`,
   },
   {
     slug: "page-usage",
@@ -469,13 +664,104 @@ It shows year-to-date progress against the yearly and current-quarter targets, a
     group: "Team Guide",
     order: 7,
     visibility: "public",
-    content: `Usage tracking is where monthly resource consumption gets recorded per company — this is the raw input that quotes are generated from later.
+    content: `Usage Tracking is where monthly customer cloud consumption is recorded.
 
-**Two ways to add usage data:**
-- Manually enter usage entries one at a time.
-- **Auto-fill from ManageOne** — a dedicated page that pulls a company's real, live resource usage from ManageOne and converts it into priced usage entries automatically, so you don't have to type numbers in by hand. Use this whenever a company's tenant is provisioned in ManageOne — it's much faster and less error-prone than manual entry.
+Usage is the source data used for customer consumption totals, quote generation, Dashboard usage summaries, and Cloud Advisor recommendations.
 
-Usage entries are grouped by company and month. Once entries exist for a given company/month, that data becomes available to Quotes → Generate from Usage.`,
+## What Usage Tracks
+
+Each usage entry belongs to:
+
+- Company
+- Month
+- Service type
+- Catalog item when available
+- Quantity
+- Amount
+
+Month values use year-month format, for example 2026-07.
+
+## Summary Cards
+
+The summary cards show totals for the currently selected usage dataset:
+
+- Total Entries - number of usage rows matching the selected filters.
+- Total Consumption - total amount for the selected usage rows.
+- Tenants with Data - number of companies/tenants with usage entries in the selected dataset.
+
+If Month is set to All Months, the summary shows all matching months.
+
+If a specific month is selected, such as 2026-07, the summary shows that month only.
+
+The month picker and month filter should stay aligned so the visible month matches the totals being shown.
+
+## Filters and Paging
+
+Users can filter by:
+
+- Company
+- Month
+- Rows per page
+
+Use the month filter to focus on a billing month. Use All Months when reviewing historical totals.
+
+## Adding Usage
+
+Usage can be added manually when needed.
+
+Manual entry is useful when:
+
+- ManageOne data is unavailable
+- A service needs manual pricing review
+- A correction must be entered directly
+
+## CSV Import
+
+CSV import can bulk-load usage entries from a spreadsheet.
+
+Imported rows are validated before they are saved. Pricing may be calculated from the Service Catalog when a confident match exists.
+
+## Auto-fill from ManageOne
+
+Auto-fill from ManageOne helps create usage entries from linked ManageOne tenant data.
+
+Workflow:
+
+1. Select a company.
+2. Select the month.
+3. Review detected ManageOne usage.
+4. Select the rows to create.
+5. Create usage entries after review.
+
+The system does not blindly create usage entries without review.
+
+Some services can be auto-priced from the Service Catalog. Others may require manual entry if the catalog match is not safe.
+
+## Pricing
+
+Usage totals use the saved amount on each usage entry.
+
+When possible, the CRM uses the Service Catalog to calculate pricing automatically from quantity and catalog price.
+
+If pricing cannot be matched confidently, the user should review and enter the correct service or amount manually.
+
+## Relationship to Quotes
+
+Quotes can be generated from Usage for a selected company and month.
+
+Before generating a quote, confirm the usage entries for that company and month are complete and correct.
+
+## Relationship to Cloud Advisor
+
+Cloud Advisor uses usage history to find cross-sell, risk, and optimization opportunities.
+
+Accurate usage data makes Advisor recommendations more useful.
+
+## Important Notes
+
+Usage Tracking does not provision resources in ManageOne.
+
+It records CRM billing/consumption data and can use synced ManageOne data as an input.`,
   },
   {
     slug: "page-at-risk",
@@ -483,11 +769,68 @@ Usage entries are grouped by company and month. Once entries exist for a given c
     group: "Team Guide",
     order: 8,
     visibility: "public",
-    content: `At Risk is an early-warning list — it flags companies whose resource usage has been declining for 2 or more consecutive months, which can be a sign of churn or a shrinking account before it becomes an obvious problem.
+    content: `At Risk is an early-warning page for accounts whose usage may be shrinking.
 
-The summary cards at the top show how many tenants are currently flagged, how usage compares month-over-month, and how many tenants have enough usage history to be evaluated at all.
+It helps the team identify customers that may need follow-up before the issue becomes churn, downgrade, or lost revenue.
 
-There's nothing to configure here — it's a read-only list. Click through to a flagged company's detail page to see the actual Usage Trends chart and decide whether outreach is warranted.`,
+## What At Risk Looks For
+
+At Risk focuses on usage decline patterns.
+
+Companies are flagged when their usage has declined for consecutive months and there is enough history to evaluate the trend.
+
+## What the Summary Cards Mean
+
+The top cards summarize:
+
+- Companies currently flagged as at risk
+- Month-over-month usage movement
+- Accounts with enough usage history to evaluate
+- Potential revenue attention areas
+
+## What Each Row Shows
+
+At Risk rows help identify:
+
+- Company
+- Account Manager
+- Recent usage trend
+- Decline pattern
+- Latest usage value
+- Previous usage comparison
+
+## What Users Should Do
+
+Use At Risk as a follow-up list.
+
+Recommended workflow:
+
+1. Open At Risk.
+2. Review the highest-risk accounts.
+3. Click into the company detail page.
+4. Check Usage Trends and recent consumption.
+5. Contact the customer or Account Manager if the decline needs explanation.
+6. Create a Task if follow-up work is needed.
+
+## Relationship to Usage
+
+At Risk depends on Usage Tracking data.
+
+If usage entries are missing or incomplete, At Risk may not show the full picture.
+
+## Relationship to Company Detail
+
+Company detail pages show Usage Trends where available.
+
+Use the trend chart to understand whether the decline is temporary or consistent.
+
+## Important Notes
+
+At Risk is read-only.
+
+It does not send customer notifications, create tasks automatically, or change company status.
+
+It is a signal for the sales and leadership team to investigate.`,
   },
   {
     slug: "page-quotes",
@@ -495,17 +838,80 @@ There's nothing to configure here — it's a read-only list. Click through to a 
     group: "Team Guide",
     order: 9,
     visibility: "public",
-    content: `Quotes covers everything from generating a price quote to sending it to a customer.
+    content: `Quotes is where the team creates, reviews, sends, and tracks customer quotes.
 
-**Generate from Usage** — the main way quotes get created: pick a company and a month, and the CRM builds a draft quote automatically from that company's usage entries for that month, priced using the Service Catalog. Review the auto-priced line items before saving.
+Quotes can be created manually, generated from Usage, or started from a Cloud Advisor recommendation review.
 
-**On an individual quote's page**, you can:
-- Review every line item, quantity, and the monthly/yearly totals.
-- **Print / Export** — generates a formatted, branded copy of the quote.
-- Change status: Draft → Sent → Accepted (or revert back to Draft).
-- **Send to Customer** — emails the quote directly to the company's contact address (requires a contact email to be set on that company's record first — add one on the Companies page if it's missing).
+## Quote List
 
-Quotes already generated appear in the main Quotes list, with their current status visible at a glance.`,
+The Quotes page shows existing quotes with:
+
+- Company
+- Date
+- Status
+- Monthly total
+- Yearly total
+- Created by
+
+Open a quote to review details.
+
+## Quote Statuses
+
+Quotes use these statuses:
+
+- Draft - still being prepared or reviewed.
+- Sent - sent to the customer.
+- Accepted - customer accepted the quote.
+
+## Generate from Usage
+
+Generate from Usage is the main workflow for consumption-based quotes.
+
+Workflow:
+
+1. Confirm Usage entries exist for the company and month.
+2. Open Quotes.
+3. Choose Generate from Usage.
+4. Select company and month.
+5. Review the line items and totals.
+6. Save the draft quote.
+
+Pricing comes from the Service Catalog and saved usage entries.
+
+## Cloud Advisor Quote Flow
+
+Cloud Advisor can open a quote review page from a recommendation.
+
+The CRM only creates a draft quote automatically when it can safely match the recommendation to one catalog-backed line item.
+
+If the catalog match or quantity is not safe, the review page asks for manual review instead of inventing pricing.
+
+## Quote Detail Page
+
+On a quote detail page, users can:
+
+- Review line items
+- Review monthly and yearly totals
+- Print or export the quote
+- Change status
+- Send the quote to the customer
+- Delete a draft quote if permitted
+
+## Sending to Customer
+
+Send to Customer emails the quote to the company contact email.
+
+If the company has no contact email, update the company record first.
+
+Quote email is sent through the CRM mail relay integration.
+
+## Important Notes
+
+Quotes do not change Usage entries.
+
+Quotes do not provision cloud resources.
+
+Always review quote line items and totals before sending to the customer.`,
   },
   {
     slug: "page-ai-recs",
@@ -535,9 +941,85 @@ Quotes already generated appear in the main Quotes list, with their current stat
     group: "Team Guide",
     order: 11,
     visibility: "public",
-    content: `*Titled "Daily Sales Coach" on the page itself.*
+    content: `Coach is the daily sales guidance page for Account Managers and leadership. It helps the team quickly understand who is ahead, who is behind, which deals need attention, and what each Account Manager should focus on today.
 
-Coach gives each account manager a daily, personalized summary: current pace against their target, their active proposals and total value, and suggested priorities for the day. It's meant to be the first stop of the day for an AM deciding what to focus on. Read-only — no actions to take here, it's a briefing.`,
+## What Coach Shows
+
+Each Account Manager card shows:
+
+- Yearly target
+- Expected progress to date
+- Achieved amount
+- Gap against expected progress
+- Pace status: Ahead, On Track, or Behind
+- Active proposal and negotiation deals
+- Today's recommended priorities
+
+## How Pace Is Calculated
+
+Coach uses the Account Manager's current-year quarterly targets.
+
+The yearly target is calculated from:
+
+Q1 + Q2 + Q3 + Q4
+
+Achieved amount comes from Pipeline deals marked as Won.
+
+Expected progress is calculated based on completed quarters plus the current quarter progress by working days. Working days are Monday to Friday.
+
+Pace status means:
+
+- Ahead: achieved is more than expected
+- On Track: achieved is close to expected
+- Behind: achieved is below expected
+
+## Active Proposals
+
+Coach shows active deals from Pipeline when the deal is in:
+
+- Proposal
+- Negotiation
+
+These are sorted by highest value first so the team can focus on the most important opportunities.
+
+## Today's Priorities
+
+Coach automatically suggests up to two priorities for each Account Manager.
+
+Examples:
+
+- Follow up on a high-value proposal closing soon
+- Recover pace if the Account Manager is behind target
+- Maintain momentum if the Account Manager is ahead
+- Review a Cloud Advisor cross-sell opportunity if there are no active proposals
+
+## Who Can See Coach
+
+Access depends on role:
+
+- Account Manager: sees their own coaching summary
+- Country GM: sees Account Managers in their country
+- Head of Business: sees all Account Managers
+- CEO: sees all Account Managers
+
+## How to Use Coach
+
+1. Open Coach from the Sales section.
+2. Review the pace badge for each Account Manager.
+3. Check the Gap value to see who is ahead or behind.
+4. Review Active Proposals for deals that need follow-up.
+5. Use Today's Priorities as the daily action plan.
+6. Update the related Pipeline, Targets, or customer activity pages as work progresses.
+
+## Important Notes
+
+Coach is read-only. It does not create leads, change targets, move deals, or send notifications.
+
+To update the data shown in Coach, update the source areas:
+
+- Pipeline for deals and stages
+- Targets for quarterly sales targets
+- Usage and Cloud Advisor data for recommendation opportunities`,
   },
   {
     slug: "page-activities",
@@ -545,15 +1027,80 @@ Coach gives each account manager a daily, personalized summary: current pace aga
     group: "Team Guide",
     order: 12,
     visibility: "public",
-    content: `Activities is the log of everything an account manager has done against a lead — calls, meetings, and proposals sent.
+    content: `Activities is the sales activity log for customer follow-ups and opportunity work. Use it to record calls, meetings, and proposals sent for Pipeline leads.
 
-**Add an entry:** **Log Activity** button — records a type (Call / Meeting / Proposal Sent), the associated lead, a date, and an optional description.
+## What Activities Tracks
 
-**Filters:** by activity type, and by account manager.
+Each activity records:
 
-**Each entry shows:** a type icon and color (Call = blue, Meeting = purple, Proposal Sent = amber), which lead it's tied to, who logged it, the date, and the description if one was written.
+- Account Manager
+- Related lead or opportunity
+- Activity type
+- Date
+- Optional notes
 
-Leadership (CEO/HOB) can delete activity entries; other roles can only add them, not remove them.`,
+Activity types are:
+
+- Call
+- Meeting
+- Proposal Sent
+
+## How to Log an Activity
+
+1. Open Activities from the Sales section.
+2. Click Log Activity.
+3. Select the related Lead / Opportunity.
+4. Choose the activity type.
+5. Select the activity date.
+6. Add notes if needed.
+7. Click Log Activity.
+
+The activity will appear in the Activity Log and will be tied to the selected Pipeline lead.
+
+## Filters
+
+Use the filters at the top of the page to narrow the activity list:
+
+- Activity Type: All Types, Call, Meeting, Proposal Sent
+- Account Manager: All Managers or a specific user
+
+## Who Can See Activities
+
+Access depends on role:
+
+- Account Manager: sees their own activities
+- Country GM: sees activities for users in their country
+- Head of Business: sees all activities
+- CEO: sees all activities
+
+## Deleting Activities
+
+CEO and Head of Business users can delete activity records.
+
+Deletion is permanent, so only delete an activity if it was logged by mistake.
+
+## Relationship to Pipeline
+
+Activities are linked to Pipeline leads. They help show what follow-up has happened on an opportunity.
+
+Activities do not move a lead from one stage to another. To update the sales stage, use the Pipeline page.
+
+## Best Practice
+
+Log important customer interactions as soon as they happen:
+
+- After a customer call
+- After a meeting
+- When a proposal is sent
+- When a follow-up note is important for leadership or the team
+
+Keeping Activities updated helps managers understand progress without needing separate manual reports.
+
+## Important Notes
+
+Activities is a sales log, not a task manager. For internal work assignment, use Tasks.
+
+Activities does not send emails, create reminders, attach files, or update Pipeline stages automatically.`,
   },
   {
     slug: "page-manageone",
@@ -561,16 +1108,100 @@ Leadership (CEO/HOB) can delete activity entries; other roles can only add them,
     group: "Team Guide",
     order: 13,
     visibility: "public",
-    content: `*Leadership only (CEO / Head of Business) — everyone else sees a restricted-access notice here.*
+    content: `ManageOne shows tenant and VDC information synced from Huawei ManageOne into the CRM. It helps leadership connect cloud platform tenants to CRM companies so usage, Cloud Health, and customer reporting can work correctly.
 
-This is a read-only view of every tenant synced nightly from ManageOne (Huawei's cloud platform): VDC info, resource usage (ECS instances used, EVS storage used, project count), manager contact details, and when each tenant last synced.
+## What ManageOne Shows
 
-**Linking a tenant to a CRM company** — each tenant row shows one of three states in its Company column:
-- Already linked — shows the company name as a link; clicking it jumps to that company filtered in the Companies list.
-- A suggested match exists but isn't confirmed yet — shows "Suggested: {company name}" with a **Confirm Link** button.
-- No match found — shows a **Create Company** button, which opens a form (sector, country, and account manager required) to create a brand-new CRM company directly from this tenant's data.
+The ManageOne page lists synced tenants with:
 
-If the list is empty, it means the nightly ManageOne sync job hasn't run or hasn't found any tenants yet — that's an infrastructure issue, not something to fix from this page.`,
+- Tenant name
+- VDC ID
+- Region and level
+- Domain ID
+- Manager contact
+- ECS used
+- EVS used
+- Project count
+- Last synced time
+- Linked CRM company
+
+## Who Can Access ManageOne
+
+ManageOne is restricted to:
+
+- CEO
+- Head of Business
+
+Other users will see an access restricted message.
+
+## How Tenant Linking Works
+
+Each ManageOne tenant should be linked to the correct CRM company.
+
+If CRM finds a possible match, it shows a suggested company. Click Confirm Link to connect the ManageOne tenant to that company.
+
+If no company exists yet, click Create Company. Choose:
+
+- Sector
+- Country
+- Account Manager
+
+The CRM will create a pending company and link it to the ManageOne tenant.
+
+## Why Linking Matters
+
+Linking ManageOne tenants to CRM companies helps the CRM connect cloud data to the correct customer.
+
+This supports:
+
+- Usage Tracking auto-fill
+- Company cloud usage visibility
+- Cloud Health customer-impact mapping
+- Cloud Advisor recommendations
+- Better customer reporting
+
+## Usage Auto-Fill from ManageOne
+
+Usage Tracking can use linked ManageOne tenant data to preview usage entries.
+
+Use Auto-fill from ManageOne on the Usage page to:
+
+1. Select a company.
+2. Select a month.
+3. Review detected ManageOne usage.
+4. Confirm which entries should be created.
+5. Create usage entries after review.
+
+The system does not blindly create usage entries without user review.
+
+## Company Usage Trends
+
+For linked tenants, CRM can show usage history on the company detail page. Trends appear after enough sync snapshots have been collected.
+
+## Sync Notes
+
+ManageOne data is synced into CRM by backend/sync tooling. The browser page does not connect directly to ManageOne.
+
+If no tenants appear, the ManageOne sync has not loaded tenant data yet.
+
+## Best Practice
+
+Use ManageOne regularly to keep tenant-to-company mapping clean.
+
+Recommended workflow:
+
+1. Open ManageOne.
+2. Review unlinked tenants.
+3. Confirm suggested matches when correct.
+4. Create missing companies when needed.
+5. Assign the correct sector, country, and account manager.
+6. Use Usage Tracking auto-fill after tenants are linked.
+
+## Important Notes
+
+ManageOne is not the live ManageOne console. It does not edit cloud tenants or platform resources.
+
+It is the CRM mapping and visibility layer for synced ManageOne tenant data.`,
   },
   {
     slug: "page-cloud-health",
