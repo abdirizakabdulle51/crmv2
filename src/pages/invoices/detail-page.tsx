@@ -1,7 +1,14 @@
 import { Component, type ReactNode, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { ArrowLeft, FileText, Loader2, LockKeyhole, Send } from "lucide-react";
+import {
+  ArrowLeft,
+  FileText,
+  Loader2,
+  LockKeyhole,
+  Printer,
+  Send,
+} from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
@@ -47,6 +54,15 @@ const STATUS_LABELS: Record<InvoiceStatus, string> = {
   void: "Void",
   cancelled: "Cancelled",
 };
+
+const PRINTABLE_STATUSES = new Set<InvoiceStatus>([
+  "draft",
+  "issued",
+  "sent",
+  "partially_paid",
+  "paid",
+  "overdue",
+]);
 
 function formatDate(value?: number) {
   if (!value) return "-";
@@ -262,111 +278,122 @@ function InvoiceDetailContent() {
             Read-only invoice snapshot and history.
           </p>
         </div>
-        {invoice.status === "draft" ? (
-          <AlertDialog
-            open={issueDialogOpen}
-            onOpenChange={(open) => {
-              if (!isIssuing) setIssueDialogOpen(open);
-            }}
-          >
+        <div className="flex flex-wrap gap-2">
+          {PRINTABLE_STATUSES.has(invoice.status) ? (
             <Button
-              className="bg-cyan-600 text-white hover:bg-cyan-700"
-              onClick={() => setIssueDialogOpen(true)}
-              disabled={isIssuing}
+              variant="secondary"
+              onClick={() => navigate(`/invoices/${invoice._id}/print`)}
             >
-              {isIssuing ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <LockKeyhole className="mr-2 h-4 w-4" />
-              )}
-              {isIssuing ? "Issuing..." : "Issue Invoice"}
+              <Printer className="mr-2 h-4 w-4" />
+              Print / Export PDF
             </Button>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>
-                  Issue and lock this invoice?
-                </AlertDialogTitle>
-                <AlertDialogDescription asChild>
-                  <div className="space-y-2 text-left">
-                    <p>
-                      Issuing will lock the invoice and finalize the current
-                      snapshot.
-                    </p>
-                    <ul className="list-disc space-y-1 pl-5">
-                      <li>Locked invoices cannot be edited.</li>
-                      <li>The invoice will receive an invoice number.</li>
-                      <li>This does not send email yet.</li>
-                    </ul>
-                  </div>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel disabled={isIssuing}>
-                  Cancel
-                </AlertDialogCancel>
-                <AlertDialogAction
-                  disabled={isIssuing}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    void handleIssueInvoice();
-                  }}
-                >
-                  {isIssuing ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
-                  {isIssuing ? "Issuing..." : "Issue Invoice"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        ) : null}
-        {invoice.status === "issued" ? (
-          <AlertDialog
-            open={sendDialogOpen}
-            onOpenChange={(open) => {
-              if (!isSending) setSendDialogOpen(open);
-            }}
-          >
-            <Button
-              className="bg-cyan-600 text-white hover:bg-cyan-700"
-              onClick={() => setSendDialogOpen(true)}
-              disabled={isSending}
+          ) : null}
+          {invoice.status === "draft" ? (
+            <AlertDialog
+              open={issueDialogOpen}
+              onOpenChange={(open) => {
+                if (!isIssuing) setIssueDialogOpen(open);
+              }}
             >
-              {isSending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="mr-2 h-4 w-4" />
-              )}
-              {isSending ? "Sending..." : "Send Invoice"}
-            </Button>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Send this invoice?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This will email invoice {title} to{" "}
-                  {sendRecipient || "the customer email on the invoice"}.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel disabled={isSending}>
-                  Cancel
-                </AlertDialogCancel>
-                <AlertDialogAction
-                  disabled={isSending}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    void handleSendInvoice();
-                  }}
-                >
-                  {isSending ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
-                  {isSending ? "Sending..." : "Send Invoice"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        ) : null}
+              <Button
+                className="bg-cyan-600 text-white hover:bg-cyan-700"
+                onClick={() => setIssueDialogOpen(true)}
+                disabled={isIssuing}
+              >
+                {isIssuing ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <LockKeyhole className="mr-2 h-4 w-4" />
+                )}
+                {isIssuing ? "Issuing..." : "Issue Invoice"}
+              </Button>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Issue and lock this invoice?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription asChild>
+                    <div className="space-y-2 text-left">
+                      <p>
+                        Issuing will lock the invoice and finalize the current
+                        snapshot.
+                      </p>
+                      <ul className="list-disc space-y-1 pl-5">
+                        <li>Locked invoices cannot be edited.</li>
+                        <li>The invoice will receive an invoice number.</li>
+                        <li>This does not send email yet.</li>
+                      </ul>
+                    </div>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isIssuing}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={isIssuing}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void handleIssueInvoice();
+                    }}
+                  >
+                    {isIssuing ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    {isIssuing ? "Issuing..." : "Issue Invoice"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : null}
+          {invoice.status === "issued" ? (
+            <AlertDialog
+              open={sendDialogOpen}
+              onOpenChange={(open) => {
+                if (!isSending) setSendDialogOpen(open);
+              }}
+            >
+              <Button
+                className="bg-cyan-600 text-white hover:bg-cyan-700"
+                onClick={() => setSendDialogOpen(true)}
+                disabled={isSending}
+              >
+                {isSending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="mr-2 h-4 w-4" />
+                )}
+                {isSending ? "Sending..." : "Send Invoice"}
+              </Button>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Send this invoice?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will email invoice {title} to{" "}
+                    {sendRecipient || "the customer email on the invoice"}.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isSending}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={isSending}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void handleSendInvoice();
+                    }}
+                  >
+                    {isSending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    {isSending ? "Sending..." : "Send Invoice"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : null}
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">

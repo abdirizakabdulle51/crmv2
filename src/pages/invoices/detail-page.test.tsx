@@ -140,6 +140,15 @@ function renderDetailPage(initialEntry = "/invoices/invoice-1") {
           }
         />
         <Route
+          path="/invoices/:invoiceId/print"
+          element={
+            <>
+              <div>Invoice Print</div>
+              <LocationProbe />
+            </>
+          }
+        />
+        <Route
           path="/invoices"
           element={
             <>
@@ -247,6 +256,19 @@ describe("InvoiceDetailPage", () => {
     expect(
       screen.queryByRole("button", { name: "Issue Invoice" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("navigates to the invoice print page from Print / Export PDF", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.click(
+      screen.getByRole("button", { name: "Print / Export PDF" }),
+    );
+
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/invoices/invoice-1/print",
+    );
   });
 
   it("shows Send Invoice for issued invoices", () => {
