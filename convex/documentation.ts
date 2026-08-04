@@ -914,10 +914,346 @@ Quotes do not provision cloud resources.
 Always review quote line items and totals before sending to the customer.`,
   },
   {
+    slug: "page-invoices",
+    title: "Invoices",
+    group: "Team Guide",
+    order: 10,
+    visibility: "public",
+    content: `Invoices is where accepted quotes become official customer invoices, payments are recorded, and unpaid balances are followed up.
+
+Use this page when a customer quote has been accepted and the team is ready to bill the customer.
+
+## 1. Invoice System Overview
+
+The invoice workflow is:
+
+1. A quote is created and accepted.
+2. The accepted quote becomes a draft invoice.
+3. The draft invoice is reviewed.
+4. The invoice is issued and locked.
+5. The issued invoice can be printed/exported or emailed to the customer with an official PDF.
+6. Payments are recorded against the invoice.
+7. Unpaid invoices can become overdue.
+8. The system sends follow-up reminders for overdue invoices.
+
+Important rule: an issued invoice is locked. It uses the invoice snapshot saved at the time of issuing, not live company, quote, usage, or catalog data.
+
+## 2. Before You Start
+
+Before creating an invoice, check these items:
+
+- The customer/company exists in Companies.
+- The company has the correct contact or billing email.
+- The company has payment terms selected: Default (Net 7), Net 7, Net 15, or Net 30.
+- The company has an assigned account manager.
+- The account manager has an email address if internal overdue reminders should work.
+- A quote exists and has been moved to Accepted.
+
+Tip: if the customer email is missing, update the company before sending the invoice. The CRM uses billing email first, then contact email.
+
+## 3. Step-by-Step Tutorial
+
+### Step 1: Create or generate a quote
+
+Open Quotes and create a quote in one of these ways:
+
+- Create a manual quote.
+- Generate a quote from Usage for a company and month.
+- Start a quote review from Cloud Advisor when the recommendation has a safe catalog match.
+
+Review the quote line items and totals before continuing.
+
+### Step 2: Accept the quote
+
+Open the quote detail page and change the quote status to Accepted.
+
+Only accepted quotes can become invoices.
+
+### Step 3: Create draft invoice
+
+On an accepted quote, click Create Invoice.
+
+The CRM creates a draft invoice from the accepted quote and takes a snapshot of:
+
+- Customer/company details
+- Contact and billing email
+- Quote line items
+- Quote totals
+- Source month
+- Friendly quote reference, such as Q-2026-00001
+
+The original quote relationship remains stored internally, but customers do not see internal system IDs.
+
+### Step 4: Review the draft invoice
+
+Open Invoices and then open the draft invoice.
+
+Check:
+
+- Customer snapshot
+- Contact and billing email
+- Line items
+- Grand total
+- Balance due
+- Due date, if already set
+- Source month
+- Source quote/reference
+- Notes
+
+Warning: make sure the customer snapshot and line items are correct before issuing. After issuing, the invoice becomes locked.
+
+### Step 5: Issue invoice
+
+Click Issue Invoice on the draft invoice.
+
+The CRM will ask for confirmation because issuing is final.
+
+When issued:
+
+- The invoice receives an invoice number.
+- The invoice status becomes Issued.
+- The invoice is locked.
+- The issue date is saved.
+- The due date is calculated if it was blank.
+
+### Step 6: Print or export PDF
+
+After issuing, click Print / Export PDF.
+
+This opens the customer-facing invoice print page. Use the browser print dialog to print or save as PDF.
+
+The printed invoice uses the locked invoice snapshot and displays friendly source/reference values, not internal IDs.
+
+### Step 7: Send invoice email
+
+On an issued invoice, click Send Invoice.
+
+The CRM emails the customer a short professional message with the official invoice PDF attached.
+
+The email is sent to:
+
+1. Billing email, if available.
+2. Contact email, if billing email is missing.
+
+If neither email exists, sending will fail. Update the company or invoice customer snapshot first.
+
+### Step 8: Record payment
+
+When the customer pays, click Record Payment.
+
+Enter:
+
+- Amount
+- Payment date
+- Method: Bank Transfer, Cash, Mobile Money, Card, or Other
+- Reference, if available
+
+The payment reduces the balance due.
+
+### Step 9: Check payment history and invoice events
+
+After payment is recorded, review:
+
+- Payment History - shows payment amount, date, method, reference, recorded by, and recorded at.
+- Invoice Events - shows invoice creation, issue, send, payment, overdue, and reminder history.
+
+Use these sections to understand what happened without asking another team member.
+
+## 4. Payment Terms Tutorial
+
+Payment terms control how the due date is calculated.
+
+Available terms:
+
+- Default (Net 7)
+- Net 7
+- Net 15
+- Net 30
+
+Net 7 means the invoice is due 7 calendar days after it is issued.
+
+Examples:
+
+- Invoice issued Aug 4 with Net 7: due Aug 11.
+- Invoice issued Aug 4 with Net 15: due Aug 19.
+- Invoice issued Aug 4 with Net 30: due Sep 3.
+
+The due date is calculated when the invoice is issued.
+
+If a draft invoice already has a due date, the CRM preserves that due date when issuing.
+
+Existing issued invoices are not changed when company payment terms are updated later.
+
+## 5. Email and PDF Tutorial
+
+Send Invoice emails the customer.
+
+The email body is short and professional. It does not repeat every invoice line item because the official PDF is attached.
+
+The PDF includes:
+
+- HTG Clouds branding
+- Customer Bill To block
+- Invoice number
+- Invoice date and due date
+- Source month
+- Friendly source reference, such as Q-2026-00001
+- Line items
+- Total
+- Payment communication
+- Bank/payment details
+
+The PDF is generated from the locked invoice snapshot.
+
+Internal system IDs are not shown to customers.
+
+## 6. Payment Recording Tutorial
+
+Use Record Payment when the customer has paid all or part of the invoice.
+
+Full payment:
+
+- Payment amount equals the balance due.
+- Invoice status becomes Paid.
+- Balance due becomes 0.
+
+Partial payment:
+
+- Payment amount is less than the balance due.
+- Invoice status becomes Partially Paid.
+- Balance due is reduced by the payment amount.
+
+The CRM rejects overpayment. If the customer pays more than the balance, ask finance/leadership how to handle it before recording.
+
+Payment reference is useful for bank transfer numbers, mobile money references, receipt numbers, or customer proof of payment.
+
+Recorded By shows the staff member who recorded the payment.
+
+## 7. Overdue and Reminder Tutorial
+
+Every morning, the CRM checks invoice due dates.
+
+An invoice becomes Overdue when:
+
+- The due date has passed.
+- Balance due is still greater than 0.
+- The invoice is Issued, Sent, or Partially Paid.
+
+The CRM does not mark Draft, Paid, Void, or Cancelled invoices overdue.
+
+When an invoice is overdue:
+
+- The status changes to Overdue.
+- An overdue event is added.
+- An internal reminder can be sent to the company account manager.
+- A customer reminder can be sent to the billing/contact email.
+
+Customer overdue reminders include the invoice PDF attachment.
+
+Reminder emails do not send repeatedly every day. The CRM waits 7 days before sending another reminder for the same invoice type.
+
+## 8. Status Guide
+
+- Draft - invoice is being prepared. It can still be reviewed and edited by authorized users.
+- Issued - invoice is official, numbered, and locked. It can be emailed and paid.
+- Sent - invoice was emailed to the customer.
+- Partially Paid - customer paid part of the balance, but money is still due.
+- Paid - customer fully paid the invoice.
+- Overdue - due date passed and balance remains unpaid.
+- Void - invoice is no longer valid and should not be paid.
+- Cancelled - invoice was cancelled and should not continue through the workflow.
+
+## 9. Common Examples
+
+### Customer pays full invoice
+
+Open the invoice, click Record Payment, enter the full balance due, select the method, add the reference, and save.
+
+The invoice becomes Paid.
+
+### Customer pays part of invoice
+
+Open the invoice, click Record Payment, enter the partial amount, and save.
+
+The invoice becomes Partially Paid and the remaining balance stays visible.
+
+### Customer has Net 15 terms
+
+Open the company, edit Payment Terms to Net 15, and save.
+
+The next invoice issued for that company will use Net 15 if the draft invoice does not already have a due date.
+
+### Customer has no billing email
+
+Send Invoice will use contact email if billing email is missing.
+
+If both are missing, update the company/customer email first.
+
+### Old invoice has no quote reference
+
+Older invoices created before friendly quote references may show a blank reference.
+
+This is expected. New invoices created from new quotes use friendly quote references such as Q-2026-00001.
+
+### Invoice is overdue but customer already paid
+
+Record the payment immediately.
+
+If the payment clears the balance, the invoice becomes Paid and should not continue as overdue.
+
+## 10. FAQ / Troubleshooting
+
+### Why can't I edit an issued invoice?
+
+Issued invoices are locked to protect the official billing record. If something is wrong, escalate before changing anything. Corrections should use the approved finance process, not silent editing.
+
+### Why is due date blank?
+
+The invoice may still be Draft or may have been created before due date rules were added. New invoices receive a due date when they are issued.
+
+### Why did due date become Aug 19?
+
+The company likely has Net 15 terms. If an invoice is issued on Aug 4, Net 15 makes the due date Aug 19.
+
+### Why did invoice become overdue?
+
+The due date passed and the balance due was still greater than 0.
+
+### Why did customer not receive email?
+
+Check that the invoice is Issued, the customer has billing/contact email, and the email did not fail. The invoice must be issued before Send Invoice appears.
+
+### Why did customer not receive reminder?
+
+Customer reminders only apply to Overdue invoices with balance due. The customer must have billing/contact email. The system also waits 7 days between reminders.
+
+### Why does an old invoice show no quote reference?
+
+Older invoices may not have a friendly quote reference snapshot. The CRM hides internal system IDs from customer-facing invoice pages.
+
+### Can I resend invoice?
+
+Currently Send Invoice is available for Issued invoices. Once an invoice is Sent, follow the approved internal process if the customer needs another copy.
+
+### Can I delete test invoices?
+
+Do not delete real invoice records. Use the approved void/cancel workflow when available, or ask leadership/engineering for test-data cleanup.
+
+### What should I do if payment was recorded wrong?
+
+Do not try to hide or overwrite the mistake. Escalate to finance/leadership so the correction can be handled with a clear audit trail.
+
+## Important Notes
+
+Invoices do not change quotes, usage entries, company records, or service catalog pricing after they are issued.
+
+Always review before issuing. Issuing is the step that turns a draft into an official locked invoice.`,
+  },
+  {
     slug: "page-ai-recs",
     title: "Cloud Advisor",
     group: "Team Guide",
-    order: 10,
+    order: 11,
     visibility: "public",
     content: `Cloud Advisor surfaces cross-sell, risk, and cloud-improvement opportunities based on actual CRM and cloud data. The recommendations are rule-based; AI narratives only summarize the rule-based findings in clearer language.
 
@@ -939,7 +1275,7 @@ Always review quote line items and totals before sending to the customer.`,
     slug: "page-coach",
     title: "Coach",
     group: "Team Guide",
-    order: 11,
+    order: 12,
     visibility: "public",
     content: `Coach is the daily sales guidance page for Account Managers and leadership. It helps the team quickly understand who is ahead, who is behind, which deals need attention, and what each Account Manager should focus on today.
 
@@ -1025,7 +1361,7 @@ To update the data shown in Coach, update the source areas:
     slug: "page-activities",
     title: "Activities",
     group: "Team Guide",
-    order: 12,
+    order: 13,
     visibility: "public",
     content: `Activities is the sales activity log for customer follow-ups and opportunity work. Use it to record calls, meetings, and proposals sent for Pipeline leads.
 
@@ -1106,7 +1442,7 @@ Activities does not send emails, create reminders, attach files, or update Pipel
     slug: "page-manageone",
     title: "ManageOne",
     group: "Team Guide",
-    order: 13,
+    order: 14,
     visibility: "public",
     content: `ManageOne shows tenant and VDC information synced from Huawei ManageOne into the CRM. It helps leadership connect cloud platform tenants to CRM companies so usage, Cloud Health, and customer reporting can work correctly.
 
@@ -1207,7 +1543,7 @@ It is the CRM mapping and visibility layer for synced ManageOne tenant data.`,
     slug: "page-cloud-health",
     title: "Cloud Health",
     group: "Team Guide",
-    order: 14,
+    order: 15,
     visibility: "public",
     content: `*Leadership and Country GM only — everyone else sees a restricted-access notice here. CEO and Head of Business can also manage ping targets; Country GM is view-only for ping target management.*
 
@@ -1231,7 +1567,7 @@ Cloud Health is for catching alarm, network, capacity, and host-pressure issues 
     slug: "page-tasks",
     title: "Tasks",
     group: "Team Guide",
-    order: 15,
+    order: 16,
     visibility: "public",
     content: `Tasks helps the team create, assign, track, and discuss internal CRM work without using a separate project-management tool.
 
@@ -1465,7 +1801,7 @@ If you cannot see or assign a task, it is usually because it is outside your rol
     slug: "page-team",
     title: "Team",
     group: "Team Guide",
-    order: 16,
+    order: 17,
     visibility: "public",
     content: `*Leadership only (CEO / Head of Business) can make changes here — other roles can view team members' roles and country assignments, but can't edit anything.*
 
@@ -1481,7 +1817,7 @@ If you cannot see or assign a task, it is usually because it is outside your rol
     slug: "page-settings",
     title: "Settings",
     group: "Team Guide",
-    order: 17,
+    order: 18,
     visibility: "public",
     content: `**Profile** (everyone) — update your own display name here.
 
@@ -1608,6 +1944,74 @@ export const remove = mutation({
   },
 });
 
+export const syncPageDocumentationSections = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanEditDocumentation(user);
+
+    const now = Date.now();
+    const inserted: string[] = [];
+    const updated: string[] = [];
+
+    for (const section of PAGE_DOCUMENTATION_SECTIONS) {
+      const existing = await ctx.db
+        .query("documentationSections")
+        .withIndex("by_slug", (q) => q.eq("slug", section.slug))
+        .unique();
+
+      if (!existing) {
+        await ctx.db.insert("documentationSections", {
+          ...section,
+          updatedAt: now,
+          updatedBy: user._id,
+        });
+        inserted.push(section.slug);
+        continue;
+      }
+
+      const metadataPatch: Partial<Doc<"documentationSections">> = {};
+      if (existing.title !== section.title) {
+        metadataPatch.title = section.title;
+      }
+      if (existing.group !== section.group) {
+        metadataPatch.group = section.group;
+      }
+      if (existing.order !== section.order) {
+        metadataPatch.order = section.order;
+      }
+      if (existing.visibility !== section.visibility) {
+        metadataPatch.visibility = section.visibility;
+      }
+
+      if (Object.keys(metadataPatch).length > 0) {
+        await ctx.db.patch(existing._id, {
+          ...metadataPatch,
+          updatedAt: now,
+          updatedBy: user._id,
+        });
+        updated.push(section.slug);
+      }
+    }
+
+    const commonWorkflows = await ctx.db
+      .query("documentationSections")
+      .withIndex("by_slug", (q) => q.eq("slug", "common-workflows"))
+      .unique();
+
+    if (commonWorkflows && commonWorkflows.order !== 19) {
+      await ctx.db.patch(commonWorkflows._id, {
+        order: 19,
+        updatedAt: now,
+        updatedBy: user._id,
+      });
+      updated.push("common-workflows");
+    }
+
+    return { inserted, updated };
+  },
+});
+
 export const seedInitialDocs = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -1674,7 +2078,7 @@ export const replaceNavigationSection = internalMutation({
       .unique();
 
     if (commonWorkflows) {
-      await ctx.db.patch(commonWorkflows._id, { order: 18 });
+      await ctx.db.patch(commonWorkflows._id, { order: 19 });
     }
 
     return { removed, inserted };
