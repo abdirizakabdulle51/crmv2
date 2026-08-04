@@ -22,21 +22,40 @@ vi.mock("@/convex/_generated/api.js", () => ({
   api: {
     companies: { list: "companies.list" },
     invoices: { list: "invoices.list" },
+    users: { getCurrentUser: "users.getCurrentUser" },
   },
 }));
 
 const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
   invoices: [] as Doc<"invoices">[],
+  currentUser: null as Doc<"users"> | null,
+  invoiceListArgs: [] as unknown[],
 }));
 
 vi.mock("convex/react", () => ({
-  useQuery: (query: string) => {
+  useQuery: (query: string, args?: unknown) => {
     if (query === "companies.list") return mocks.companies;
-    if (query === "invoices.list") return mocks.invoices;
+    if (query === "invoices.list") {
+      mocks.invoiceListArgs.push(args);
+      return mocks.invoices;
+    }
+    if (query === "users.getCurrentUser") return mocks.currentUser;
     return undefined;
   },
 }));
+
+function crmUser(overrides: Partial<Doc<"users">> = {}): Doc<"users"> {
+  return {
+    _id: "user-1" as Id<"users">,
+    _creationTime: 1,
+    tokenIdentifier: "user-1-token",
+    name: "Amina",
+    email: "amina@example.com",
+    role: "account_manager",
+    ...overrides,
+  };
+}
 
 function company(id: string, name: string): Doc<"companies"> {
   return {
@@ -128,6 +147,8 @@ async function chooseSelectOption(label: RegExp | string, option: string) {
 
 describe("InvoicesPage", () => {
   beforeEach(() => {
+    mocks.invoiceListArgs = [];
+    mocks.currentUser = crmUser();
     mocks.companies = [
       company("company-1", "Hormuud"),
       company("company-2", "Telesom"),
@@ -263,5 +284,80 @@ describe("InvoicesPage", () => {
       .toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Due Date" }))
       .toBeInTheDocument();
+  });
+
+  it("shows an admin include toggle and requests test/hidden invoices when enabled", async () => {
+    const user = userEvent.setup();
+    mocks.currentUser = crmUser({ role: "ceo" });
+
+    renderInvoicesPage();
+
+    expect(mocks.invoiceListArgs.at(-1)).toEqual({
+      includeTestHidden: false,
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Include test/hidden" }),
+    );
+
+    expect(mocks.invoiceListArgs.at(-1)).toEqual({
+      includeTestHidden: true,
+    });
+    expect(
+      screen.getByRole("button", { name: "Hide test/hidden" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the include test/hidden toggle to non-admin users", () => {
+    mocks.currentUser = crmUser({ role: "country_gm" });
+
+    renderInvoicesPage();
+
+    expect(
+      screen.queryByRole("button", { name: "Include test/hidden" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("excludes void, cancelled, and test invoices from normal summary totals", () => {
+    mocks.currentUser = crmUser({ role: "ceo" });
+    mocks.invoices = [
+      invoice("invoice-1", {
+        grandTotal: 100,
+        balanceDue: 100,
+      }),
+      invoice("invoice-2", {
+        invoiceNumber: "INV-2026-00002",
+        status: "paid",
+        grandTotal: 200,
+        amountPaid: 200,
+        balanceDue: 0,
+      }),
+      invoice("invoice-3", {
+        invoiceNumber: "INV-2026-00003",
+        status: "void",
+        grandTotal: 333,
+        amountPaid: 333,
+        balanceDue: 0,
+      }),
+      invoice("invoice-4", {
+        invoiceNumber: "INV-2026-00004",
+        status: "cancelled",
+        grandTotal: 400,
+        balanceDue: 400,
+      }),
+      invoice("invoice-5", {
+        invoiceNumber: "INV-2026-00005",
+        isTest: true,
+        hiddenAt: Date.UTC(2026, 7, 3),
+        grandTotal: 500,
+        balanceDue: 500,
+      }),
+    ];
+
+    renderInvoicesPage();
+
+    expect(screen.getByText("$300.00")).toBeInTheDocument();
+    expect(screen.getAllByText("$100.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$200.00").length).toBeGreaterThan(0);
+    expect(screen.getByText("Test/Hidden")).toBeInTheDocument();
   });
 });

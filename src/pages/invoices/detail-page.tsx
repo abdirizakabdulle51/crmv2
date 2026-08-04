@@ -9,6 +9,7 @@ import {
   LockKeyhole,
   Printer,
   Send,
+  ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
@@ -55,6 +56,7 @@ import {
   SelectValue,
 } from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import { Textarea } from "@/components/ui/textarea.tsx";
 import { formatCurrency } from "@/lib/format.ts";
 
 type Invoice = Doc<"invoices">;
@@ -62,6 +64,7 @@ type InvoiceEvent = Doc<"invoiceEvents">;
 type InvoicePayment = Doc<"invoicePayments">;
 type InvoiceStatus = Invoice["status"];
 type User = Doc<"users">;
+type CleanupAction = "cancel" | "void" | "mark_test" | "unmark_test";
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
   draft: "Draft",
@@ -88,6 +91,12 @@ const PAYABLE_STATUSES = new Set<InvoiceStatus>([
   "sent",
   "overdue",
   "partially_paid",
+]);
+const VOIDABLE_STATUSES = new Set<InvoiceStatus>([
+  "issued",
+  "sent",
+  "partially_paid",
+  "overdue",
 ]);
 
 const PAYMENT_METHODS = [
@@ -172,8 +181,14 @@ function eventLabel(type: InvoiceEvent["type"]) {
       return "Draft updated";
     case "issued":
       return "Issued";
+    case "cancelled":
+      return "Cancelled";
     case "voided":
       return "Voided";
+    case "marked_test":
+      return "Marked test";
+    case "unmarked_test":
+      return "Unmarked test";
     case "sent":
       return "Sent";
     case "payment_recorded":
@@ -240,9 +255,14 @@ function InvoiceDetailContent() {
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [cleanupAction, setCleanupAction] = useState<CleanupAction | null>(
+    null,
+  );
+  const [cleanupReason, setCleanupReason] = useState("");
   const [isIssuing, setIsIssuing] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isRecordingPayment, setIsRecordingPayment] = useState(false);
+  const [isCleaningUp, setIsCleaningUp] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(() =>
     formatDateInput(Date.now()),
@@ -262,8 +282,12 @@ function InvoiceDetailContent() {
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
   );
   const users = useQuery(api.users.listAll, {});
+  const currentUser = useQuery(api.users.getCurrentUser, {});
   const issueInvoice = useMutation(api.invoices.issueInvoice);
   const recordPayment = useMutation(api.invoices.recordPayment);
+  const cancelDraftInvoice = useMutation(api.invoices.cancelDraftInvoice);
+  const voidInvoice = useMutation(api.invoices.voidInvoice);
+  const setInvoiceTestMode = useMutation(api.invoices.setInvoiceTestMode);
   const sendInvoiceEmail = useAction(api.invoices.sendInvoiceEmail);
 
   if (!invoiceId) {
@@ -274,7 +298,7 @@ function InvoiceDetailContent() {
     return <UnavailableState />;
   }
 
-  if (!invoice || !events || !payments || !users) {
+  if (!invoice || !events || !payments || !users || currentUser === undefined) {
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-8 w-48" />
@@ -288,6 +312,9 @@ function InvoiceDetailContent() {
   const sendRecipient =
     invoice.billingEmail?.trim() || invoice.contactEmail?.trim();
   const canRecordPayment = PAYABLE_STATUSES.has(invoice.status);
+  const isCleanupAdmin =
+    currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
+  const isTestHidden = Boolean(invoice.isTest || invoice.hiddenAt);
   const usersById = new Map(users.map((user) => [user._id, user]));
 
   const handleIssueInvoice = async () => {
@@ -360,6 +387,69 @@ function InvoiceDetailContent() {
     }
   };
 
+  const closeCleanupDialog = () => {
+    if (isCleaningUp) return;
+    setCleanupAction(null);
+    setCleanupReason("");
+  };
+
+  const cleanupDialogTitle =
+    cleanupAction === "cancel"
+      ? "Cancel draft invoice?"
+      : cleanupAction === "void"
+        ? "Void invoice?"
+        : cleanupAction === "mark_test"
+          ? "Mark invoice as test/hidden?"
+          : "Unmark invoice as test/hidden?";
+
+  const cleanupConfirmLabel =
+    cleanupAction === "cancel"
+      ? "Cancel Draft"
+      : cleanupAction === "void"
+        ? "Void Invoice"
+        : cleanupAction === "mark_test"
+          ? "Mark as Test"
+          : "Unmark Test";
+
+  const handleCleanup = async () => {
+    if (!cleanupAction) return;
+    const reason = cleanupReason.trim();
+    if (!reason) {
+      toast.error("Cleanup reason is required");
+      return;
+    }
+
+    setIsCleaningUp(true);
+    try {
+      if (cleanupAction === "cancel") {
+        await cancelDraftInvoice({ invoiceId: invoice._id, reason });
+        toast.success("Draft invoice cancelled");
+      } else if (cleanupAction === "void") {
+        await voidInvoice({ invoiceId: invoice._id, reason });
+        toast.success("Invoice voided");
+      } else {
+        await setInvoiceTestMode({
+          invoiceId: invoice._id,
+          isTest: cleanupAction === "mark_test",
+          reason,
+        });
+        toast.success(
+          cleanupAction === "mark_test"
+            ? "Invoice marked as test/hidden"
+            : "Invoice unmarked as test/hidden",
+        );
+      }
+      setCleanupAction(null);
+      setCleanupReason("");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not update invoice";
+      toast.error(message);
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
+
   return (
     <div className="space-y-6 p-6 md:p-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -375,6 +465,7 @@ function InvoiceDetailContent() {
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
             {statusBadge(invoice.status)}
+            {isTestHidden ? <Badge variant="outline">Test/Hidden</Badge> : null}
           </div>
           <p className="mt-1 text-muted-foreground">
             Read-only invoice snapshot and history.
@@ -503,6 +594,40 @@ function InvoiceDetailContent() {
             >
               <CreditCard className="mr-2 h-4 w-4" />
               Record Payment
+            </Button>
+          ) : null}
+          {isCleanupAdmin && invoice.status === "draft" ? (
+            <Button
+              variant="outline"
+              className="border-destructive/40 text-destructive hover:bg-destructive/10"
+              onClick={() => setCleanupAction("cancel")}
+              disabled={isCleaningUp}
+            >
+              <ShieldAlert className="mr-2 h-4 w-4" />
+              Cancel Draft
+            </Button>
+          ) : null}
+          {isCleanupAdmin && VOIDABLE_STATUSES.has(invoice.status) ? (
+            <Button
+              variant="outline"
+              className="border-destructive/40 text-destructive hover:bg-destructive/10"
+              onClick={() => setCleanupAction("void")}
+              disabled={isCleaningUp}
+            >
+              <ShieldAlert className="mr-2 h-4 w-4" />
+              Void Invoice
+            </Button>
+          ) : null}
+          {isCleanupAdmin ? (
+            <Button
+              variant="outline"
+              onClick={() =>
+                setCleanupAction(isTestHidden ? "unmark_test" : "mark_test")
+              }
+              disabled={isCleaningUp}
+            >
+              <ShieldAlert className="mr-2 h-4 w-4" />
+              {isTestHidden ? "Unmark Test" : "Mark as Test"}
             </Button>
           ) : null}
         </div>
@@ -751,6 +876,55 @@ function InvoiceDetailContent() {
         }}
         onSubmit={handleRecordPayment}
       />
+      <Dialog
+        open={cleanupAction !== null}
+        onOpenChange={(open) => {
+          if (!open) closeCleanupDialog();
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{cleanupDialogTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-muted-foreground">
+              This does not delete the invoice. It keeps the invoice snapshot,
+              payments, and audit history for review.
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cleanup-reason">Reason</Label>
+              <Textarea
+                id="cleanup-reason"
+                value={cleanupReason}
+                onChange={(event) => setCleanupReason(event.target.value)}
+                placeholder="Explain why this cleanup action is needed"
+                rows={4}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={closeCleanupDialog}
+              disabled={isCleaningUp}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleCleanup()}
+              disabled={isCleaningUp}
+            >
+              {isCleaningUp ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              {isCleaningUp ? "Saving..." : cleanupConfirmLabel}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -100,7 +100,13 @@ function statusBadge(status: InvoiceStatus) {
 
 export default function InvoicesPage() {
   const navigate = useNavigate();
-  const invoices = useQuery(api.invoices.list, {});
+  const currentUser = useQuery(api.users.getCurrentUser, {});
+  const [includeTestHidden, setIncludeTestHidden] = useState(false);
+  const canIncludeTestHidden =
+    currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
+  const invoices = useQuery(api.invoices.list, {
+    includeTestHidden: canIncludeTestHidden ? includeTestHidden : false,
+  });
   const companies = useQuery(api.companies.list, {});
   const [statusFilter, setStatusFilter] = useState<"all" | InvoiceStatus>(
     "all",
@@ -127,13 +133,21 @@ export default function InvoicesPage() {
     );
   }
 
-  const totalInvoiced = invoices
+  const normalSummaryInvoices = invoices.filter(
+    (invoice) =>
+      invoice.status !== "void" &&
+      invoice.status !== "cancelled" &&
+      !invoice.isTest &&
+      !invoice.hiddenAt,
+  );
+
+  const totalInvoiced = normalSummaryInvoices
     .filter(
       (invoice) =>
         invoice.status !== "void" && invoice.status !== "cancelled",
     )
     .reduce((sum, invoice) => sum + invoice.grandTotal, 0);
-  const outstanding = invoices
+  const outstanding = normalSummaryInvoices
     .filter(
       (invoice) =>
         invoice.status !== "void" &&
@@ -141,8 +155,11 @@ export default function InvoicesPage() {
         invoice.status !== "paid",
     )
     .reduce((sum, invoice) => sum + invoice.balanceDue, 0);
-  const paid = invoices.reduce((sum, invoice) => sum + invoice.amountPaid, 0);
-  const overdue = invoices
+  const paid = normalSummaryInvoices.reduce(
+    (sum, invoice) => sum + invoice.amountPaid,
+    0,
+  );
+  const overdue = normalSummaryInvoices
     .filter((invoice) => invoice.status === "overdue")
     .reduce((sum, invoice) => sum + invoice.balanceDue, 0);
 
@@ -271,6 +288,15 @@ export default function InvoicesPage() {
             ))}
           </SelectContent>
         </Select>
+        {canIncludeTestHidden ? (
+          <Button
+            type="button"
+            variant={includeTestHidden ? "secondary" : "outline"}
+            onClick={() => setIncludeTestHidden((value) => !value)}
+          >
+            {includeTestHidden ? "Hide test/hidden" : "Include test/hidden"}
+          </Button>
+        ) : null}
       </div>
 
       {invoices.length === 0 ? (
@@ -335,7 +361,12 @@ export default function InvoicesPage() {
                       }}
                     >
                       <td className="p-3 font-medium">
-                        {invoice.invoiceNumber ?? "Draft"}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{invoice.invoiceNumber ?? "Draft"}</span>
+                          {invoice.isTest || invoice.hiddenAt ? (
+                            <Badge variant="outline">Test/Hidden</Badge>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="p-3 text-muted-foreground">
                         {formatDate(invoice.issueDate ?? invoice.createdAt)}
