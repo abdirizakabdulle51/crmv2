@@ -243,15 +243,42 @@ function InvoicePrintContent() {
         }
 
         @media print {
+          html,
           body {
             background: #fff !important;
+            margin: 0 !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+            padding: 0 !important;
+            width: 100% !important;
           }
+          #root {
+            min-height: 0 !important;
+            overflow: visible !important;
+            width: 100% !important;
+          }
+          body * {
+            visibility: hidden !important;
+          }
+          .invoice-print-shell,
+          .invoice-print-shell * {
+            visibility: visible !important;
+          }
+          aside,
+          nav,
+          [data-testid="app-top-notification-area"],
           .invoice-print-actions {
             display: none !important;
           }
           .invoice-print-shell {
-            padding: 0 !important;
             background: #fff !important;
+            inset: 0 auto auto 0 !important;
+            margin: 0 !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+            padding: 0 !important;
+            position: absolute !important;
+            width: 100% !important;
           }
           .invoice-page {
             box-shadow: none !important;
@@ -429,21 +456,24 @@ function InvoicePrintContent() {
         }
 
         .payment-note {
-          bottom: 36mm;
+          border-top: 1px solid #d1d5db;
+          bottom: 34mm;
           font-size: 13px;
           left: 14mm;
+          line-height: 1.45;
+          padding-top: 5mm;
           position: absolute;
-          width: 112mm;
+          width: 118mm;
         }
 
         .payment-note p {
-          margin: 0 0 8px;
+          margin: 0 0 6px;
         }
 
         .amount-due {
           color: #6b7280;
           font-size: 14px;
-          margin-top: 10mm;
+          margin-top: 7mm;
         }
 
         .payment-instruction {
@@ -572,7 +602,7 @@ function InvoicePrintContent() {
             </div>
           </div>
 
-          <div className="payment-note">
+          <div className="payment-note" aria-label="Payment communication">
             <p>
               Payment Communication: <strong>{invoiceNumber}</strong>
               <br />

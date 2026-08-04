@@ -215,6 +215,7 @@ describe("InvoicePrintPage", () => {
   it("includes payment communication, instructions, and bank details", () => {
     renderPrintPage();
 
+    expect(screen.getByLabelText("Payment communication")).toBeInTheDocument();
     expect(screen.getByText(/Payment Communication:/)).toHaveTextContent(
       "Payment Communication: INV/2026/00002",
     );
@@ -232,6 +233,20 @@ describe("InvoicePrintPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("MOGADISHU - SOMALIA")).toBeInTheDocument();
     expect(screen.getByText("All fees are listed in USD")).toBeInTheDocument();
+  });
+
+  it("isolates invoice pages from app navigation during printing", () => {
+    renderPrintPage();
+
+    const printStyles = document.querySelector("style")?.textContent ?? "";
+
+    expect(printStyles).toContain("body *");
+    expect(printStyles).toContain("visibility: hidden !important");
+    expect(printStyles).toContain(".invoice-print-shell *");
+    expect(printStyles).toContain("visibility: visible !important");
+    expect(printStyles).toContain("[data-testid=\"app-top-notification-area\"]");
+    expect(printStyles).toContain("aside");
+    expect(printStyles).toContain("nav");
   });
 
   it("falls back to contact email when billing email is unavailable", () => {
