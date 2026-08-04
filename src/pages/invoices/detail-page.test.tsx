@@ -10,8 +10,10 @@ vi.mock("@/convex/_generated/api.js", () => ({
     invoices: {
       getById: "invoices.getById",
       issueInvoice: "invoices.issueInvoice",
+      recordPayment: "invoices.recordPayment",
       sendInvoiceEmail: "invoices.sendInvoiceEmail",
       listEvents: "invoices.listEvents",
+      listPayments: "invoices.listPayments",
     },
   },
 }));
@@ -19,7 +21,9 @@ vi.mock("@/convex/_generated/api.js", () => ({
 const mocks = vi.hoisted(() => ({
   invoice: undefined as Doc<"invoices"> | null | undefined,
   events: undefined as Doc<"invoiceEvents">[] | undefined,
+  payments: undefined as Doc<"invoicePayments">[] | undefined,
   issueInvoice: vi.fn(),
+  recordPayment: vi.fn(),
   sendInvoiceEmail: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -32,11 +36,13 @@ vi.mock("convex/react", () => ({
   },
   useMutation: (mutation: string) => {
     if (mutation === "invoices.issueInvoice") return mocks.issueInvoice;
+    if (mutation === "invoices.recordPayment") return mocks.recordPayment;
     return vi.fn();
   },
   useQuery: (query: string) => {
     if (query === "invoices.getById") return mocks.invoice;
     if (query === "invoices.listEvents") return mocks.events;
+    if (query === "invoices.listPayments") return mocks.payments;
     return undefined;
   },
 }));
@@ -121,6 +127,24 @@ function invoiceEvent(
   };
 }
 
+function invoicePayment(
+  id: string,
+  overrides: Partial<Doc<"invoicePayments">> = {},
+): Doc<"invoicePayments"> {
+  return {
+    _id: id as Id<"invoicePayments">,
+    _creationTime: 1,
+    invoiceId: "invoice-1" as Id<"invoices">,
+    amount: 200,
+    paidAt: Date.UTC(2026, 7, 4),
+    method: "Bank Transfer",
+    reference: "SSB-1001",
+    recordedBy: "user-1" as Id<"users">,
+    createdAt: Date.UTC(2026, 7, 4, 10, 30),
+    ...overrides,
+  };
+}
+
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location">{location.pathname}</div>;
@@ -167,7 +191,9 @@ describe("InvoiceDetailPage", () => {
     vi.clearAllMocks();
     mocks.invoice = invoice();
     mocks.issueInvoice.mockResolvedValue(undefined);
+    mocks.recordPayment.mockResolvedValue(undefined);
     mocks.sendInvoiceEmail.mockResolvedValue(undefined);
+    mocks.payments = [];
     mocks.events = [
       invoiceEvent("event-1"),
       invoiceEvent("event-2", {
@@ -205,6 +231,8 @@ describe("InvoiceDetailPage", () => {
     expect(screen.getAllByText("$1,200.00").length).toBeGreaterThan(0);
     expect(screen.getByText("$200.00")).toBeInTheDocument();
     expect(screen.getByText("$1,000.00")).toBeInTheDocument();
+    expect(screen.getByText("Payment History")).toBeInTheDocument();
+    expect(screen.getByText("No payments recorded yet.")).toBeInTheDocument();
     expect(
       screen.getByText("Invoice copied from accepted quote."),
     ).toBeInTheDocument();
@@ -313,6 +341,130 @@ describe("InvoiceDetailPage", () => {
     expect(
       screen.queryByRole("button", { name: "Send Invoice" }),
     ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    "issued",
+    "sent",
+    "overdue",
+    "partially_paid",
+  ] as const)("shows Record Payment for %s invoices", (status) => {
+    mocks.invoice = invoice({ status });
+
+    renderDetailPage();
+
+    expect(
+      screen.getByRole("button", { name: "Record Payment" }),
+    ).toBeInTheDocument();
+  });
+
+  it.each(["draft", "paid", "void", "cancelled"] as const)(
+    "hides Record Payment for %s invoices",
+    (status) => {
+      mocks.invoice = invoice({ status });
+
+      renderDetailPage();
+
+      expect(
+        screen.queryByRole("button", { name: "Record Payment" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("opens the payment dialog with balance due context", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Record Payment" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Record Payment" });
+    expect(within(dialog).getByText("Current balance due")).toBeInTheDocument();
+    expect(within(dialog).getByText("$1,000.00")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Amount")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Payment date")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Payment method")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Reference")).toBeInTheDocument();
+  });
+
+  it("records a valid payment and shows a success toast", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Record Payment" }));
+    const dialog = screen.getByRole("dialog", { name: "Record Payment" });
+    await user.type(within(dialog).getByLabelText("Amount"), "250");
+    await user.clear(within(dialog).getByLabelText("Payment date"));
+    await user.type(within(dialog).getByLabelText("Payment date"), "2026-08-04");
+    await user.type(within(dialog).getByLabelText("Reference"), "SSB-2002");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Record Payment" }),
+    );
+
+    expect(mocks.recordPayment).toHaveBeenCalledWith({
+      invoiceId: "invoice-1",
+      amount: 250,
+      paidAt: new Date("2026-08-04T00:00:00").getTime(),
+      method: "Bank Transfer",
+      reference: "SSB-2002",
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Payment recorded");
+  });
+
+  it("blocks over-balance payment submission in the dialog", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Record Payment" }));
+    const dialog = screen.getByRole("dialog", { name: "Record Payment" });
+    await user.type(within(dialog).getByLabelText("Amount"), "1001");
+
+    expect(
+      within(dialog).getByText("Payment cannot exceed the balance due."),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Record Payment" }),
+    ).toBeDisabled();
+    expect(mocks.recordPayment).not.toHaveBeenCalled();
+  });
+
+  it("shows an error toast if recording payment fails", async () => {
+    const user = userEvent.setup();
+    mocks.recordPayment.mockRejectedValue(new Error("FORBIDDEN"));
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Record Payment" }));
+    const dialog = screen.getByRole("dialog", { name: "Record Payment" });
+    await user.type(within(dialog).getByLabelText("Amount"), "100");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Record Payment" }),
+    );
+
+    expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");
+  });
+
+  it("renders payment history", () => {
+    mocks.payments = [
+      invoicePayment("payment-1"),
+      invoicePayment("payment-2", {
+        amount: 50,
+        paidAt: Date.UTC(2026, 7, 5),
+        method: "Cash",
+        reference: undefined,
+      }),
+    ];
+
+    renderDetailPage();
+
+    const history = screen
+      .getByText("Payment History")
+      .closest("[data-slot='card']");
+    expect(history).not.toBeNull();
+    expect(within(history as HTMLElement).getByText("$200.00")).toBeInTheDocument();
+    expect(within(history as HTMLElement).getByText("Bank Transfer")).toBeInTheDocument();
+    expect(within(history as HTMLElement).getByText("SSB-1001")).toBeInTheDocument();
+    expect(within(history as HTMLElement).getAllByText("user-1").length).toBeGreaterThan(0);
+    expect(within(history as HTMLElement).getByText("$50.00")).toBeInTheDocument();
+    expect(within(history as HTMLElement).getByText("Cash")).toBeInTheDocument();
   });
 
   it("opens confirmation before issuing a draft invoice", async () => {

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
   ArrowLeft,
+  CreditCard,
   FileText,
   Loader2,
   LockKeyhole,
@@ -31,17 +32,34 @@ import {
   CardTitle,
 } from "@/components/ui/card.tsx";
 import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog.tsx";
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty.tsx";
+import { Input } from "@/components/ui/input.tsx";
+import { Label } from "@/components/ui/label.tsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { formatCurrency } from "@/lib/format.ts";
 
 type Invoice = Doc<"invoices">;
 type InvoiceEvent = Doc<"invoiceEvents">;
+type InvoicePayment = Doc<"invoicePayments">;
 type InvoiceStatus = Invoice["status"];
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
@@ -64,6 +82,21 @@ const PRINTABLE_STATUSES = new Set<InvoiceStatus>([
   "overdue",
 ]);
 
+const PAYABLE_STATUSES = new Set<InvoiceStatus>([
+  "issued",
+  "sent",
+  "overdue",
+  "partially_paid",
+]);
+
+const PAYMENT_METHODS = [
+  "Bank Transfer",
+  "Cash",
+  "Mobile Money",
+  "Card",
+  "Other",
+];
+
 function formatDate(value?: number) {
   if (!value) return "-";
   return new Intl.DateTimeFormat("en-US", {
@@ -71,6 +104,10 @@ function formatDate(value?: number) {
     day: "numeric",
     year: "numeric",
   }).format(new Date(value));
+}
+
+function formatDateInput(value: number) {
+  return new Date(value).toISOString().slice(0, 10);
 }
 
 function formatDateTime(value?: number) {
@@ -141,6 +178,10 @@ function eventLabel(type: InvoiceEvent["type"]) {
   }
 }
 
+function parsePaymentDate(value: string) {
+  return value ? new Date(`${value}T00:00:00`).getTime() : undefined;
+}
+
 function UnavailableState() {
   const navigate = useNavigate();
 
@@ -193,8 +234,16 @@ function InvoiceDetailContent() {
   const navigate = useNavigate();
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [isIssuing, setIsIssuing] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isRecordingPayment, setIsRecordingPayment] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentDate, setPaymentDate] = useState(() =>
+    formatDateInput(Date.now()),
+  );
+  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]);
+  const [paymentReference, setPaymentReference] = useState("");
   const invoice = useQuery(
     api.invoices.getById,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
@@ -203,7 +252,12 @@ function InvoiceDetailContent() {
     api.invoices.listEvents,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
   );
+  const payments = useQuery(
+    api.invoices.listPayments,
+    invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
+  );
   const issueInvoice = useMutation(api.invoices.issueInvoice);
+  const recordPayment = useMutation(api.invoices.recordPayment);
   const sendInvoiceEmail = useAction(api.invoices.sendInvoiceEmail);
 
   if (!invoiceId) {
@@ -214,7 +268,7 @@ function InvoiceDetailContent() {
     return <UnavailableState />;
   }
 
-  if (!invoice || !events) {
+  if (!invoice || !events || !payments) {
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-8 w-48" />
@@ -227,6 +281,7 @@ function InvoiceDetailContent() {
   const title = invoice.invoiceNumber ?? "Draft";
   const sendRecipient =
     invoice.billingEmail?.trim() || invoice.contactEmail?.trim();
+  const canRecordPayment = PAYABLE_STATUSES.has(invoice.status);
 
   const handleIssueInvoice = async () => {
     setIsIssuing(true);
@@ -255,6 +310,46 @@ function InvoiceDetailContent() {
       toast.error(message);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const resetPaymentForm = () => {
+    setPaymentAmount("");
+    setPaymentDate(formatDateInput(Date.now()));
+    setPaymentMethod(PAYMENT_METHODS[0]);
+    setPaymentReference("");
+  };
+
+  const handleRecordPayment = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const amount = Number(paymentAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Enter a positive payment amount");
+      return;
+    }
+    if (amount > invoice.balanceDue) {
+      toast.error("Payment cannot exceed the balance due");
+      return;
+    }
+
+    setIsRecordingPayment(true);
+    try {
+      await recordPayment({
+        invoiceId: invoice._id,
+        amount,
+        paidAt: parsePaymentDate(paymentDate),
+        method: paymentMethod,
+        reference: paymentReference.trim() || undefined,
+      });
+      toast.success("Payment recorded");
+      setPaymentDialogOpen(false);
+      resetPaymentForm();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not record payment";
+      toast.error(message);
+    } finally {
+      setIsRecordingPayment(false);
     }
   };
 
@@ -393,6 +488,16 @@ function InvoiceDetailContent() {
               </AlertDialogContent>
             </AlertDialog>
           ) : null}
+          {canRecordPayment ? (
+            <Button
+              variant="outline"
+              onClick={() => setPaymentDialogOpen(true)}
+              disabled={isRecordingPayment}
+            >
+              <CreditCard className="mr-2 h-4 w-4" />
+              Record Payment
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -523,6 +628,59 @@ function InvoiceDetailContent() {
         </Card>
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Payment History</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {payments.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No payments recorded yet.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    <th className="p-3 text-left font-medium">Amount</th>
+                    <th className="p-3 text-left font-medium">
+                      Payment Date
+                    </th>
+                    <th className="p-3 text-left font-medium">Method</th>
+                    <th className="p-3 text-left font-medium">Reference</th>
+                    <th className="p-3 text-left font-medium">Recorded By</th>
+                    <th className="p-3 text-left font-medium">Recorded At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.map((payment) => (
+                    <tr
+                      key={payment._id}
+                      className="border-b last:border-0"
+                    >
+                      <td className="p-3 font-medium">
+                        {formatCurrency(payment.amount)}
+                      </td>
+                      <td className="p-3 text-muted-foreground">
+                        {formatDate(payment.paidAt)}
+                      </td>
+                      <td className="p-3">{payment.method ?? "-"}</td>
+                      <td className="p-3">{payment.reference ?? "-"}</td>
+                      <td className="p-3 text-muted-foreground">
+                        {String(payment.recordedBy)}
+                      </td>
+                      <td className="p-3 text-muted-foreground">
+                        {formatDateTime(payment.createdAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {invoice.notes ? (
         <Card>
           <CardHeader>
@@ -566,7 +724,153 @@ function InvoiceDetailContent() {
           )}
         </CardContent>
       </Card>
+
+      <RecordPaymentDialog
+        balanceDue={invoice.balanceDue}
+        amount={paymentAmount}
+        date={paymentDate}
+        method={paymentMethod}
+        reference={paymentReference}
+        open={paymentDialogOpen}
+        pending={isRecordingPayment}
+        onAmountChange={setPaymentAmount}
+        onDateChange={setPaymentDate}
+        onMethodChange={setPaymentMethod}
+        onReferenceChange={setPaymentReference}
+        onOpenChange={(open) => {
+          if (isRecordingPayment) return;
+          setPaymentDialogOpen(open);
+          if (!open) resetPaymentForm();
+        }}
+        onSubmit={handleRecordPayment}
+      />
     </div>
+  );
+}
+
+function RecordPaymentDialog({
+  balanceDue,
+  amount,
+  date,
+  method,
+  reference,
+  open,
+  pending,
+  onAmountChange,
+  onDateChange,
+  onMethodChange,
+  onReferenceChange,
+  onOpenChange,
+  onSubmit,
+}: {
+  balanceDue: number;
+  amount: string;
+  date: string;
+  method: string;
+  reference: string;
+  open: boolean;
+  pending: boolean;
+  onAmountChange: (value: string) => void;
+  onDateChange: (value: string) => void;
+  onMethodChange: (value: string) => void;
+  onReferenceChange: (value: string) => void;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (event: React.FormEvent) => void;
+}) {
+  const numericAmount = Number(amount);
+  const isOverBalance = Number.isFinite(numericAmount)
+    ? numericAmount > balanceDue
+    : false;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Record Payment</DialogTitle>
+        </DialogHeader>
+        <form className="space-y-4" onSubmit={onSubmit}>
+          <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+            <div className="text-muted-foreground">Current balance due</div>
+            <div className="mt-1 text-xl font-bold">
+              {formatCurrency(balanceDue)}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="payment-amount">Amount</Label>
+            <Input
+              id="payment-amount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={amount}
+              onChange={(event) => onAmountChange(event.target.value)}
+              placeholder="0.00"
+            />
+            {isOverBalance ? (
+              <p className="text-xs text-destructive">
+                Payment cannot exceed the balance due.
+              </p>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="payment-date">Payment date</Label>
+            <Input
+              id="payment-date"
+              type="date"
+              value={date}
+              onChange={(event) => onDateChange(event.target.value)}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Method</Label>
+            <Select value={method} onValueChange={onMethodChange}>
+              <SelectTrigger aria-label="Payment method">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAYMENT_METHODS.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="payment-reference">Reference</Label>
+            <Input
+              id="payment-reference"
+              value={reference}
+              onChange={(event) => onReferenceChange(event.target.value)}
+              placeholder="Bank reference or receipt number"
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              className="bg-cyan-600 text-white hover:bg-cyan-700"
+              disabled={pending || isOverBalance}
+            >
+              {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {pending ? "Recording..." : "Record Payment"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

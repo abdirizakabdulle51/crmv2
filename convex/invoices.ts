@@ -15,6 +15,13 @@ type Ctx = QueryCtx | MutationCtx;
 type InvoiceStatus = Doc<"invoices">["status"];
 type InvoiceLineItem = Doc<"invoices">["lineItems"][number];
 
+const PAYABLE_STATUSES = new Set<InvoiceStatus>([
+  "issued",
+  "sent",
+  "overdue",
+  "partially_paid",
+]);
+
 const invoiceStatusValidator = v.union(
   v.literal("draft"),
   v.literal("issued"),
@@ -154,6 +161,19 @@ function assertIssuedForSend(invoice: Doc<"invoices">) {
       message: "Only issued invoices can be sent",
     });
   }
+}
+
+function assertPayable(invoice: Doc<"invoices">) {
+  if (!PAYABLE_STATUSES.has(invoice.status)) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Payments can only be recorded for payable invoices",
+    });
+  }
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 function escapeHtml(value: string | number | undefined) {
@@ -607,6 +627,94 @@ export const voidInvoice = mutation({
       type: "voided",
       actorId: user._id,
       message: trimOptional(args.reason) ?? "Invoice voided.",
+      now,
+    });
+  },
+});
+
+export const listPayments = query({
+  args: { invoiceId: v.id("invoices") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
+    await assertCanAccessInvoice(ctx, user, invoice);
+
+    const payments = await ctx.db
+      .query("invoicePayments")
+      .withIndex("by_invoice", (q) => q.eq("invoiceId", args.invoiceId))
+      .collect();
+    return payments.sort((a, b) => b.paidAt - a.paidAt);
+  },
+});
+
+export const recordPayment = mutation({
+  args: {
+    invoiceId: v.id("invoices"),
+    amount: v.number(),
+    paidAt: v.optional(v.number()),
+    method: v.optional(v.string()),
+    reference: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
+    await assertCanAccessInvoice(ctx, user, invoice);
+    assertPayable(invoice);
+
+    const amount = roundMoney(args.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Payment amount must be positive",
+      });
+    }
+    if (amount > roundMoney(invoice.balanceDue)) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Payment cannot exceed the balance due",
+      });
+    }
+
+    const now = Date.now();
+    const paidAt = args.paidAt ?? now;
+    const nextAmountPaid = roundMoney(invoice.amountPaid + amount);
+    const nextBalanceDue = roundMoney(invoice.balanceDue - amount);
+    const nextStatus: InvoiceStatus =
+      nextBalanceDue === 0 ? "paid" : "partially_paid";
+    const method = trimOptional(args.method);
+    const reference = trimOptional(args.reference);
+
+    await ctx.db.insert("invoicePayments", {
+      invoiceId: args.invoiceId,
+      amount,
+      paidAt,
+      method,
+      reference,
+      recordedBy: user._id,
+      createdAt: now,
+    });
+
+    await ctx.db.patch(args.invoiceId, {
+      amountPaid: nextAmountPaid,
+      balanceDue: nextBalanceDue,
+      status: nextStatus,
+      updatedAt: now,
+    });
+
+    const details = [
+      `Payment of ${formatMoney(amount)} recorded.`,
+      method ? `Method: ${method}.` : undefined,
+      reference ? `Reference: ${reference}.` : undefined,
+      `Balance due: ${formatMoney(nextBalanceDue)}.`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    await insertEvent(ctx, {
+      invoiceId: args.invoiceId,
+      type: "payment_recorded",
+      actorId: user._id,
+      message: details,
       now,
     });
   },

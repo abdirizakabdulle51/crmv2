@@ -615,4 +615,201 @@ describe("invoices", () => {
     ).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("rejects payments on draft, paid, void, and cancelled invoices", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const draftInvoiceId = await createDraftForA(t, s);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId: draftInvoiceId,
+        amount: 5,
+      }),
+    ).rejects.toThrow("Payments can only be recorded for payable invoices");
+
+    const issuedInvoiceId = await issueDraftForA(t, s);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(issuedInvoiceId, {
+        status: "paid",
+        amountPaid: 20,
+        balanceDue: 0,
+      });
+    });
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId: issuedInvoiceId,
+        amount: 5,
+      }),
+    ).rejects.toThrow("Payments can only be recorded for payable invoices");
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(issuedInvoiceId, {
+        status: "void",
+        amountPaid: 0,
+        balanceDue: 20,
+      });
+    });
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId: issuedInvoiceId,
+        amount: 5,
+      }),
+    ).rejects.toThrow("Payments can only be recorded for payable invoices");
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(issuedInvoiceId, {
+        status: "cancelled",
+      });
+    });
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId: issuedInvoiceId,
+        amount: 5,
+      }),
+    ).rejects.toThrow("Payments can only be recorded for payable invoices");
+  });
+
+  it("rejects zero, negative, and over-balance payments", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 0,
+      }),
+    ).rejects.toThrow("Payment amount must be positive");
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: -1,
+      }),
+    ).rejects.toThrow("Payment amount must be positive");
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 25,
+      }),
+    ).rejects.toThrow("Payment cannot exceed the balance due");
+  });
+
+  it("records partial payments and creates payment and event records", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    const paidAt = Date.UTC(2026, 7, 4, 12, 0);
+
+    await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+      invoiceId,
+      amount: 7.5,
+      paidAt,
+      method: "Bank Transfer",
+      reference: "SSB-1001",
+    });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice).toMatchObject({
+      status: "partially_paid",
+      amountPaid: 7.5,
+      balanceDue: 12.5,
+    });
+
+    const payments = await asUser(t, s.amA).query(api.invoices.listPayments, {
+      invoiceId,
+    });
+    expect(payments).toHaveLength(1);
+    expect(payments[0]).toMatchObject({
+      invoiceId,
+      amount: 7.5,
+      paidAt,
+      method: "Bank Transfer",
+      reference: "SSB-1001",
+      recordedBy: s.amA._id,
+    });
+
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(events[events.length - 1]).toMatchObject({
+      type: "payment_recorded",
+      actorId: s.amA._id,
+      message: expect.stringContaining("Payment of $7.50 recorded."),
+    });
+    expect(events[events.length - 1].message).toContain(
+      "Method: Bank Transfer.",
+    );
+    expect(events[events.length - 1].message).toContain(
+      "Reference: SSB-1001.",
+    );
+    expect(events[events.length - 1].message).toContain(
+      "Balance due: $12.50.",
+    );
+  });
+
+  it("records full payments and marks invoices paid", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+
+    await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+      invoiceId,
+      amount: 20,
+      method: "Cash",
+    });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice).toMatchObject({
+      status: "paid",
+      amountPaid: 20,
+      balanceDue: 0,
+    });
+  });
+
+  it("allows payments for sent, overdue, and partially paid invoices", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    for (const status of ["sent", "overdue", "partially_paid"] as const) {
+      const invoiceId = await issueDraftForA(t, s);
+      await t.run(async (ctx) => {
+        await ctx.db.patch(invoiceId, {
+          status,
+          amountPaid: status === "partially_paid" ? 5 : 0,
+          balanceDue: status === "partially_paid" ? 15 : 20,
+        });
+      });
+
+      await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 5,
+      });
+
+      const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+        invoiceId,
+      });
+      expect(invoice.status).toBe("partially_paid");
+    }
+  });
+
+  it("protects payment recording and payment history with invoice RBAC", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+
+    await expect(
+      asUser(t, s.amB).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 5,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      asUser(t, s.amB).query(api.invoices.listPayments, { invoiceId }),
+    ).rejects.toThrow();
+  });
 });
