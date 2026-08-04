@@ -503,9 +503,21 @@ describe("invoices", () => {
     };
     expect(payload.to).toBe("billing-a@example.com");
     expect(payload.subject).toMatch(/^HTGClouds invoice INV-/);
-    expect(payload.html).toContain("Company A");
-    expect(payload.html).toContain("ECS Small");
+    expect(payload.html).toContain(
+      "Please find attached your HTGClouds invoice",
+    );
+    expect(payload.html).toContain("Invoice amount");
+    expect(payload.html).toContain("Balance due");
+    expect(payload.html).not.toContain(
+      "Please find your HTGClouds invoice summary below",
+    );
+    expect(payload.html).not.toContain("ECS Small");
     expect(payload.text).toContain("Balance due: $20.00");
+    expect(payload.text).toContain(
+      "Please find attached your HTGClouds invoice",
+    );
+    expect(payload.text).not.toContain("Line items:");
+    expect(payload.text).not.toContain("ECS Small");
     expect(payload.invoice).toMatchObject({
       _id: invoiceId,
       status: "issued",

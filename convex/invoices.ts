@@ -202,21 +202,6 @@ function formatInvoiceDate(value?: number) {
   }).format(new Date(value));
 }
 
-function lineItemRows(lineItems: InvoiceLineItem[]) {
-  return lineItems
-    .map(
-      (item) => `
-        <tr>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escapeHtml(item.itemName)}</td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escapeHtml(item.serviceCategory)}</td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${escapeHtml(item.quantity)}</td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${escapeHtml(formatMoney(item.monthlyUnitPrice))}</td>
-          <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${escapeHtml(formatMoney(item.monthlyTotal))}</td>
-        </tr>`,
-    )
-    .join("");
-}
-
 function buildInvoiceEmail(invoice: Doc<"invoices">, recipient: string) {
   const invoiceNumber = invoice.invoiceNumber ?? "Invoice";
   const subject = `HTGClouds invoice ${invoiceNumber}`;
@@ -224,44 +209,26 @@ function buildInvoiceEmail(invoice: Doc<"invoices">, recipient: string) {
     <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
       <h1 style="margin:0 0 12px;font-size:24px;">${escapeHtml(invoiceNumber)}</h1>
       <p>Dear ${escapeHtml(invoice.contactName ?? invoice.companyName)},</p>
-      <p>Please find your HTGClouds invoice summary below.</p>
+      <p>Please find attached your HTGClouds invoice ${escapeHtml(invoiceNumber)}.</p>
       <table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:720px;">
         <tbody>
-          <tr><td style="padding:6px 0;color:#64748b;">Customer</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(invoice.companyName)}</td></tr>
-          <tr><td style="padding:6px 0;color:#64748b;">Invoice number</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(invoiceNumber)}</td></tr>
-          <tr><td style="padding:6px 0;color:#64748b;">Issue date</td><td style="padding:6px 0;">${escapeHtml(formatInvoiceDate(invoice.issueDate))}</td></tr>
+          <tr><td style="padding:6px 18px 6px 0;color:#64748b;">Invoice amount</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(formatMoney(invoice.grandTotal))}</td></tr>
+          <tr><td style="padding:6px 18px 6px 0;color:#64748b;">Balance due</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(formatMoney(invoice.balanceDue))}</td></tr>
           <tr><td style="padding:6px 0;color:#64748b;">Due date</td><td style="padding:6px 0;">${escapeHtml(formatInvoiceDate(invoice.dueDate))}</td></tr>
-          <tr><td style="padding:6px 0;color:#64748b;">Recipient</td><td style="padding:6px 0;">${escapeHtml(recipient)}</td></tr>
         </tbody>
       </table>
-      <table style="border-collapse:collapse;width:100%;max-width:720px;">
-        <thead>
-          <tr style="background:#f8fafc;">
-            <th style="padding:8px;text-align:left;border-bottom:1px solid #cbd5e1;">Item</th>
-            <th style="padding:8px;text-align:left;border-bottom:1px solid #cbd5e1;">Category</th>
-            <th style="padding:8px;text-align:right;border-bottom:1px solid #cbd5e1;">Qty</th>
-            <th style="padding:8px;text-align:right;border-bottom:1px solid #cbd5e1;">Unit</th>
-            <th style="padding:8px;text-align:right;border-bottom:1px solid #cbd5e1;">Total</th>
-          </tr>
-        </thead>
-        <tbody>${lineItemRows(invoice.lineItems)}</tbody>
-      </table>
-      <p style="margin-top:18px;font-size:18px;"><strong>Balance due: ${escapeHtml(formatMoney(invoice.balanceDue))}</strong></p>
       <p>If you have any questions, please contact your HTGClouds account team.</p>
     </div>`;
   const textLines = [
     `${invoiceNumber}`,
-    `Customer: ${invoice.companyName}`,
-    `Issue date: ${formatInvoiceDate(invoice.issueDate)}`,
-    `Due date: ${formatInvoiceDate(invoice.dueDate)}`,
     "",
-    "Line items:",
-    ...invoice.lineItems.map(
-      (item) =>
-        `- ${item.itemName} (${item.serviceCategory}) x ${item.quantity}: ${formatMoney(item.monthlyTotal)}`,
-    ),
+    `Dear ${invoice.contactName ?? invoice.companyName},`,
     "",
+    `Please find attached your HTGClouds invoice ${invoiceNumber}.`,
+    "",
+    `Invoice amount: ${formatMoney(invoice.grandTotal)}`,
     `Balance due: ${formatMoney(invoice.balanceDue)}`,
+    `Due date: ${formatInvoiceDate(invoice.dueDate)}`,
     "",
     "If you have any questions, please contact your HTGClouds account team.",
   ];
