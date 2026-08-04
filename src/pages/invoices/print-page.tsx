@@ -127,7 +127,7 @@ function Footer({ page }: { page: 1 | 2 }) {
   return (
     <footer className="invoice-footer">
       <span>
-        +252 61 5558484 Mohamed.hussein@htgclouds.com https://htgclouds.com/
+        +252 61 5558484 | Mohamed.hussein@htgclouds.com | https://htgclouds.com/
       </span>
       <span>Page {page} / 2</span>
     </footer>
