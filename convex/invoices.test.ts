@@ -782,6 +782,213 @@ describe("invoices", () => {
     ).toBe(false);
   });
 
+  it("sends customer reminder for an overdue invoice with balance", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue");
+    const fetchMock = mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendCustomerOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://htgweb.example/internal/send-invoice-email",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          "X-Mail-Relay-Secret": "relay-secret",
+        }),
+      }),
+    );
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      to: string;
+      subject: string;
+      html: string;
+      text: string;
+      invoice: Doc<"invoices">;
+    };
+    expect(payload.to).toBe("billing-a@example.com");
+    expect(payload.subject).toMatch(/^Overdue HTGClouds invoice INV-/);
+    expect(payload.html).toContain("friendly reminder");
+    expect(payload.html).toContain("Please find the invoice PDF attached");
+    expect(payload.text).toContain("Balance due: $20.00");
+    expect(payload.text).toContain("Please find the invoice PDF attached");
+    expect(payload.invoice).toMatchObject({
+      _id: invoiceId,
+      status: "overdue",
+      companyName: "Company A",
+      contactEmail: "billing-a@example.com",
+      billingEmail: "billing-a@example.com",
+      balanceDue: 20,
+    });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lastCustomerReminderAt).toBe(Date.UTC(2026, 7, 20, 6));
+    expect(invoice.customerReminderCount).toBe(1);
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(events[events.length - 1]).toMatchObject({
+      type: "customer_reminder_sent",
+      message: expect.stringContaining("billing-a@example.com"),
+    });
+  });
+
+  it("prefers billingEmail over contactEmail for customer reminders", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue", {
+      billingEmail: "accounts-payable@example.com",
+      contactEmail: "contact@example.com",
+    });
+    const fetchMock = mockRelaySuccess();
+
+    await t.action(internal.invoices.sendCustomerOverdueReminders, {
+      now: Date.UTC(2026, 7, 20, 6),
+      limit: 10,
+    });
+
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      to: string;
+      invoice: Doc<"invoices">;
+    };
+    expect(payload.to).toBe("accounts-payable@example.com");
+    expect(payload.invoice._id).toBe(invoiceId);
+  });
+
+  it.each([
+    "draft",
+    "issued",
+    "sent",
+    "partially_paid",
+    "paid",
+    "void",
+    "cancelled",
+  ] as const)("skips %s invoices for customer reminders", async (status) => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await issueInvoiceWithStatus(t, s, status, {
+      amountPaid: status === "paid" ? 20 : 0,
+      balanceDue: status === "paid" ? 0 : 20,
+    });
+    const fetchMock = mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendCustomerOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 0, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skips customer reminders with no email or no balance due", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await issueInvoiceWithStatus(t, s, "overdue", {
+      billingEmail: undefined,
+      contactEmail: undefined,
+    });
+    await issueInvoiceWithStatus(t, s, "overdue", {
+      amountPaid: 20,
+      balanceDue: 0,
+    });
+    const fetchMock = mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendCustomerOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 2, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not resend customer reminders within seven days", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const now = Date.UTC(2026, 7, 20, 6);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue", {
+      lastCustomerReminderAt: now - 6 * 24 * 60 * 60 * 1000,
+      customerReminderCount: 1,
+    });
+    const fetchMock = mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendCustomerOverdueReminders,
+      { now, limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.customerReminderCount).toBe(1);
+  });
+
+  it("sends customer reminders again after seven days", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const now = Date.UTC(2026, 7, 20, 6);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue", {
+      lastCustomerReminderAt: now - 8 * 24 * 60 * 60 * 1000,
+      customerReminderCount: 1,
+    });
+    mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendCustomerOverdueReminders,
+      { now, limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lastCustomerReminderAt).toBe(now);
+    expect(invoice.customerReminderCount).toBe(2);
+  });
+
+  it("does not update customer reminder fields when relay fails", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: false, error: "SMTP down" }), {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const result = await t.action(
+      internal.invoices.sendCustomerOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lastCustomerReminderAt).toBeUndefined();
+    expect(invoice.customerReminderCount).toBeUndefined();
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(
+      events.some((event) => event.type === "customer_reminder_sent"),
+    ).toBe(false);
+  });
+
   it("rejects editing an issued invoice", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

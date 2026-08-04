@@ -19,4 +19,11 @@ crons.daily(
   {},
 );
 
+crons.daily(
+  "send customer overdue invoice reminders",
+  { hourUTC: 3, minuteUTC: 30 },
+  internal.invoices.sendCustomerOverdueReminders,
+  {},
+);
+
 export default crons;

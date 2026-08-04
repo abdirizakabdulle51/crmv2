@@ -29,6 +29,19 @@ type InternalReminderRunResult = {
   skipped: number;
   failed: number;
 };
+type CustomerReminderCandidate = {
+  invoice: Doc<"invoices">;
+  recipient: string;
+};
+type CustomerReminderCandidateResult = {
+  reminders: CustomerReminderCandidate[];
+  skipped: number;
+};
+type CustomerReminderRunResult = {
+  sent: number;
+  skipped: number;
+  failed: number;
+};
 
 const DEFAULT_PAYMENT_TERM_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -37,6 +50,8 @@ const MOGADISHU_UTC_OFFSET_HOURS = 3;
 const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
 const INTERNAL_REMINDER_INTERVAL_MS = 7 * MS_PER_DAY;
 const DEFAULT_INTERNAL_REMINDER_LIMIT = 50;
+const CUSTOMER_REMINDER_INTERVAL_MS = 7 * MS_PER_DAY;
+const DEFAULT_CUSTOMER_REMINDER_LIMIT = 50;
 
 const PAYABLE_STATUSES = new Set<InvoiceStatus>([
   "issued",
@@ -324,6 +339,43 @@ function buildInternalReminderEmail(args: {
     `Due date: ${formatInvoiceDate(invoice.dueDate)}`,
     `Balance due: ${formatMoney(invoice.balanceDue)}`,
     `CRM invoice: ${invoicePath}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+function buildCustomerReminderEmail(invoice: Doc<"invoices">) {
+  const invoiceNumber = invoice.invoiceNumber ?? String(invoice._id);
+  const greeting = invoice.contactName ?? invoice.companyName;
+  const subject = `Overdue HTGClouds invoice ${invoiceNumber}`;
+  const html = `
+    <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
+      <p>Dear ${escapeHtml(greeting)},</p>
+      <p>This is a friendly reminder that invoice ${escapeHtml(invoiceNumber)} is now overdue.</p>
+      <table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:640px;">
+        <tbody>
+          <tr><td style="padding:6px 18px 6px 0;color:#64748b;">Balance due</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(formatMoney(invoice.balanceDue))}</td></tr>
+          <tr><td style="padding:6px 18px 6px 0;color:#64748b;">Due date</td><td style="padding:6px 0;">${escapeHtml(formatInvoiceDate(invoice.dueDate))}</td></tr>
+        </tbody>
+      </table>
+      <p>Please find the invoice PDF attached for your reference.</p>
+      <p>If payment has already been made, please disregard this reminder or contact your HTGClouds account team.</p>
+      <p>Thank you,<br />HTGClouds</p>
+    </div>`;
+  const text = [
+    `Dear ${greeting},`,
+    "",
+    `This is a friendly reminder that invoice ${invoiceNumber} is now overdue.`,
+    "",
+    `Balance due: ${formatMoney(invoice.balanceDue)}`,
+    `Due date: ${formatInvoiceDate(invoice.dueDate)}`,
+    "",
+    "Please find the invoice PDF attached for your reference.",
+    "",
+    "If payment has already been made, please disregard this reminder or contact your HTGClouds account team.",
+    "",
+    "Thank you,",
+    "HTGClouds",
   ].join("\n");
 
   return { subject, html, text };
@@ -816,6 +868,157 @@ export const sendInternalOverdueReminders = internalAction({
 
         const recorded = await ctx.runMutation(
           internal.invoices.markInternalReminderSent,
+          {
+            invoiceId: reminder.invoice._id,
+            sentTo: reminder.recipient,
+            now,
+          },
+        );
+        if (recorded) {
+          sent += 1;
+        } else {
+          skipped += 1;
+        }
+      } catch {
+        failed += 1;
+      }
+    }
+
+    return { sent, skipped, failed };
+  },
+});
+
+export const listCustomerReminderCandidates = internalQuery({
+  args: {
+    now: v.number(),
+    limit: v.number(),
+  },
+  handler: async (ctx, args): Promise<CustomerReminderCandidateResult> => {
+    const invoices = await ctx.db
+      .query("invoices")
+      .withIndex("by_status", (q) => q.eq("status", "overdue"))
+      .collect();
+    const reminders: CustomerReminderCandidate[] = [];
+    let skipped = 0;
+
+    for (const invoice of invoices) {
+      if (invoice.balanceDue <= 0) {
+        skipped += 1;
+        continue;
+      }
+      if (
+        invoice.lastCustomerReminderAt !== undefined &&
+        args.now - invoice.lastCustomerReminderAt <
+          CUSTOMER_REMINDER_INTERVAL_MS
+      ) {
+        skipped += 1;
+        continue;
+      }
+
+      const recipient = recipientForInvoice(invoice);
+      if (!recipient) {
+        skipped += 1;
+        continue;
+      }
+
+      reminders.push({ invoice, recipient });
+      if (reminders.length >= args.limit) {
+        break;
+      }
+    }
+
+    return { reminders, skipped };
+  },
+});
+
+export const markCustomerReminderSent = internalMutation({
+  args: {
+    invoiceId: v.id("invoices"),
+    sentTo: v.string(),
+    now: v.number(),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
+    if (
+      invoice.status !== "overdue" ||
+      invoice.balanceDue <= 0 ||
+      (invoice.lastCustomerReminderAt !== undefined &&
+        args.now - invoice.lastCustomerReminderAt <
+          CUSTOMER_REMINDER_INTERVAL_MS)
+    ) {
+      return false;
+    }
+
+    const count = (invoice.customerReminderCount ?? 0) + 1;
+    await ctx.db.patch(args.invoiceId, {
+      lastCustomerReminderAt: args.now,
+      customerReminderCount: count,
+      updatedAt: args.now,
+    });
+    await insertEvent(ctx, {
+      invoiceId: args.invoiceId,
+      type: "customer_reminder_sent",
+      message: `Customer overdue reminder sent to ${args.sentTo}. Balance due: ${formatMoney(invoice.balanceDue)}.`,
+      now: args.now,
+    });
+    return true;
+  },
+});
+
+export const sendCustomerOverdueReminders = internalAction({
+  args: {
+    now: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<CustomerReminderRunResult> => {
+    const now = args.now ?? Date.now();
+    const limit = Math.min(
+      Math.max(args.limit ?? DEFAULT_CUSTOMER_REMINDER_LIMIT, 1),
+      100,
+    );
+    const { reminders, skipped: initialSkipped } = (await ctx.runQuery(
+      internal.invoices.listCustomerReminderCandidates,
+      { now, limit },
+    )) as CustomerReminderCandidateResult;
+    let sent = 0;
+    let skipped = initialSkipped;
+    let failed = 0;
+
+    for (const reminder of reminders) {
+      const email = buildCustomerReminderEmail(reminder.invoice);
+      try {
+        const response = await fetch(invoiceRelayUrl(), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Mail-Relay-Secret": relaySecret(),
+          },
+          body: JSON.stringify({
+            to: reminder.recipient,
+            subject: email.subject,
+            html: email.html,
+            text: email.text,
+            invoice: reminder.invoice,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(await relayErrorMessage(response));
+        }
+
+        const body = (await response.json().catch(() => ({
+          success: true,
+        }))) as { success?: unknown; error?: unknown };
+        if (body.success === false) {
+          throw new Error(
+            typeof body.error === "string" && body.error.trim()
+              ? body.error.trim()
+              : "Customer reminder delivery failed",
+          );
+        }
+
+        const recorded = await ctx.runMutation(
+          internal.invoices.markCustomerReminderSent,
           {
             invoiceId: reminder.invoice._id,
             sentTo: reminder.recipient,
