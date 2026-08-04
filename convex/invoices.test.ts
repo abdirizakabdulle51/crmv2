@@ -485,7 +485,7 @@ describe("invoices", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://htgweb.example/internal/send-email",
+      "https://htgweb.example/internal/send-invoice-email",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
@@ -499,12 +499,27 @@ describe("invoices", () => {
       subject: string;
       html: string;
       text: string;
+      invoice: Doc<"invoices">;
     };
     expect(payload.to).toBe("billing-a@example.com");
     expect(payload.subject).toMatch(/^HTGClouds invoice INV-/);
     expect(payload.html).toContain("Company A");
     expect(payload.html).toContain("ECS Small");
     expect(payload.text).toContain("Balance due: $20.00");
+    expect(payload.invoice).toMatchObject({
+      _id: invoiceId,
+      status: "issued",
+      companyName: "Company A",
+      contactEmail: "billing-a@example.com",
+      billingEmail: "billing-a@example.com",
+      grandTotal: 20,
+      balanceDue: 20,
+    });
+    expect(payload.invoice.lineItems[0]).toMatchObject({
+      itemName: "ECS Small",
+      quantity: 2,
+      monthlyTotal: 20,
+    });
   });
 
   it("prefers billingEmail over contactEmail when sending", async () => {

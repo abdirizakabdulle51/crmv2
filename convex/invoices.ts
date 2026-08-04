@@ -282,6 +282,20 @@ function relayUrl() {
   return value;
 }
 
+function invoiceRelayUrl() {
+  const value = relayUrl();
+  if (value.endsWith("/internal/send-invoice-email")) {
+    return value;
+  }
+  if (value.endsWith("/internal/send-email")) {
+    return value.replace(
+      /\/internal\/send-email$/,
+      "/internal/send-invoice-email",
+    );
+  }
+  return `${value.replace(/\/$/, "")}/internal/send-invoice-email`;
+}
+
 function relaySecret() {
   const value = process.env.MAIL_RELAY_SECRET?.trim();
   if (!value) {
@@ -561,7 +575,7 @@ export const sendInvoiceEmail = action({
       { invoiceId: args.invoiceId },
     );
     const email = buildInvoiceEmail(invoice, recipient);
-    const response = await fetch(relayUrl(), {
+    const response = await fetch(invoiceRelayUrl(), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -572,6 +586,7 @@ export const sendInvoiceEmail = action({
         subject: email.subject,
         html: email.html,
         text: email.text,
+        invoice,
       }),
     });
 
