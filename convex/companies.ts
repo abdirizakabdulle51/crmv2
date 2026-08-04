@@ -9,6 +9,10 @@ import {
   isCeoOrHob,
 } from "./authorization";
 
+const paymentTermDaysValidator = v.optional(
+  v.union(v.literal(7), v.literal(15), v.literal(30)),
+);
+
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
 ): Promise<Doc<"users">> {
@@ -107,6 +111,7 @@ export const create = mutation({
         v.literal("delinquent"),
       ),
     ),
+    paymentTermDays: paymentTermDaysValidator,
     notes: v.optional(v.string()),
     website: v.optional(v.string()),
     contactName: v.optional(v.string()),
@@ -142,6 +147,7 @@ export const create = mutation({
       accountManagerId,
       contractStatus: args.contractStatus,
       paymentStatus: args.paymentStatus,
+      paymentTermDays: args.paymentTermDays,
       notes: args.notes,
       website: args.website,
       contactName: args.contactName,
@@ -170,6 +176,7 @@ export const update = mutation({
         v.literal("delinquent"),
       ),
     ),
+    paymentTermDays: paymentTermDaysValidator,
     notes: v.optional(v.string()),
     website: v.optional(v.string()),
     contactName: v.optional(v.string()),

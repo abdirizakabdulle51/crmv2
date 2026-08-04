@@ -125,8 +125,11 @@ function invoiceNumberForSequence(now: number, sequence: number) {
   return `INV-${year}-${String(sequence).padStart(5, "0")}`;
 }
 
-function defaultDueDateForIssue(issueDate: number) {
-  return issueDate + DEFAULT_PAYMENT_TERM_DAYS * MS_PER_DAY;
+function defaultDueDateForIssue(
+  issueDate: number,
+  paymentTermDays = DEFAULT_PAYMENT_TERM_DAYS,
+) {
+  return issueDate + paymentTermDays * MS_PER_DAY;
 }
 
 async function nextInvoiceNumber(ctx: MutationCtx, now: number) {
@@ -492,6 +495,7 @@ export const issueInvoice = mutation({
     const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
     await assertCanAccessInvoice(ctx, user, invoice);
     assertTransitionFromDraft(invoice);
+    const company = await getCompanyOrThrow(ctx, invoice.companyId);
 
     const now = Date.now();
     const invoiceNumber =
@@ -500,7 +504,9 @@ export const issueInvoice = mutation({
       status: "issued",
       invoiceNumber,
       issueDate: now,
-      dueDate: invoice.dueDate ?? defaultDueDateForIssue(now),
+      dueDate:
+        invoice.dueDate ??
+        defaultDueDateForIssue(now, company.paymentTermDays),
       lockedAt: now,
       updatedAt: now,
     });

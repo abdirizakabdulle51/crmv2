@@ -226,6 +226,57 @@ describe("invoices", () => {
     vi.clearAllMocks();
   });
 
+  it("creates companies with Net 7, Net 15, and Net 30 payment terms", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    for (const paymentTermDays of [7, 15, 30] as const) {
+      const companyId = await asUser(t, s.ceo).mutation(api.companies.create, {
+        name: `Terms ${paymentTermDays}`,
+        sectorId: s.sector,
+        countryId: s.countryA,
+        accountManagerId: s.amA._id,
+        contractStatus: "active",
+        paymentTermDays,
+      });
+      const company = await asUser(t, s.ceo).query(api.companies.getById, {
+        id: companyId,
+      });
+      expect(company.paymentTermDays).toBe(paymentTermDays);
+    }
+  });
+
+  it("updates company payment terms and rejects invalid values", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await asUser(t, s.ceo).mutation(api.companies.update, {
+      id: s.companyA,
+      name: "Company A",
+      sectorId: s.sector,
+      countryId: s.countryA,
+      accountManagerId: s.amA._id,
+      contractStatus: "active",
+      paymentTermDays: 30,
+    });
+    const company = await asUser(t, s.ceo).query(api.companies.getById, {
+      id: s.companyA,
+    });
+    expect(company.paymentTermDays).toBe(30);
+
+    await expect(
+      asUser(t, s.ceo).mutation(api.companies.update, {
+        id: s.companyA,
+        name: "Company A",
+        sectorId: s.sector,
+        countryId: s.countryA,
+        accountManagerId: s.amA._id,
+        contractStatus: "active",
+        paymentTermDays: 45 as 7,
+      }),
+    ).rejects.toThrow();
+  });
+
   it("scopes invoice visibility by AM, Country GM, HOB, and CEO company access", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -402,6 +453,29 @@ describe("invoices", () => {
     });
     expect(invoice.issueDate).toEqual(expect.any(Number));
     expect(invoice.dueDate).toBe(invoice.issueDate! + 7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("uses company payment terms when issuing an invoice without a due date", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await asUser(t, s.ceo).mutation(api.companies.update, {
+      id: s.companyA,
+      name: "Company A",
+      sectorId: s.sector,
+      countryId: s.countryA,
+      accountManagerId: s.amA._id,
+      contractStatus: "active",
+      paymentTermDays: 15,
+    });
+    const invoiceId = await createDraftForA(t, s, { omitDueDate: true });
+
+    await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.issueDate).toEqual(expect.any(Number));
+    expect(invoice.dueDate).toBe(invoice.issueDate! + 15 * 24 * 60 * 60 * 1000);
   });
 
   it("rejects editing an issued invoice", async () => {

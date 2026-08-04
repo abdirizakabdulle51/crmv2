@@ -43,6 +43,7 @@ function formatManageOneDate(value: number) {
 
 type ContractStatus = "active" | "pending" | "expired" | "terminated";
 type PaymentStatus = "current" | "overdue" | "delinquent";
+type PaymentTermValue = "default" | "7" | "15" | "30";
 type ManageOneTenant = Doc<"manageOneTenants">;
 type ManageOneResource = NonNullable<ManageOneTenant["resources"]>[number];
 
@@ -155,6 +156,8 @@ export function CompanyForm({
   const [contractStatus, setContractStatus] =
     useState<ContractStatus>("pending");
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>("current");
+  const [paymentTermDays, setPaymentTermDays] =
+    useState<PaymentTermValue>("default");
   const [notes, setNotes] = useState("");
   const [website, setWebsite] = useState("");
   const [contactName, setContactName] = useState("");
@@ -170,6 +173,11 @@ export function CompanyForm({
       setAccountManagerId(company.accountManagerId || "");
       setContractStatus(company.contractStatus);
       setPaymentStatus((company.paymentStatus as PaymentStatus) || "current");
+      setPaymentTermDays(
+        company.paymentTermDays
+          ? (String(company.paymentTermDays) as PaymentTermValue)
+          : "default",
+      );
       setNotes(company.notes || "");
       setWebsite(company.website || "");
       setContactName(company.contactName || "");
@@ -192,6 +200,7 @@ export function CompanyForm({
     setAccountManagerId("");
     setContractStatus("pending");
     setPaymentStatus("current");
+    setPaymentTermDays("default");
     setNotes("");
     setWebsite("");
     setContactName("");
@@ -229,6 +238,10 @@ export function CompanyForm({
         accountManagerId: effectiveAccountManagerId as Id<"users">,
         contractStatus,
         paymentStatus,
+        paymentTermDays:
+          paymentTermDays === "default"
+            ? undefined
+            : (Number(paymentTermDays) as 7 | 15 | 30),
         notes: notes.trim() || undefined,
         website: website.trim() || undefined,
         contactName: contactName.trim() || undefined,
@@ -359,21 +372,41 @@ export function CompanyForm({
           </div>
         </div>
 
-        <div className="space-y-2">
-          <Label>Payment Status</Label>
-          <Select
-            value={paymentStatus}
-            onValueChange={(v) => setPaymentStatus(v as PaymentStatus)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="current">Current</SelectItem>
-              <SelectItem value="overdue">Overdue</SelectItem>
-              <SelectItem value="delinquent">Delinquent</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Payment Status</Label>
+            <Select
+              value={paymentStatus}
+              onValueChange={(v) => setPaymentStatus(v as PaymentStatus)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="current">Current</SelectItem>
+                <SelectItem value="overdue">Overdue</SelectItem>
+                <SelectItem value="delinquent">Delinquent</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Payment Terms</Label>
+            <Select
+              value={paymentTermDays}
+              onValueChange={(v) => setPaymentTermDays(v as PaymentTermValue)}
+            >
+              <SelectTrigger aria-label="Payment Terms">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Default (Net 7)</SelectItem>
+                <SelectItem value="7">Net 7</SelectItem>
+                <SelectItem value="15">Net 15</SelectItem>
+                <SelectItem value="30">Net 30</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <div className="space-y-2">

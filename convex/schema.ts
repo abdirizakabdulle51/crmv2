@@ -58,6 +58,9 @@ export default defineSchema({
         v.literal("delinquent"),
       ),
     ),
+    paymentTermDays: v.optional(
+      v.union(v.literal(7), v.literal(15), v.literal(30)),
+    ),
     notes: v.optional(v.string()),
     website: v.optional(v.string()),
     contactName: v.optional(v.string()),
