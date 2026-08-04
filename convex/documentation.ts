@@ -1152,7 +1152,102 @@ Customer overdue reminders include the invoice PDF attachment.
 
 Reminder emails do not send repeatedly every day. The CRM waits 7 days before sending another reminder for the same invoice type.
 
-## 8. Status Guide
+## 8. Admin Invoice Cleanup Tutorial
+
+Admin invoice cleanup is for test invoices or incorrect invoices that should not continue through normal billing.
+
+Cleanup does not delete invoices. It keeps the invoice record, invoice snapshot, payment history, and audit history.
+
+### Who can use invoice cleanup
+
+Only CEO and Head of Business can use invoice cleanup actions.
+
+Account Managers, Country GMs, and normal users cannot cancel, void, mark test, or unmark test invoices.
+
+The CRM enforces this in the backend, not only on the screen.
+
+### Cancel Draft Invoice
+
+Use Cancel Draft when a draft invoice was created by mistake and should not be issued.
+
+Cancel Draft is only available for Draft invoices.
+
+When cancelling a draft:
+
+- The admin must enter a reason.
+- The invoice status becomes Cancelled.
+- The invoice is not deleted.
+- An Invoice Event is saved with the reason, timestamp, and who performed the action.
+
+Use this when the invoice is still a draft and should never become official.
+
+### Void Invoice
+
+Use Void Invoice when an official invoice should no longer count because it is wrong or should not be paid.
+
+Void Invoice is available for:
+
+- Issued
+- Sent
+- Partially Paid
+- Overdue
+
+Void Invoice is not available for:
+
+- Draft
+- Paid
+- Cancelled
+- Already void invoices
+
+When voiding an invoice:
+
+- The admin must enter a reason.
+- The invoice status becomes Void.
+- Payment history is kept if payments already exist.
+- The invoice snapshot stays intact.
+- An Invoice Event is saved with the reason, timestamp, and who performed the action.
+
+Paid invoices cannot be voided in this phase. If a paid invoice needs correction, escalate for a future credit/refund workflow.
+
+### Mark as Test/Hidden
+
+Use Mark as Test when an invoice was created for training, setup, testing, or cleanup review.
+
+When marking an invoice as test/hidden:
+
+- The admin must enter a reason.
+- The invoice is hidden from the normal invoice list.
+- The invoice is excluded from normal invoice totals.
+- An Invoice Event is saved with the reason, timestamp, and who performed the action.
+
+Admins can still see test/hidden invoices by using Include test/hidden on the Invoices page.
+
+If an invoice was marked as test by mistake, CEO/HOB can use Unmark Test. Unmarking also requires a reason and creates an Invoice Event.
+
+### Audit Trail
+
+All cleanup actions appear in Invoice Detail -> Invoice Events.
+
+Cleanup events show:
+
+- The action
+- The reason
+- The timestamp
+- Who performed the action
+
+Even CEO/HOB cleanup actions are never silent.
+
+### Cleanup Examples
+
+I created a test invoice during setup: mark it as Test/Hidden.
+
+A draft invoice was created by mistake: use Cancel Draft.
+
+An issued invoice is wrong and should not count: use Void Invoice.
+
+I need to see hidden test invoices: open Invoices and use Include test/hidden.
+
+## 9. Status Guide
 
 - Draft - invoice is being prepared. It can still be reviewed and edited by authorized users.
 - Issued - invoice is official, numbered, and locked. It can be emailed and paid.
@@ -1163,7 +1258,7 @@ Reminder emails do not send repeatedly every day. The CRM waits 7 days before se
 - Void - invoice is no longer valid and should not be paid.
 - Cancelled - invoice was cancelled and should not continue through the workflow.
 
-## 9. Common Examples
+## 10. Common Examples
 
 ### Customer pays full invoice
 
@@ -1201,7 +1296,29 @@ Record the payment immediately.
 
 If the payment clears the balance, the invoice becomes Paid and should not continue as overdue.
 
-## 10. FAQ / Troubleshooting
+### I created a test invoice during setup
+
+Open the invoice and use Mark as Test.
+
+Enter a clear reason, such as "Training invoice" or "Setup test."
+
+The invoice will be hidden from normal invoice lists and totals, but it will still be available to CEO/HOB through Include test/hidden.
+
+### A draft invoice was created by mistake
+
+Open the draft invoice and use Cancel Draft.
+
+Enter a reason so the audit trail explains why it was cancelled.
+
+### An issued invoice is wrong and should not count
+
+Open the invoice and use Void Invoice.
+
+Enter the reason. The invoice becomes Void and stops counting in normal totals.
+
+Do not use this for paid invoices in this phase.
+
+## 11. FAQ / Troubleshooting
 
 ### Why can't I edit an issued invoice?
 
@@ -1237,7 +1354,37 @@ Currently Send Invoice is available for Issued invoices. Once an invoice is Sent
 
 ### Can I delete test invoices?
 
-Do not delete real invoice records. Use the approved void/cancel workflow when available, or ask leadership/engineering for test-data cleanup.
+No. Invoices are not hard deleted in this phase.
+
+For test invoices, CEO/HOB should use Mark as Test/Hidden.
+
+For draft mistakes, CEO/HOB should use Cancel Draft.
+
+For incorrect official invoices, CEO/HOB should use Void Invoice when the status allows it.
+
+### Can I void a paid invoice?
+
+No. Paid invoices cannot be voided in this phase.
+
+Use a future credit/refund workflow when that is available, or escalate to finance/leadership.
+
+### Can normal account managers cleanup invoices?
+
+No. Account Managers and Country GMs cannot use invoice cleanup actions.
+
+Only CEO and Head of Business can cancel drafts, void invoices, or mark/unmark test invoices.
+
+### Where do I see who performed cleanup?
+
+Open Invoice Detail -> Invoice Events.
+
+Cleanup events show the action, reason, timestamp, and who performed it.
+
+### Do hidden invoices affect totals?
+
+No. Test/hidden invoices are excluded from normal invoice lists and totals.
+
+CEO/HOB can use Include test/hidden when they need to review them.
 
 ### What should I do if payment was recorded wrong?
 
