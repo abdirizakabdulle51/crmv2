@@ -1355,6 +1355,27 @@ export const listEvents = query({
       .query("invoiceEvents")
       .withIndex("by_invoice", (q) => q.eq("invoiceId", args.invoiceId))
       .collect();
-    return events.sort((a, b) => a.createdAt - b.createdAt);
+    const actorIds = Array.from(
+      new Set(events.map((event) => event.actorId).filter(Boolean)),
+    ) as Id<"users">[];
+    const actors = await Promise.all(
+      actorIds.map(async (actorId) => await ctx.db.get(actorId)),
+    );
+    const actorMap = new Map(
+      actors
+        .filter((actor): actor is Doc<"users"> => actor !== null)
+        .map((actor) => [actor._id, actor]),
+    );
+
+    return events
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((event) => {
+        const actor = event.actorId ? actorMap.get(event.actorId) : undefined;
+        return {
+          ...event,
+          actorEmail: actor?.email,
+          actorName: actor?.name,
+        };
+      });
   },
 });

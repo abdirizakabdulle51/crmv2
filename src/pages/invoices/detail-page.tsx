@@ -60,7 +60,10 @@ import { Textarea } from "@/components/ui/textarea.tsx";
 import { formatCurrency } from "@/lib/format.ts";
 
 type Invoice = Doc<"invoices">;
-type InvoiceEvent = Doc<"invoiceEvents">;
+type InvoiceEvent = Doc<"invoiceEvents"> & {
+  actorEmail?: string;
+  actorName?: string;
+};
 type InvoicePayment = Doc<"invoicePayments">;
 type InvoiceStatus = Invoice["status"];
 type User = Doc<"users">;
@@ -135,6 +138,14 @@ function formatUserDisplayName(user?: User) {
   return user?.name?.trim() || user?.email?.trim() || "Recorded user";
 }
 
+function formatActorDisplayName(event: InvoiceEvent) {
+  return (
+    event.actorName?.trim() ||
+    event.actorEmail?.trim() ||
+    (event.actorId ? "Unknown user" : undefined)
+  );
+}
+
 function statusBadge(status: InvoiceStatus) {
   switch (status) {
     case "draft":
@@ -196,6 +207,43 @@ function eventLabel(type: InvoiceEvent["type"]) {
     default:
       return type;
   }
+}
+
+function cleanupEventAction(type: InvoiceEvent["type"]) {
+  switch (type) {
+    case "cancelled":
+      return "Invoice cancelled";
+    case "voided":
+      return "Invoice voided";
+    case "marked_test":
+      return "Invoice marked as test/hidden";
+    case "unmarked_test":
+      return "Invoice unmarked as test/hidden";
+    default:
+      return undefined;
+  }
+}
+
+function cleanupEventReason(message?: string) {
+  if (!message) return undefined;
+  const reasonIndex = message.indexOf("Reason:");
+  if (reasonIndex >= 0) {
+    return message.slice(reasonIndex + "Reason:".length).trim();
+  }
+  return message.trim();
+}
+
+function eventMessage(event: InvoiceEvent) {
+  const action = cleanupEventAction(event.type);
+  if (!action) {
+    return event.message;
+  }
+  const actor = formatActorDisplayName(event);
+  if (!actor) {
+    return event.message;
+  }
+  const reason = cleanupEventReason(event.message);
+  return `${action} by ${actor}.${reason ? ` Reason: ${reason}` : ""}`;
 }
 
 function parsePaymentDate(value: string) {
@@ -845,9 +893,9 @@ function InvoiceDetailContent() {
                       {formatDateTime(event.createdAt)}
                     </span>
                   </div>
-                  {event.message ? (
+                  {eventMessage(event) ? (
                     <p className="mt-1 text-muted-foreground">
-                      {event.message}
+                      {eventMessage(event)}
                     </p>
                   ) : null}
                 </div>

@@ -5,6 +5,11 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import InvoiceDetailPage from "./detail-page.tsx";
 
+type InvoiceEvent = Doc<"invoiceEvents"> & {
+  actorEmail?: string;
+  actorName?: string;
+};
+
 vi.mock("@/convex/_generated/api.js", () => ({
   api: {
     invoices: {
@@ -27,7 +32,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
 
 const mocks = vi.hoisted(() => ({
   invoice: undefined as Doc<"invoices"> | null | undefined,
-  events: undefined as Doc<"invoiceEvents">[] | undefined,
+  events: undefined as InvoiceEvent[] | undefined,
   payments: undefined as Doc<"invoicePayments">[] | undefined,
   users: undefined as Doc<"users">[] | undefined,
   currentUser: undefined as Doc<"users"> | null | undefined,
@@ -133,8 +138,8 @@ function invoice(overrides: Partial<Doc<"invoices">> = {}): Doc<"invoices"> {
 
 function invoiceEvent(
   id: string,
-  overrides: Partial<Doc<"invoiceEvents">> = {},
-): Doc<"invoiceEvents"> {
+  overrides: Partial<InvoiceEvent> = {},
+): InvoiceEvent {
   return {
     _id: id as Id<"invoiceEvents">,
     _creationTime: 1,
@@ -847,14 +852,17 @@ describe("InvoiceDetailPage", () => {
     mocks.events = [
       invoiceEvent("event-1", {
         type: "cancelled",
+        actorName: "Abdirizak Abdulle",
         message: "Draft invoice cancelled. Reason: Duplicate",
       }),
       invoiceEvent("event-2", {
         type: "marked_test",
+        actorName: "Abdirizak Abdulle",
         message: "Invoice marked as test/hidden. Reason: Training",
       }),
       invoiceEvent("event-3", {
         type: "unmarked_test",
+        actorEmail: "admin@example.com",
         message: "Invoice unmarked as test/hidden. Reason: Real",
       }),
     ];
@@ -865,7 +873,14 @@ describe("InvoiceDetailPage", () => {
     expect(screen.getByText("Marked test")).toBeInTheDocument();
     expect(screen.getByText("Unmarked test")).toBeInTheDocument();
     expect(
-      screen.getByText("Invoice marked as test/hidden. Reason: Training"),
+      screen.getByText(
+        "Invoice marked as test/hidden by Abdirizak Abdulle. Reason: Training",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Invoice unmarked as test/hidden by admin@example.com. Reason: Real",
+      ),
     ).toBeInTheDocument();
   });
 
