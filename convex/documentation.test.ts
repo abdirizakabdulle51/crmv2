@@ -207,6 +207,63 @@ describe("documentation", () => {
     expect(cloudAdvisor.order).toBe(11);
   });
 
+  it("syncs only the invoices documentation body from the seed", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+    await t.mutation(internal.documentation.seedInitialDocs, {});
+    await t.mutation(internal.documentation.replaceNavigationSection, {});
+
+    await asUser(t, users.hob).mutation(api.documentation.upsert, {
+      slug: "page-invoices",
+      title: "Old Invoice Title",
+      group: "Team Guide",
+      content: "Old live invoice guide",
+      order: 99,
+      visibility: "public",
+    });
+    await asUser(t, users.hob).mutation(api.documentation.upsert, {
+      slug: "page-quotes",
+      title: "Quotes",
+      group: "Team Guide",
+      content: "Live production quote guide",
+      order: 9,
+      visibility: "public",
+    });
+
+    await expect(
+      asUser(t, users.am).mutation(
+        api.documentation.syncInvoicesDocumentationFromSeed,
+        {},
+      ),
+    ).rejects.toMatchObject({
+      data: expect.objectContaining({ code: "FORBIDDEN" }),
+    });
+
+    const result = await asUser(t, users.ceo).mutation(
+      api.documentation.syncInvoicesDocumentationFromSeed,
+      {},
+    );
+    expect(result).toEqual({
+      inserted: false,
+      slug: "page-invoices",
+      updated: ["title", "order", "content"],
+    });
+
+    const invoices = await asUser(t, users.ceo).query(
+      api.documentation.getBySlug,
+      { slug: "page-invoices" },
+    );
+    expect(invoices.title).toBe("Invoices");
+    expect(invoices.order).toBe(10);
+    expect(invoices.content).toContain("Admin Invoice Cleanup Tutorial");
+
+    const quotes = await asUser(t, users.ceo).query(
+      api.documentation.getBySlug,
+      { slug: "page-quotes" },
+    );
+    expect(quotes.content).toBe("Live production quote guide");
+  });
+
   it("replaces the navigation section with idempotent per-page guides", async () => {
     const t = convexTest(schema, modules);
     const users = await seedUsers(t);

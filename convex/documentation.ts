@@ -2159,6 +2159,80 @@ export const syncPageDocumentationSections = mutation({
   },
 });
 
+export const syncInvoicesDocumentationFromSeed = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanEditDocumentation(user);
+
+    const seed = PAGE_DOCUMENTATION_SECTIONS.find(
+      (section) => section.slug === "page-invoices",
+    );
+    if (!seed) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Invoices documentation seed not found",
+      });
+    }
+
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("documentationSections")
+      .withIndex("by_slug", (q) => q.eq("slug", seed.slug))
+      .unique();
+
+    if (!existing) {
+      await ctx.db.insert("documentationSections", {
+        ...seed,
+        updatedAt: now,
+        updatedBy: user._id,
+      });
+      return {
+        inserted: true,
+        updated: ["content", "title", "group", "order", "visibility"],
+        slug: seed.slug,
+      };
+    }
+
+    const patch: Partial<Doc<"documentationSections">> = {};
+    const updated: string[] = [];
+    if (existing.title !== seed.title) {
+      patch.title = seed.title;
+      updated.push("title");
+    }
+    if (existing.group !== seed.group) {
+      patch.group = seed.group;
+      updated.push("group");
+    }
+    if (existing.order !== seed.order) {
+      patch.order = seed.order;
+      updated.push("order");
+    }
+    if (existing.visibility !== seed.visibility) {
+      patch.visibility = seed.visibility;
+      updated.push("visibility");
+    }
+    if (existing.content !== seed.content) {
+      patch.content = seed.content;
+      updated.push("content");
+    }
+
+    if (updated.length > 0) {
+      await ctx.db.patch(existing._id, {
+        ...patch,
+        updatedAt: now,
+        updatedBy: user._id,
+      });
+    }
+
+    return {
+      inserted: false,
+      updated,
+      slug: seed.slug,
+    };
+  },
+});
+
 export const seedInitialDocs = internalMutation({
   args: {},
   handler: async (ctx) => {
