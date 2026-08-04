@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import {
   action,
+  internalAction,
   internalMutation,
   internalQuery,
   mutation,
@@ -20,6 +21,8 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_HOUR = 60 * 60 * 1000;
 const MOGADISHU_UTC_OFFSET_HOURS = 3;
 const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
+const INTERNAL_REMINDER_INTERVAL_MS = 7 * MS_PER_DAY;
+const DEFAULT_INTERNAL_REMINDER_LIMIT = 50;
 
 const PAYABLE_STATUSES = new Set<InvoiceStatus>([
   "issued",
@@ -272,6 +275,46 @@ function buildInvoiceEmail(invoice: Doc<"invoices">, recipient: string) {
   return { subject, html, text: textLines.join("\n") };
 }
 
+function buildInternalReminderEmail(args: {
+  invoice: Doc<"invoices">;
+  accountManager: Doc<"users">;
+}) {
+  const { invoice, accountManager } = args;
+  const invoiceNumber = invoice.invoiceNumber ?? String(invoice._id);
+  const invoicePath = `/invoices/${invoice._id}`;
+  const subject = `Overdue invoice follow-up: ${invoiceNumber}`;
+  const greeting = accountManager.name
+    ? `Hi ${accountManager.name},`
+    : "Hi,";
+  const html = `
+    <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
+      <p>${escapeHtml(greeting)}</p>
+      <p>Invoice ${escapeHtml(invoiceNumber)} for ${escapeHtml(invoice.companyName)} is overdue and needs follow-up.</p>
+      <table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:640px;">
+        <tbody>
+          <tr><td style="padding:6px 18px 6px 0;color:#64748b;">Customer</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(invoice.companyName)}</td></tr>
+          <tr><td style="padding:6px 18px 6px 0;color:#64748b;">Invoice</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(invoiceNumber)}</td></tr>
+          <tr><td style="padding:6px 18px 6px 0;color:#64748b;">Due date</td><td style="padding:6px 0;">${escapeHtml(formatInvoiceDate(invoice.dueDate))}</td></tr>
+          <tr><td style="padding:6px 18px 6px 0;color:#64748b;">Balance due</td><td style="padding:6px 0;font-weight:600;">${escapeHtml(formatMoney(invoice.balanceDue))}</td></tr>
+        </tbody>
+      </table>
+      <p>Open the invoice in CRM: ${escapeHtml(invoicePath)}</p>
+    </div>`;
+  const text = [
+    greeting,
+    "",
+    `Invoice ${invoiceNumber} for ${invoice.companyName} is overdue and needs follow-up.`,
+    "",
+    `Customer: ${invoice.companyName}`,
+    `Invoice: ${invoiceNumber}`,
+    `Due date: ${formatInvoiceDate(invoice.dueDate)}`,
+    `Balance due: ${formatMoney(invoice.balanceDue)}`,
+    `CRM invoice: ${invoicePath}`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
 function relayUrl() {
   const value =
     process.env.HTGWEB_MAIL_RELAY_URL?.trim() ??
@@ -297,6 +340,20 @@ function invoiceRelayUrl() {
     );
   }
   return `${value.replace(/\/$/, "")}/internal/send-invoice-email`;
+}
+
+function genericMailRelayUrl() {
+  const value = relayUrl();
+  if (value.endsWith("/internal/send-email")) {
+    return value;
+  }
+  if (value.endsWith("/internal/send-invoice-email")) {
+    return value.replace(
+      /\/internal\/send-invoice-email$/,
+      "/internal/send-email",
+    );
+  }
+  return `${value.replace(/\/$/, "")}/internal/send-email`;
 }
 
 function relaySecret() {
@@ -606,6 +663,166 @@ export const markOverdueInvoices = internalMutation({
     }
 
     return { updated };
+  },
+});
+
+export const listInternalReminderCandidates = internalQuery({
+  args: {
+    now: v.number(),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const invoices = await ctx.db
+      .query("invoices")
+      .withIndex("by_status", (q) => q.eq("status", "overdue"))
+      .collect();
+    const reminders: Array<{
+      invoice: Doc<"invoices">;
+      accountManager: Doc<"users">;
+      recipient: string;
+    }> = [];
+    let skipped = 0;
+
+    for (const invoice of invoices) {
+      if (invoice.balanceDue <= 0) {
+        skipped += 1;
+        continue;
+      }
+      if (
+        invoice.lastInternalReminderAt !== undefined &&
+        args.now - invoice.lastInternalReminderAt < INTERNAL_REMINDER_INTERVAL_MS
+      ) {
+        skipped += 1;
+        continue;
+      }
+
+      const company = await ctx.db.get(invoice.companyId);
+      if (!company?.accountManagerId) {
+        skipped += 1;
+        continue;
+      }
+
+      const accountManager = await ctx.db.get(company.accountManagerId);
+      const recipient = trimOptional(accountManager?.email);
+      if (!accountManager || !recipient) {
+        skipped += 1;
+        continue;
+      }
+
+      reminders.push({ invoice, accountManager, recipient });
+      if (reminders.length >= args.limit) {
+        break;
+      }
+    }
+
+    return { reminders, skipped };
+  },
+});
+
+export const markInternalReminderSent = internalMutation({
+  args: {
+    invoiceId: v.id("invoices"),
+    sentTo: v.string(),
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
+    if (
+      invoice.status !== "overdue" ||
+      invoice.balanceDue <= 0 ||
+      (invoice.lastInternalReminderAt !== undefined &&
+        args.now - invoice.lastInternalReminderAt <
+          INTERNAL_REMINDER_INTERVAL_MS)
+    ) {
+      return false;
+    }
+
+    const count = (invoice.internalReminderCount ?? 0) + 1;
+    await ctx.db.patch(args.invoiceId, {
+      lastInternalReminderAt: args.now,
+      internalReminderCount: count,
+      updatedAt: args.now,
+    });
+    await insertEvent(ctx, {
+      invoiceId: args.invoiceId,
+      type: "internal_reminder_sent",
+      message: `Internal overdue reminder sent to ${args.sentTo}. Balance due: ${formatMoney(invoice.balanceDue)}.`,
+      now: args.now,
+    });
+    return true;
+  },
+});
+
+export const sendInternalOverdueReminders = internalAction({
+  args: {
+    now: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const limit = Math.min(
+      Math.max(args.limit ?? DEFAULT_INTERNAL_REMINDER_LIMIT, 1),
+      100,
+    );
+    const { reminders, skipped: initialSkipped } = await ctx.runQuery(
+      internal.invoices.listInternalReminderCandidates,
+      { now, limit },
+    );
+    let sent = 0;
+    let skipped = initialSkipped;
+    let failed = 0;
+
+    for (const reminder of reminders) {
+      const email = buildInternalReminderEmail(reminder);
+      try {
+        const response = await fetch(genericMailRelayUrl(), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Mail-Relay-Secret": relaySecret(),
+          },
+          body: JSON.stringify({
+            to: reminder.recipient,
+            subject: email.subject,
+            html: email.html,
+            text: email.text,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(await relayErrorMessage(response));
+        }
+
+        const body = (await response.json().catch(() => ({
+          success: true,
+        }))) as { success?: unknown; error?: unknown };
+        if (body.success === false) {
+          throw new Error(
+            typeof body.error === "string" && body.error.trim()
+              ? body.error.trim()
+              : "Internal reminder delivery failed",
+          );
+        }
+
+        const recorded = await ctx.runMutation(
+          internal.invoices.markInternalReminderSent,
+          {
+            invoiceId: reminder.invoice._id,
+            sentTo: reminder.recipient,
+            now,
+          },
+        );
+        if (recorded) {
+          sent += 1;
+        } else {
+          skipped += 1;
+        }
+      } catch {
+        failed += 1;
+      }
+    }
+
+    return { sent, skipped, failed };
   },
 });
 

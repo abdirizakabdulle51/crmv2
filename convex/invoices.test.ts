@@ -63,12 +63,14 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
     });
     const amAId = await ctx.db.insert("users", {
       name: "AM A",
+      email: "am-a@example.com",
       tokenIdentifier: "am-a-token",
       role: "account_manager",
       countryId: countryA,
     });
     const amBId = await ctx.db.insert("users", {
       name: "AM B",
+      email: "am-b@example.com",
       tokenIdentifier: "am-b-token",
       role: "account_manager",
       countryId: countryB,
@@ -598,6 +600,186 @@ describe("invoices", () => {
       invoiceId,
     });
     expect(events.filter((event) => event.type === "overdue")).toHaveLength(1);
+  });
+
+  it("sends internal reminder for an overdue invoice with balance", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue");
+    const fetchMock = mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendInternalOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://htgweb.example/internal/send-email",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          "X-Mail-Relay-Secret": "relay-secret",
+        }),
+      }),
+    );
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      to: string;
+      subject: string;
+      html: string;
+      text: string;
+      invoice?: unknown;
+    };
+    expect(payload.to).toBe("am-a@example.com");
+    expect(payload.subject).toMatch(/^Overdue invoice follow-up: INV-/);
+    expect(payload.html).toContain("Company A");
+    expect(payload.html).toContain("Balance due");
+    expect(payload.html).toContain(`/invoices/${invoiceId}`);
+    expect(payload.text).toContain("Customer: Company A");
+    expect(payload.text).toContain("Balance due: $20.00");
+    expect(payload.text).toContain(`/invoices/${invoiceId}`);
+    expect(payload.invoice).toBeUndefined();
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lastInternalReminderAt).toBe(Date.UTC(2026, 7, 20, 6));
+    expect(invoice.internalReminderCount).toBe(1);
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(events[events.length - 1]).toMatchObject({
+      type: "internal_reminder_sent",
+      message: expect.stringContaining("am-a@example.com"),
+    });
+  });
+
+  it.each([
+    "draft",
+    "issued",
+    "sent",
+    "partially_paid",
+    "paid",
+    "void",
+    "cancelled",
+  ] as const)("skips %s invoices for internal reminders", async (status) => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await issueInvoiceWithStatus(t, s, status, {
+      amountPaid: status === "paid" ? 20 : 0,
+      balanceDue: status === "paid" ? 0 : 20,
+    });
+    const fetchMock = mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendInternalOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 0, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skips zero-balance overdue invoices and missing account manager emails", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await issueInvoiceWithStatus(t, s, "overdue", {
+      amountPaid: 20,
+      balanceDue: 0,
+    });
+    await issueInvoiceWithStatus(t, s, "overdue");
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.amA._id, { email: undefined });
+    });
+    const fetchMock = mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendInternalOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 2, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not resend internal reminders within seven days", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const now = Date.UTC(2026, 7, 20, 6);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue", {
+      lastInternalReminderAt: now - 6 * 24 * 60 * 60 * 1000,
+      internalReminderCount: 1,
+    });
+    const fetchMock = mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendInternalOverdueReminders,
+      { now, limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.internalReminderCount).toBe(1);
+  });
+
+  it("sends internal reminders again after seven days", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const now = Date.UTC(2026, 7, 20, 6);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue", {
+      lastInternalReminderAt: now - 8 * 24 * 60 * 60 * 1000,
+      internalReminderCount: 1,
+    });
+    mockRelaySuccess();
+
+    const result = await t.action(
+      internal.invoices.sendInternalOverdueReminders,
+      { now, limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lastInternalReminderAt).toBe(now);
+    expect(invoice.internalReminderCount).toBe(2);
+  });
+
+  it("does not update reminder fields when internal reminder relay fails", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: false, error: "SMTP down" }), {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const result = await t.action(
+      internal.invoices.sendInternalOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lastInternalReminderAt).toBeUndefined();
+    expect(invoice.internalReminderCount).toBeUndefined();
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(
+      events.some((event) => event.type === "internal_reminder_sent"),
+    ).toBe(false);
   });
 
   it("rejects editing an issued invoice", async () => {
