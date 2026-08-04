@@ -15,6 +15,9 @@ vi.mock("@/convex/_generated/api.js", () => ({
       listEvents: "invoices.listEvents",
       listPayments: "invoices.listPayments",
     },
+    users: {
+      listAll: "users.listAll",
+    },
   },
 }));
 
@@ -22,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   invoice: undefined as Doc<"invoices"> | null | undefined,
   events: undefined as Doc<"invoiceEvents">[] | undefined,
   payments: undefined as Doc<"invoicePayments">[] | undefined,
+  users: undefined as Doc<"users">[] | undefined,
   issueInvoice: vi.fn(),
   recordPayment: vi.fn(),
   sendInvoiceEmail: vi.fn(),
@@ -43,6 +47,7 @@ vi.mock("convex/react", () => ({
     if (query === "invoices.getById") return mocks.invoice;
     if (query === "invoices.listEvents") return mocks.events;
     if (query === "invoices.listPayments") return mocks.payments;
+    if (query === "users.listAll") return mocks.users;
     return undefined;
   },
 }));
@@ -145,6 +150,21 @@ function invoicePayment(
   };
 }
 
+function user(
+  id: string,
+  overrides: Partial<Doc<"users">> = {},
+): Doc<"users"> {
+  return {
+    _id: id as Id<"users">,
+    _creationTime: 1,
+    tokenIdentifier: `${id}-token`,
+    name: "Amina Recorder",
+    email: "amina.recorder@example.com",
+    role: "account_manager",
+    ...overrides,
+  };
+}
+
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location">{location.pathname}</div>;
@@ -194,6 +214,7 @@ describe("InvoiceDetailPage", () => {
     mocks.recordPayment.mockResolvedValue(undefined);
     mocks.sendInvoiceEmail.mockResolvedValue(undefined);
     mocks.payments = [];
+    mocks.users = [user("user-1")];
     mocks.events = [
       invoiceEvent("event-1"),
       invoiceEvent("event-2", {
@@ -462,9 +483,41 @@ describe("InvoiceDetailPage", () => {
     expect(within(history as HTMLElement).getByText("$200.00")).toBeInTheDocument();
     expect(within(history as HTMLElement).getByText("Bank Transfer")).toBeInTheDocument();
     expect(within(history as HTMLElement).getByText("SSB-1001")).toBeInTheDocument();
-    expect(within(history as HTMLElement).getAllByText("user-1").length).toBeGreaterThan(0);
+    expect(within(history as HTMLElement).getAllByText("Amina Recorder").length).toBeGreaterThan(0);
+    expect(within(history as HTMLElement).queryByText("user-1")).not.toBeInTheDocument();
     expect(within(history as HTMLElement).getByText("$50.00")).toBeInTheDocument();
     expect(within(history as HTMLElement).getByText("Cash")).toBeInTheDocument();
+  });
+
+  it("falls back to recorder email or generic label without exposing raw ids", () => {
+    mocks.payments = [
+      invoicePayment("payment-1"),
+      invoicePayment("payment-2", {
+        recordedBy: "user-2" as Id<"users">,
+        amount: 50,
+      }),
+    ];
+    mocks.users = [
+      user("user-1", {
+        name: undefined,
+        email: "payments@example.com",
+      }),
+    ];
+
+    renderDetailPage();
+
+    const history = screen
+      .getByText("Payment History")
+      .closest("[data-slot='card']");
+    expect(history).not.toBeNull();
+    expect(
+      within(history as HTMLElement).getByText("payments@example.com"),
+    ).toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).getByText("Recorded user"),
+    ).toBeInTheDocument();
+    expect(within(history as HTMLElement).queryByText("user-1")).not.toBeInTheDocument();
+    expect(within(history as HTMLElement).queryByText("user-2")).not.toBeInTheDocument();
   });
 
   it("opens confirmation before issuing a draft invoice", async () => {

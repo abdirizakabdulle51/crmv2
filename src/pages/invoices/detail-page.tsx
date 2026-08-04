@@ -61,6 +61,7 @@ type Invoice = Doc<"invoices">;
 type InvoiceEvent = Doc<"invoiceEvents">;
 type InvoicePayment = Doc<"invoicePayments">;
 type InvoiceStatus = Invoice["status"];
+type User = Doc<"users">;
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
   draft: "Draft",
@@ -119,6 +120,10 @@ function formatDateTime(value?: number) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatUserDisplayName(user?: User) {
+  return user?.name?.trim() || user?.email?.trim() || "Recorded user";
 }
 
 function statusBadge(status: InvoiceStatus) {
@@ -256,6 +261,7 @@ function InvoiceDetailContent() {
     api.invoices.listPayments,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
   );
+  const users = useQuery(api.users.listAll, {});
   const issueInvoice = useMutation(api.invoices.issueInvoice);
   const recordPayment = useMutation(api.invoices.recordPayment);
   const sendInvoiceEmail = useAction(api.invoices.sendInvoiceEmail);
@@ -268,7 +274,7 @@ function InvoiceDetailContent() {
     return <UnavailableState />;
   }
 
-  if (!invoice || !events || !payments) {
+  if (!invoice || !events || !payments || !users) {
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-8 w-48" />
@@ -282,6 +288,7 @@ function InvoiceDetailContent() {
   const sendRecipient =
     invoice.billingEmail?.trim() || invoice.contactEmail?.trim();
   const canRecordPayment = PAYABLE_STATUSES.has(invoice.status);
+  const usersById = new Map(users.map((user) => [user._id, user]));
 
   const handleIssueInvoice = async () => {
     setIsIssuing(true);
@@ -667,7 +674,9 @@ function InvoiceDetailContent() {
                       <td className="p-3">{payment.method ?? "-"}</td>
                       <td className="p-3">{payment.reference ?? "-"}</td>
                       <td className="p-3 text-muted-foreground">
-                        {String(payment.recordedBy)}
+                        {formatUserDisplayName(
+                          usersById.get(payment.recordedBy),
+                        )}
                       </td>
                       <td className="p-3 text-muted-foreground">
                         {formatDateTime(payment.createdAt)}
