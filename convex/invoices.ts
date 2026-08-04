@@ -17,11 +17,19 @@ type InvoiceLineItem = Doc<"invoices">["lineItems"][number];
 
 const DEFAULT_PAYMENT_TERM_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MS_PER_HOUR = 60 * 60 * 1000;
+const MOGADISHU_UTC_OFFSET_HOURS = 3;
+const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
 
 const PAYABLE_STATUSES = new Set<InvoiceStatus>([
   "issued",
   "sent",
   "overdue",
+  "partially_paid",
+]);
+const OVERDUE_CANDIDATE_STATUSES = new Set<InvoiceStatus>([
+  "issued",
+  "sent",
   "partially_paid",
 ]);
 
@@ -130,6 +138,24 @@ function defaultDueDateForIssue(
   paymentTermDays = DEFAULT_PAYMENT_TERM_DAYS,
 ) {
   return issueDate + paymentTermDays * MS_PER_DAY;
+}
+
+function startOfBusinessDay(now: number) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: BUSINESS_TIME_ZONE,
+    year: "numeric",
+  }).formatToParts(new Date(now));
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+
+  // Africa/Mogadishu is UTC+3 with no daylight-saving shift.
+  return (
+    Date.UTC(year, month - 1, day) -
+    MOGADISHU_UTC_OFFSET_HOURS * MS_PER_HOUR
+  );
 }
 
 async function nextInvoiceNumber(ctx: MutationCtx, now: number) {
@@ -545,6 +571,41 @@ export const markInvoiceSent = internalMutation({
       message: `Invoice ${invoice.invoiceNumber ?? args.invoiceId} sent to ${args.sentTo}.`,
       now,
     });
+  },
+});
+
+export const markOverdueInvoices = internalMutation({
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const overdueBefore = startOfBusinessDay(now);
+    const invoices = await ctx.db.query("invoices").collect();
+    let updated = 0;
+
+    for (const invoice of invoices) {
+      if (
+        !OVERDUE_CANDIDATE_STATUSES.has(invoice.status) ||
+        invoice.dueDate === undefined ||
+        invoice.dueDate >= overdueBefore ||
+        invoice.balanceDue <= 0
+      ) {
+        continue;
+      }
+
+      await ctx.db.patch(invoice._id, {
+        status: "overdue",
+        updatedAt: now,
+      });
+      await insertEvent(ctx, {
+        invoiceId: invoice._id,
+        type: "overdue",
+        message: `Invoice marked overdue. Balance due: ${formatMoney(invoice.balanceDue)}.`,
+        now,
+      });
+      updated += 1;
+    }
+
+    return { updated };
   },
 });
 

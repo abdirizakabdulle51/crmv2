@@ -1,6 +1,6 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import schema from "./schema";
 import { modules } from "./test.setup";
@@ -193,6 +193,25 @@ async function createDraftForA(
 async function issueDraftForA(t: ReturnType<typeof convexTest>, s: Seed) {
   const invoiceId = await createDraftForA(t, s);
   await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+  return invoiceId;
+}
+
+async function issueInvoiceWithStatus(
+  t: ReturnType<typeof convexTest>,
+  s: Seed,
+  status: Doc<"invoices">["status"],
+  overrides: Partial<Doc<"invoices">> = {},
+) {
+  const invoiceId = await issueDraftForA(t, s);
+  await t.run(async (ctx) => {
+    await ctx.db.patch(invoiceId, {
+      status,
+      dueDate: Date.UTC(2026, 7, 8, 12),
+      amountPaid: 0,
+      balanceDue: 20,
+      ...overrides,
+    });
+  });
   return invoiceId;
 }
 
@@ -476,6 +495,109 @@ describe("invoices", () => {
     });
     expect(invoice.issueDate).toEqual(expect.any(Number));
     expect(invoice.dueDate).toBe(invoice.issueDate! + 15 * 24 * 60 * 60 * 1000);
+  });
+
+  it.each(["issued", "sent", "partially_paid"] as const)(
+    "marks %s invoices overdue when due date has passed",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const s = await seed(t);
+      const invoiceId = await issueInvoiceWithStatus(t, s, status, {
+        amountPaid: status === "partially_paid" ? 5 : 0,
+        balanceDue: status === "partially_paid" ? 15 : 20,
+      });
+
+      const result = await t.mutation(internal.invoices.markOverdueInvoices, {
+        now: Date.UTC(2026, 7, 10, 12),
+      });
+
+      expect(result).toEqual({ updated: 1 });
+      const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+        invoiceId,
+      });
+      expect(invoice.status).toBe("overdue");
+      const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+        invoiceId,
+      });
+      const expectedBalance = status === "partially_paid" ? "$15.00" : "$20.00";
+      expect(events[events.length - 1]).toMatchObject({
+        type: "overdue",
+        message: `Invoice marked overdue. Balance due: ${expectedBalance}.`,
+      });
+    },
+  );
+
+  it.each(["draft", "paid", "void", "cancelled"] as const)(
+    "does not mark %s invoices overdue",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const s = await seed(t);
+      const invoiceId = await issueInvoiceWithStatus(t, s, status, {
+        amountPaid: status === "paid" ? 20 : 0,
+        balanceDue: status === "paid" ? 0 : 20,
+      });
+
+      const result = await t.mutation(internal.invoices.markOverdueInvoices, {
+        now: Date.UTC(2026, 7, 10, 12),
+      });
+
+      expect(result).toEqual({ updated: 0 });
+      const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+        invoiceId,
+      });
+      expect(invoice.status).toBe(status);
+    },
+  );
+
+  it("ignores invoices with no balance due or due dates within the current business day", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const paidBalanceInvoiceId = await issueInvoiceWithStatus(t, s, "sent", {
+      amountPaid: 20,
+      balanceDue: 0,
+    });
+    const dueTodayInvoiceId = await issueInvoiceWithStatus(t, s, "sent", {
+      dueDate: Date.UTC(2026, 7, 10, 8),
+    });
+    const futureInvoiceId = await issueInvoiceWithStatus(t, s, "sent", {
+      dueDate: Date.UTC(2026, 7, 11, 8),
+    });
+
+    const result = await t.mutation(internal.invoices.markOverdueInvoices, {
+      now: Date.UTC(2026, 7, 10, 12),
+    });
+
+    expect(result).toEqual({ updated: 0 });
+    for (const invoiceId of [
+      paidBalanceInvoiceId,
+      dueTodayInvoiceId,
+      futureInvoiceId,
+    ]) {
+      const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+        invoiceId,
+      });
+      expect(invoice.status).toBe("sent");
+    }
+  });
+
+  it("does not duplicate overdue events on repeated runs", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "issued");
+
+    const first = await t.mutation(internal.invoices.markOverdueInvoices, {
+      now: Date.UTC(2026, 7, 10, 12),
+    });
+    const second = await t.mutation(internal.invoices.markOverdueInvoices, {
+      now: Date.UTC(2026, 7, 10, 13),
+    });
+
+    expect(first).toEqual({ updated: 1 });
+    expect(second).toEqual({ updated: 0 });
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(events.filter((event) => event.type === "overdue")).toHaveLength(1);
   });
 
   it("rejects editing an issued invoice", async () => {
@@ -925,6 +1047,26 @@ describe("invoices", () => {
       });
       expect(invoice.status).toBe("partially_paid");
     }
+  });
+
+  it("records full payment after overdue and marks invoice paid", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue");
+
+    await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+      invoiceId,
+      amount: 20,
+    });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice).toMatchObject({
+      status: "paid",
+      amountPaid: 20,
+      balanceDue: 0,
+    });
   });
 
   it("protects payment recording and payment history with invoice RBAC", async () => {

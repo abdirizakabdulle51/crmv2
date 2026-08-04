@@ -608,6 +608,7 @@ export default defineSchema({
       v.literal("voided"),
       v.literal("sent"),
       v.literal("payment_recorded"),
+      v.literal("overdue"),
     ),
     actorId: v.optional(v.id("users")),
     message: v.optional(v.string()),
