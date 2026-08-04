@@ -15,6 +15,9 @@ type Ctx = QueryCtx | MutationCtx;
 type InvoiceStatus = Doc<"invoices">["status"];
 type InvoiceLineItem = Doc<"invoices">["lineItems"][number];
 
+const DEFAULT_PAYMENT_TERM_DAYS = 7;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 const PAYABLE_STATUSES = new Set<InvoiceStatus>([
   "issued",
   "sent",
@@ -120,6 +123,10 @@ function trimOptional(value: string | undefined) {
 function invoiceNumberForSequence(now: number, sequence: number) {
   const year = new Date(now).getUTCFullYear();
   return `INV-${year}-${String(sequence).padStart(5, "0")}`;
+}
+
+function defaultDueDateForIssue(issueDate: number) {
+  return issueDate + DEFAULT_PAYMENT_TERM_DAYS * MS_PER_DAY;
 }
 
 async function nextInvoiceNumber(ctx: MutationCtx, now: number) {
@@ -493,6 +500,7 @@ export const issueInvoice = mutation({
       status: "issued",
       invoiceNumber,
       issueDate: now,
+      dueDate: invoice.dueDate ?? defaultDueDateForIssue(now),
       lockedAt: now,
       updatedAt: now,
     });

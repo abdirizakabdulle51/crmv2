@@ -168,12 +168,26 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
   });
 }
 
-async function createDraftForA(t: ReturnType<typeof convexTest>, s: Seed) {
-  return await asUser(t, s.amA).mutation(api.invoices.createDraftFromQuote, {
+async function createDraftForA(
+  t: ReturnType<typeof convexTest>,
+  s: Seed,
+  options: { omitDueDate?: boolean; dueDate?: number } = {},
+) {
+  const args: {
+    quoteId: Id<"quotes">;
+    dueDate?: number;
+    notes: string;
+  } = {
     quoteId: s.acceptedQuoteA,
-    dueDate: 1786400000000,
     notes: "Invoice notes",
-  });
+  };
+  if (!options.omitDueDate) {
+    args.dueDate = options.dueDate ?? 1786400000000;
+  }
+  return await asUser(t, s.amA).mutation(
+    api.invoices.createDraftFromQuote,
+    args,
+  );
 }
 
 async function issueDraftForA(t: ReturnType<typeof convexTest>, s: Seed) {
@@ -364,6 +378,7 @@ describe("invoices", () => {
     expect(invoice.status).toBe("issued");
     expect(invoice.invoiceNumber).toMatch(/^INV-\d{4}-00001$/);
     expect(invoice.issueDate).toEqual(expect.any(Number));
+    expect(invoice.dueDate).toBe(1786400000000);
     expect(invoice.lockedAt).toEqual(expect.any(Number));
 
     const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
@@ -373,6 +388,20 @@ describe("invoices", () => {
       "draft_created",
       "issued",
     ]);
+  });
+
+  it("sets a default Net 7 due date when issuing an invoice without a due date", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await createDraftForA(t, s, { omitDueDate: true });
+
+    await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.issueDate).toEqual(expect.any(Number));
+    expect(invoice.dueDate).toBe(invoice.issueDate! + 7 * 24 * 60 * 60 * 1000);
   });
 
   it("rejects editing an issued invoice", async () => {
