@@ -15,6 +15,20 @@ import { assertCanManageCompany, canViewCompany } from "./authorization";
 type Ctx = QueryCtx | MutationCtx;
 type InvoiceStatus = Doc<"invoices">["status"];
 type InvoiceLineItem = Doc<"invoices">["lineItems"][number];
+type InternalReminderCandidate = {
+  invoice: Doc<"invoices">;
+  accountManager: Doc<"users">;
+  recipient: string;
+};
+type InternalReminderCandidateResult = {
+  reminders: InternalReminderCandidate[];
+  skipped: number;
+};
+type InternalReminderRunResult = {
+  sent: number;
+  skipped: number;
+  failed: number;
+};
 
 const DEFAULT_PAYMENT_TERM_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -671,16 +685,12 @@ export const listInternalReminderCandidates = internalQuery({
     now: v.number(),
     limit: v.number(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<InternalReminderCandidateResult> => {
     const invoices = await ctx.db
       .query("invoices")
       .withIndex("by_status", (q) => q.eq("status", "overdue"))
       .collect();
-    const reminders: Array<{
-      invoice: Doc<"invoices">;
-      accountManager: Doc<"users">;
-      recipient: string;
-    }> = [];
+    const reminders: InternalReminderCandidate[] = [];
     let skipped = 0;
 
     for (const invoice of invoices) {
@@ -725,7 +735,7 @@ export const markInternalReminderSent = internalMutation({
     sentTo: v.string(),
     now: v.number(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<boolean> => {
     const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
     if (
       invoice.status !== "overdue" ||
@@ -758,16 +768,16 @@ export const sendInternalOverdueReminders = internalAction({
     now: v.optional(v.number()),
     limit: v.optional(v.number()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<InternalReminderRunResult> => {
     const now = args.now ?? Date.now();
     const limit = Math.min(
       Math.max(args.limit ?? DEFAULT_INTERNAL_REMINDER_LIMIT, 1),
       100,
     );
-    const { reminders, skipped: initialSkipped } = await ctx.runQuery(
+    const { reminders, skipped: initialSkipped } = (await ctx.runQuery(
       internal.invoices.listInternalReminderCandidates,
       { now, limit },
-    );
+    )) as InternalReminderCandidateResult;
     let sent = 0;
     let skipped = initialSkipped;
     let failed = 0;
