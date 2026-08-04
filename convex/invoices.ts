@@ -56,6 +56,19 @@ const INTERNAL_REMINDER_INTERVAL_MS = 7 * MS_PER_DAY;
 const DEFAULT_INTERNAL_REMINDER_LIMIT = 50;
 const CUSTOMER_REMINDER_INTERVAL_MS = 7 * MS_PER_DAY;
 const DEFAULT_CUSTOMER_REMINDER_LIMIT = 50;
+const PAYMENT_METHOD_BANK_TRANSFER = "Bank Transfer";
+const PAYMENT_METHOD_MOBILE_MONEY = "Mobile Money";
+const SUPPORTED_PAYMENT_METHODS = new Set([
+  PAYMENT_METHOD_BANK_TRANSFER,
+  PAYMENT_METHOD_MOBILE_MONEY,
+]);
+const BANK_TRANSFER_RECEIVING_DETAILS = {
+  receivingBankName: "Salaam Somali Bank",
+  receivingAccountNumber: "33111777",
+  receivingAccountName: "HTG CLOUDS LIMITED",
+  receivingBankLocation: "MOGADISHU - SOMALIA",
+  receivingCurrencyNote: "All fees are listed in USD",
+};
 
 const PAYABLE_STATUSES = new Set<InvoiceStatus>([
   "issued",
@@ -1305,8 +1318,18 @@ export const recordPayment = mutation({
     const nextBalanceDue = roundMoney(invoice.balanceDue - amount);
     const nextStatus: InvoiceStatus =
       nextBalanceDue === 0 ? "paid" : "partially_paid";
-    const method = trimOptional(args.method);
+    const method = trimOptional(args.method) ?? PAYMENT_METHOD_BANK_TRANSFER;
+    if (!SUPPORTED_PAYMENT_METHODS.has(method)) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Unsupported payment method",
+      });
+    }
     const reference = trimOptional(args.reference);
+    const receivingDetails =
+      method === PAYMENT_METHOD_BANK_TRANSFER
+        ? BANK_TRANSFER_RECEIVING_DETAILS
+        : {};
 
     await ctx.db.insert("invoicePayments", {
       invoiceId: args.invoiceId,
@@ -1314,6 +1337,7 @@ export const recordPayment = mutation({
       paidAt,
       method,
       reference,
+      ...receivingDetails,
       recordedBy: user._id,
       createdAt: now,
     });

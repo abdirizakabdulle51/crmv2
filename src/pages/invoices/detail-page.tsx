@@ -104,11 +104,15 @@ const VOIDABLE_STATUSES = new Set<InvoiceStatus>([
 
 const PAYMENT_METHODS = [
   "Bank Transfer",
-  "Cash",
   "Mobile Money",
-  "Card",
-  "Other",
 ];
+const BANK_TRANSFER_RECEIVING_DETAILS = {
+  receivingBankName: "Salaam Somali Bank",
+  receivingAccountNumber: "33111777",
+  receivingAccountName: "HTG CLOUDS LIMITED",
+  receivingBankLocation: "MOGADISHU - SOMALIA",
+  receivingCurrencyNote: "All fees are listed in USD",
+};
 
 function formatDate(value?: number) {
   if (!value) return "-";
@@ -244,6 +248,30 @@ function eventMessage(event: InvoiceEvent) {
   }
   const reason = cleanupEventReason(event.message);
   return `${action} by ${actor}.${reason ? ` Reason: ${reason}` : ""}`;
+}
+
+function paymentReceivingDetails(payment: InvoicePayment) {
+  if (
+    !payment.receivingAccountNumber &&
+    !payment.receivingAccountName &&
+    !payment.receivingBankLocation &&
+    !payment.receivingCurrencyNote
+  ) {
+    return "-";
+  }
+  return [
+    payment.receivingBankName,
+    payment.receivingAccountNumber
+      ? `ACCOUNT # = ${payment.receivingAccountNumber}`
+      : undefined,
+    payment.receivingAccountName
+      ? `ACC. NAME = ${payment.receivingAccountName}`
+      : undefined,
+    payment.receivingBankLocation,
+    payment.receivingCurrencyNote,
+  ]
+    .filter(Boolean)
+    .join(" / ");
 }
 
 function parsePaymentDate(value: string) {
@@ -826,6 +854,9 @@ function InvoiceDetailContent() {
                     </th>
                     <th className="p-3 text-left font-medium">Method</th>
                     <th className="p-3 text-left font-medium">Reference</th>
+                    <th className="p-3 text-left font-medium">
+                      Receiving Account
+                    </th>
                     <th className="p-3 text-left font-medium">Recorded By</th>
                     <th className="p-3 text-left font-medium">Recorded At</th>
                   </tr>
@@ -844,6 +875,9 @@ function InvoiceDetailContent() {
                       </td>
                       <td className="p-3">{payment.method ?? "-"}</td>
                       <td className="p-3">{payment.reference ?? "-"}</td>
+                      <td className="max-w-xs p-3 text-muted-foreground">
+                        {paymentReceivingDetails(payment)}
+                      </td>
                       <td className="p-3 text-muted-foreground">
                         {formatUserDisplayName(
                           usersById.get(payment.recordedBy),
@@ -1069,13 +1103,37 @@ function RecordPaymentDialog({
             </Select>
           </div>
 
+          {method === "Bank Transfer" ? (
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              <div className="mb-2 font-medium">Receiving bank details</div>
+              <div className="space-y-1 text-muted-foreground">
+                <div>
+                  ACCOUNT # ={" "}
+                  {BANK_TRANSFER_RECEIVING_DETAILS.receivingAccountNumber}
+                </div>
+                <div>
+                  ACC. NAME ={" "}
+                  {BANK_TRANSFER_RECEIVING_DETAILS.receivingAccountName}
+                </div>
+                <div>
+                  {BANK_TRANSFER_RECEIVING_DETAILS.receivingBankLocation}
+                </div>
+                <div>
+                  {BANK_TRANSFER_RECEIVING_DETAILS.receivingCurrencyNote}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           <div className="space-y-2">
-            <Label htmlFor="payment-reference">Reference</Label>
+            <Label htmlFor="payment-reference">
+              Customer reference / receipt number
+            </Label>
             <Input
               id="payment-reference"
               value={reference}
               onChange={(event) => onReferenceChange(event.target.value)}
-              placeholder="Bank reference or receipt number"
+              placeholder="Customer transfer reference or receipt number"
             />
           </div>
 

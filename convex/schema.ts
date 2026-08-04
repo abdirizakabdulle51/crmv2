@@ -601,6 +601,11 @@ export default defineSchema({
     paidAt: v.number(),
     method: v.optional(v.string()),
     reference: v.optional(v.string()),
+    receivingBankName: v.optional(v.string()),
+    receivingAccountNumber: v.optional(v.string()),
+    receivingAccountName: v.optional(v.string()),
+    receivingBankLocation: v.optional(v.string()),
+    receivingCurrencyNote: v.optional(v.string()),
     recordedBy: v.id("users"),
     createdAt: v.number(),
   })

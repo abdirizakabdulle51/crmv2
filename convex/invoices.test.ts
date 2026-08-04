@@ -1588,6 +1588,11 @@ describe("invoices", () => {
       paidAt,
       method: "Bank Transfer",
       reference: "SSB-1001",
+      receivingBankName: "Salaam Somali Bank",
+      receivingAccountNumber: "33111777",
+      receivingAccountName: "HTG CLOUDS LIMITED",
+      receivingBankLocation: "MOGADISHU - SOMALIA",
+      receivingCurrencyNote: "All fees are listed in USD",
       recordedBy: s.amA._id,
     });
 
@@ -1610,6 +1615,46 @@ describe("invoices", () => {
     );
   });
 
+  it("records mobile money payments without receiving bank details", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+
+    await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+      invoiceId,
+      amount: 5,
+      method: "Mobile Money",
+      reference: "ZAAD-1001",
+    });
+
+    const payments = await asUser(t, s.amA).query(api.invoices.listPayments, {
+      invoiceId,
+    });
+    expect(payments[0]).toMatchObject({
+      method: "Mobile Money",
+      reference: "ZAAD-1001",
+    });
+    expect(payments[0].receivingBankName).toBeUndefined();
+    expect(payments[0].receivingAccountNumber).toBeUndefined();
+    expect(payments[0].receivingAccountName).toBeUndefined();
+    expect(payments[0].receivingBankLocation).toBeUndefined();
+    expect(payments[0].receivingCurrencyNote).toBeUndefined();
+  });
+
+  it("rejects unsupported new payment methods", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 5,
+        method: "Cash",
+      }),
+    ).rejects.toThrow("Unsupported payment method");
+  });
+
   it("records full payments and marks invoices paid", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -1618,7 +1663,7 @@ describe("invoices", () => {
     await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
       invoiceId,
       amount: 20,
-      method: "Cash",
+      method: "Mobile Money",
     });
 
     const invoice = await asUser(t, s.amA).query(api.invoices.getById, {

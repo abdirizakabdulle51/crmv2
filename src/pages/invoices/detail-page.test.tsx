@@ -164,6 +164,11 @@ function invoicePayment(
     paidAt: Date.UTC(2026, 7, 4),
     method: "Bank Transfer",
     reference: "SSB-1001",
+    receivingBankName: "Salaam Somali Bank",
+    receivingAccountNumber: "33111777",
+    receivingAccountName: "HTG CLOUDS LIMITED",
+    receivingBankLocation: "MOGADISHU - SOMALIA",
+    receivingCurrencyNote: "All fees are listed in USD",
     recordedBy: "user-1" as Id<"users">,
     createdAt: Date.UTC(2026, 7, 4, 10, 30),
     ...overrides,
@@ -441,7 +446,31 @@ describe("InvoiceDetailPage", () => {
     expect(within(dialog).getByLabelText("Amount")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Payment date")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Payment method")).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("Reference")).toBeInTheDocument();
+    expect(
+      within(dialog).getByLabelText("Customer reference / receipt number"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("Receiving bank details")).toBeInTheDocument();
+    expect(within(dialog).getByText("ACCOUNT # = 33111777")).toBeInTheDocument();
+  });
+
+  it("shows only supported payment methods and hides bank details for Mobile Money", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Record Payment" }));
+    const dialog = screen.getByRole("dialog", { name: "Record Payment" });
+    await user.click(within(dialog).getByLabelText("Payment method"));
+
+    expect(screen.getByRole("option", { name: "Bank Transfer" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Mobile Money" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Cash" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Card" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Other" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("option", { name: "Mobile Money" }));
+    expect(
+      within(dialog).queryByText("Receiving bank details"),
+    ).not.toBeInTheDocument();
   });
 
   it("records a valid payment and shows a success toast", async () => {
@@ -453,7 +482,10 @@ describe("InvoiceDetailPage", () => {
     await user.type(within(dialog).getByLabelText("Amount"), "250");
     await user.clear(within(dialog).getByLabelText("Payment date"));
     await user.type(within(dialog).getByLabelText("Payment date"), "2026-08-04");
-    await user.type(within(dialog).getByLabelText("Reference"), "SSB-2002");
+    await user.type(
+      within(dialog).getByLabelText("Customer reference / receipt number"),
+      "SSB-2002",
+    );
     await user.click(
       within(dialog).getByRole("button", { name: "Record Payment" }),
     );
@@ -508,6 +540,11 @@ describe("InvoiceDetailPage", () => {
         paidAt: Date.UTC(2026, 7, 5),
         method: "Cash",
         reference: undefined,
+        receivingBankName: undefined,
+        receivingAccountNumber: undefined,
+        receivingAccountName: undefined,
+        receivingBankLocation: undefined,
+        receivingCurrencyNote: undefined,
       }),
     ];
 
@@ -520,10 +557,16 @@ describe("InvoiceDetailPage", () => {
     expect(within(history as HTMLElement).getByText("$200.00")).toBeInTheDocument();
     expect(within(history as HTMLElement).getByText("Bank Transfer")).toBeInTheDocument();
     expect(within(history as HTMLElement).getByText("SSB-1001")).toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).getByText(
+        /Salaam Somali Bank \/ ACCOUNT # = 33111777 \/ ACC\. NAME = HTG CLOUDS LIMITED/i,
+      ),
+    ).toBeInTheDocument();
     expect(within(history as HTMLElement).getAllByText("Amina Recorder").length).toBeGreaterThan(0);
     expect(within(history as HTMLElement).queryByText("user-1")).not.toBeInTheDocument();
     expect(within(history as HTMLElement).getByText("$50.00")).toBeInTheDocument();
     expect(within(history as HTMLElement).getByText("Cash")).toBeInTheDocument();
+    expect(within(history as HTMLElement).getAllByText("-").length).toBeGreaterThan(0);
   });
 
   it("falls back to recorder email or generic label without exposing raw ids", () => {
@@ -532,6 +575,11 @@ describe("InvoiceDetailPage", () => {
       invoicePayment("payment-2", {
         recordedBy: "user-2" as Id<"users">,
         amount: 50,
+        receivingBankName: undefined,
+        receivingAccountNumber: undefined,
+        receivingAccountName: undefined,
+        receivingBankLocation: undefined,
+        receivingCurrencyNote: undefined,
       }),
     ];
     mocks.users = [
