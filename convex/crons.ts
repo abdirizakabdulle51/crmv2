@@ -9,6 +9,7 @@ crons.daily(
   "mark overdue invoices",
   { hourUTC: 3, minuteUTC: 0 },
   internal.invoices.markOverdueInvoices,
+  {},
 );
 
 export default crons;
