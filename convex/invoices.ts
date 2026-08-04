@@ -381,6 +381,11 @@ function buildCustomerReminderEmail(invoice: Doc<"invoices">) {
   return { subject, html, text };
 }
 
+function invoiceRelaySnapshot(invoice: Doc<"invoices">) {
+  const { sourceQuoteId: _sourceQuoteId, ...snapshot } = invoice;
+  return snapshot;
+}
+
 function relayUrl() {
   const value =
     process.env.HTGWEB_MAIL_RELAY_URL?.trim() ??
@@ -527,6 +532,7 @@ export const createDraftFromQuote = mutation({
       companyId: quote.companyId,
       sourceQuoteId: quote._id,
       sourceMonth: quote.sourceMonth,
+      sourceReference: quote.quoteNumber,
       createdBy: user._id,
       status: "draft",
       dueDate: args.dueDate,
@@ -550,7 +556,7 @@ export const createDraftFromQuote = mutation({
       invoiceId,
       type: "draft_created",
       actorId: user._id,
-      message: `Draft invoice created from quote ${quote._id}.`,
+      message: `Draft invoice created from quote ${quote.quoteNumber ?? "accepted quote"}.`,
       now,
     });
 
@@ -998,7 +1004,7 @@ export const sendCustomerOverdueReminders = internalAction({
             subject: email.subject,
             html: email.html,
             text: email.text,
-            invoice: reminder.invoice,
+            invoice: invoiceRelaySnapshot(reminder.invoice),
           }),
         });
 
@@ -1058,7 +1064,7 @@ export const sendInvoiceEmail = action({
         subject: email.subject,
         html: email.html,
         text: email.text,
-        invoice,
+        invoice: invoiceRelaySnapshot(invoice),
       }),
     });
 

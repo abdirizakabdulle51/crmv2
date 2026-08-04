@@ -79,16 +79,11 @@ function formatCurrency(value: number) {
 }
 
 function sourceLabel(invoice: Invoice) {
-  return (
-    invoice.sourceMonth ??
-    (invoice.sourceQuoteId ? String(invoice.sourceQuoteId) : "-")
-  );
+  return invoice.sourceMonth ?? "Quote";
 }
 
 function referenceLabel(invoice: Invoice) {
-  return invoice.sourceQuoteId
-    ? String(invoice.sourceQuoteId)
-    : (invoice.sourceMonth ?? "-");
+  return invoice.sourceReference ?? "-";
 }
 
 function Header() {

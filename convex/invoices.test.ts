@@ -113,6 +113,7 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
     const acceptedQuoteA = await ctx.db.insert("quotes", {
       companyId: companyA,
       createdBy: amAId,
+      quoteNumber: "Q-2026-00001",
       date: "2026-08-01",
       status: "accepted",
       lineItems: [lineItem],
@@ -124,6 +125,7 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
     const acceptedQuoteB = await ctx.db.insert("quotes", {
       companyId: companyB,
       createdBy: amBId,
+      quoteNumber: "Q-2026-00002",
       date: "2026-08-01",
       status: "accepted",
       lineItems: [lineItem],
@@ -361,6 +363,7 @@ describe("invoices", () => {
       companyId: s.companyA,
       sourceQuoteId: s.acceptedQuoteA,
       sourceMonth: "2026-07",
+      sourceReference: "Q-2026-00001",
       status: "draft",
       companyName: "Company A",
       contactName: "A Contact",
@@ -821,10 +824,12 @@ describe("invoices", () => {
       _id: invoiceId,
       status: "overdue",
       companyName: "Company A",
+      sourceReference: "Q-2026-00001",
       contactEmail: "billing-a@example.com",
       billingEmail: "billing-a@example.com",
       balanceDue: 20,
     });
+    expect("sourceQuoteId" in payload.invoice).toBe(false);
 
     const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
       invoiceId,
@@ -860,6 +865,7 @@ describe("invoices", () => {
     };
     expect(payload.to).toBe("accounts-payable@example.com");
     expect(payload.invoice._id).toBe(invoiceId);
+    expect("sourceQuoteId" in payload.invoice).toBe(false);
   });
 
   it.each([
@@ -1136,6 +1142,7 @@ describe("invoices", () => {
       _id: invoiceId,
       status: "issued",
       companyName: "Company A",
+      sourceReference: "Q-2026-00001",
       contactEmail: "billing-a@example.com",
       billingEmail: "billing-a@example.com",
       grandTotal: 20,
@@ -1146,6 +1153,7 @@ describe("invoices", () => {
       quantity: 2,
       monthlyTotal: 20,
     });
+    expect("sourceQuoteId" in payload.invoice).toBe(false);
   });
 
   it("prefers billingEmail over contactEmail when sending", async () => {

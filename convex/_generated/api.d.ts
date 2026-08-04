@@ -22,6 +22,7 @@ import type * as companies from "../companies.js";
 import type * as companiesImport from "../companiesImport.js";
 import type * as consumption from "../consumption.js";
 import type * as countries from "../countries.js";
+import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as documentation from "../documentation.js";
 import type * as http from "../http.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   companiesImport: typeof companiesImport;
   consumption: typeof consumption;
   countries: typeof countries;
+  crons: typeof crons;
   dashboard: typeof dashboard;
   documentation: typeof documentation;
   http: typeof http;

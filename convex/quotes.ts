@@ -103,6 +103,23 @@ function findAdvisorCatalogMatch(
   };
 }
 
+function quoteNumberForSequence(now: Date, sequence: number) {
+  return `Q-${now.getUTCFullYear()}-${String(sequence).padStart(5, "0")}`;
+}
+
+async function nextQuoteNumber(ctx: MutationCtx, now: Date) {
+  const year = now.getUTCFullYear();
+  const prefix = `Q-${year}-`;
+  const quotes = await ctx.db.query("quotes").collect();
+  const issuedThisYear = quotes
+    .map((quote) => quote.quoteNumber)
+    .filter(
+      (quoteNumber): quoteNumber is string =>
+        typeof quoteNumber === "string" && quoteNumber.startsWith(prefix),
+    );
+  return quoteNumberForSequence(now, issuedThisYear.length + 1);
+}
+
 /** List quotes by company */
 export const listByCompany = query({
   args: { companyId: v.id("companies") },
@@ -365,11 +382,12 @@ export const create = mutation({
     const user = await getCurrentUserOrThrow(ctx);
     const company = await getCompanyOrThrow(ctx, args.companyId);
     assertCanManageCompany(user, company);
-    const now = new Date().toISOString().slice(0, 10);
+    const now = new Date();
     return await ctx.db.insert("quotes", {
       companyId: args.companyId,
       createdBy: user._id,
-      date: now,
+      quoteNumber: await nextQuoteNumber(ctx, now),
+      date: now.toISOString().slice(0, 10),
       status: "draft",
       lineItems: args.lineItems,
       monthlyGrandTotal: args.monthlyGrandTotal,

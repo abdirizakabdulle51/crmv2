@@ -79,6 +79,7 @@ function invoice(overrides: Partial<Doc<"invoices">> = {}): Doc<"invoices"> {
     companyId: "company-1" as Id<"companies">,
     sourceQuoteId: "quote-1" as Id<"quotes">,
     sourceMonth: "2026-07",
+    sourceReference: "Q-2026-00001",
     createdBy: "user-1" as Id<"users">,
     invoiceNumber: "INV-2026-00001",
     status: "issued",
@@ -126,7 +127,7 @@ function invoiceEvent(
     invoiceId: "invoice-1" as Id<"invoices">,
     type: "draft_created",
     actorId: "user-1" as Id<"users">,
-    message: "Draft invoice created from quote quote-1.",
+    message: "Draft invoice created from quote Q-2026-00001.",
     createdAt: Date.UTC(2026, 7, 1, 8, 45),
     ...overrides,
   };
@@ -239,7 +240,20 @@ describe("InvoiceDetailPage", () => {
     expect(screen.getByText("Hormuud")).toBeInTheDocument();
     expect(screen.getByText("Amina Yusuf")).toBeInTheDocument();
     expect(screen.getByText("billing@example.com")).toBeInTheDocument();
-    expect(screen.getByText("quote-1")).toBeInTheDocument();
+    expect(screen.getByText("Q-2026-00001")).toBeInTheDocument();
+    expect(screen.queryByText("quote-1")).not.toBeInTheDocument();
+  });
+
+  it("shows a safe fallback for legacy invoices without a source reference", () => {
+    mocks.invoice = invoice({ sourceReference: undefined });
+    mocks.events = [];
+
+    renderDetailPage();
+
+    expect(screen.getByText("Source Quote").parentElement).toHaveTextContent(
+      "Source Quote-",
+    );
+    expect(screen.queryByText("quote-1")).not.toBeInTheDocument();
   });
 
   it("renders line items, totals, notes, and event history", () => {

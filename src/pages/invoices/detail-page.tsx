@@ -538,9 +538,7 @@ function InvoiceDetailContent() {
             <Detail label="Sent At" value={formatDateTime(invoice.sentAt)} />
             <Detail
               label="Source Quote"
-              value={
-                invoice.sourceQuoteId ? String(invoice.sourceQuoteId) : "-"
-              }
+              value={invoice.sourceReference ?? "-"}
             />
             <Detail label="Source Month" value={invoice.sourceMonth} />
           </CardContent>

@@ -535,6 +535,7 @@ export default defineSchema({
     companyId: v.id("companies"),
     sourceQuoteId: v.optional(v.id("quotes")),
     sourceMonth: v.optional(v.string()),
+    sourceReference: v.optional(v.string()),
     createdBy: v.id("users"),
     invoiceNumber: v.optional(v.string()),
     status: v.union(
@@ -626,6 +627,7 @@ export default defineSchema({
   quotes: defineTable({
     companyId: v.id("companies"),
     createdBy: v.id("users"),
+    quoteNumber: v.optional(v.string()),
     date: v.string(),
     status: v.union(
       v.literal("draft"),
@@ -651,5 +653,6 @@ export default defineSchema({
   })
     .index("by_company", ["companyId"])
     .index("by_status", ["status"])
-    .index("by_created_by", ["createdBy"]),
+    .index("by_created_by", ["createdBy"])
+    .index("by_quote_number", ["quoteNumber"]),
 });

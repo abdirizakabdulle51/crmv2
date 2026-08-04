@@ -9,6 +9,86 @@ type ConvexTestCtx = Parameters<
   Parameters<ReturnType<typeof convexTest>["run"]>[0]
 >[0];
 
+async function seedQuoteCreateScope(ctx: ConvexTestCtx) {
+  const countryId = await ctx.db.insert("countries", {
+    name: "Somalia",
+    region: "East Africa",
+  });
+  const sectorId = await ctx.db.insert("sectors", { name: "Banking" });
+  const userId = await ctx.db.insert("users", {
+    tokenIdentifier: "ceo-token",
+    name: "CEO",
+    role: "ceo",
+  });
+  const companyId = await ctx.db.insert("companies", {
+    name: "AICC",
+    sectorId,
+    countryId,
+    accountManagerId: userId,
+    contractStatus: "active",
+  });
+  const catalogItemId = await ctx.db.insert("serviceCatalog", {
+    serviceCategory: "ECS",
+    itemName: "ECS Small",
+    billingUnit: "per instance",
+    monthlyPrice: 10,
+  });
+  const lineItem = {
+    catalogItemId,
+    itemName: "ECS Small",
+    serviceCategory: "ECS",
+    billingUnit: "per instance",
+    quantity: 1,
+    monthlyUnitPrice: 10,
+    monthlyTotal: 10,
+    yearlyTotal: 120,
+  };
+  return { companyId, lineItem };
+}
+
+describe("create", () => {
+  it("assigns friendly quote numbers to manual, usage, and advisor-created quotes", async () => {
+    const t = convexTest({ schema, modules });
+    const seed = await t.run(seedQuoteCreateScope);
+    const authed = t.withIdentity({ tokenIdentifier: "ceo-token" });
+
+    const manualQuoteId = await authed.mutation(api.quotes.create, {
+      companyId: seed.companyId,
+      lineItems: [seed.lineItem],
+      monthlyGrandTotal: 10,
+      yearlyGrandTotal: 120,
+      notes: "Manual quote",
+    });
+    const usageQuoteId = await authed.mutation(api.quotes.create, {
+      companyId: seed.companyId,
+      lineItems: [seed.lineItem],
+      monthlyGrandTotal: 10,
+      yearlyGrandTotal: 120,
+      notes: "Generated from Usage Tracking for 2026-08",
+      sourceMonth: "2026-08",
+    });
+    const advisorQuoteId = await authed.mutation(api.quotes.create, {
+      companyId: seed.companyId,
+      lineItems: [seed.lineItem],
+      monthlyGrandTotal: 10,
+      yearlyGrandTotal: 120,
+      notes: "Cloud Advisor recommendation",
+    });
+
+    const quotes = await t.run(async (ctx) => {
+      return {
+        manual: await ctx.db.get(manualQuoteId),
+        usage: await ctx.db.get(usageQuoteId),
+        advisor: await ctx.db.get(advisorQuoteId),
+      };
+    });
+
+    expect(quotes.manual?.quoteNumber).toMatch(/^Q-\d{4}-00001$/);
+    expect(quotes.usage?.quoteNumber).toMatch(/^Q-\d{4}-00002$/);
+    expect(quotes.advisor?.quoteNumber).toMatch(/^Q-\d{4}-00003$/);
+  });
+});
+
 describe("buildQuotePreviewFromUsage", () => {
   it("builds quote line items from resolvable usage and warns for skipped entries", async () => {
     const t = convexTest({ schema, modules });

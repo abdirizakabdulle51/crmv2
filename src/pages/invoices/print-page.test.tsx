@@ -31,6 +31,7 @@ function invoice(overrides: Partial<Doc<"invoices">> = {}): Doc<"invoices"> {
     companyId: "company-1" as Id<"companies">,
     sourceQuoteId: "quote-1" as Id<"quotes">,
     sourceMonth: "2026-08",
+    sourceReference: "Q-2026-00001",
     createdBy: "user-1" as Id<"users">,
     invoiceNumber: "INV-2026-00002",
     status: "issued",
@@ -146,6 +147,27 @@ describe("InvoicePrintPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("SSD (Block Storage / NVMe)")).toBeInTheDocument();
     expect(screen.getByText("$ 4,279.56")).toBeInTheDocument();
+    const metadata = screen.getByText("Reference").closest("dl");
+    expect(metadata).not.toBeNull();
+    expect(
+      within(metadata as HTMLElement).getByText("Q-2026-00001"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("quote-1")).not.toBeInTheDocument();
+  });
+
+  it("uses customer-safe source and reference fallbacks for legacy invoices", () => {
+    mocks.invoice = invoice({
+      sourceMonth: undefined,
+      sourceReference: undefined,
+    });
+
+    renderPrintPage();
+
+    const metadata = screen.getByText("Reference").closest("dl");
+    expect(metadata).not.toBeNull();
+    expect(within(metadata as HTMLElement).getByText("Quote")).toBeInTheDocument();
+    expect(within(metadata as HTMLElement).getByText("-")).toBeInTheDocument();
+    expect(screen.queryByText("quote-1")).not.toBeInTheDocument();
   });
 
   it("renders official print output for sent and paid-like statuses", () => {
