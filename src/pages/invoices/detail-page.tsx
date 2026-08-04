@@ -1087,13 +1087,13 @@ function RecordPaymentDialog({
             />
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 pb-2">
             <Label>Method</Label>
             <Select value={method} onValueChange={onMethodChange}>
               <SelectTrigger aria-label="Payment method" className="w-full">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent position="popper" side="top" align="start">
+              <SelectContent position="popper" side="bottom" align="start">
                 {PAYMENT_METHODS.map((option) => (
                   <SelectItem key={option} value={option}>
                     {option}
