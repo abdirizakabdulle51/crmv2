@@ -172,6 +172,27 @@ describe("AppLayout", () => {
       .toBeInTheDocument();
   });
 
+  it("renders Finance with Expenses while keeping Invoices under Revenue", async () => {
+    const user = userEvent.setup();
+    const { container } = renderLayout();
+    const sidebar = container.querySelector("aside") as HTMLElement;
+
+    expect(within(sidebar).getByText("Finance")).toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Expenses" }))
+      .toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Invoices" }))
+      .toBeInTheDocument();
+
+    await user.click(
+      within(sidebar).getByRole("button", { name: "Collapse Revenue" }),
+    );
+
+    expect(within(sidebar).queryByRole("link", { name: "Invoices" }))
+      .not.toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Expenses" }))
+      .toBeInTheDocument();
+  });
+
   it("keeps a Sales section open when its active route is inside Sales", () => {
     window.localStorage.setItem("crm.sidebar.collapsedGroups", '["Sales"]');
     const { container } = renderLayout("/companies");
