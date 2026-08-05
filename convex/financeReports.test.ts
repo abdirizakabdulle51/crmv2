@@ -10,6 +10,7 @@ type Seed = {
   countryB: Id<"countries">;
   companyA: Id<"companies">;
   companyB: Id<"companies">;
+  catalogItem: Id<"serviceCatalog">;
   categoryTravel: Id<"expenseCategories">;
   categoryOps: Id<"expenseCategories">;
   ceo: Doc<"users">;
@@ -73,6 +74,12 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       accountManagerId: amAId,
       contractStatus: "active",
     });
+    const catalogItem = await ctx.db.insert("serviceCatalog", {
+      serviceCategory: "Compute",
+      itemName: "ECS",
+      billingUnit: "VM",
+      monthlyPrice: 1,
+    });
     const categoryTravel = await ctx.db.insert("expenseCategories", {
       name: "Travel",
       isActive: true,
@@ -93,6 +100,7 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       countryB,
       companyA,
       companyB,
+      catalogItem,
       categoryTravel,
       categoryOps,
       ceo: (await ctx.db.get(ceoId))!,
@@ -122,6 +130,7 @@ async function insertInvoiceWithPayment(
     receivingAccountName?: string;
     receivingBankLocation?: string;
     receivingCurrencyNote?: string;
+    lineItems?: Doc<"invoices">["lineItems"];
   },
 ) {
   return await t.run(async (ctx) => {
@@ -134,7 +143,7 @@ async function insertInvoiceWithPayment(
       isTest: args.isTest,
       hiddenAt: args.hiddenAt,
       companyName: "Company",
-      lineItems: [],
+      lineItems: args.lineItems ?? [],
       subtotal: args.paymentAmount,
       monthlyTotal: args.paymentAmount,
       yearlyTotal: args.paymentAmount,
@@ -160,6 +169,30 @@ async function insertInvoiceWithPayment(
     });
     return invoiceId;
   });
+}
+
+function invoiceLineItem(
+  catalogItemId: Id<"serviceCatalog">,
+  args: {
+    monthlyTotal: number;
+    regionId?: string;
+    regionName?: string;
+    dataCenterName?: string;
+  },
+): Doc<"invoices">["lineItems"][number] {
+  return {
+    catalogItemId,
+    itemName: "ECS",
+    serviceCategory: "Compute",
+    billingUnit: "VM",
+    quantity: args.monthlyTotal,
+    monthlyUnitPrice: 1,
+    monthlyTotal: args.monthlyTotal,
+    yearlyTotal: args.monthlyTotal * 12,
+    regionId: args.regionId,
+    regionName: args.regionName,
+    dataCenterName: args.dataCenterName,
+  };
 }
 
 async function insertExpense(
@@ -240,6 +273,118 @@ describe("finance reports", () => {
     });
   });
 
+  it("reports single region payment income fully to that region", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 300,
+      paidAt: Date.UTC(2026, 7, 5),
+      lineItems: [
+        invoiceLineItem(s.catalogItem, {
+          monthlyTotal: 300,
+          regionId: "hoa-mog-2",
+          regionName: "Hoa-Mogadishu-2",
+        }),
+      ],
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+
+    expect(report.incomeByRegion).toEqual([
+      {
+        region: "Hoa-Mogadishu-2",
+        income: 300,
+        paymentCount: 1,
+        invoiceCount: 1,
+      },
+    ]);
+    expect(report.totals.income).toBe(300);
+  });
+
+  it("splits payment income proportionally across invoice regions", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 50,
+      paidAt: Date.UTC(2026, 7, 5),
+      lineItems: [
+        invoiceLineItem(s.catalogItem, {
+          monthlyTotal: 70,
+          regionName: "Hoa-Mogadishu-2",
+        }),
+        invoiceLineItem(s.catalogItem, {
+          monthlyTotal: 30,
+          regionName: "Mogadishu-region-hq3",
+        }),
+      ],
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+
+    expect(report.incomeByRegion).toEqual([
+      {
+        region: "Hoa-Mogadishu-2",
+        income: 35,
+        paymentCount: 1,
+        invoiceCount: 1,
+      },
+      {
+        region: "Mogadishu-region-hq3",
+        income: 15,
+        paymentCount: 1,
+        invoiceCount: 1,
+      },
+    ]);
+    expect(report.totals.income).toBe(50);
+  });
+
+  it("uses Unassigned for missing regions and legacy invoices without line totals", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 80,
+      paidAt: Date.UTC(2026, 7, 5),
+      lineItems: [
+        invoiceLineItem(s.catalogItem, {
+          monthlyTotal: 80,
+        }),
+      ],
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 20,
+      paidAt: Date.UTC(2026, 7, 6),
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+
+    expect(report.incomeByRegion).toEqual([
+      {
+        region: "Unassigned",
+        income: 100,
+        paymentCount: 2,
+        invoiceCount: 2,
+      },
+    ]);
+    expect(report.totals.income).toBe(100);
+  });
+
   it("excludes test hidden void and cancelled invoices from income", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -279,6 +424,7 @@ describe("finance reports", () => {
 
     expect(report.totals.income).toBe(0);
     expect(report.totals.paymentCount).toBe(0);
+    expect(report.incomeByRegion).toEqual([]);
   });
 
   it("groups paid expenses by top category and summarizes statuses", async () => {
@@ -333,12 +479,24 @@ describe("finance reports", () => {
       createdBy: s.ceo._id,
       paymentAmount: 100,
       paidAt: Date.UTC(2026, 7, 5),
+      lineItems: [
+        invoiceLineItem(s.catalogItem, {
+          monthlyTotal: 100,
+          regionName: "Hoa-Mogadishu-2",
+        }),
+      ],
     });
     await insertInvoiceWithPayment(t, {
       companyId: s.companyB,
       createdBy: s.ceo._id,
       paymentAmount: 300,
       paidAt: Date.UTC(2026, 7, 5),
+      lineItems: [
+        invoiceLineItem(s.catalogItem, {
+          monthlyTotal: 300,
+          regionName: "Nairobi-region",
+        }),
+      ],
     });
     await insertExpense(t, s, {
       status: "paid",
@@ -384,6 +542,14 @@ describe("finance reports", () => {
       expenses: 25,
       net: 75,
     });
+    expect(gmReport.incomeByRegion).toEqual([
+      {
+        region: "Hoa-Mogadishu-2",
+        income: 100,
+        paymentCount: 1,
+        invoiceCount: 1,
+      },
+    ]);
     await expect(
       asUser(t, s.amA).query(api.financeReports.summary, {
         startMonth: "2026-08",
@@ -449,6 +615,120 @@ describe("finance reports", () => {
       recordedByEmail: "ceo@example.com",
       invoiceStatus: "paid",
       sourceReference: "Q-2026-00004",
+    });
+  });
+
+  it("exports region income rows by payment allocation", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 50,
+      paidAt: Date.UTC(2026, 7, 5),
+      invoiceNumber: "INV-2026-00020",
+      sourceReference: "Q-2026-00005",
+      reference: "BANK-REGION",
+      lineItems: [
+        invoiceLineItem(s.catalogItem, {
+          monthlyTotal: 70,
+          regionName: "Hoa-Mogadishu-2",
+        }),
+        invoiceLineItem(s.catalogItem, {
+          monthlyTotal: 30,
+          regionName: "Mogadishu-region-hq3",
+        }),
+      ],
+    });
+
+    const rows = await asUser(t, s.ceo).query(
+      api.financeReports.invoicePaymentsByRegionExport,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      },
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual([
+      expect.objectContaining({
+        invoiceNumber: "INV-2026-00020",
+        customerCompany: "Company",
+        country: "Somalia",
+        region: "Hoa-Mogadishu-2",
+        allocatedAmount: 35,
+        originalPaymentAmount: 50,
+        paymentMethod: "Bank Transfer",
+        customerReference: "BANK-REGION",
+        recordedByName: "CEO",
+        recordedByEmail: "ceo@example.com",
+        invoiceStatus: "paid",
+        sourceReference: "Q-2026-00005",
+      }),
+      expect.objectContaining({
+        region: "Mogadishu-region-hq3",
+        allocatedAmount: 15,
+        originalPaymentAmount: 50,
+      }),
+    ]);
+  });
+
+  it("exports one region income row for single region invoices", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 300,
+      paidAt: Date.UTC(2026, 7, 5),
+      lineItems: [
+        invoiceLineItem(s.catalogItem, {
+          monthlyTotal: 300,
+          regionId: "hoa-mog-2",
+          regionName: "Hoa-Mogadishu-2",
+        }),
+      ],
+    });
+
+    const rows = await asUser(t, s.ceo).query(
+      api.financeReports.invoicePaymentsByRegionExport,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      },
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      region: "Hoa-Mogadishu-2",
+      allocatedAmount: 300,
+      originalPaymentAmount: 300,
+    });
+  });
+
+  it("exports Unassigned for legacy invoice region income", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 80,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+
+    const rows = await asUser(t, s.ceo).query(
+      api.financeReports.invoicePaymentsByRegionExport,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      },
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      region: "Unassigned",
+      allocatedAmount: 80,
+      originalPaymentAmount: 80,
     });
   });
 

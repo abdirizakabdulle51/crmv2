@@ -84,6 +84,28 @@ type PaidExpenseExportRow = {
   paidByEmail: string;
   status: string;
 };
+type RegionIncomeExportRow = {
+  paymentDate: number;
+  invoiceNumber: string;
+  customerCompany: string;
+  country: string;
+  region: string;
+  allocatedAmount: number;
+  originalPaymentAmount: number;
+  paymentMethod: string;
+  customerReference: string;
+  recordedByName: string;
+  recordedByEmail: string;
+  recordedAt: number;
+  invoiceStatus: string;
+  sourceReference: string;
+};
+type IncomeByRegionRow = {
+  region: string;
+  income: number;
+  paymentCount: number;
+  invoiceCount: number;
+};
 
 const STATUS_LABELS: Record<ExpenseStatus, string> = {
   draft: "Draft",
@@ -169,6 +191,26 @@ const INVOICE_PAYMENT_EXPORT_COLUMNS: CsvColumn<InvoicePaymentExportRow>[] = [
   { header: "Source Reference", value: (row) => row.sourceReference },
 ];
 
+const REGION_INCOME_EXPORT_COLUMNS: CsvColumn<RegionIncomeExportRow>[] = [
+  { header: "Payment Date", value: (row) => formatDateForCsv(row.paymentDate) },
+  { header: "Invoice Number", value: (row) => row.invoiceNumber },
+  { header: "Customer / Company", value: (row) => row.customerCompany },
+  { header: "Country", value: (row) => row.country },
+  { header: "Region / Data Center", value: (row) => row.region },
+  { header: "Allocated Amount", value: (row) => row.allocatedAmount.toFixed(2) },
+  {
+    header: "Original Payment Amount",
+    value: (row) => row.originalPaymentAmount.toFixed(2),
+  },
+  { header: "Payment Method", value: (row) => row.paymentMethod },
+  { header: "Customer Reference", value: (row) => row.customerReference },
+  { header: "Recorded By Name", value: (row) => row.recordedByName },
+  { header: "Recorded By Email", value: (row) => row.recordedByEmail },
+  { header: "Recorded At", value: (row) => formatDateTimeForCsv(row.recordedAt) },
+  { header: "Invoice Status", value: (row) => row.invoiceStatus },
+  { header: "Source Reference", value: (row) => row.sourceReference },
+];
+
 const PAID_EXPENSE_EXPORT_COLUMNS: CsvColumn<PaidExpenseExportRow>[] = [
   { header: "Expense Date", value: (row) => formatDateForCsv(row.expenseDate) },
   { header: "Paid Date", value: (row) => formatDateForCsv(row.paidDate) },
@@ -205,7 +247,7 @@ export default function FinanceReportsPage() {
   const [endMonth, setEndMonth] = useState(currentMonthInputValue());
   const [countryFilter, setCountryFilter] = useState("all");
   const [exporting, setExporting] = useState<
-    "invoice-payments" | "paid-expenses" | null
+    "invoice-payments" | "region-income" | "paid-expenses" | null
   >(null);
   const canView = canViewReports(currentUser?.role);
   const canFilterCountry = isAdminRole(currentUser?.role);
@@ -289,6 +331,27 @@ export default function FinanceReportsPage() {
     }
   }
 
+  async function handleExportRegionIncome() {
+    setExporting("region-income");
+    try {
+      const rows = await convex.query(
+        api.financeReports.invoicePaymentsByRegionExport,
+        exportArgs,
+      );
+      downloadCsv(
+        `finance-region-income-${startMonth}-to-${endMonth}.csv`,
+        rowsToCsv(REGION_INCOME_EXPORT_COLUMNS, rows),
+      );
+      toast.success("Region income CSV exported");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to export region income",
+      );
+    } finally {
+      setExporting(null);
+    }
+  }
+
   if (currentUser === undefined) {
     return (
       <div className="space-y-6 p-6 md:p-8">
@@ -358,6 +421,17 @@ export default function FinanceReportsPage() {
             {exporting === "invoice-payments"
               ? "Exporting..."
               : "Export Invoice Payments CSV"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleExportRegionIncome}
+            disabled={exporting !== null}
+          >
+            <Download className="mr-2 size-4" />
+            {exporting === "region-income"
+              ? "Exporting..."
+              : "Export Region Income CSV"}
           </Button>
           <Button
             type="button"
@@ -501,6 +575,52 @@ export default function FinanceReportsPage() {
               </tbody>
             </table>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Income by Region / Data Center</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Allocated income from invoice payments. Payments are recorded at the
+            invoice level and split by invoice line item region totals.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {(report.incomeByRegion ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No region income data in this period.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-3 py-3">Region / Data Center</th>
+                    <th className="px-3 py-3 text-right">Allocated Income</th>
+                    <th className="px-3 py-3 text-right">Payments</th>
+                    <th className="px-3 py-3 text-right">Invoices</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(report.incomeByRegion as IncomeByRegionRow[]).map((row) => (
+                    <tr key={row.region} className="border-b last:border-0">
+                      <td className="px-3 py-3 font-medium">{row.region}</td>
+                      <td className="px-3 py-3 text-right">
+                        {formatCurrency(row.income)}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        {row.paymentCount}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        {row.invoiceCount}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
 

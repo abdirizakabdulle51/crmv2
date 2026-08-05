@@ -113,6 +113,38 @@ function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function lineItemRegionLabel(item: Doc<"invoices">["lineItems"][number]) {
+  return item.regionName || item.dataCenterName || item.regionId || "Unassigned";
+}
+
+function paymentRegionAllocations(
+  invoice: Doc<"invoices">,
+  paymentAmount: number,
+) {
+  const regionBases = new Map<string, number>();
+  for (const lineItem of invoice.lineItems) {
+    if (lineItem.monthlyTotal <= 0) continue;
+    const label = lineItemRegionLabel(lineItem);
+    regionBases.set(
+      label,
+      roundMoney((regionBases.get(label) ?? 0) + lineItem.monthlyTotal),
+    );
+  }
+
+  const totalBasis = [...regionBases.values()].reduce(
+    (sum, value) => sum + value,
+    0,
+  );
+  if (totalBasis <= 0) {
+    return [{ region: "Unassigned", amount: roundMoney(paymentAmount) }];
+  }
+
+  return [...regionBases.entries()].map(([region, basis]) => ({
+    region,
+    amount: roundMoney((paymentAmount * basis) / totalBasis),
+  }));
+}
+
 function displayUserName(user: Doc<"users"> | undefined) {
   return user?.name ?? user?.email ?? "";
 }
@@ -241,6 +273,15 @@ export const summary = query({
     const invoices = await ctx.db.query("invoices").collect();
     const invoiceMap = new Map(invoices.map((invoice) => [invoice._id, invoice]));
     const payments = await ctx.db.query("invoicePayments").collect();
+    const regionIncome = new Map<
+      string,
+      {
+        region: string;
+        income: number;
+        paymentCount: number;
+        invoiceIds: Set<Id<"invoices">>;
+      }
+    >();
     for (const payment of payments) {
       const invoice = invoiceMap.get(payment.invoiceId);
       if (!invoice) continue;
@@ -256,6 +297,22 @@ export const summary = query({
       if (!row) continue;
       row.income = roundMoney(row.income + payment.amount);
       row.paymentCount += 1;
+
+      for (const allocation of paymentRegionAllocations(
+        invoice,
+        payment.amount,
+      )) {
+        const regionRow = regionIncome.get(allocation.region) ?? {
+          region: allocation.region,
+          income: 0,
+          paymentCount: 0,
+          invoiceIds: new Set<Id<"invoices">>(),
+        };
+        regionRow.income = roundMoney(regionRow.income + allocation.amount);
+        regionRow.paymentCount += 1;
+        regionRow.invoiceIds.add(invoice._id);
+        regionIncome.set(allocation.region, regionRow);
+      }
     }
 
     const categoryTotals = new Map<
@@ -327,6 +384,14 @@ export const summary = query({
         (a, b) => b.total - a.total,
       ),
       expenseStatusSummary: [...statusSummary.values()],
+      incomeByRegion: [...regionIncome.values()]
+        .map((row) => ({
+          region: row.region,
+          income: row.income,
+          paymentCount: row.paymentCount,
+          invoiceCount: row.invoiceIds.size,
+        }))
+        .sort((a, b) => b.income - a.income),
     };
   },
 });
@@ -386,6 +451,64 @@ export const invoicePaymentsExport = query({
         ];
       })
       .sort((a, b) => a.paymentDate - b.paymentDate);
+  },
+});
+
+export const invoicePaymentsByRegionExport = query({
+  args: {
+    startMonth: v.optional(v.string()),
+    endMonth: v.optional(v.string()),
+    countryId: v.optional(v.id("countries")),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanViewFinanceReports(user);
+    const scope = await getReportScope(ctx, user, args);
+    const invoices = await ctx.db.query("invoices").collect();
+    const invoiceMap = new Map(invoices.map((invoice) => [invoice._id, invoice]));
+    const payments = await ctx.db.query("invoicePayments").collect();
+
+    return payments
+      .flatMap((payment) => {
+        const invoice = invoiceMap.get(payment.invoiceId);
+        if (!invoice) return [];
+        if (invoice.isTest || invoice.hiddenAt) return [];
+        if (invoice.status === "void" || invoice.status === "cancelled") {
+          return [];
+        }
+        if (!scope.visibleCompanyIds.has(invoice.companyId)) return [];
+
+        const month = monthFromTimestamp(payment.paidAt);
+        if (!monthInRange(month, scope.startMonth, scope.endMonth)) return [];
+
+        const company = scope.companyMap.get(invoice.companyId);
+        const country = company ? scope.countryMap.get(company.countryId) : undefined;
+        const recordedBy = scope.userMap.get(payment.recordedBy);
+
+        return paymentRegionAllocations(invoice, payment.amount).map(
+          (allocation) => ({
+            paymentDate: payment.paidAt,
+            invoiceNumber: invoice.invoiceNumber ?? "",
+            customerCompany: invoice.companyName,
+            country: country?.name ?? "",
+            region: allocation.region,
+            allocatedAmount: allocation.amount,
+            originalPaymentAmount: roundMoney(payment.amount),
+            paymentMethod: payment.method ?? "",
+            customerReference: payment.reference ?? "",
+            recordedByName: displayUserName(recordedBy),
+            recordedByEmail: displayUserEmail(recordedBy),
+            recordedAt: payment.createdAt,
+            invoiceStatus: invoice.status,
+            sourceReference: invoice.sourceReference ?? "",
+          }),
+        );
+      })
+      .sort((a, b) =>
+        a.paymentDate === b.paymentDate
+          ? a.region.localeCompare(b.region)
+          : a.paymentDate - b.paymentDate,
+      );
   },
 });
 
