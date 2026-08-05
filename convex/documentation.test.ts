@@ -204,7 +204,7 @@ describe("documentation", () => {
       api.documentation.getBySlug,
       { slug: "page-ai-recs" },
     );
-    expect(cloudAdvisor.order).toBe(11);
+    expect(cloudAdvisor.order).toBe(12);
   });
 
   it("syncs only the invoices documentation body from the seed", async () => {
@@ -264,6 +264,64 @@ describe("documentation", () => {
     expect(quotes.content).toBe("Live production quote guide");
   });
 
+  it("syncs only the finance documentation body from the seed", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+    await t.mutation(internal.documentation.seedInitialDocs, {});
+    await t.mutation(internal.documentation.replaceNavigationSection, {});
+
+    await asUser(t, users.hob).mutation(api.documentation.upsert, {
+      slug: "page-finance",
+      title: "Old Finance Title",
+      group: "Team Guide",
+      content: "Old live finance guide",
+      order: 99,
+      visibility: "public",
+    });
+    await asUser(t, users.hob).mutation(api.documentation.upsert, {
+      slug: "page-invoices",
+      title: "Invoices",
+      group: "Team Guide",
+      content: "Live production invoice guide",
+      order: 10,
+      visibility: "public",
+    });
+
+    await expect(
+      asUser(t, users.am).mutation(
+        api.documentation.syncFinanceDocumentationFromSeed,
+        {},
+      ),
+    ).rejects.toMatchObject({
+      data: expect.objectContaining({ code: "FORBIDDEN" }),
+    });
+
+    const result = await asUser(t, users.ceo).mutation(
+      api.documentation.syncFinanceDocumentationFromSeed,
+      {},
+    );
+    expect(result).toEqual({
+      inserted: false,
+      slug: "page-finance",
+      updated: ["title", "order", "content"],
+    });
+
+    const finance = await asUser(t, users.ceo).query(
+      api.documentation.getBySlug,
+      { slug: "page-finance" },
+    );
+    expect(finance.title).toBe("Finance");
+    expect(finance.order).toBe(11);
+    expect(finance.content).toContain("Finance Overview");
+    expect(finance.content).toContain("CSV Exports");
+
+    const invoices = await asUser(t, users.ceo).query(
+      api.documentation.getBySlug,
+      { slug: "page-invoices" },
+    );
+    expect(invoices.content).toBe("Live production invoice guide");
+  });
+
   it("replaces the navigation section with idempotent per-page guides", async () => {
     const t = convexTest(schema, modules);
     const users = await seedUsers(t);
@@ -284,6 +342,7 @@ describe("documentation", () => {
       "page-at-risk",
       "page-quotes",
       "page-invoices",
+      "page-finance",
       "page-ai-recs",
       "page-coach",
       "page-activities",
@@ -298,7 +357,7 @@ describe("documentation", () => {
       api.documentation.list,
       {},
     );
-    expect(amSections.map((section) => section.slug).slice(0, 19)).toEqual([
+    expect(amSections.map((section) => section.slug).slice(0, 20)).toEqual([
       "roles-and-access",
       ...firstRun.inserted,
       "common-workflows",
@@ -310,7 +369,7 @@ describe("documentation", () => {
     const commonWorkflows = amSections.find(
       (section) => section.slug === "common-workflows",
     );
-    expect(commonWorkflows?.order).toBe(19);
+    expect(commonWorkflows?.order).toBe(20);
 
     const dashboard = await asUser(t, users.am).query(
       api.documentation.getBySlug,
@@ -325,8 +384,16 @@ describe("documentation", () => {
     });
     expect(tasks.group).toBe("Team Guide");
     expect(tasks.visibility).toBe("public");
-    expect(tasks.order).toBe(16);
+    expect(tasks.order).toBe(17);
     expect(tasks.content).toContain("Tasks helps the team");
+
+    const finance = await asUser(t, users.am).query(
+      api.documentation.getBySlug,
+      { slug: "page-finance" },
+    );
+    expect(finance.group).toBe("Team Guide");
+    expect(finance.visibility).toBe("public");
+    expect(finance.content).toContain("Finance is where the CRM handles");
 
     const secondRun = await t.mutation(
       internal.documentation.replaceNavigationSection,

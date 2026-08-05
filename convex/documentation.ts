@@ -1397,10 +1397,451 @@ Invoices do not change quotes, usage entries, company records, or service catalo
 Always review before issuing. Issuing is the step that turns a draft into an official locked invoice.`,
   },
   {
+    slug: "page-finance",
+    title: "Finance",
+    group: "Team Guide",
+    order: 11,
+    visibility: "public",
+    content: `Finance is where the CRM handles operational expense requests, approvals, receipts, finance reports, and accounting exports.
+
+Use Finance when staff need to request reimbursement, managers need to approve spending, leadership needs visibility, or the finance/accounting team needs clean operational export data.
+
+## 1. Finance Overview
+
+CRM Finance is for operational finance workflows.
+
+It helps the team:
+
+- Request expenses.
+- Attach receipts.
+- Approve or reject spending.
+- Mark approved expenses as paid.
+- Review income, expenses, and net movement.
+- Export invoice payment and paid expense data for accounting work.
+
+Important: CRM Finance is not full accounting.
+
+It does not do:
+
+- General ledger posting.
+- Journal entries.
+- Bank reconciliation.
+- Financial statements.
+
+The accounting team should use CRM exports as operational source data, then complete formal accounting work in the accounting system.
+
+## 2. Finance Menu
+
+The Finance menu contains these pages:
+
+### Expenses
+
+Use Expenses to create, submit, approve, reject, pay, and track expense requests.
+
+This is the main page for staff reimbursements and operational spending requests.
+
+### Expense Categories
+
+Use Expense Categories to organize spending.
+
+CEO and Head of Business can create and update categories, activate/deactivate them, and decide whether receipts are required.
+
+### Finance Settings
+
+Use Finance Settings to control approval thresholds.
+
+CEO and Head of Business can update the approval limits used to decide whether an expense needs Country Approval, Business Approval, or Executive Approval.
+
+### Finance Reports
+
+Use Finance Reports to review operational income and expense data.
+
+It includes:
+
+- Monthly income vs expenses.
+- Top expense categories.
+- Expense status summary.
+- CSV exports for invoice payments and paid expenses.
+
+## 3. Expense Workflow
+
+Expense requests move through clear statuses.
+
+| Status | Meaning |
+|---|---|
+| Draft | The requester is preparing the expense. It has not been submitted yet. |
+| Submitted | The expense is waiting for approval or rejection. |
+| Approved | The expense is approved but not paid yet. |
+| Rejected | The expense was rejected with a reason. |
+| Paid | The approved expense has been marked as paid by HOB/CEO. |
+| Cancelled | The expense was cancelled and should not continue. |
+
+### Full workflow
+
+1. Staff or Account Manager creates a draft expense.
+2. Staff or Account Manager reviews the draft.
+3. If the category requires a receipt, the receipt is uploaded.
+4. Staff or Account Manager submits the expense.
+5. Country GM, HOB, or CEO approves or rejects it, depending on amount and scope.
+6. HOB or CEO marks an approved expense as paid.
+7. The audit trail records every important step.
+
+Tip: use the expense detail page to see the current status, approval level, receipts, and audit events.
+
+## 4. Personal/Staff Expenses vs Company Expenses
+
+Expenses can be personal/staff reimbursements or customer/company-related spending.
+
+### Staff or personal reimbursement
+
+Choose **No company** when the expense is for the staff member and not tied to a customer account.
+
+Examples:
+
+- Staff internet reimbursement.
+- Fuel reimbursement.
+- Transport reimbursement.
+- Office supplies used internally.
+
+### Customer or company-related expense
+
+Select the related company when the expense belongs to customer work.
+
+Examples:
+
+- Customer visit transport.
+- Customer meeting fuel.
+- Vendor payment related to a customer project.
+- Operational work for a specific customer.
+
+Choosing the correct company helps managers understand why the expense exists and who it belongs to.
+
+## 5. Expense Categories
+
+Categories organize spending so finance can report and export clean data.
+
+Examples include:
+
+- Travel
+- Cloud Operations
+- Customer Visit
+- Office Supplies
+- Vendor Payment
+- Internet / Connectivity
+- Fuel / Transport
+- Other
+
+CEO and Head of Business can manage categories from Expense Categories.
+
+Category rules:
+
+- Active categories are available when creating expenses.
+- Inactive categories are hidden from new expenses.
+- Existing expenses that already use an old category are not broken.
+- Requires receipt means a receipt must be uploaded before submit and before approval.
+
+## 6. Receipt Attachments
+
+Receipts support expense proof and audit history.
+
+On the expense detail page, users can:
+
+- Upload receipt files.
+- Download receipt files.
+- Remove receipt files.
+
+Supported receipt files include PDF, images, text/CSV, Excel, and Word documents.
+
+Receipts are private and permission-controlled. Users must be allowed to view the expense before they can view or download the receipt.
+
+Removing a receipt archives it. It does not hard-delete the expense request.
+
+Receipt upload and removal create audit events.
+
+### Receipt-required categories
+
+If the category requires receipt:
+
+- Draft can still be created without receipt.
+- Submit is blocked until at least one active receipt exists.
+- Approval is blocked if the receipt was removed before approval.
+
+Example:
+
+If Customer Visit requires receipt, the requester must upload a taxi receipt, fuel receipt, invoice, or other proof before the expense can be submitted and approved.
+
+## 7. Approval Levels
+
+Finance approvals depend on amount.
+
+There are three approval levels:
+
+| Approval Level | Meaning | Who can approve |
+|---|---|---|
+| Country Approval | Smaller expenses within the country approval limit | Country GM for their country, HOB, CEO |
+| Business Approval | Medium expenses above country limit and up to business limit | HOB, CEO |
+| Executive Approval | Large expenses above business limit | HOB, CEO |
+
+Country GM can approve only in-country expenses that fit the Country Approval level.
+
+HOB and CEO can approve all approval levels.
+
+Account Managers and staff cannot approve expenses.
+
+### Approval threshold example
+
+If Finance Settings are:
+
+- Country Approval limit: $200
+- Business Approval limit: $500
+
+Then:
+
+- $200 or less = Country Approval.
+- $200.01 to $500 = Business Approval.
+- Above $500 = Executive Approval.
+
+If the Approve button is hidden, the expense may require a higher approver.
+
+## 8. Finance Settings
+
+CEO and Head of Business can update Finance Settings.
+
+Finance Settings control:
+
+- Country Approval limit.
+- Business Approval limit.
+- Currency.
+
+Currency is USD for now.
+
+Changes apply to future approval decisions. They do not rewrite old audit events or turn CRM into accounting.
+
+## 9. Finance Reports
+
+Finance Reports show operational finance visibility.
+
+### Monthly Income vs Expenses
+
+Income comes from invoice payment records.
+
+Expenses come from paid expense requests.
+
+Net is calculated as:
+
+Income - Expenses
+
+Example:
+
+If August income is $1,000 and paid expenses are $250, net is $750.
+
+### Top Expense Categories
+
+This shows paid expenses grouped by category.
+
+Use it to see where operational spending is going.
+
+### Expense Status Summary
+
+This shows how many expenses are in each status and the total amount per status:
+
+- Draft
+- Submitted
+- Approved
+- Rejected
+- Paid
+- Cancelled
+
+### Country scope
+
+CEO and HOB can view all finance reports and may filter by country when available.
+
+Country GM sees their own country scope only.
+
+Account Managers do not have Finance Reports access for now.
+
+## 10. CSV Exports
+
+Finance Reports includes CSV exports for finance/accounting work.
+
+Available exports:
+
+- **Export Invoice Payments CSV**
+- **Export Paid Expenses CSV**
+
+These exports are for accounting review and processing.
+
+They are operational data exports. They are not GL entries, journal entries, reconciliations, or financial statements.
+
+### Invoice Payments CSV
+
+This export includes payment records such as:
+
+- Payment date
+- Invoice number
+- Customer/company
+- Amount
+- Payment method
+- Customer reference
+- Receiving bank/account details
+- Recorded by
+- Recorded at
+
+Old payment rows may have blank receiving bank fields if the payment was recorded before receiving bank details were added.
+
+### Paid Expenses CSV
+
+This export includes paid expense records such as:
+
+- Expense date
+- Paid date
+- Title
+- Category
+- Requester
+- Company/country
+- Vendor
+- Amount/currency
+- Payment method
+- Payment reference
+- Approved by
+- Paid by
+
+CSV files can be opened in Excel, LibreOffice, Google Sheets, or accounting import tools.
+
+## 11. Permissions Summary
+
+| Role | What they can do |
+|---|---|
+| Account Manager / staff | Create draft expenses, submit own expenses, upload receipts, view own expenses |
+| Country GM | View and approve in-country submitted expenses within Country Approval limit |
+| Head of Business | Manage categories/settings, approve all levels, mark approved expenses as paid, view reports and exports |
+| CEO | Same as HOB, with full finance visibility |
+
+Backend permissions are the final authority. If the UI shows a button but the backend rejects the action, follow the error message and check role, country, amount, and receipt requirements.
+
+## 12. Troubleshooting
+
+### Submit is blocked because receipt is required
+
+The selected category requires a receipt.
+
+Open the expense detail page, upload at least one receipt, then submit again.
+
+### Approve button is hidden
+
+The expense may require a higher approver.
+
+Check the approval level on the expense detail page.
+
+For example, a Country GM cannot approve a Business Approval or Executive Approval expense.
+
+### Category is missing from the New Expense form
+
+The category may be inactive.
+
+Ask CEO or Head of Business to review Expense Categories.
+
+### Finance Reports show USD only
+
+Finance Reports are USD-only for this phase.
+
+Expense records still store their currency, but reporting is designed for USD operational reporting today.
+
+### Old payment rows have blank receiving bank fields
+
+Older invoice payments may not have receiving bank details because those fields were added later.
+
+This is expected for historical rows.
+
+### CSV export opens in Excel or LibreOffice
+
+CSV files are plain spreadsheet files.
+
+Open them in Excel, LibreOffice, Google Sheets, or the accounting tool requested by finance.
+
+### I cannot access Finance Reports
+
+Finance Reports are available to CEO, Head of Business, and Country GM.
+
+Account Managers do not have Finance Reports access for now.
+
+## 13. Practical Examples
+
+### Example 1: Staff internet reimbursement with No company
+
+1. Open Finance -> Expenses.
+2. Click New Expense.
+3. Enter title: Staff internet reimbursement.
+4. Choose category: Internet / Connectivity.
+5. Enter amount and expense date.
+6. Leave company as No company.
+7. Save as draft.
+8. Upload receipt if required.
+9. Submit the expense.
+
+### Example 2: Customer visit transport with company selected
+
+1. Open Finance -> Expenses.
+2. Click New Expense.
+3. Enter title: Customer visit transport.
+4. Choose category: Customer Visit or Fuel / Transport.
+5. Select the related company.
+6. Enter amount, vendor if needed, and expense date.
+7. Save as draft.
+8. Upload receipt if required.
+9. Submit.
+
+This helps managers see which customer the spending belongs to.
+
+### Example 3: Fuel reimbursement and submit
+
+1. Create a new expense.
+2. Choose Fuel / Transport.
+3. Enter the fuel amount.
+4. Add vendor if useful.
+5. Save draft.
+6. Upload fuel receipt if required.
+7. Submit for approval.
+
+### Example 4: Upload receipt for a receipt-required category
+
+1. Open the expense detail page.
+2. Go to Receipts.
+3. Click Upload.
+4. Select the receipt file.
+5. Confirm the receipt appears in the list.
+6. Submit or approve the expense.
+
+If the receipt is removed before approval, approval will be blocked until another receipt is uploaded.
+
+### Example 5: Approve and mark paid
+
+1. Manager/HOB/CEO opens a submitted expense.
+2. Review amount, category, requester, company, and receipts.
+3. Click Approve if allowed.
+4. HOB/CEO later clicks Mark Paid.
+5. Enter payment method and reference.
+6. Save.
+
+The expense becomes Paid and appears in Finance Reports and paid expense exports.
+
+### Example 6: Export monthly finance data
+
+1. Open Finance -> Finance Reports.
+2. Select start month and end month.
+3. CEO/HOB may select a country filter if needed.
+4. Review Income, Expenses, Net, categories, and statuses.
+5. Click Export Invoice Payments CSV.
+6. Click Export Paid Expenses CSV.
+7. Send the CSV files to the accounting team or import them into the accounting workflow.
+
+Remember: the export is operational CRM data. Accounting still completes final accounting treatment outside the CRM.`,
+  },
+  {
     slug: "page-ai-recs",
     title: "Cloud Advisor",
     group: "Team Guide",
-    order: 11,
+    order: 12,
     visibility: "public",
     content: `Cloud Advisor surfaces cross-sell, risk, and cloud-improvement opportunities based on actual CRM and cloud data. The recommendations are rule-based; AI narratives only summarize the rule-based findings in clearer language.
 
@@ -1422,7 +1863,7 @@ Always review before issuing. Issuing is the step that turns a draft into an off
     slug: "page-coach",
     title: "Coach",
     group: "Team Guide",
-    order: 12,
+    order: 13,
     visibility: "public",
     content: `Coach is the daily sales guidance page for Account Managers and leadership. It helps the team quickly understand who is ahead, who is behind, which deals need attention, and what each Account Manager should focus on today.
 
@@ -1508,7 +1949,7 @@ To update the data shown in Coach, update the source areas:
     slug: "page-activities",
     title: "Activities",
     group: "Team Guide",
-    order: 13,
+    order: 14,
     visibility: "public",
     content: `Activities is the sales activity log for customer follow-ups and opportunity work. Use it to record calls, meetings, and proposals sent for Pipeline leads.
 
@@ -1589,7 +2030,7 @@ Activities does not send emails, create reminders, attach files, or update Pipel
     slug: "page-manageone",
     title: "ManageOne",
     group: "Team Guide",
-    order: 14,
+    order: 15,
     visibility: "public",
     content: `ManageOne shows tenant and VDC information synced from Huawei ManageOne into the CRM. It helps leadership connect cloud platform tenants to CRM companies so usage, Cloud Health, and customer reporting can work correctly.
 
@@ -1690,7 +2131,7 @@ It is the CRM mapping and visibility layer for synced ManageOne tenant data.`,
     slug: "page-cloud-health",
     title: "Cloud Health",
     group: "Team Guide",
-    order: 15,
+    order: 16,
     visibility: "public",
     content: `*Leadership and Country GM only — everyone else sees a restricted-access notice here. CEO and Head of Business can also manage ping targets; Country GM is view-only for ping target management.*
 
@@ -1714,7 +2155,7 @@ Cloud Health is for catching alarm, network, capacity, and host-pressure issues 
     slug: "page-tasks",
     title: "Tasks",
     group: "Team Guide",
-    order: 16,
+    order: 17,
     visibility: "public",
     content: `Tasks helps the team create, assign, track, and discuss internal CRM work without using a separate project-management tool.
 
@@ -1948,7 +2389,7 @@ If you cannot see or assign a task, it is usually because it is outside your rol
     slug: "page-team",
     title: "Team",
     group: "Team Guide",
-    order: 17,
+    order: 18,
     visibility: "public",
     content: `*Leadership only (CEO / Head of Business) can make changes here — other roles can view team members' roles and country assignments, but can't edit anything.*
 
@@ -1964,7 +2405,7 @@ If you cannot see or assign a task, it is usually because it is outside your rol
     slug: "page-settings",
     title: "Settings",
     group: "Team Guide",
-    order: 18,
+    order: 19,
     visibility: "public",
     content: `**Profile** (everyone) — update your own display name here.
 
@@ -2146,9 +2587,9 @@ export const syncPageDocumentationSections = mutation({
       .withIndex("by_slug", (q) => q.eq("slug", "common-workflows"))
       .unique();
 
-    if (commonWorkflows && commonWorkflows.order !== 19) {
+    if (commonWorkflows && commonWorkflows.order !== 20) {
       await ctx.db.patch(commonWorkflows._id, {
-        order: 19,
+        order: 20,
         updatedAt: now,
         updatedBy: user._id,
       });
@@ -2172,6 +2613,80 @@ export const syncInvoicesDocumentationFromSeed = mutation({
       throw new ConvexError({
         code: "NOT_FOUND",
         message: "Invoices documentation seed not found",
+      });
+    }
+
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("documentationSections")
+      .withIndex("by_slug", (q) => q.eq("slug", seed.slug))
+      .unique();
+
+    if (!existing) {
+      await ctx.db.insert("documentationSections", {
+        ...seed,
+        updatedAt: now,
+        updatedBy: user._id,
+      });
+      return {
+        inserted: true,
+        updated: ["content", "title", "group", "order", "visibility"],
+        slug: seed.slug,
+      };
+    }
+
+    const patch: Partial<Doc<"documentationSections">> = {};
+    const updated: string[] = [];
+    if (existing.title !== seed.title) {
+      patch.title = seed.title;
+      updated.push("title");
+    }
+    if (existing.group !== seed.group) {
+      patch.group = seed.group;
+      updated.push("group");
+    }
+    if (existing.order !== seed.order) {
+      patch.order = seed.order;
+      updated.push("order");
+    }
+    if (existing.visibility !== seed.visibility) {
+      patch.visibility = seed.visibility;
+      updated.push("visibility");
+    }
+    if (existing.content !== seed.content) {
+      patch.content = seed.content;
+      updated.push("content");
+    }
+
+    if (updated.length > 0) {
+      await ctx.db.patch(existing._id, {
+        ...patch,
+        updatedAt: now,
+        updatedBy: user._id,
+      });
+    }
+
+    return {
+      inserted: false,
+      updated,
+      slug: seed.slug,
+    };
+  },
+});
+
+export const syncFinanceDocumentationFromSeed = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanEditDocumentation(user);
+
+    const seed = PAGE_DOCUMENTATION_SECTIONS.find(
+      (section) => section.slug === "page-finance",
+    );
+    if (!seed) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Finance documentation seed not found",
       });
     }
 
@@ -2299,7 +2814,7 @@ export const replaceNavigationSection = internalMutation({
       .unique();
 
     if (commonWorkflows) {
-      await ctx.db.patch(commonWorkflows._id, { order: 19 });
+      await ctx.db.patch(commonWorkflows._id, { order: 20 });
     }
 
     return { removed, inserted };
