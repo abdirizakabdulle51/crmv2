@@ -278,7 +278,7 @@ describe("InvoicePrintPage", () => {
 
     renderPrintPage();
 
-    expect(screen.getAllByText("HTG KENYA LIMITED").length).toBeGreaterThan(0);
+    expect(screen.queryByText("HTG KENYA LIMITED")).not.toBeInTheDocument();
     expect(screen.getAllByText("Westlands").length).toBeGreaterThan(0);
     expect(
       screen.getAllByText("Cloud billing for East Africa.").length,
@@ -306,7 +306,6 @@ describe("InvoicePrintPage", () => {
   it("falls back to existing HTG seller details for legacy invoices", () => {
     renderPrintPage();
 
-    expect(screen.getAllByText("HTG Clouds").length).toBeGreaterThan(0);
     expect(
       screen.getAllByText("Airport road, Next to Ali Jimale Masque").length,
     ).toBeGreaterThan(0);

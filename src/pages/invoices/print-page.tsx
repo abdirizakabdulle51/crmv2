@@ -141,7 +141,6 @@ function Header({ seller }: { seller: SellerDetails }) {
       <div>
         <img className="invoice-logo" src="/Logo.svg" alt="HTG Clouds" />
         <address>
-          <strong>{seller.legalName}</strong>
           {seller.addressLines.map((line) => (
             <span key={line}>{line}</span>
           ))}
