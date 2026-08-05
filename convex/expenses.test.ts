@@ -191,6 +191,23 @@ async function uploadReceipt(
   });
 }
 
+async function updateFinanceSettings(
+  t: ReturnType<typeof convexTest>,
+  s: Seed,
+  overrides: Partial<{
+    countryApprovalLimit: number;
+    businessApprovalLimit: number;
+    currency: string;
+  }> = {},
+  user: Doc<"users"> = s.ceo,
+) {
+  return await asUser(t, user).mutation(api.expenses.updateFinanceSettings, {
+    countryApprovalLimit: overrides.countryApprovalLimit ?? 100,
+    businessApprovalLimit: overrides.businessApprovalLimit ?? 500,
+    currency: overrides.currency,
+  });
+}
+
 describe("expenses", () => {
   it("allows an Account Manager to create and submit own expense", async () => {
     const t = convexTest(schema, modules);
@@ -256,6 +273,73 @@ describe("expenses", () => {
     expect(visible[0].requestedBy).toBe(s.amA._id);
   });
 
+  it("uses default finance approval settings when none exist", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const settings = await asUser(t, s.amA).query(
+      api.expenses.getFinanceSettings,
+      {},
+    );
+
+    expect(settings).toMatchObject({
+      countryApprovalLimit: 100,
+      businessApprovalLimit: 500,
+      currency: "USD",
+    });
+  });
+
+  it("allows CEO and HOB to update finance settings and rejects other roles", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await expect(
+      updateFinanceSettings(t, s, { countryApprovalLimit: 150 }, s.amA),
+    ).rejects.toThrow();
+    await expect(
+      updateFinanceSettings(t, s, { countryApprovalLimit: 150 }, s.gmA),
+    ).rejects.toThrow();
+
+    await updateFinanceSettings(
+      t,
+      s,
+      {
+        countryApprovalLimit: 150,
+        businessApprovalLimit: 750,
+        currency: "usd",
+      },
+      s.hob,
+    );
+    const settings = await asUser(t, s.ceo).query(
+      api.expenses.getFinanceSettings,
+      {},
+    );
+
+    expect(settings).toMatchObject({
+      countryApprovalLimit: 150,
+      businessApprovalLimit: 750,
+      currency: "USD",
+      updatedBy: s.hob._id,
+    });
+  });
+
+  it("rejects invalid finance approval settings", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await expect(
+      updateFinanceSettings(t, s, { countryApprovalLimit: -1 }),
+    ).rejects.toThrow("Country approval limit must be 0 or greater");
+    await expect(
+      updateFinanceSettings(t, s, {
+        countryApprovalLimit: 500,
+        businessApprovalLimit: 500,
+      }),
+    ).rejects.toThrow(
+      "Business approval limit must be greater than country approval limit",
+    );
+  });
+
   it("allows Country GM to approve and reject country expenses only", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -284,6 +368,70 @@ describe("expenses", () => {
     expect(visible.map((expense) => expense._id)).not.toContain(
       otherCountryExpense,
     );
+  });
+
+  it("blocks Country GM approvals above the country approval limit", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await updateFinanceSettings(t, s, {
+      countryApprovalLimit: 100,
+      businessApprovalLimit: 500,
+    });
+    const expenseId = await createDraftExpense(t, s, s.amA, { amount: 250 });
+    await asUser(t, s.amA).mutation(api.expenses.submitExpenseRequest, {
+      expenseId,
+    });
+
+    await expect(
+      asUser(t, s.gmA).mutation(api.expenses.approveExpenseRequest, {
+        expenseId,
+      }),
+    ).rejects.toThrow("You do not have permission to approve this expense");
+
+    await asUser(t, s.hob).mutation(api.expenses.approveExpenseRequest, {
+      expenseId,
+    });
+    const expense = await asUser(t, s.hob).query(
+      api.expenses.getExpenseRequest,
+      { expenseId },
+    );
+    expect(expense.status).toBe("approved");
+  });
+
+  it("allows HOB and CEO to approve business and executive approval levels", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await updateFinanceSettings(t, s, {
+      countryApprovalLimit: 100,
+      businessApprovalLimit: 500,
+    });
+    const businessExpense = await createDraftExpense(t, s, s.amA, {
+      amount: 250,
+    });
+    const executiveExpense = await createDraftExpense(t, s, s.amB, {
+      amount: 800,
+      companyId: s.companyB,
+      countryId: s.countryB,
+    });
+    await asUser(t, s.amA).mutation(api.expenses.submitExpenseRequest, {
+      expenseId: businessExpense,
+    });
+    await asUser(t, s.amB).mutation(api.expenses.submitExpenseRequest, {
+      expenseId: executiveExpense,
+    });
+
+    await asUser(t, s.hob).mutation(api.expenses.approveExpenseRequest, {
+      expenseId: businessExpense,
+    });
+    await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
+      expenseId: executiveExpense,
+    });
+
+    const visible = await asUser(t, s.ceo).query(
+      api.expenses.listExpenseRequests,
+      {},
+    );
+    expect(visible.every((expense) => expense.status === "approved")).toBe(true);
   });
 
   it("allows HOB and CEO to view, approve, reject, and mark paid across countries", async () => {

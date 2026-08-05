@@ -724,6 +724,15 @@ export default defineSchema({
     .index("by_uploaded_by", ["uploadedBy"])
     .index("by_storage_id", ["storageId"]),
 
+  financeSettings: defineTable({
+    key: v.literal("default"),
+    countryApprovalLimit: v.number(),
+    businessApprovalLimit: v.number(),
+    currency: v.string(),
+    updatedBy: v.id("users"),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   quotes: defineTable({
     companyId: v.id("companies"),
     createdBy: v.id("users"),

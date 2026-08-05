@@ -24,6 +24,7 @@ import {
   ChevronDown,
   ChevronRight,
   Tags,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -48,6 +49,11 @@ const NAV_ITEMS = [
     to: "/finance/expense-categories",
     label: "Expense Categories",
     icon: Tags,
+  },
+  {
+    to: "/finance/settings",
+    label: "Finance Settings",
+    icon: SlidersHorizontal,
   },
   { to: "/recommendations", label: "Cloud Advisor", icon: Lightbulb },
   {
@@ -86,7 +92,11 @@ const NAV_GROUPS = [
   },
   {
     label: "Finance",
-    items: ["/finance/expenses", "/finance/expense-categories"],
+    items: [
+      "/finance/expenses",
+      "/finance/expense-categories",
+      "/finance/settings",
+    ],
   },
   {
     label: "Infrastructure",

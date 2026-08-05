@@ -60,6 +60,18 @@ type ExpenseStatus = Expense["status"];
 type ExpenseEvent = Doc<"expenseEvents">;
 type ExpenseReceipt = Doc<"expenseReceipts">;
 type ReasonAction = "reject" | "cancel" | null;
+type FinanceSettings = {
+  countryApprovalLimit: number;
+  businessApprovalLimit: number;
+  currency: string;
+};
+type ApprovalLevel = "country" | "business" | "executive";
+
+const APPROVAL_LEVEL_LABELS: Record<ApprovalLevel, string> = {
+  country: "Country Approval",
+  business: "Business Approval",
+  executive: "Executive Approval",
+};
 const MAX_RECEIPT_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_RECEIPT_MIME_TYPES = new Set([
   "application/pdf",
@@ -189,6 +201,34 @@ function isAdminRole(role: Doc<"users">["role"] | undefined) {
   return role === "ceo" || role === "head_of_business";
 }
 
+function approvalLevelForAmount(
+  amount: number,
+  settings: FinanceSettings,
+): ApprovalLevel {
+  if (amount <= settings.countryApprovalLimit) {
+    return "country";
+  }
+  if (amount <= settings.businessApprovalLimit) {
+    return "business";
+  }
+  return "executive";
+}
+
+function canApproveForLevel(
+  currentUser: Doc<"users"> | null,
+  expense: Expense,
+  approvalLevel: ApprovalLevel,
+) {
+  if (!currentUser) return false;
+  if (isAdminRole(currentUser.role)) return true;
+  return (
+    approvalLevel === "country" &&
+    currentUser.role === "country_gm" &&
+    !!currentUser.countryId &&
+    expense.countryId === currentUser.countryId
+  );
+}
+
 function canArchiveReceipt(
   currentUser: Doc<"users"> | null,
   receipt: ExpenseReceipt,
@@ -217,6 +257,7 @@ export default function ExpenseDetailPage() {
     api.expenses.listReceipts,
     expense ? { expenseId: expense._id } : "skip",
   );
+  const financeSettings = useQuery(api.expenses.getFinanceSettings, {});
   const categories = useQuery(api.expenses.listExpenseCategories, {});
   const users = useQuery(api.users.listAll, {});
   const companies = useQuery(api.companies.list, {});
@@ -266,6 +307,7 @@ export default function ExpenseDetailPage() {
     expense === undefined ||
     events === undefined ||
     receipts === undefined ||
+    financeSettings === undefined ||
     !categories ||
     !users ||
     !companies ||
@@ -302,11 +344,12 @@ export default function ExpenseDetailPage() {
 
   const isRequester = currentUser?._id === expense.requestedBy;
   const isAdmin = isAdminRole(currentUser?.role);
+  const approvalLevel = approvalLevelForAmount(expense.amount, financeSettings);
   const canEditDraft = expense.status === "draft" && (isRequester || isAdmin);
   const canSubmit = expense.status === "draft" && isRequester;
   const canApproveReject =
     expense.status === "submitted" &&
-    (currentUser?.role === "country_gm" || isAdmin);
+    canApproveForLevel(currentUser, expense, approvalLevel);
   const canCancel =
     !["rejected", "paid", "cancelled"].includes(expense.status) &&
     (isRequester || isAdmin);
@@ -573,6 +616,10 @@ export default function ExpenseDetailPage() {
             <CardTitle>Workflow</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
+            <Detail
+              label="Approval Level"
+              value={APPROVAL_LEVEL_LABELS[approvalLevel]}
+            />
             <Detail label="Submitted" value={formatDateTime(expense.submittedAt)} />
             <Detail
               label="Approved By"

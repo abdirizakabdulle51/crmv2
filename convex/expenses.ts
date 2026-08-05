@@ -7,8 +7,14 @@ import { assertCanManageCompany, canViewCompany, isCeoOrHob } from "./authorizat
 type Ctx = QueryCtx | MutationCtx;
 type ExpenseStatus = Doc<"expenseRequests">["status"];
 type ExpenseEventType = Doc<"expenseEvents">["type"];
+type ApprovalLevel = "country" | "business" | "executive";
 
 const DEFAULT_CURRENCY = "USD";
+const DEFAULT_FINANCE_SETTINGS = {
+  countryApprovalLimit: 100,
+  businessApprovalLimit: 500,
+  currency: "USD",
+};
 const MAX_RECEIPT_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_RECEIPT_MIME_TYPES = new Set([
   "application/pdf",
@@ -105,6 +111,36 @@ function normalizeCurrency(value: string | undefined) {
   return normalized;
 }
 
+function normalizeFinanceSettings(args: {
+  countryApprovalLimit: number;
+  businessApprovalLimit: number;
+  currency?: string;
+}) {
+  if (
+    !Number.isFinite(args.countryApprovalLimit) ||
+    args.countryApprovalLimit < 0
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Country approval limit must be 0 or greater",
+    });
+  }
+  if (
+    !Number.isFinite(args.businessApprovalLimit) ||
+    args.businessApprovalLimit <= args.countryApprovalLimit
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Business approval limit must be greater than country approval limit",
+    });
+  }
+  return {
+    countryApprovalLimit: args.countryApprovalLimit,
+    businessApprovalLimit: args.businessApprovalLimit,
+    currency: normalizeCurrency(args.currency),
+  };
+}
+
 function assertPositiveAmount(amount: number) {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ConvexError({
@@ -156,6 +192,30 @@ async function getExpenseOrThrow(ctx: Ctx, expenseId: Id<"expenseRequests">) {
     });
   }
   return expense;
+}
+
+async function getFinanceSettingsValues(ctx: Ctx) {
+  const settings = await ctx.db
+    .query("financeSettings")
+    .withIndex("by_key", (q) => q.eq("key", "default"))
+    .first();
+  return settings ?? DEFAULT_FINANCE_SETTINGS;
+}
+
+function approvalLevelForAmount(
+  amount: number,
+  settings: {
+    countryApprovalLimit: number;
+    businessApprovalLimit: number;
+  },
+): ApprovalLevel {
+  if (amount <= settings.countryApprovalLimit) {
+    return "country";
+  }
+  if (amount <= settings.businessApprovalLimit) {
+    return "business";
+  }
+  return "executive";
 }
 
 async function getReceiptOrThrow(ctx: Ctx, receiptId: Id<"expenseReceipts">) {
@@ -258,8 +318,13 @@ async function canApproveExpense(
   user: Doc<"users">,
   expense: Doc<"expenseRequests">,
 ) {
+  const settings = await getFinanceSettingsValues(ctx);
+  const approvalLevel = approvalLevelForAmount(expense.amount, settings);
   if (isCeoOrHob(user)) {
     return true;
+  }
+  if (approvalLevel !== "country") {
+    return false;
   }
   if (user.role === "country_gm" && user.countryId) {
     if (expense.countryId === user.countryId) {
@@ -417,6 +482,52 @@ export const listExpenseCategories = query({
     return categories
       .filter((category) => args.includeInactive || category.isActive)
       .sort((a, b) => a.name.localeCompare(b.name));
+  },
+});
+
+export const getFinanceSettings = query({
+  args: {},
+  handler: async (ctx) => {
+    await getCurrentUserOrThrow(ctx);
+    const settings = await getFinanceSettingsValues(ctx);
+    return settings;
+  },
+});
+
+export const updateFinanceSettings = mutation({
+  args: {
+    countryApprovalLimit: v.number(),
+    businessApprovalLimit: v.number(),
+    currency: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (!isCeoOrHob(user)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can update finance settings",
+      });
+    }
+    const values = normalizeFinanceSettings(args);
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("financeSettings")
+      .withIndex("by_key", (q) => q.eq("key", "default"))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        ...values,
+        updatedBy: user._id,
+        updatedAt: now,
+      });
+      return existing._id;
+    }
+    return await ctx.db.insert("financeSettings", {
+      key: "default",
+      ...values,
+      updatedBy: user._id,
+      updatedAt: now,
+    });
   },
 });
 

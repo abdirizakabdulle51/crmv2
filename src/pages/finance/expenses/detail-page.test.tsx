@@ -24,6 +24,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
     countries: { list: "countries.list" },
     expenses: {
       getExpenseRequest: "expenses.getExpenseRequest",
+      getFinanceSettings: "expenses.getFinanceSettings",
       listExpenseEvents: "expenses.listExpenseEvents",
       listReceipts: "expenses.listReceipts",
       listExpenseCategories: "expenses.listExpenseCategories",
@@ -47,6 +48,11 @@ const mocks = vi.hoisted(() => ({
   expense: undefined as Doc<"expenseRequests"> | null | undefined,
   events: undefined as Doc<"expenseEvents">[] | undefined,
   receipts: undefined as Doc<"expenseReceipts">[] | undefined,
+  financeSettings: {
+    countryApprovalLimit: 100,
+    businessApprovalLimit: 500,
+    currency: "USD",
+  },
   categories: [] as Doc<"expenseCategories">[],
   users: [] as Doc<"users">[],
   companies: [] as Doc<"companies">[],
@@ -73,6 +79,7 @@ vi.mock("convex/react", () => ({
   useConvex: () => ({ query: mocks.convexQuery }),
   useQuery: (query: string) => {
     if (query === "expenses.getExpenseRequest") return mocks.expense;
+    if (query === "expenses.getFinanceSettings") return mocks.financeSettings;
     if (query === "expenses.listExpenseEvents") return mocks.events;
     if (query === "expenses.listReceipts") return mocks.receipts;
     if (query === "expenses.listExpenseCategories") return mocks.categories;
@@ -114,7 +121,7 @@ function crmUser(
   role: Doc<"users">["role"],
   name: string,
 ): Doc<"users"> {
-  return {
+  const user = {
     _id: id as Id<"users">,
     _creationTime: 1,
     tokenIdentifier: `${id}-token`,
@@ -122,6 +129,13 @@ function crmUser(
     email: `${id}@example.com`,
     role,
   };
+  if (role === "country_gm" || role === "account_manager") {
+    return {
+      ...user,
+      countryId: "country-1" as Id<"countries">,
+    };
+  }
+  return user;
 }
 
 function category(
@@ -254,6 +268,11 @@ describe("ExpenseDetailPage", () => {
     mocks.expense = expense();
     mocks.events = [event("event-1")];
     mocks.receipts = [];
+    mocks.financeSettings = {
+      countryApprovalLimit: 100,
+      businessApprovalLimit: 500,
+      currency: "USD",
+    };
     mocks.categories = [category("category-1", "Travel")];
     mocks.users = [
       crmUser("am", "account_manager", "Amina"),
@@ -295,6 +314,7 @@ describe("ExpenseDetailPage", () => {
     expect(screen.getByText("Hormuud")).toBeInTheDocument();
     expect(screen.getByText("Taxi to customer meeting")).toBeInTheDocument();
     expect(screen.getByText("Receipts")).toBeInTheDocument();
+    expectDetailValue("Approval Level", "Country Approval");
     expect(screen.getByText("No receipts uploaded yet.")).toBeInTheDocument();
     expect(screen.getByText("Expense request created.")).toBeInTheDocument();
     expect(screen.getByText(/By Amina/)).toBeInTheDocument();
@@ -433,6 +453,30 @@ describe("ExpenseDetailPage", () => {
     expect(mocks.approveExpenseRequest).toHaveBeenCalledWith({
       expenseId: "expense-1",
     });
+  });
+
+  it("hides approve and reject for Country GM when the expense needs business approval", () => {
+    mocks.currentUser = crmUser("gm", "country_gm", "GM");
+    mocks.expense = expense({ status: "submitted", amount: 250 });
+
+    renderDetailPage();
+
+    expectDetailValue("Approval Level", "Business Approval");
+    expect(screen.queryByRole("button", { name: "Approve" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("shows approve and reject for HOB on executive approval expenses", () => {
+    mocks.currentUser = crmUser("hob", "head_of_business", "HOB");
+    mocks.expense = expense({ status: "submitted", amount: 800 });
+
+    renderDetailPage();
+
+    expectDetailValue("Approval Level", "Executive Approval");
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
   });
 
   it("rejects with a required reason dialog", async () => {
