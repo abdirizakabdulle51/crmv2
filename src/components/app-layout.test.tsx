@@ -172,13 +172,15 @@ describe("AppLayout", () => {
       .toBeInTheDocument();
   });
 
-  it("renders Finance with Expenses while keeping Invoices under Revenue", async () => {
+  it("renders Finance with Expenses and Expense Categories while keeping Invoices under Revenue", async () => {
     const user = userEvent.setup();
     const { container } = renderLayout();
     const sidebar = container.querySelector("aside") as HTMLElement;
 
     expect(within(sidebar).getByText("Finance")).toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Expenses" }))
+      .toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Expense Categories" }))
       .toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Invoices" }))
       .toBeInTheDocument();
@@ -190,6 +192,8 @@ describe("AppLayout", () => {
     expect(within(sidebar).queryByRole("link", { name: "Invoices" }))
       .not.toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Expenses" }))
+      .toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Expense Categories" }))
       .toBeInTheDocument();
   });
 

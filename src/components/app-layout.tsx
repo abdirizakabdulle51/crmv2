@@ -23,6 +23,7 @@ import {
   ClipboardList,
   ChevronDown,
   ChevronRight,
+  Tags,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -43,6 +44,11 @@ const NAV_ITEMS = [
   { to: "/quotes", label: "Quotes", icon: FileText },
   { to: "/invoices", label: "Invoices", icon: ReceiptText },
   { to: "/finance/expenses", label: "Expenses", icon: WalletCards },
+  {
+    to: "/finance/expense-categories",
+    label: "Expense Categories",
+    icon: Tags,
+  },
   { to: "/recommendations", label: "Cloud Advisor", icon: Lightbulb },
   {
     to: "/manageone-tenants",
@@ -80,7 +86,7 @@ const NAV_GROUPS = [
   },
   {
     label: "Finance",
-    items: ["/finance/expenses"],
+    items: ["/finance/expenses", "/finance/expense-categories"],
   },
   {
     label: "Infrastructure",
