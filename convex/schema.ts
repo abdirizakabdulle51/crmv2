@@ -635,6 +635,78 @@ export default defineSchema({
     .index("by_invoice", ["invoiceId"])
     .index("by_type", ["type"]),
 
+  expenseCategories: defineTable({
+    name: v.string(),
+    code: v.optional(v.string()),
+    description: v.optional(v.string()),
+    isActive: v.boolean(),
+    requiresReceipt: v.optional(v.boolean()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_is_active", ["isActive"])
+    .index("by_name", ["name"]),
+
+  expenseRequests: defineTable({
+    title: v.string(),
+    description: v.optional(v.string()),
+    categoryId: v.id("expenseCategories"),
+    amount: v.number(),
+    currency: v.string(),
+    expenseDate: v.number(),
+    vendor: v.optional(v.string()),
+    requestedBy: v.id("users"),
+    companyId: v.optional(v.id("companies")),
+    countryId: v.optional(v.id("countries")),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("submitted"),
+      v.literal("approved"),
+      v.literal("rejected"),
+      v.literal("paid"),
+      v.literal("cancelled"),
+    ),
+    submittedAt: v.optional(v.number()),
+    approvedAt: v.optional(v.number()),
+    approvedBy: v.optional(v.id("users")),
+    rejectedAt: v.optional(v.number()),
+    rejectedBy: v.optional(v.id("users")),
+    rejectionReason: v.optional(v.string()),
+    paidAt: v.optional(v.number()),
+    paidBy: v.optional(v.id("users")),
+    paymentMethod: v.optional(v.string()),
+    paymentReference: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  })
+    .index("by_requested_by", ["requestedBy"])
+    .index("by_status", ["status"])
+    .index("by_category", ["categoryId"])
+    .index("by_company", ["companyId"])
+    .index("by_country", ["countryId"])
+    .index("by_created_at", ["createdAt"])
+    .index("by_expense_date", ["expenseDate"]),
+
+  expenseEvents: defineTable({
+    expenseId: v.id("expenseRequests"),
+    type: v.union(
+      v.literal("created"),
+      v.literal("submitted"),
+      v.literal("approved"),
+      v.literal("rejected"),
+      v.literal("marked_paid"),
+      v.literal("cancelled"),
+      v.literal("updated"),
+    ),
+    message: v.string(),
+    actorId: v.id("users"),
+    createdAt: v.number(),
+  })
+    .index("by_expense", ["expenseId"])
+    .index("by_actor", ["actorId"]),
+
   quotes: defineTable({
     companyId: v.id("companies"),
     createdBy: v.id("users"),

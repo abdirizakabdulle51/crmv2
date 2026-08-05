@@ -25,6 +25,7 @@ import type * as countries from "../countries.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as documentation from "../documentation.js";
+import type * as expenses from "../expenses.js";
 import type * as http from "../http.js";
 import type * as invoices from "../invoices.js";
 import type * as leads from "../leads.js";
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   dashboard: typeof dashboard;
   documentation: typeof documentation;
+  expenses: typeof expenses;
   http: typeof http;
   invoices: typeof invoices;
   leads: typeof leads;
