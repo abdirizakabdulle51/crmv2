@@ -28,6 +28,7 @@ import type * as documentation from "../documentation.js";
 import type * as expenses from "../expenses.js";
 import type * as financeReports from "../financeReports.js";
 import type * as http from "../http.js";
+import type * as invoiceProfiles from "../invoiceProfiles.js";
 import type * as invoices from "../invoices.js";
 import type * as leads from "../leads.js";
 import type * as leadsImport from "../leadsImport.js";
@@ -75,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   expenses: typeof expenses;
   financeReports: typeof financeReports;
   http: typeof http;
+  invoiceProfiles: typeof invoiceProfiles;
   invoices: typeof invoices;
   leads: typeof leads;
   leadsImport: typeof leadsImport;

@@ -733,6 +733,36 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
+  invoiceProfiles: defineTable({
+    name: v.string(),
+    countryId: v.optional(v.id("countries")),
+    region: v.optional(v.string()),
+    isDefault: v.boolean(),
+    isActive: v.boolean(),
+    legalName: v.string(),
+    logoPath: v.optional(v.string()),
+    slogan: v.optional(v.string()),
+    addressLines: v.array(v.string()),
+    phone: v.string(),
+    email: v.string(),
+    website: v.string(),
+    taxId: v.optional(v.string()),
+    bankName: v.string(),
+    bankAccountNumber: v.string(),
+    bankAccountName: v.string(),
+    bankLocation: v.string(),
+    currency: v.string(),
+    currencyNote: v.string(),
+    paymentInstructions: v.string(),
+    footerText: v.optional(v.string()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_country", ["countryId"])
+    .index("by_default_active", ["isDefault", "isActive"])
+    .index("by_active", ["isActive"]),
+
   quotes: defineTable({
     companyId: v.id("companies"),
     createdBy: v.id("users"),
