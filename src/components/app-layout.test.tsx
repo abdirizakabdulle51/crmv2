@@ -180,6 +180,8 @@ describe("AppLayout", () => {
     expect(within(sidebar).getByText("Finance")).toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Expenses" }))
       .toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Finance Reports" }))
+      .toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Expense Categories" }))
       .toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Finance Settings" }))
@@ -194,6 +196,8 @@ describe("AppLayout", () => {
     expect(within(sidebar).queryByRole("link", { name: "Invoices" }))
       .not.toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Expenses" }))
+      .toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Finance Reports" }))
       .toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Expense Categories" }))
       .toBeInTheDocument();

@@ -1,0 +1,374 @@
+import { convexTest } from "convex-test";
+import { describe, expect, it } from "vitest";
+import { api } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel.d.ts";
+import schema from "./schema";
+import { modules } from "./test.setup";
+
+type Seed = {
+  countryA: Id<"countries">;
+  countryB: Id<"countries">;
+  companyA: Id<"companies">;
+  companyB: Id<"companies">;
+  categoryTravel: Id<"expenseCategories">;
+  categoryOps: Id<"expenseCategories">;
+  ceo: Doc<"users">;
+  hob: Doc<"users">;
+  gmA: Doc<"users">;
+  amA: Doc<"users">;
+};
+
+function asUser(t: ReturnType<typeof convexTest>, user: Doc<"users">) {
+  return t.withIdentity({ tokenIdentifier: user.tokenIdentifier });
+}
+
+async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
+  return await t.run(async (ctx) => {
+    const countryA = await ctx.db.insert("countries", {
+      name: "Somalia",
+      region: "East Africa",
+    });
+    const countryB = await ctx.db.insert("countries", {
+      name: "Kenya",
+      region: "East Africa",
+    });
+    const sector = await ctx.db.insert("sectors", { name: "Banking" });
+    const ceoId = await ctx.db.insert("users", {
+      name: "CEO",
+      tokenIdentifier: "ceo-token",
+      role: "ceo",
+    });
+    const hobId = await ctx.db.insert("users", {
+      name: "HOB",
+      tokenIdentifier: "hob-token",
+      role: "head_of_business",
+    });
+    const gmAId = await ctx.db.insert("users", {
+      name: "GM A",
+      tokenIdentifier: "gm-a-token",
+      role: "country_gm",
+      countryId: countryA,
+    });
+    const amAId = await ctx.db.insert("users", {
+      name: "AM A",
+      tokenIdentifier: "am-a-token",
+      role: "account_manager",
+      countryId: countryA,
+    });
+    const companyA = await ctx.db.insert("companies", {
+      name: "Company A",
+      sectorId: sector,
+      countryId: countryA,
+      accountManagerId: amAId,
+      contractStatus: "active",
+    });
+    const companyB = await ctx.db.insert("companies", {
+      name: "Company B",
+      sectorId: sector,
+      countryId: countryB,
+      accountManagerId: amAId,
+      contractStatus: "active",
+    });
+    const categoryTravel = await ctx.db.insert("expenseCategories", {
+      name: "Travel",
+      isActive: true,
+      createdBy: ceoId,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const categoryOps = await ctx.db.insert("expenseCategories", {
+      name: "Cloud Operations",
+      isActive: true,
+      createdBy: ceoId,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    return {
+      countryA,
+      countryB,
+      companyA,
+      companyB,
+      categoryTravel,
+      categoryOps,
+      ceo: (await ctx.db.get(ceoId))!,
+      hob: (await ctx.db.get(hobId))!,
+      gmA: (await ctx.db.get(gmAId))!,
+      amA: (await ctx.db.get(amAId))!,
+    };
+  });
+}
+
+async function insertInvoiceWithPayment(
+  t: ReturnType<typeof convexTest>,
+  args: {
+    companyId: Id<"companies">;
+    createdBy: Id<"users">;
+    status?: Doc<"invoices">["status"];
+    paymentAmount: number;
+    paidAt: number;
+    isTest?: boolean;
+    hiddenAt?: number;
+  },
+) {
+  return await t.run(async (ctx) => {
+    const invoiceId = await ctx.db.insert("invoices", {
+      companyId: args.companyId,
+      createdBy: args.createdBy,
+      invoiceNumber: "INV-2026-00001",
+      status: args.status ?? "paid",
+      isTest: args.isTest,
+      hiddenAt: args.hiddenAt,
+      companyName: "Company",
+      lineItems: [],
+      subtotal: args.paymentAmount,
+      monthlyTotal: args.paymentAmount,
+      yearlyTotal: args.paymentAmount,
+      grandTotal: args.paymentAmount,
+      amountPaid: args.paymentAmount,
+      balanceDue: 0,
+      createdAt: args.paidAt,
+      updatedAt: args.paidAt,
+    });
+    await ctx.db.insert("invoicePayments", {
+      invoiceId,
+      amount: args.paymentAmount,
+      paidAt: args.paidAt,
+      method: "Bank Transfer",
+      recordedBy: args.createdBy,
+      createdAt: args.paidAt,
+    });
+    return invoiceId;
+  });
+}
+
+async function insertExpense(
+  t: ReturnType<typeof convexTest>,
+  s: Seed,
+  args: {
+    status: Doc<"expenseRequests">["status"];
+    amount: number;
+    categoryId?: Id<"expenseCategories">;
+    companyId?: Id<"companies">;
+    countryId?: Id<"countries">;
+    expenseDate?: number;
+    paidAt?: number;
+  },
+) {
+  return await t.run(async (ctx) => {
+    return await ctx.db.insert("expenseRequests", {
+      title: "Expense",
+      categoryId: args.categoryId ?? s.categoryTravel,
+      amount: args.amount,
+      currency: "USD",
+      expenseDate: args.expenseDate ?? Date.UTC(2026, 7, 1),
+      requestedBy: s.amA._id,
+      companyId: args.companyId ?? s.companyA,
+      countryId: args.countryId ?? s.countryA,
+      status: args.status,
+      paidAt: args.paidAt,
+      paidBy: args.paidAt ? s.ceo._id : undefined,
+      createdAt: args.expenseDate ?? Date.UTC(2026, 7, 1),
+      updatedAt: args.paidAt ?? args.expenseDate ?? Date.UTC(2026, 7, 1),
+    });
+  });
+}
+
+describe("finance reports", () => {
+  it("groups income by invoice payment paidAt and expenses by paidAt", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 300,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 125,
+      paidAt: Date.UTC(2026, 7, 10),
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+
+    expect(report.monthly).toEqual([
+      {
+        month: "2026-08",
+        income: 300,
+        expenses: 125,
+        net: 175,
+        paymentCount: 1,
+        paidExpenseCount: 1,
+      },
+    ]);
+    expect(report.totals).toMatchObject({
+      income: 300,
+      expenses: 125,
+      net: 175,
+      paymentCount: 1,
+    });
+  });
+
+  it("excludes test hidden void and cancelled invoices from income", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+      isTest: true,
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+      hiddenAt: Date.UTC(2026, 7, 6),
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+      status: "void",
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+      status: "cancelled",
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+
+    expect(report.totals.income).toBe(0);
+    expect(report.totals.paymentCount).toBe(0);
+  });
+
+  it("groups paid expenses by top category and summarizes statuses", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 75,
+      categoryId: s.categoryTravel,
+      paidAt: Date.UTC(2026, 7, 1),
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 50,
+      categoryId: s.categoryTravel,
+      paidAt: Date.UTC(2026, 7, 2),
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 25,
+      categoryId: s.categoryOps,
+      paidAt: Date.UTC(2026, 7, 3),
+    });
+    await insertExpense(t, s, {
+      status: "submitted",
+      amount: 40,
+      categoryId: s.categoryOps,
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+
+    expect(report.topExpenseCategories[0]).toMatchObject({
+      categoryName: "Travel",
+      total: 125,
+      count: 2,
+    });
+    expect(report.expenseStatusSummary.find((row) => row.status === "paid"))
+      .toMatchObject({ count: 3, total: 150 });
+    expect(
+      report.expenseStatusSummary.find((row) => row.status === "submitted"),
+    ).toMatchObject({ count: 1, total: 40 });
+  });
+
+  it("scopes reports for CEO HOB and Country GM and blocks Account Managers", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyB,
+      createdBy: s.ceo._id,
+      paymentAmount: 300,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 25,
+      companyId: s.companyA,
+      countryId: s.countryA,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 75,
+      companyId: s.companyB,
+      countryId: s.countryB,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+
+    const ceoReport = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+    const hobReport = await asUser(t, s.hob).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+      countryId: s.countryA,
+    });
+    const gmReport = await asUser(t, s.gmA).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+
+    expect(ceoReport.totals).toMatchObject({
+      income: 400,
+      expenses: 100,
+      net: 300,
+    });
+    expect(hobReport.totals).toMatchObject({
+      income: 100,
+      expenses: 25,
+      net: 75,
+    });
+    expect(gmReport.totals).toMatchObject({
+      income: 100,
+      expenses: 25,
+      net: 75,
+    });
+    await expect(
+      asUser(t, s.amA).query(api.financeReports.summary, {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      }),
+    ).rejects.toThrow("You do not have permission to view finance reports");
+    await expect(
+      asUser(t, s.gmA).query(api.financeReports.summary, {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+        countryId: s.countryB,
+      }),
+    ).rejects.toThrow();
+  });
+});

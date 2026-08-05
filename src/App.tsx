@@ -25,6 +25,7 @@ import ExpensesPage from "./pages/finance/expenses/page.tsx";
 import ExpenseDetailPage from "./pages/finance/expenses/detail-page.tsx";
 import ExpenseCategoriesPage from "./pages/finance/expense-categories/page.tsx";
 import FinanceSettingsPage from "./pages/finance/settings/page.tsx";
+import FinanceReportsPage from "./pages/finance/reports/page.tsx";
 import RecommendationsPage from "./pages/recommendations/page.tsx";
 import CoachPage from "./pages/coach/page.tsx";
 import ManageOneTenantsPage from "./pages/manageone-tenants/page.tsx";
@@ -74,6 +75,7 @@ export default function App() {
               path="/finance/expense-categories"
               element={<ExpenseCategoriesPage />}
             />
+            <Route path="/finance/reports" element={<FinanceReportsPage />} />
             <Route
               path="/finance/settings"
               element={<FinanceSettingsPage />}

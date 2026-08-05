@@ -15,6 +15,7 @@ import {
   FileText,
   ReceiptText,
   WalletCards,
+  ChartColumn,
   Lightbulb,
   Zap,
   Cloud,
@@ -45,6 +46,7 @@ const NAV_ITEMS = [
   { to: "/quotes", label: "Quotes", icon: FileText },
   { to: "/invoices", label: "Invoices", icon: ReceiptText },
   { to: "/finance/expenses", label: "Expenses", icon: WalletCards },
+  { to: "/finance/reports", label: "Finance Reports", icon: ChartColumn },
   {
     to: "/finance/expense-categories",
     label: "Expense Categories",
@@ -94,6 +96,7 @@ const NAV_GROUPS = [
     label: "Finance",
     items: [
       "/finance/expenses",
+      "/finance/reports",
       "/finance/expense-categories",
       "/finance/settings",
     ],
