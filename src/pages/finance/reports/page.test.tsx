@@ -34,7 +34,11 @@ Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
 vi.mock("@/convex/_generated/api.js", () => ({
   api: {
     countries: { list: "countries.list" },
-    financeReports: { summary: "financeReports.summary" },
+    financeReports: {
+      summary: "financeReports.summary",
+      invoicePaymentsExport: "financeReports.invoicePaymentsExport",
+      paidExpensesExport: "financeReports.paidExpensesExport",
+    },
   },
 }));
 
@@ -74,6 +78,9 @@ const mocks = vi.hoisted(() => ({
       }
     | undefined,
   reportArgs: [] as unknown[],
+  convexQuery: vi.fn(),
+  downloadCsv: vi.fn((_filename: string, _csv: string) => undefined),
+  rowsToCsv: vi.fn((_columns: unknown[], _rows: unknown[]) => "csv-body"),
 }));
 
 vi.mock("@/lib/crm-context.tsx", () => ({
@@ -81,6 +88,7 @@ vi.mock("@/lib/crm-context.tsx", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: mocks.convexQuery }),
   useQuery: (query: string, args?: unknown) => {
     if (query === "countries.list") return mocks.countries;
     if (query === "financeReports.summary") {
@@ -91,6 +99,13 @@ vi.mock("convex/react", () => ({
     }
     return undefined;
   },
+}));
+
+vi.mock("@/lib/csv.ts", () => ({
+  downloadCsv: (filename: string, csv: string) =>
+    mocks.downloadCsv(filename, csv),
+  rowsToCsv: (columns: unknown[], rows: unknown[]) =>
+    mocks.rowsToCsv(columns, rows),
 }));
 
 function crmUser(role: Doc<"users">["role"]): Doc<"users"> {
@@ -160,6 +175,9 @@ describe("FinanceReportsPage", () => {
     mocks.countries = [country("country-1", "Somalia")];
     mocks.report = report();
     mocks.reportArgs = [];
+    mocks.convexQuery.mockReset().mockResolvedValue([]);
+    mocks.downloadCsv.mockReset();
+    mocks.rowsToCsv.mockReset().mockReturnValue("csv-body");
   });
 
   it("renders finance report summary cards and report sections", () => {
@@ -179,6 +197,12 @@ describe("FinanceReportsPage", () => {
     expect(screen.getByTestId("chart")).toBeInTheDocument();
     expect(screen.getByText("Travel")).toBeInTheDocument();
     expect(screen.getByText("Expense Status Summary")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Export Invoice Payments CSV" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Export Paid Expenses CSV" }),
+    ).toBeInTheDocument();
   });
 
   it("updates report query filters", async () => {
@@ -209,6 +233,9 @@ describe("FinanceReportsPage", () => {
     expect(
       screen.getByText("Finance reports unavailable"),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Export Invoice Payments CSV" }),
+    ).not.toBeInTheDocument();
     expect(mocks.reportArgs).toHaveLength(0);
   });
 
@@ -255,5 +282,109 @@ describe("FinanceReportsPage", () => {
       endMonth: expect.any(String),
       countryId: undefined,
     });
+  });
+
+  it("exports invoice payments with current filters and filename", async () => {
+    const user = userEvent.setup();
+    render(<FinanceReportsPage />);
+
+    fireEvent.change(screen.getByLabelText("Start month"), {
+      target: { value: "2026-07" },
+    });
+    fireEvent.change(screen.getByLabelText("End month"), {
+      target: { value: "2026-08" },
+    });
+    await user.click(screen.getByRole("combobox", { name: "Filter by country" }));
+    await user.click(await screen.findByRole("option", { name: "Somalia" }));
+    await user.click(
+      screen.getByRole("button", { name: "Export Invoice Payments CSV" }),
+    );
+
+    expect(mocks.convexQuery).toHaveBeenCalledWith(
+      "financeReports.invoicePaymentsExport",
+      {
+        startMonth: "2026-07",
+        endMonth: "2026-08",
+        countryId: "country-1",
+      },
+    );
+    const csvCalls = mocks.rowsToCsv.mock.calls as unknown[][];
+    const columns = csvCalls[0]?.[0] as
+      | Array<{ header: string }>
+      | undefined;
+    expect(columns?.map((column) => column.header)).toEqual([
+        "Payment Date",
+        "Invoice Number",
+        "Customer / Company",
+        "Country",
+        "Amount",
+        "Currency",
+        "Payment Method",
+        "Customer Reference",
+        "Receiving Bank Name",
+        "Receiving Account Number",
+        "Receiving Account Name",
+        "Receiving Bank Location",
+        "Receiving Currency Note",
+        "Recorded By Name",
+        "Recorded By Email",
+        "Recorded At",
+        "Invoice Status",
+        "Source Reference",
+      ]);
+    expect(mocks.downloadCsv).toHaveBeenCalledWith(
+      "finance-invoice-payments-2026-07-to-2026-08.csv",
+      "csv-body",
+    );
+  });
+
+  it("exports paid expenses with current filters and filename", async () => {
+    const user = userEvent.setup();
+    render(<FinanceReportsPage />);
+
+    fireEvent.change(screen.getByLabelText("Start month"), {
+      target: { value: "2026-07" },
+    });
+    fireEvent.change(screen.getByLabelText("End month"), {
+      target: { value: "2026-08" },
+    });
+    await user.click(screen.getByRole("button", { name: "Export Paid Expenses CSV" }));
+
+    expect(mocks.convexQuery).toHaveBeenCalledWith(
+      "financeReports.paidExpensesExport",
+      {
+        startMonth: "2026-07",
+        endMonth: "2026-08",
+        countryId: undefined,
+      },
+    );
+    const csvCalls = mocks.rowsToCsv.mock.calls as unknown[][];
+    const columns = csvCalls[0]?.[0] as
+      | Array<{ header: string }>
+      | undefined;
+    expect(columns?.map((column) => column.header)).toEqual([
+        "Expense Date",
+        "Paid Date",
+        "Title",
+        "Category",
+        "Requester Name",
+        "Requester Email",
+        "Company",
+        "Country",
+        "Vendor",
+        "Amount",
+        "Currency",
+        "Payment Method",
+        "Payment Reference",
+        "Approved By Name",
+        "Approved By Email",
+        "Paid By Name",
+        "Paid By Email",
+        "Status",
+      ]);
+    expect(mocks.downloadCsv).toHaveBeenCalledWith(
+      "finance-paid-expenses-2026-07-to-2026-08.csv",
+      "csv-body",
+    );
   });
 });

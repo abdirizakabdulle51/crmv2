@@ -35,22 +35,26 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
     const sector = await ctx.db.insert("sectors", { name: "Banking" });
     const ceoId = await ctx.db.insert("users", {
       name: "CEO",
+      email: "ceo@example.com",
       tokenIdentifier: "ceo-token",
       role: "ceo",
     });
     const hobId = await ctx.db.insert("users", {
       name: "HOB",
+      email: "hob@example.com",
       tokenIdentifier: "hob-token",
       role: "head_of_business",
     });
     const gmAId = await ctx.db.insert("users", {
       name: "GM A",
+      email: "gm@example.com",
       tokenIdentifier: "gm-a-token",
       role: "country_gm",
       countryId: countryA,
     });
     const amAId = await ctx.db.insert("users", {
       name: "AM A",
+      email: "am@example.com",
       tokenIdentifier: "am-a-token",
       role: "account_manager",
       countryId: countryA,
@@ -109,13 +113,23 @@ async function insertInvoiceWithPayment(
     paidAt: number;
     isTest?: boolean;
     hiddenAt?: number;
+    invoiceNumber?: string;
+    sourceReference?: string;
+    method?: string;
+    reference?: string;
+    receivingBankName?: string;
+    receivingAccountNumber?: string;
+    receivingAccountName?: string;
+    receivingBankLocation?: string;
+    receivingCurrencyNote?: string;
   },
 ) {
   return await t.run(async (ctx) => {
     const invoiceId = await ctx.db.insert("invoices", {
       companyId: args.companyId,
       createdBy: args.createdBy,
-      invoiceNumber: "INV-2026-00001",
+      invoiceNumber: args.invoiceNumber ?? "INV-2026-00001",
+      sourceReference: args.sourceReference,
       status: args.status ?? "paid",
       isTest: args.isTest,
       hiddenAt: args.hiddenAt,
@@ -134,7 +148,13 @@ async function insertInvoiceWithPayment(
       invoiceId,
       amount: args.paymentAmount,
       paidAt: args.paidAt,
-      method: "Bank Transfer",
+      method: args.method ?? "Bank Transfer",
+      reference: args.reference,
+      receivingBankName: args.receivingBankName,
+      receivingAccountNumber: args.receivingAccountNumber,
+      receivingAccountName: args.receivingAccountName,
+      receivingBankLocation: args.receivingBankLocation,
+      receivingCurrencyNote: args.receivingCurrencyNote,
       recordedBy: args.createdBy,
       createdAt: args.paidAt,
     });
@@ -153,6 +173,9 @@ async function insertExpense(
     countryId?: Id<"countries">;
     expenseDate?: number;
     paidAt?: number;
+    vendor?: string;
+    paymentMethod?: string;
+    paymentReference?: string;
   },
 ) {
   return await t.run(async (ctx) => {
@@ -162,12 +185,16 @@ async function insertExpense(
       amount: args.amount,
       currency: "USD",
       expenseDate: args.expenseDate ?? Date.UTC(2026, 7, 1),
+      vendor: args.vendor,
       requestedBy: s.amA._id,
       companyId: args.companyId ?? s.companyA,
       countryId: args.countryId ?? s.countryA,
       status: args.status,
+      approvedBy: args.paidAt ? s.hob._id : undefined,
       paidAt: args.paidAt,
       paidBy: args.paidAt ? s.ceo._id : undefined,
+      paymentMethod: args.paymentMethod,
+      paymentReference: args.paymentReference,
       createdAt: args.expenseDate ?? Date.UTC(2026, 7, 1),
       updatedAt: args.paidAt ?? args.expenseDate ?? Date.UTC(2026, 7, 1),
     });
@@ -370,5 +397,215 @@ describe("finance reports", () => {
         countryId: s.countryB,
       }),
     ).rejects.toThrow();
+  });
+
+  it("exports invoice payment rows by paidAt with joined accounting fields", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 300,
+      paidAt: Date.UTC(2026, 7, 5),
+      invoiceNumber: "INV-2026-00010",
+      sourceReference: "Q-2026-00004",
+      reference: "BANK-7788",
+      receivingBankName: "Salaam Somali Bank",
+      receivingAccountNumber: "33111777",
+      receivingAccountName: "HTG CLOUDS LIMITED",
+      receivingBankLocation: "MOGADISHU - SOMALIA",
+      receivingCurrencyNote: "All fees are listed in USD",
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 99,
+      paidAt: Date.UTC(2026, 6, 31),
+    });
+
+    const rows = await asUser(t, s.ceo).query(
+      api.financeReports.invoicePaymentsExport,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      },
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      invoiceNumber: "INV-2026-00010",
+      customerCompany: "Company",
+      country: "Somalia",
+      amount: 300,
+      currency: "USD",
+      paymentMethod: "Bank Transfer",
+      customerReference: "BANK-7788",
+      receivingBankName: "Salaam Somali Bank",
+      receivingAccountNumber: "33111777",
+      receivingAccountName: "HTG CLOUDS LIMITED",
+      receivingBankLocation: "MOGADISHU - SOMALIA",
+      receivingCurrencyNote: "All fees are listed in USD",
+      recordedByName: "CEO",
+      recordedByEmail: "ceo@example.com",
+      invoiceStatus: "paid",
+      sourceReference: "Q-2026-00004",
+    });
+  });
+
+  it("excludes test hidden void and cancelled invoices from payment export", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+      isTest: true,
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+      hiddenAt: Date.UTC(2026, 7, 6),
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+      status: "void",
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+      status: "cancelled",
+    });
+
+    const rows = await asUser(t, s.ceo).query(
+      api.financeReports.invoicePaymentsExport,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      },
+    );
+
+    expect(rows).toEqual([]);
+  });
+
+  it("exports paid expenses by paidAt with joined finance fields", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 125,
+      paidAt: Date.UTC(2026, 7, 10),
+      vendor: "Hotel",
+      paymentMethod: "Bank Transfer",
+      paymentReference: "EXP-REF",
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 75,
+      paidAt: Date.UTC(2026, 6, 30),
+    });
+    await insertExpense(t, s, {
+      status: "approved",
+      amount: 50,
+      paidAt: Date.UTC(2026, 7, 10),
+    });
+
+    const rows = await asUser(t, s.ceo).query(
+      api.financeReports.paidExpensesExport,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      },
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      title: "Expense",
+      category: "Travel",
+      requesterName: "AM A",
+      requesterEmail: "am@example.com",
+      company: "Company A",
+      country: "Somalia",
+      vendor: "Hotel",
+      amount: 125,
+      currency: "USD",
+      paymentMethod: "Bank Transfer",
+      paymentReference: "EXP-REF",
+      approvedByName: "HOB",
+      approvedByEmail: "hob@example.com",
+      paidByName: "CEO",
+      paidByEmail: "ceo@example.com",
+      status: "paid",
+    });
+  });
+
+  it("scopes export rows for Country GM and blocks Account Managers", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyB,
+      createdBy: s.ceo._id,
+      paymentAmount: 300,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 25,
+      companyId: s.companyA,
+      countryId: s.countryA,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 75,
+      companyId: s.companyB,
+      countryId: s.countryB,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+
+    const gmPayments = await asUser(t, s.gmA).query(
+      api.financeReports.invoicePaymentsExport,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      },
+    );
+    const gmExpenses = await asUser(t, s.gmA).query(
+      api.financeReports.paidExpensesExport,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      },
+    );
+
+    expect(gmPayments).toHaveLength(1);
+    expect(gmPayments[0].amount).toBe(100);
+    expect(gmExpenses).toHaveLength(1);
+    expect(gmExpenses[0].amount).toBe(25);
+    await expect(
+      asUser(t, s.amA).query(api.financeReports.invoicePaymentsExport, {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      }),
+    ).rejects.toThrow("You do not have permission to view finance reports");
+    await expect(
+      asUser(t, s.amA).query(api.financeReports.paidExpensesExport, {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+      }),
+    ).rejects.toThrow("You do not have permission to view finance reports");
   });
 });

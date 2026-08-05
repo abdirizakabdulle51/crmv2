@@ -5,6 +5,17 @@ import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { canViewCompany, isCeoOrHob } from "./authorization";
 
 type ExpenseStatus = Doc<"expenseRequests">["status"];
+type FinanceReportScope = {
+  startMonth: string;
+  endMonth: string;
+  countryScope?: Id<"countries">;
+  visibleCompanyIds: Set<Id<"companies">>;
+  companies: Doc<"companies">[];
+  companyMap: Map<Id<"companies">, Doc<"companies">>;
+  countryMap: Map<Id<"countries">, Doc<"countries">>;
+  userMap: Map<Id<"users">, Doc<"users">>;
+  categoryMap: Map<Id<"expenseCategories">, Doc<"expenseCategories">>;
+};
 
 const EXPENSE_STATUSES: ExpenseStatus[] = [
   "draft",
@@ -102,6 +113,14 @@ function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function displayUserName(user: Doc<"users"> | undefined) {
+  return user?.name ?? user?.email ?? "";
+}
+
+function displayUserEmail(user: Doc<"users"> | undefined) {
+  return user?.email ?? "";
+}
+
 function assertCanViewFinanceReports(user: Doc<"users">) {
   if (isCeoOrHob(user) || user.role === "country_gm") {
     return;
@@ -110,6 +129,86 @@ function assertCanViewFinanceReports(user: Doc<"users">) {
     code: "FORBIDDEN",
     message: "You do not have permission to view finance reports",
   });
+}
+
+async function getReportScope(
+  ctx: QueryCtx,
+  user: Doc<"users">,
+  args: {
+    startMonth?: string;
+    endMonth?: string;
+    countryId?: Id<"countries">;
+  },
+): Promise<FinanceReportScope> {
+  if (args.countryId && !isCeoOrHob(user)) {
+    throw new ConvexError({
+      code: "FORBIDDEN",
+      message: "Only CEO or Head of Business can filter finance reports by country",
+    });
+  }
+
+  const { startMonth, endMonth } = normalizeMonthRange(args);
+  const companies = await ctx.db.query("companies").collect();
+  const countryScope = isCeoOrHob(user) ? args.countryId : user.countryId;
+  const visibleCompanyIds = new Set(
+    companies
+      .filter((company) => canViewCompany(user, company))
+      .filter((company) => !countryScope || company.countryId === countryScope)
+      .map((company) => company._id),
+  );
+
+  return {
+    startMonth,
+    endMonth,
+    countryScope,
+    visibleCompanyIds,
+    companies,
+    companyMap: new Map(companies.map((company) => [company._id, company])),
+    countryMap: new Map(
+      (await ctx.db.query("countries").collect()).map((country) => [
+        country._id,
+        country,
+      ]),
+    ),
+    userMap: new Map(
+      (await ctx.db.query("users").collect()).map((crmUser) => [
+        crmUser._id,
+        crmUser,
+      ]),
+    ),
+    categoryMap: new Map(
+      (await ctx.db.query("expenseCategories").collect()).map((category) => [
+        category._id,
+        category,
+      ]),
+    ),
+  };
+}
+
+function isVisibleExpenseForReport(
+  expense: Doc<"expenseRequests">,
+  user: Doc<"users">,
+  scope: FinanceReportScope,
+) {
+  if (expense.archivedAt !== undefined) return false;
+  const expenseCompany = expense.companyId
+    ? scope.companyMap.get(expense.companyId)
+    : undefined;
+  const expenseCountryId = expense.countryId ?? expenseCompany?.countryId;
+  if (scope.countryScope && expenseCountryId !== scope.countryScope) {
+    return false;
+  }
+  if (expense.companyId && !scope.visibleCompanyIds.has(expense.companyId)) {
+    return false;
+  }
+  if (
+    !expense.companyId &&
+    !isCeoOrHob(user) &&
+    expenseCountryId !== user.countryId
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export const summary = query({
@@ -121,35 +220,9 @@ export const summary = query({
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     assertCanViewFinanceReports(user);
-    if (args.countryId && !isCeoOrHob(user)) {
-      throw new ConvexError({
-        code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can filter finance reports by country",
-      });
-    }
-
-    const { startMonth, endMonth } = normalizeMonthRange(args);
+    const scope = await getReportScope(ctx, user, args);
+    const { startMonth, endMonth } = scope;
     const reportMonths = monthsBetween(startMonth, endMonth);
-    const companies = await ctx.db.query("companies").collect();
-    const companyMap = new Map(
-      companies.map((company) => [company._id, company]),
-    );
-    const categoryMap = new Map(
-      (await ctx.db.query("expenseCategories").collect()).map((category) => [
-        category._id,
-        category,
-      ]),
-    );
-
-    const countryScope = isCeoOrHob(user)
-      ? args.countryId
-      : user.countryId;
-    const visibleCompanyIds = new Set(
-      companies
-        .filter((company) => canViewCompany(user, company))
-        .filter((company) => !countryScope || company.countryId === countryScope)
-        .map((company) => company._id),
-    );
 
     const monthly = new Map(
       reportMonths.map((month) => [
@@ -175,7 +248,7 @@ export const summary = query({
       if (invoice.status === "void" || invoice.status === "cancelled") {
         continue;
       }
-      if (!visibleCompanyIds.has(invoice.companyId)) continue;
+      if (!scope.visibleCompanyIds.has(invoice.companyId)) continue;
 
       const month = monthFromTimestamp(payment.paidAt);
       if (!monthInRange(month, startMonth, endMonth)) continue;
@@ -197,14 +270,7 @@ export const summary = query({
     );
     const expenses = await ctx.db.query("expenseRequests").collect();
     for (const expense of expenses) {
-      if (expense.archivedAt !== undefined) continue;
-      if (countryScope && expense.countryId !== countryScope) continue;
-      if (expense.companyId && !visibleCompanyIds.has(expense.companyId)) {
-        continue;
-      }
-      if (!expense.companyId && !isCeoOrHob(user) && expense.countryId !== user.countryId) {
-        continue;
-      }
+      if (!isVisibleExpenseForReport(expense, user, scope)) continue;
 
       const statusMonth = monthFromTimestamp(expense.expenseDate);
       if (monthInRange(statusMonth, startMonth, endMonth)) {
@@ -225,7 +291,7 @@ export const summary = query({
         row.paidExpenseCount += 1;
       }
 
-      const category = categoryMap.get(expense.categoryId);
+      const category = scope.categoryMap.get(expense.categoryId);
       const existing = categoryTotals.get(expense.categoryId) ?? {
         categoryId: expense.categoryId,
         categoryName: category?.name ?? "Uncategorized",
@@ -262,5 +328,122 @@ export const summary = query({
       ),
       expenseStatusSummary: [...statusSummary.values()],
     };
+  },
+});
+
+export const invoicePaymentsExport = query({
+  args: {
+    startMonth: v.optional(v.string()),
+    endMonth: v.optional(v.string()),
+    countryId: v.optional(v.id("countries")),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanViewFinanceReports(user);
+    const scope = await getReportScope(ctx, user, args);
+    const invoices = await ctx.db.query("invoices").collect();
+    const invoiceMap = new Map(invoices.map((invoice) => [invoice._id, invoice]));
+    const payments = await ctx.db.query("invoicePayments").collect();
+
+    return payments
+      .flatMap((payment) => {
+        const invoice = invoiceMap.get(payment.invoiceId);
+        if (!invoice) return [];
+        if (invoice.isTest || invoice.hiddenAt) return [];
+        if (invoice.status === "void" || invoice.status === "cancelled") {
+          return [];
+        }
+        if (!scope.visibleCompanyIds.has(invoice.companyId)) return [];
+
+        const month = monthFromTimestamp(payment.paidAt);
+        if (!monthInRange(month, scope.startMonth, scope.endMonth)) return [];
+
+        const company = scope.companyMap.get(invoice.companyId);
+        const country = company ? scope.countryMap.get(company.countryId) : undefined;
+        const recordedBy = scope.userMap.get(payment.recordedBy);
+
+        return [
+          {
+            paymentDate: payment.paidAt,
+            invoiceNumber: invoice.invoiceNumber ?? "",
+            customerCompany: invoice.companyName,
+            country: country?.name ?? "",
+            amount: roundMoney(payment.amount),
+            currency: REPORT_CURRENCY,
+            paymentMethod: payment.method ?? "",
+            customerReference: payment.reference ?? "",
+            receivingBankName: payment.receivingBankName ?? "",
+            receivingAccountNumber: payment.receivingAccountNumber ?? "",
+            receivingAccountName: payment.receivingAccountName ?? "",
+            receivingBankLocation: payment.receivingBankLocation ?? "",
+            receivingCurrencyNote: payment.receivingCurrencyNote ?? "",
+            recordedByName: displayUserName(recordedBy),
+            recordedByEmail: displayUserEmail(recordedBy),
+            recordedAt: payment.createdAt,
+            invoiceStatus: invoice.status,
+            sourceReference: invoice.sourceReference ?? "",
+          },
+        ];
+      })
+      .sort((a, b) => a.paymentDate - b.paymentDate);
+  },
+});
+
+export const paidExpensesExport = query({
+  args: {
+    startMonth: v.optional(v.string()),
+    endMonth: v.optional(v.string()),
+    countryId: v.optional(v.id("countries")),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanViewFinanceReports(user);
+    const scope = await getReportScope(ctx, user, args);
+    const expenses = await ctx.db.query("expenseRequests").collect();
+
+    return expenses
+      .flatMap((expense) => {
+        if (!isVisibleExpenseForReport(expense, user, scope)) return [];
+        if (expense.status !== "paid" || !expense.paidAt) return [];
+
+        const month = monthFromTimestamp(expense.paidAt);
+        if (!monthInRange(month, scope.startMonth, scope.endMonth)) return [];
+
+        const category = scope.categoryMap.get(expense.categoryId);
+        const requester = scope.userMap.get(expense.requestedBy);
+        const approvedBy = expense.approvedBy
+          ? scope.userMap.get(expense.approvedBy)
+          : undefined;
+        const paidBy = expense.paidBy ? scope.userMap.get(expense.paidBy) : undefined;
+        const company = expense.companyId
+          ? scope.companyMap.get(expense.companyId)
+          : undefined;
+        const countryId = expense.countryId ?? company?.countryId;
+        const country = countryId ? scope.countryMap.get(countryId) : undefined;
+
+        return [
+          {
+            expenseDate: expense.expenseDate,
+            paidDate: expense.paidAt,
+            title: expense.title,
+            category: category?.name ?? "",
+            requesterName: displayUserName(requester),
+            requesterEmail: displayUserEmail(requester),
+            company: company?.name ?? "",
+            country: country?.name ?? "",
+            vendor: expense.vendor ?? "",
+            amount: roundMoney(expense.amount),
+            currency: expense.currency,
+            paymentMethod: expense.paymentMethod ?? "",
+            paymentReference: expense.paymentReference ?? "",
+            approvedByName: displayUserName(approvedBy),
+            approvedByEmail: displayUserEmail(approvedBy),
+            paidByName: displayUserName(paidBy),
+            paidByEmail: displayUserEmail(paidBy),
+            status: expense.status,
+          },
+        ];
+      })
+      .sort((a, b) => a.paidDate - b.paidDate);
   },
 });
