@@ -9,6 +9,20 @@ type ExpenseStatus = Doc<"expenseRequests">["status"];
 type ExpenseEventType = Doc<"expenseEvents">["type"];
 
 const DEFAULT_CURRENCY = "USD";
+const MAX_RECEIPT_SIZE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_RECEIPT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "text/plain",
+  "text/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
 const TERMINAL_STATUSES = new Set<ExpenseStatus>([
   "rejected",
   "paid",
@@ -134,6 +148,17 @@ async function getExpenseOrThrow(ctx: Ctx, expenseId: Id<"expenseRequests">) {
     });
   }
   return expense;
+}
+
+async function getReceiptOrThrow(ctx: Ctx, receiptId: Id<"expenseReceipts">) {
+  const receipt = await ctx.db.get(receiptId);
+  if (!receipt) {
+    throw new ConvexError({
+      code: "NOT_FOUND",
+      message: "Expense receipt not found",
+    });
+  }
+  return receipt;
 }
 
 async function getCompanyCountryId(
@@ -272,6 +297,51 @@ function assertCanMarkPaid(user: Doc<"users">) {
     code: "FORBIDDEN",
     message: "Only CEO or Head of Business can mark expenses as paid",
   });
+}
+
+function assertCanArchiveReceipt(
+  user: Doc<"users">,
+  receipt: Doc<"expenseReceipts">,
+) {
+  if (receipt.uploadedBy === user._id || isCeoOrHob(user)) {
+    return;
+  }
+  throw new ConvexError({
+    code: "FORBIDDEN",
+    message: "Only the uploader, CEO, or Head of Business can remove this receipt",
+  });
+}
+
+function normalizeReceiptFileName(fileName: string) {
+  const trimmed = fileName.trim();
+  if (!trimmed) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Receipt file name is required",
+    });
+  }
+  return trimmed;
+}
+
+function assertAllowedReceipt(mimeType: string, size: number) {
+  if (!ALLOWED_RECEIPT_MIME_TYPES.has(mimeType)) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Receipt file type is not allowed",
+    });
+  }
+  if (!Number.isFinite(size) || size <= 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Receipt file size is invalid",
+    });
+  }
+  if (size > MAX_RECEIPT_SIZE_BYTES) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Receipt file size must be 10 MB or less",
+    });
+  }
 }
 
 function assertExpenseStatus(
@@ -712,5 +782,101 @@ export const listExpenseEvents = query({
       .withIndex("by_expense", (q) => q.eq("expenseId", args.expenseId))
       .collect();
     return events.sort((a, b) => a.createdAt - b.createdAt);
+  },
+});
+
+export const generateReceiptUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await getCurrentUserOrThrow(ctx);
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+export const saveReceiptMetadata = mutation({
+  args: {
+    expenseId: v.id("expenseRequests"),
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const expense = await getExpenseOrThrow(ctx, args.expenseId);
+    await assertCanViewExpense(ctx, user, expense);
+    assertAllowedReceipt(args.mimeType, args.size);
+
+    const now = Date.now();
+    const receiptId = await ctx.db.insert("expenseReceipts", {
+      expenseId: args.expenseId,
+      storageId: args.storageId,
+      fileName: normalizeReceiptFileName(args.fileName),
+      mimeType: args.mimeType,
+      size: args.size,
+      uploadedBy: user._id,
+      uploadedAt: now,
+    });
+    await insertExpenseEvent(ctx, {
+      expenseId: args.expenseId,
+      type: "receipt_uploaded",
+      message: `Receipt uploaded: ${normalizeReceiptFileName(args.fileName)}.`,
+      actorId: user._id,
+      now,
+    });
+    return receiptId;
+  },
+});
+
+export const listReceipts = query({
+  args: { expenseId: v.id("expenseRequests") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const expense = await getExpenseOrThrow(ctx, args.expenseId);
+    await assertCanViewExpense(ctx, user, expense);
+
+    const receipts = await ctx.db
+      .query("expenseReceipts")
+      .withIndex("by_expense", (q) => q.eq("expenseId", args.expenseId))
+      .collect();
+    return receipts
+      .filter((receipt) => receipt.archivedAt === undefined)
+      .sort((a, b) => a.uploadedAt - b.uploadedAt);
+  },
+});
+
+export const getReceiptDownloadUrl = query({
+  args: { receiptId: v.id("expenseReceipts") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const receipt = await getReceiptOrThrow(ctx, args.receiptId);
+    const expense = await getExpenseOrThrow(ctx, receipt.expenseId);
+    await assertCanViewExpense(ctx, user, expense);
+
+    return await ctx.storage.getUrl(receipt.storageId);
+  },
+});
+
+export const archiveReceipt = mutation({
+  args: { receiptId: v.id("expenseReceipts") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const receipt = await getReceiptOrThrow(ctx, args.receiptId);
+    const expense = await getExpenseOrThrow(ctx, receipt.expenseId);
+    await assertCanViewExpense(ctx, user, expense);
+    assertCanArchiveReceipt(user, receipt);
+
+    const now = Date.now();
+    await ctx.db.patch(args.receiptId, {
+      archivedAt: now,
+      archivedBy: user._id,
+    });
+    await insertExpenseEvent(ctx, {
+      expenseId: receipt.expenseId,
+      type: "receipt_removed",
+      message: `Receipt removed: ${receipt.fileName}.`,
+      actorId: user._id,
+      now,
+    });
   },
 });

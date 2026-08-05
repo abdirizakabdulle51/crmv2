@@ -25,6 +25,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
     expenses: {
       getExpenseRequest: "expenses.getExpenseRequest",
       listExpenseEvents: "expenses.listExpenseEvents",
+      listReceipts: "expenses.listReceipts",
       listExpenseCategories: "expenses.listExpenseCategories",
       updateDraftExpenseRequest: "expenses.updateDraftExpenseRequest",
       submitExpenseRequest: "expenses.submitExpenseRequest",
@@ -32,6 +33,10 @@ vi.mock("@/convex/_generated/api.js", () => ({
       rejectExpenseRequest: "expenses.rejectExpenseRequest",
       cancelExpenseRequest: "expenses.cancelExpenseRequest",
       markExpensePaid: "expenses.markExpensePaid",
+      generateReceiptUploadUrl: "expenses.generateReceiptUploadUrl",
+      saveReceiptMetadata: "expenses.saveReceiptMetadata",
+      getReceiptDownloadUrl: "expenses.getReceiptDownloadUrl",
+      archiveReceipt: "expenses.archiveReceipt",
     },
     users: { listAll: "users.listAll" },
   },
@@ -41,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as Doc<"users"> | null,
   expense: undefined as Doc<"expenseRequests"> | null | undefined,
   events: undefined as Doc<"expenseEvents">[] | undefined,
+  receipts: undefined as Doc<"expenseReceipts">[] | undefined,
   categories: [] as Doc<"expenseCategories">[],
   users: [] as Doc<"users">[],
   companies: [] as Doc<"companies">[],
@@ -51,6 +57,10 @@ const mocks = vi.hoisted(() => ({
   rejectExpenseRequest: vi.fn(),
   cancelExpenseRequest: vi.fn(),
   markExpensePaid: vi.fn(),
+  generateReceiptUploadUrl: vi.fn(),
+  saveReceiptMetadata: vi.fn(),
+  archiveReceipt: vi.fn(),
+  convexQuery: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
 }));
@@ -60,9 +70,11 @@ vi.mock("@/lib/crm-context.tsx", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useConvex: () => ({ query: mocks.convexQuery }),
   useQuery: (query: string) => {
     if (query === "expenses.getExpenseRequest") return mocks.expense;
     if (query === "expenses.listExpenseEvents") return mocks.events;
+    if (query === "expenses.listReceipts") return mocks.receipts;
     if (query === "expenses.listExpenseCategories") return mocks.categories;
     if (query === "users.listAll") return mocks.users;
     if (query === "companies.list") return mocks.companies;
@@ -81,6 +93,11 @@ vi.mock("convex/react", () => ({
     if (mutation === "expenses.cancelExpenseRequest")
       return mocks.cancelExpenseRequest;
     if (mutation === "expenses.markExpensePaid") return mocks.markExpensePaid;
+    if (mutation === "expenses.generateReceiptUploadUrl")
+      return mocks.generateReceiptUploadUrl;
+    if (mutation === "expenses.saveReceiptMetadata")
+      return mocks.saveReceiptMetadata;
+    if (mutation === "expenses.archiveReceipt") return mocks.archiveReceipt;
     return vi.fn();
   },
 }));
@@ -179,6 +196,24 @@ function event(
   };
 }
 
+function receipt(
+  id: string,
+  overrides: Partial<Doc<"expenseReceipts">> = {},
+): Doc<"expenseReceipts"> {
+  return {
+    _id: id as Id<"expenseReceipts">,
+    _creationTime: 1,
+    expenseId: "expense-1" as Id<"expenseRequests">,
+    storageId: `storage-${id}` as Id<"_storage">,
+    fileName: "receipt.pdf",
+    mimeType: "application/pdf",
+    size: 2048,
+    uploadedBy: "am" as Id<"users">,
+    uploadedAt: Date.UTC(2026, 7, 5, 9),
+    ...overrides,
+  };
+}
+
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location">{location.pathname}</div>;
@@ -213,6 +248,7 @@ describe("ExpenseDetailPage", () => {
     mocks.currentUser = crmUser("am", "account_manager", "Amina");
     mocks.expense = expense();
     mocks.events = [event("event-1")];
+    mocks.receipts = [];
     mocks.categories = [category("category-1", "Travel")];
     mocks.users = [
       crmUser("am", "account_manager", "Amina"),
@@ -227,6 +263,18 @@ describe("ExpenseDetailPage", () => {
     mocks.rejectExpenseRequest.mockReset().mockResolvedValue(undefined);
     mocks.cancelExpenseRequest.mockReset().mockResolvedValue(undefined);
     mocks.markExpensePaid.mockReset().mockResolvedValue(undefined);
+    mocks.generateReceiptUploadUrl.mockReset().mockResolvedValue("https://upload.example");
+    mocks.saveReceiptMetadata.mockReset().mockResolvedValue("receipt-new");
+    mocks.archiveReceipt.mockReset().mockResolvedValue(undefined);
+    mocks.convexQuery.mockReset().mockResolvedValue("https://download.example/receipt.pdf");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ storageId: "storage-new" }),
+      }),
+    );
+    vi.stubGlobal("open", vi.fn());
     mocks.toastError.mockReset();
     mocks.toastSuccess.mockReset();
   });
@@ -241,6 +289,8 @@ describe("ExpenseDetailPage", () => {
     expect(screen.getByText("Amina")).toBeInTheDocument();
     expect(screen.getByText("Hormuud")).toBeInTheDocument();
     expect(screen.getByText("Taxi to customer meeting")).toBeInTheDocument();
+    expect(screen.getByText("Receipts")).toBeInTheDocument();
+    expect(screen.getByText("No receipts uploaded yet.")).toBeInTheDocument();
     expect(screen.getByText("Expense request created.")).toBeInTheDocument();
     expect(screen.getByText(/By Amina/)).toBeInTheDocument();
   });
@@ -418,6 +468,117 @@ describe("ExpenseDetailPage", () => {
       paymentMethod: "Bank Transfer",
       paymentReference: "PAY-1",
     });
+  });
+
+  it("validates receipt file type before upload", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.upload(
+      screen.getByLabelText("Upload expense receipt"),
+      new File(["bad"], "receipt.pdf", { type: "text/html" }),
+    );
+
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "This file type is not allowed for expense receipts",
+    );
+    expect(mocks.generateReceiptUploadUrl).not.toHaveBeenCalled();
+  });
+
+  it("validates receipt file size before upload", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.upload(
+      screen.getByLabelText("Upload expense receipt"),
+      new File(["x".repeat(11 * 1024 * 1024)], "large.pdf", {
+        type: "application/pdf",
+      }),
+    );
+
+    expect(mocks.toastError).toHaveBeenCalledWith("Receipts must be 10 MB or less");
+    expect(mocks.generateReceiptUploadUrl).not.toHaveBeenCalled();
+  });
+
+  it("uploads a valid receipt and saves metadata", async () => {
+    const user = userEvent.setup();
+    renderDetailPage();
+
+    await user.upload(
+      screen.getByLabelText("Upload expense receipt"),
+      new File(["ok"], "receipt.pdf", { type: "application/pdf" }),
+    );
+
+    expect(mocks.generateReceiptUploadUrl).toHaveBeenCalledWith({});
+    expect(fetch).toHaveBeenCalledWith("https://upload.example", {
+      method: "POST",
+      headers: { "Content-Type": "application/pdf" },
+      body: expect.any(File),
+    });
+    expect(mocks.saveReceiptMetadata).toHaveBeenCalledWith({
+      expenseId: "expense-1",
+      storageId: "storage-new",
+      fileName: "receipt.pdf",
+      mimeType: "application/pdf",
+      size: 2,
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Receipt uploaded");
+  });
+
+  it("renders receipt metadata and downloads receipts", async () => {
+    const user = userEvent.setup();
+    mocks.receipts = [
+      receipt("receipt-1", {
+        fileName: "taxi-receipt.pdf",
+        size: 4096,
+      }),
+    ];
+
+    renderDetailPage();
+
+    expect(screen.getByText("taxi-receipt.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/4.0 KB/)).toBeInTheDocument();
+    expect(screen.getByText(/Uploaded by Amina/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Download" }));
+
+    expect(mocks.convexQuery).toHaveBeenCalledWith(
+      "expenses.getReceiptDownloadUrl",
+      { receiptId: "receipt-1" },
+    );
+    expect(window.open).toHaveBeenCalledWith(
+      "https://download.example/receipt.pdf",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("confirms before removing receipts", async () => {
+    const user = userEvent.setup();
+    mocks.receipts = [receipt("receipt-1")];
+
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(
+      within(dialog).getByRole("heading", { name: "Remove this receipt?" }),
+    ).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(mocks.archiveReceipt).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Remove",
+      }),
+    );
+
+    expect(mocks.archiveReceipt).toHaveBeenCalledWith({
+      receiptId: "receipt-1",
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Receipt removed");
   });
 
   it("shows backend errors as friendly toasts", async () => {

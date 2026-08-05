@@ -25,6 +25,16 @@ function asUser(t: ReturnType<typeof convexTest>, user: Doc<"users">) {
   return t.withIdentity({ tokenIdentifier: user.tokenIdentifier });
 }
 
+async function storeTestFile(
+  t: ReturnType<typeof convexTest>,
+  body = "receipt",
+  type = "application/pdf",
+) {
+  return await t.run(async (ctx) => {
+    return await ctx.storage.store(new Blob([body], { type }));
+  });
+}
+
 async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
   return await t.run(async (ctx) => {
     const countryA = await ctx.db.insert("countries", {
@@ -472,5 +482,205 @@ describe("expenses", () => {
     );
     expect(submittedForAmA).toHaveLength(1);
     expect(submittedForAmA[0]._id).toBe(expenseA);
+  });
+
+  it("requires auth before generating receipt upload URLs", async () => {
+    const t = convexTest(schema, modules);
+
+    await expect(
+      t.mutation(api.expenses.generateReceiptUploadUrl, {}),
+    ).rejects.toThrow();
+  });
+
+  it("saves receipts for visible expenses and records an upload event", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await createDraftExpense(t, s);
+    const storageId = await storeTestFile(t);
+
+    const receiptId = await asUser(t, s.amA).mutation(
+      api.expenses.saveReceiptMetadata,
+      {
+        expenseId,
+        storageId,
+        fileName: "receipt.pdf",
+        mimeType: "application/pdf",
+        size: 1024,
+      },
+    );
+
+    const receipt = await t.run(async (ctx) => await ctx.db.get(receiptId));
+    expect(receipt).toMatchObject({
+      expenseId,
+      storageId,
+      fileName: "receipt.pdf",
+      mimeType: "application/pdf",
+      size: 1024,
+      uploadedBy: s.amA._id,
+      uploadedAt: expect.any(Number),
+    });
+    const events = await asUser(t, s.amA).query(api.expenses.listExpenseEvents, {
+      expenseId,
+    });
+    expect(events.map((event) => event.type)).toContain("receipt_uploaded");
+  });
+
+  it("rejects receipts for hidden expenses and invalid files", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await createDraftExpense(t, s);
+    const storageId = await storeTestFile(t);
+
+    await expect(
+      asUser(t, s.amB).mutation(api.expenses.saveReceiptMetadata, {
+        expenseId,
+        storageId,
+        fileName: "receipt.pdf",
+        mimeType: "application/pdf",
+        size: 1024,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      asUser(t, s.amA).mutation(api.expenses.saveReceiptMetadata, {
+        expenseId,
+        storageId,
+        fileName: "script.html",
+        mimeType: "text/html",
+        size: 1024,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      asUser(t, s.amA).mutation(api.expenses.saveReceiptMetadata, {
+        expenseId,
+        storageId,
+        fileName: "large.pdf",
+        mimeType: "application/pdf",
+        size: 10 * 1024 * 1024 + 1,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("lists and downloads only non-archived receipts for visible expenses", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await createDraftExpense(t, s);
+    const firstStorageId = await storeTestFile(t, "first");
+    const secondStorageId = await storeTestFile(t, "second");
+
+    await asUser(t, s.amA).mutation(api.expenses.saveReceiptMetadata, {
+      expenseId,
+      storageId: firstStorageId,
+      fileName: "first.pdf",
+      mimeType: "application/pdf",
+      size: 100,
+    });
+    const archivedReceiptId = await asUser(t, s.amA).mutation(
+      api.expenses.saveReceiptMetadata,
+      {
+        expenseId,
+        storageId: secondStorageId,
+        fileName: "second.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+    await asUser(t, s.amA).mutation(api.expenses.archiveReceipt, {
+      receiptId: archivedReceiptId,
+    });
+
+    const receipts = await asUser(t, s.amA).query(api.expenses.listReceipts, {
+      expenseId,
+    });
+    expect(receipts.map((receipt) => receipt.fileName)).toEqual(["first.pdf"]);
+
+    const url = await asUser(t, s.amA).query(
+      api.expenses.getReceiptDownloadUrl,
+      { receiptId: receipts[0]._id },
+    );
+    expect(url).toContain("/api/storage/");
+    await expect(
+      asUser(t, s.amB).query(api.expenses.getReceiptDownloadUrl, {
+        receiptId: receipts[0]._id,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("archives receipts for uploaders HOB and CEO but not unrelated Account Managers", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await createDraftExpense(t, s);
+
+    const uploaderReceiptId = await asUser(t, s.amA).mutation(
+      api.expenses.saveReceiptMetadata,
+      {
+        expenseId,
+        storageId: await storeTestFile(t, "uploader"),
+        fileName: "uploader.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+    const hobReceiptId = await asUser(t, s.amA).mutation(
+      api.expenses.saveReceiptMetadata,
+      {
+        expenseId,
+        storageId: await storeTestFile(t, "hob"),
+        fileName: "hob.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+    const ceoReceiptId = await asUser(t, s.amA).mutation(
+      api.expenses.saveReceiptMetadata,
+      {
+        expenseId,
+        storageId: await storeTestFile(t, "ceo"),
+        fileName: "ceo.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+    const otherReceiptId = await asUser(t, s.amA).mutation(
+      api.expenses.saveReceiptMetadata,
+      {
+        expenseId,
+        storageId: await storeTestFile(t, "other"),
+        fileName: "other.pdf",
+        mimeType: "application/pdf",
+        size: 100,
+      },
+    );
+
+    await asUser(t, s.amA).mutation(api.expenses.archiveReceipt, {
+      receiptId: uploaderReceiptId,
+    });
+    await asUser(t, s.hob).mutation(api.expenses.archiveReceipt, {
+      receiptId: hobReceiptId,
+    });
+    await asUser(t, s.ceo).mutation(api.expenses.archiveReceipt, {
+      receiptId: ceoReceiptId,
+    });
+    await expect(
+      asUser(t, s.amB).mutation(api.expenses.archiveReceipt, {
+        receiptId: otherReceiptId,
+      }),
+    ).rejects.toThrow();
+
+    const archived = await t.run(async (ctx) => ({
+      uploader: await ctx.db.get(uploaderReceiptId),
+      hob: await ctx.db.get(hobReceiptId),
+      ceo: await ctx.db.get(ceoReceiptId),
+      other: await ctx.db.get(otherReceiptId),
+    }));
+    expect(archived.uploader?.archivedBy).toBe(s.amA._id);
+    expect(archived.hob?.archivedBy).toBe(s.hob._id);
+    expect(archived.ceo?.archivedBy).toBe(s.ceo._id);
+    expect(archived.other?.archivedAt).toBeUndefined();
+
+    const events = await asUser(t, s.ceo).query(api.expenses.listExpenseEvents, {
+      expenseId,
+    });
+    expect(events.filter((event) => event.type === "receipt_removed"))
+      .toHaveLength(3);
   });
 });

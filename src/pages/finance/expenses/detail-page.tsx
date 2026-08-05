@@ -1,10 +1,32 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
-import { ArrowLeft, CheckCircle2, CreditCard, Pencil, Send, XCircle } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  CreditCard,
+  Download,
+  Paperclip,
+  Pencil,
+  Send,
+  Trash2,
+  Upload,
+  XCircle,
+} from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
@@ -36,7 +58,24 @@ import { useCrm } from "@/lib/crm-context.tsx";
 type Expense = Doc<"expenseRequests">;
 type ExpenseStatus = Expense["status"];
 type ExpenseEvent = Doc<"expenseEvents">;
+type ExpenseReceipt = Doc<"expenseReceipts">;
 type ReasonAction = "reject" | "cancel" | null;
+const MAX_RECEIPT_SIZE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_RECEIPT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "text/plain",
+  "text/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+const RECEIPT_ACCEPT =
+  ".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.csv,.xls,.xlsx,.doc,.docx";
 
 function statusBadge(status: ExpenseStatus) {
   switch (status) {
@@ -128,6 +167,12 @@ function formatMoney(amount: number, currency: string) {
   }
 }
 
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function userDisplay(user?: Doc<"users">) {
   return user?.name || user?.email || "Unknown user";
 }
@@ -144,16 +189,32 @@ function isAdminRole(role: Doc<"users">["role"] | undefined) {
   return role === "ceo" || role === "head_of_business";
 }
 
+function canArchiveReceipt(
+  currentUser: Doc<"users"> | null,
+  receipt: ExpenseReceipt,
+) {
+  if (!currentUser) return false;
+  return (
+    receipt.uploadedBy === currentUser._id || isAdminRole(currentUser.role)
+  );
+}
+
 export default function ExpenseDetailPage() {
   const navigate = useNavigate();
   const { expenseId } = useParams();
   const { currentUser } = useCrm();
+  const convex = useConvex();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const expense = useQuery(
     api.expenses.getExpenseRequest,
     expenseId ? { expenseId: expenseId as Id<"expenseRequests"> } : "skip",
   );
   const events = useQuery(
     api.expenses.listExpenseEvents,
+    expense ? { expenseId: expense._id } : "skip",
+  );
+  const receipts = useQuery(
+    api.expenses.listReceipts,
     expense ? { expenseId: expense._id } : "skip",
   );
   const categories = useQuery(api.expenses.listExpenseCategories, {});
@@ -167,6 +228,11 @@ export default function ExpenseDetailPage() {
   const rejectExpense = useMutation(api.expenses.rejectExpenseRequest);
   const cancelExpense = useMutation(api.expenses.cancelExpenseRequest);
   const markPaid = useMutation(api.expenses.markExpensePaid);
+  const generateReceiptUploadUrl = useMutation(
+    api.expenses.generateReceiptUploadUrl,
+  );
+  const saveReceiptMetadata = useMutation(api.expenses.saveReceiptMetadata);
+  const archiveReceipt = useMutation(api.expenses.archiveReceipt);
 
   const [editOpen, setEditOpen] = useState(false);
   const [reasonAction, setReasonAction] = useState<ReasonAction>(null);
@@ -175,6 +241,9 @@ export default function ExpenseDetailPage() {
   const [paymentMethod, setPaymentMethod] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [pendingReceiptAction, setPendingReceiptAction] = useState<string | null>(
+    null,
+  );
 
   const categoryMap = useMemo(
     () => new Map((categories ?? []).map((category) => [category._id, category])),
@@ -196,6 +265,7 @@ export default function ExpenseDetailPage() {
   if (
     expense === undefined ||
     events === undefined ||
+    receipts === undefined ||
     !categories ||
     !users ||
     !companies ||
@@ -310,6 +380,87 @@ export default function ExpenseDetailPage() {
       toast.error(error instanceof Error ? error.message : "Failed to mark expense paid");
     } finally {
       setPendingAction(null);
+    }
+  };
+
+  const validateReceiptFile = (file: File) => {
+    if (!ALLOWED_RECEIPT_MIME_TYPES.has(file.type)) {
+      toast.error("This file type is not allowed for expense receipts");
+      return false;
+    }
+    if (file.size > MAX_RECEIPT_SIZE_BYTES) {
+      toast.error("Receipts must be 10 MB or less");
+      return false;
+    }
+    return true;
+  };
+
+  const handleUploadReceipt = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !validateReceiptFile(file)) return;
+
+    setPendingReceiptAction("upload");
+    try {
+      const uploadUrl = await generateReceiptUploadUrl({});
+      const uploadResponse = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      if (!uploadResponse.ok) {
+        throw new Error("Receipt upload failed");
+      }
+      const { storageId } = (await uploadResponse.json()) as {
+        storageId: Id<"_storage">;
+      };
+      await saveReceiptMetadata({
+        expenseId: expense._id,
+        storageId,
+        fileName: file.name,
+        mimeType: file.type,
+        size: file.size,
+      });
+      toast.success("Receipt uploaded");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to upload receipt",
+      );
+    } finally {
+      setPendingReceiptAction(null);
+    }
+  };
+
+  const handleDownloadReceipt = async (receiptId: Id<"expenseReceipts">) => {
+    setPendingReceiptAction(`${receiptId}:download`);
+    try {
+      const url = await convex.query(api.expenses.getReceiptDownloadUrl, {
+        receiptId,
+      });
+      if (!url) {
+        throw new Error("Receipt download URL is unavailable");
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to download receipt",
+      );
+    } finally {
+      setPendingReceiptAction(null);
+    }
+  };
+
+  const handleArchiveReceipt = async (receiptId: Id<"expenseReceipts">) => {
+    setPendingReceiptAction(`${receiptId}:archive`);
+    try {
+      await archiveReceipt({ receiptId });
+      toast.success("Receipt removed");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to remove receipt",
+      );
+    } finally {
+      setPendingReceiptAction(null);
     }
   };
 
@@ -444,6 +595,128 @@ export default function ExpenseDetailPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="flex items-center gap-2">
+              <Paperclip className="h-4 w-4" />
+              Receipts
+              <Badge variant="secondary" className="text-xs">
+                {receipts.length}
+              </Badge>
+            </span>
+            <div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={RECEIPT_ACCEPT}
+                className="hidden"
+                onChange={(event) => void handleUploadReceipt(event)}
+                aria-label="Upload expense receipt"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={pendingReceiptAction === "upload"}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                {pendingReceiptAction === "upload" ? "Uploading..." : "Upload Receipt"}
+              </Button>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {receipts.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+              No receipts uploaded yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {receipts.map((receipt) => {
+                const uploader = userMap.get(receipt.uploadedBy);
+                const canRemove = canArchiveReceipt(currentUser, receipt);
+
+                return (
+                  <div
+                    key={receipt._id}
+                    className="flex flex-col gap-3 rounded-lg border bg-card p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <p className="truncate text-sm font-medium">
+                        {receipt.fileName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {receipt.mimeType} - {formatFileSize(receipt.size)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Uploaded by{" "}
+                        {uploader?.name || uploader?.email || "Team member"} -{" "}
+                        {formatDateTime(receipt.uploadedAt)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={
+                          pendingReceiptAction === `${receipt._id}:download`
+                        }
+                        onClick={() => void handleDownloadReceipt(receipt._id)}
+                      >
+                        <Download className="mr-2 h-3.5 w-3.5" />
+                        Download
+                      </Button>
+                      {canRemove ? (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground"
+                              disabled={
+                                pendingReceiptAction === `${receipt._id}:archive`
+                              }
+                            >
+                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                              Remove
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent size="sm">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Remove this receipt?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This removes the receipt from this expense and
+                                keeps an audit event.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() =>
+                                  void handleArchiveReceipt(receipt._id)
+                                }
+                              >
+                                Remove
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

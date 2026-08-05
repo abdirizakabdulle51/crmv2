@@ -699,6 +699,8 @@ export default defineSchema({
       v.literal("marked_paid"),
       v.literal("cancelled"),
       v.literal("updated"),
+      v.literal("receipt_uploaded"),
+      v.literal("receipt_removed"),
     ),
     message: v.string(),
     actorId: v.id("users"),
@@ -706,6 +708,21 @@ export default defineSchema({
   })
     .index("by_expense", ["expenseId"])
     .index("by_actor", ["actorId"]),
+
+  expenseReceipts: defineTable({
+    expenseId: v.id("expenseRequests"),
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+    uploadedBy: v.id("users"),
+    uploadedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+    archivedBy: v.optional(v.id("users")),
+  })
+    .index("by_expense", ["expenseId"])
+    .index("by_uploaded_by", ["uploadedBy"])
+    .index("by_storage_id", ["storageId"]),
 
   quotes: defineTable({
     companyId: v.id("companies"),
