@@ -16,13 +16,19 @@ const TERMINAL_STATUSES = new Set<ExpenseStatus>([
 ]);
 
 const DEFAULT_EXPENSE_CATEGORIES = [
-  "Travel",
-  "Cloud Operations",
-  "Customer Visit",
-  "Office Supplies",
-  "Vendor Payment",
-  "Marketing",
-  "Other",
+  { name: "Travel", code: "TRAVEL" },
+  { name: "Cloud Operations", code: "CLOUD_OPS" },
+  { name: "Customer Visit", code: "CUSTOMER_VISIT" },
+  { name: "Office Supplies", code: "OFFICE_SUPPLIES" },
+  { name: "Vendor Payment", code: "VENDOR_PAYMENT" },
+  { name: "Marketing", code: "MARKETING" },
+  { name: "Internet / Connectivity", code: "INTERNET_CONNECTIVITY" },
+  { name: "Data Center / Colocation", code: "DATA_CENTER_COLOCATION" },
+  { name: "Hardware", code: "HARDWARE" },
+  { name: "Software Subscriptions", code: "SOFTWARE_SUBSCRIPTIONS" },
+  { name: "Maintenance", code: "MAINTENANCE" },
+  { name: "Fuel / Transport", code: "FUEL_TRANSPORT" },
+  { name: "Other", code: "OTHER" },
 ];
 
 const expenseStatusValidator = v.union(
@@ -349,14 +355,15 @@ export const seedDefaultExpenseCategories = mutation({
     assertCanManageCategories(user);
     const now = Date.now();
     let created = 0;
-    for (const name of DEFAULT_EXPENSE_CATEGORIES) {
+    for (const category of DEFAULT_EXPENSE_CATEGORIES) {
       const existing = await ctx.db
         .query("expenseCategories")
-        .withIndex("by_name", (q) => q.eq("name", name))
+        .withIndex("by_name", (q) => q.eq("name", category.name))
         .first();
       if (!existing) {
         await ctx.db.insert("expenseCategories", {
-          name,
+          name: category.name,
+          code: category.code,
           isActive: true,
           createdBy: user._id,
           createdAt: now,

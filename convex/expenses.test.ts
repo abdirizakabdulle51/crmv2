@@ -394,6 +394,63 @@ describe("expenses", () => {
     });
   });
 
+  it("seeds missing default expense categories without duplicating existing categories", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const firstRun = await asUser(t, s.ceo).mutation(
+      api.expenses.seedDefaultExpenseCategories,
+      {},
+    );
+    const secondRun = await asUser(t, s.ceo).mutation(
+      api.expenses.seedDefaultExpenseCategories,
+      {},
+    );
+    const categories = await asUser(t, s.ceo).query(
+      api.expenses.listExpenseCategories,
+      { includeInactive: true },
+    );
+
+    expect(firstRun.created).toBe(12);
+    expect(secondRun.created).toBe(0);
+    expect(categories.filter((category) => category.name === "Travel"))
+      .toHaveLength(1);
+    expect(categories.find((category) => category.name === "Travel"))
+      .toMatchObject({
+        isActive: true,
+      });
+    expect(
+      categories.find(
+        (category) => category.name === "Internet / Connectivity",
+      ),
+    ).toMatchObject({
+      code: "INTERNET_CONNECTIVITY",
+      isActive: true,
+    });
+    expect(
+      categories.find((category) => category.name === "Data Center / Colocation"),
+    ).toMatchObject({
+      code: "DATA_CENTER_COLOCATION",
+      isActive: true,
+    });
+  });
+
+  it("allows HOB to seed default expense categories and rejects Account Managers", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.expenses.seedDefaultExpenseCategories, {}),
+    ).rejects.toThrow();
+
+    const result = await asUser(t, s.hob).mutation(
+      api.expenses.seedDefaultExpenseCategories,
+      {},
+    );
+
+    expect(result.created).toBe(12);
+  });
+
   it("filters expense lists while preserving RBAC", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
