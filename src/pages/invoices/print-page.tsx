@@ -18,7 +18,28 @@ type Invoice = Doc<"invoices">;
 type InvoiceStatus = Invoice["status"];
 
 const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
-const BANK_ACCOUNT = "33111777";
+const FALLBACK_SELLER = {
+  legalName: "HTG Clouds",
+  addressLines: [
+    "Airport road, Next to Ali Jimale Masque",
+    "Wadajir District",
+    "mogadishu BN 00000",
+    "Somalia",
+  ],
+  phone: "+252 61 5558484",
+  email: "Mohamed.hussein@htgclouds.com",
+  website: "https://htgclouds.com/",
+  slogan: "Built for us, Ready for the World.",
+  bankName: "Salaam Somali Bank",
+  bankAccountNumber: "33111777",
+  bankAccountName: "HTG CLOUDS LIMITED",
+  bankLocation: "MOGADISHU - SOMALIA",
+  currency: "USD",
+  currencyNote: "All fees are listed in USD",
+  paymentInstructions:
+    "PLEASE PAY BILLS ON DUE DATE BY DEPOSITING IT TO OUR SALAAM SOMALI BANK ACCOUNT.",
+  footerText: undefined as string | undefined,
+};
 const OFFICIAL_PRINT_STATUSES = new Set<InvoiceStatus>([
   "issued",
   "sent",
@@ -86,20 +107,47 @@ function referenceLabel(invoice: Invoice) {
   return invoice.sourceReference ?? "-";
 }
 
-function Header() {
+function sellerDetails(invoice: Invoice) {
+  return {
+    legalName: invoice.sellerLegalName ?? FALLBACK_SELLER.legalName,
+    addressLines:
+      invoice.sellerAddressLines && invoice.sellerAddressLines.length > 0
+        ? invoice.sellerAddressLines
+        : FALLBACK_SELLER.addressLines,
+    phone: invoice.sellerPhone ?? FALLBACK_SELLER.phone,
+    email: invoice.sellerEmail ?? FALLBACK_SELLER.email,
+    website: invoice.sellerWebsite ?? FALLBACK_SELLER.website,
+    slogan: invoice.sellerSlogan ?? FALLBACK_SELLER.slogan,
+    taxId: invoice.sellerTaxId,
+    bankName: invoice.sellerBankName ?? FALLBACK_SELLER.bankName,
+    bankAccountNumber:
+      invoice.sellerBankAccountNumber ?? FALLBACK_SELLER.bankAccountNumber,
+    bankAccountName:
+      invoice.sellerBankAccountName ?? FALLBACK_SELLER.bankAccountName,
+    bankLocation: invoice.sellerBankLocation ?? FALLBACK_SELLER.bankLocation,
+    currency: invoice.sellerCurrency ?? FALLBACK_SELLER.currency,
+    currencyNote: invoice.sellerCurrencyNote ?? FALLBACK_SELLER.currencyNote,
+    paymentInstructions:
+      invoice.sellerPaymentInstructions ?? FALLBACK_SELLER.paymentInstructions,
+    footerText: invoice.sellerFooterText ?? FALLBACK_SELLER.footerText,
+  };
+}
+
+type SellerDetails = ReturnType<typeof sellerDetails>;
+
+function Header({ seller }: { seller: SellerDetails }) {
   return (
     <header className="invoice-header">
       <div>
         <img className="invoice-logo" src="/Logo.svg" alt="HTG Clouds" />
         <address>
-          <strong>HTG Clouds</strong>
-          <span>Airport road, Next to Ali Jimale Masque</span>
-          <span>Wadajir District</span>
-          <span>mogadishu BN 00000</span>
-          <span>Somalia</span>
+          <strong>{seller.legalName}</strong>
+          {seller.addressLines.map((line) => (
+            <span key={line}>{line}</span>
+          ))}
         </address>
       </div>
-      <div className="invoice-slogan">Built for us, Ready for the World.</div>
+      <div className="invoice-slogan">{seller.slogan}</div>
     </header>
   );
 }
@@ -118,12 +166,13 @@ function BillTo({ invoice }: { invoice: Invoice }) {
   );
 }
 
-function Footer({ page }: { page: 1 | 2 }) {
+function Footer({ page, seller }: { page: 1 | 2; seller: SellerDetails }) {
+  const footerText =
+    seller.footerText ??
+    [seller.phone, seller.email, seller.website].filter(Boolean).join(" | ");
   return (
     <footer className="invoice-footer">
-      <span>
-        +252 61 5558484 | Mohamed.hussein@htgclouds.com | https://htgclouds.com/
-      </span>
+      <span>{footerText}</span>
       <span>Page {page} / 2</span>
     </footer>
   );
@@ -228,6 +277,7 @@ function InvoicePrintContent() {
   const title =
     invoice.status === "draft" ? "Draft Preview" : `Invoice ${invoiceNumber}`;
   const dueSource = invoice.dueDate ?? invoice.issueDate ?? invoice.createdAt;
+  const seller = sellerDetails(invoice);
 
   return (
     <div className="invoice-print-shell">
@@ -534,7 +584,7 @@ function InvoicePrintContent() {
 
       <main aria-label="Invoice print template">
         <section className="invoice-page" aria-label="Invoice page 1">
-          <Header />
+          <Header seller={seller} />
           <div className="invoice-title-row">
             <div>
               {invoice.status === "draft" ? (
@@ -601,27 +651,27 @@ function InvoicePrintContent() {
             <p>
               Payment Communication: <strong>{invoiceNumber}</strong>
               <br />
-              on this account: <strong>{BANK_ACCOUNT}</strong>
+              on this account: <strong>{seller.bankAccountNumber}</strong>
             </p>
             <p className="amount-due">Amount Due {formatDueMonth(dueSource)}</p>
             <p className="payment-instruction">
-              PLEASE PAY BILLS ON DUE DATE BY DEPOSITING IT TO OUR SALAAM SOMALI
-              BANK ACCOUNT.
+              {seller.paymentInstructions}
             </p>
           </div>
 
-          <Footer page={1} />
+          <Footer page={1} seller={seller} />
         </section>
 
         <section className="invoice-page" aria-label="Invoice page 2">
-          <Header />
+          <Header seller={seller} />
           <div className="bank-details">
-            <div>ACCOUNT # = {BANK_ACCOUNT}</div>
-            <div>ACC. NAME = HTG CLOUDS LIMITED</div>
-            <div>MOGADISHU - SOMALIA</div>
-            <div>All fees are listed in USD</div>
+            <div>BANK = {seller.bankName}</div>
+            <div>ACCOUNT # = {seller.bankAccountNumber}</div>
+            <div>ACC. NAME = {seller.bankAccountName}</div>
+            <div>{seller.bankLocation}</div>
+            <div>{seller.currencyNote}</div>
           </div>
-          <Footer page={2} />
+          <Footer page={2} seller={seller} />
         </section>
       </main>
     </div>

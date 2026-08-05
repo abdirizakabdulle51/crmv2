@@ -257,6 +257,69 @@ describe("InvoicePrintPage", () => {
     expect(screen.getByText("All fees are listed in USD")).toBeInTheDocument();
   });
 
+  it("uses seller snapshot details when present", () => {
+    mocks.invoice = invoice({
+      sellerLegalName: "HTG KENYA LIMITED",
+      sellerAddressLines: ["Westlands", "Nairobi", "Kenya"],
+      sellerPhone: "+254 700 000000",
+      sellerEmail: "billing-ke@htgclouds.com",
+      sellerWebsite: "https://ke.htgclouds.com/",
+      sellerSlogan: "Cloud billing for East Africa.",
+      sellerTaxId: "KE-TAX-1",
+      sellerBankName: "Equity Bank",
+      sellerBankAccountNumber: "99887766",
+      sellerBankAccountName: "HTG KENYA LIMITED",
+      sellerBankLocation: "NAIROBI - KENYA",
+      sellerCurrency: "USD",
+      sellerCurrencyNote: "All fees are listed in USD for Kenya.",
+      sellerPaymentInstructions: "PAY THIS INVOICE TO THE KENYA HTG ACCOUNT.",
+      sellerFooterText: "+254 700 000000 | billing-ke@htgclouds.com",
+    });
+
+    renderPrintPage();
+
+    expect(screen.getAllByText("HTG KENYA LIMITED").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Westlands").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("Cloud billing for East Africa.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText(/on this account:/)).toHaveTextContent(
+      "on this account: 99887766",
+    );
+    expect(
+      screen.getByText("PAY THIS INVOICE TO THE KENYA HTG ACCOUNT."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("BANK = Equity Bank")).toBeInTheDocument();
+    expect(screen.getByText("ACCOUNT # = 99887766")).toBeInTheDocument();
+    expect(
+      screen.getByText("ACC. NAME = HTG KENYA LIMITED"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("NAIROBI - KENYA")).toBeInTheDocument();
+    expect(
+      screen.getByText("All fees are listed in USD for Kenya."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("+254 700 000000 | billing-ke@htgclouds.com").length,
+    ).toBe(2);
+  });
+
+  it("falls back to existing HTG seller details for legacy invoices", () => {
+    renderPrintPage();
+
+    expect(screen.getAllByText("HTG Clouds").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("Airport road, Next to Ali Jimale Masque").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("Built for us, Ready for the World.").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(
+        "+252 61 5558484 | Mohamed.hussein@htgclouds.com | https://htgclouds.com/",
+      ).length,
+    ).toBe(2);
+  });
+
   it("isolates invoice pages from app navigation during printing", () => {
     renderPrintPage();
 
