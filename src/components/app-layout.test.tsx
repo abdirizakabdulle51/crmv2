@@ -184,6 +184,8 @@ describe("AppLayout", () => {
       .toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Expense Categories" }))
       .toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Invoice Profiles" }))
+      .toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Finance Settings" }))
       .toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Invoices" }))
@@ -200,6 +202,8 @@ describe("AppLayout", () => {
     expect(within(sidebar).getByRole("link", { name: "Finance Reports" }))
       .toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Expense Categories" }))
+      .toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Invoice Profiles" }))
       .toBeInTheDocument();
     expect(within(sidebar).getByRole("link", { name: "Finance Settings" }))
       .toBeInTheDocument();
