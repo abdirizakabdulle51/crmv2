@@ -1,43 +1,85 @@
+import { lazy, Suspense, type ReactNode } from "react";
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { DefaultProviders } from "./components/providers/default.tsx";
 import AuthGate from "./components/auth-gate.tsx";
 import AppLayout from "./components/app-layout.tsx";
-import DashboardPage from "./pages/dashboard/page.tsx";
-import TeamPage from "./pages/team/page.tsx";
-import SettingsPage from "./pages/settings/page.tsx";
-import CompaniesPage from "./pages/companies/page.tsx";
-import CompanyDetailPage from "./pages/companies/detail-page.tsx";
-import PipelinePage from "./pages/pipeline/page.tsx";
-import TargetsPage from "./pages/targets/page.tsx";
-import ActivitiesPage from "./pages/activities/page.tsx";
-import PerformancePage from "./pages/performance/page.tsx";
-import UsagePage from "./pages/usage/page.tsx";
-import UsageAutoFillPage from "./pages/usage/auto-fill-page.tsx";
-import AtRiskPage from "./pages/at-risk/page.tsx";
-import QuotesPage from "./pages/quotes/page.tsx";
-import QuoteGenerateFromUsagePage from "./pages/quotes/generate-page.tsx";
-import QuoteFromAdvisorPage from "./pages/quotes/from-advisor-page.tsx";
-import QuoteDetailPage from "./pages/quotes/detail-page.tsx";
-import InvoicesPage from "./pages/invoices/page.tsx";
-import InvoiceDetailPage from "./pages/invoices/detail-page.tsx";
-import InvoicePrintPage from "./pages/invoices/print-page.tsx";
-import ExpensesPage from "./pages/finance/expenses/page.tsx";
-import ExpenseDetailPage from "./pages/finance/expenses/detail-page.tsx";
-import ExpenseCategoriesPage from "./pages/finance/expense-categories/page.tsx";
-import FinanceSettingsPage from "./pages/finance/settings/page.tsx";
-import FinanceReportsPage from "./pages/finance/reports/page.tsx";
-import InvoiceProfilesPage from "./pages/finance/invoice-profiles/page.tsx";
-import RecommendationsPage from "./pages/recommendations/page.tsx";
-import CoachPage from "./pages/coach/page.tsx";
-import ManageOneTenantsPage from "./pages/manageone-tenants/page.tsx";
-import CloudHealthPage from "./pages/cloud-health/page.tsx";
-import CloudHealthAlarmPage from "./pages/cloud-health/alarm-page.tsx";
-import CloudHealthHostGroupPage from "./pages/cloud-health/host-group-page.tsx";
-import CloudHealthRegionPage from "./pages/cloud-health/region-page.tsx";
-import DocumentationPage from "./pages/documentation/page.tsx";
-import TasksPage from "./pages/tasks/page.tsx";
-import TaskDetailPage from "./pages/tasks/detail-page.tsx";
-import NotFound from "./pages/NotFound.tsx";
+
+const DashboardPage = lazy(() => import("./pages/dashboard/page.tsx"));
+const TeamPage = lazy(() => import("./pages/team/page.tsx"));
+const SettingsPage = lazy(() => import("./pages/settings/page.tsx"));
+const CompaniesPage = lazy(() => import("./pages/companies/page.tsx"));
+const CompanyDetailPage = lazy(
+  () => import("./pages/companies/detail-page.tsx"),
+);
+const PipelinePage = lazy(() => import("./pages/pipeline/page.tsx"));
+const TargetsPage = lazy(() => import("./pages/targets/page.tsx"));
+const ActivitiesPage = lazy(() => import("./pages/activities/page.tsx"));
+const PerformancePage = lazy(() => import("./pages/performance/page.tsx"));
+const UsagePage = lazy(() => import("./pages/usage/page.tsx"));
+const UsageAutoFillPage = lazy(() => import("./pages/usage/auto-fill-page.tsx"));
+const AtRiskPage = lazy(() => import("./pages/at-risk/page.tsx"));
+const QuotesPage = lazy(() => import("./pages/quotes/page.tsx"));
+const QuoteGenerateFromUsagePage = lazy(
+  () => import("./pages/quotes/generate-page.tsx"),
+);
+const QuoteFromAdvisorPage = lazy(
+  () => import("./pages/quotes/from-advisor-page.tsx"),
+);
+const QuoteDetailPage = lazy(() => import("./pages/quotes/detail-page.tsx"));
+const InvoicesPage = lazy(() => import("./pages/invoices/page.tsx"));
+const InvoiceDetailPage = lazy(
+  () => import("./pages/invoices/detail-page.tsx"),
+);
+const InvoicePrintPage = lazy(() => import("./pages/invoices/print-page.tsx"));
+const ExpensesPage = lazy(() => import("./pages/finance/expenses/page.tsx"));
+const ExpenseDetailPage = lazy(
+  () => import("./pages/finance/expenses/detail-page.tsx"),
+);
+const ExpenseCategoriesPage = lazy(
+  () => import("./pages/finance/expense-categories/page.tsx"),
+);
+const FinanceSettingsPage = lazy(
+  () => import("./pages/finance/settings/page.tsx"),
+);
+const FinanceReportsPage = lazy(
+  () => import("./pages/finance/reports/page.tsx"),
+);
+const InvoiceProfilesPage = lazy(
+  () => import("./pages/finance/invoice-profiles/page.tsx"),
+);
+const RecommendationsPage = lazy(
+  () => import("./pages/recommendations/page.tsx"),
+);
+const CoachPage = lazy(() => import("./pages/coach/page.tsx"));
+const ManageOneTenantsPage = lazy(
+  () => import("./pages/manageone-tenants/page.tsx"),
+);
+const CloudHealthPage = lazy(() => import("./pages/cloud-health/page.tsx"));
+const CloudHealthAlarmPage = lazy(
+  () => import("./pages/cloud-health/alarm-page.tsx"),
+);
+const CloudHealthHostGroupPage = lazy(
+  () => import("./pages/cloud-health/host-group-page.tsx"),
+);
+const CloudHealthRegionPage = lazy(
+  () => import("./pages/cloud-health/region-page.tsx"),
+);
+const DocumentationPage = lazy(() => import("./pages/documentation/page.tsx"));
+const TasksPage = lazy(() => import("./pages/tasks/page.tsx"));
+const TaskDetailPage = lazy(() => import("./pages/tasks/detail-page.tsx"));
+const NotFound = lazy(() => import("./pages/NotFound.tsx"));
+
+function PageLoading() {
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center text-sm text-muted-foreground">
+      Loading page...
+    </div>
+  );
+}
+
+function lazyPage(page: ReactNode) {
+  return <Suspense fallback={<PageLoading />}>{page}</Suspense>;
+}
 
 export default function App() {
   return (
@@ -52,83 +94,107 @@ export default function App() {
             }
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/companies" element={<CompaniesPage />} />
-            <Route path="/companies/:id" element={<CompanyDetailPage />} />
-            <Route path="/pipeline" element={<PipelinePage />} />
-            <Route path="/targets" element={<TargetsPage />} />
-            <Route path="/performance" element={<PerformancePage />} />
-            <Route path="/usage" element={<UsagePage />} />
-            <Route path="/usage/auto-fill" element={<UsageAutoFillPage />} />
-            <Route path="/at-risk" element={<AtRiskPage />} />
-            <Route path="/quotes" element={<QuotesPage />} />
-            <Route path="/invoices" element={<InvoicesPage />} />
+            <Route path="/dashboard" element={lazyPage(<DashboardPage />)} />
+            <Route path="/companies" element={lazyPage(<CompaniesPage />)} />
+            <Route
+              path="/companies/:id"
+              element={lazyPage(<CompanyDetailPage />)}
+            />
+            <Route path="/pipeline" element={lazyPage(<PipelinePage />)} />
+            <Route path="/targets" element={lazyPage(<TargetsPage />)} />
+            <Route
+              path="/performance"
+              element={lazyPage(<PerformancePage />)}
+            />
+            <Route path="/usage" element={lazyPage(<UsagePage />)} />
+            <Route
+              path="/usage/auto-fill"
+              element={lazyPage(<UsageAutoFillPage />)}
+            />
+            <Route path="/at-risk" element={lazyPage(<AtRiskPage />)} />
+            <Route path="/quotes" element={lazyPage(<QuotesPage />)} />
+            <Route path="/invoices" element={lazyPage(<InvoicesPage />)} />
             <Route
               path="/invoices/:invoiceId/print"
-              element={<InvoicePrintPage />}
+              element={lazyPage(<InvoicePrintPage />)}
             />
             <Route
               path="/invoices/:invoiceId"
-              element={<InvoiceDetailPage />}
+              element={lazyPage(<InvoiceDetailPage />)}
             />
-            <Route path="/finance/expenses" element={<ExpensesPage />} />
+            <Route
+              path="/finance/expenses"
+              element={lazyPage(<ExpensesPage />)}
+            />
             <Route
               path="/finance/expense-categories"
-              element={<ExpenseCategoriesPage />}
+              element={lazyPage(<ExpenseCategoriesPage />)}
             />
-            <Route path="/finance/reports" element={<FinanceReportsPage />} />
+            <Route
+              path="/finance/reports"
+              element={lazyPage(<FinanceReportsPage />)}
+            />
             <Route
               path="/finance/invoice-profiles"
-              element={<InvoiceProfilesPage />}
+              element={lazyPage(<InvoiceProfilesPage />)}
             />
             <Route
               path="/finance/settings"
-              element={<FinanceSettingsPage />}
+              element={lazyPage(<FinanceSettingsPage />)}
             />
             <Route
               path="/finance/expenses/:expenseId"
-              element={<ExpenseDetailPage />}
+              element={lazyPage(<ExpenseDetailPage />)}
             />
             <Route
               path="/quotes/generate"
-              element={<QuoteGenerateFromUsagePage />}
+              element={lazyPage(<QuoteGenerateFromUsagePage />)}
             />
             <Route
               path="/quotes/from-advisor"
-              element={<QuoteFromAdvisorPage />}
+              element={lazyPage(<QuoteFromAdvisorPage />)}
             />
-            <Route path="/quotes/:id" element={<QuoteDetailPage />} />
-            <Route path="/recommendations" element={<RecommendationsPage />} />
-            <Route path="/coach" element={<CoachPage />} />
-            <Route path="/activities" element={<ActivitiesPage />} />
+            <Route path="/quotes/:id" element={lazyPage(<QuoteDetailPage />)} />
+            <Route
+              path="/recommendations"
+              element={lazyPage(<RecommendationsPage />)}
+            />
+            <Route path="/coach" element={lazyPage(<CoachPage />)} />
+            <Route path="/activities" element={lazyPage(<ActivitiesPage />)} />
             <Route
               path="/manageone-tenants"
-              element={<ManageOneTenantsPage />}
+              element={lazyPage(<ManageOneTenantsPage />)}
             />
-            <Route path="/cloud-health" element={<CloudHealthPage />} />
+            <Route
+              path="/cloud-health"
+              element={lazyPage(<CloudHealthPage />)}
+            />
             <Route
               path="/cloud-health/alarms/:csn"
-              element={<CloudHealthAlarmPage />}
+              element={lazyPage(<CloudHealthAlarmPage />)}
             />
             <Route
               path="/cloud-health/host-groups/:hostGroupId"
-              element={<CloudHealthHostGroupPage />}
+              element={lazyPage(<CloudHealthHostGroupPage />)}
             />
             <Route
               path="/cloud-health/regions/:regionId"
-              element={<CloudHealthRegionPage />}
+              element={lazyPage(<CloudHealthRegionPage />)}
             />
-            <Route path="/documentation" element={<DocumentationPage />} />
+            <Route
+              path="/documentation"
+              element={lazyPage(<DocumentationPage />)}
+            />
             <Route
               path="/documentation/:slug"
-              element={<DocumentationPage />}
+              element={lazyPage(<DocumentationPage />)}
             />
-            <Route path="/tasks" element={<TasksPage />} />
-            <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
-            <Route path="/team" element={<TeamPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/tasks" element={lazyPage(<TasksPage />)} />
+            <Route path="/tasks/:taskId" element={lazyPage(<TaskDetailPage />)} />
+            <Route path="/team" element={lazyPage(<TeamPage />)} />
+            <Route path="/settings" element={lazyPage(<SettingsPage />)} />
           </Route>
-          <Route path="*" element={<NotFound />} />
+          <Route path="*" element={lazyPage(<NotFound />)} />
         </Routes>
       </BrowserRouter>
     </DefaultProviders>
