@@ -66,6 +66,7 @@ type InvoiceEvent = Doc<"invoiceEvents"> & {
 };
 type InvoicePayment = Doc<"invoicePayments">;
 type InvoiceStatus = Invoice["status"];
+type InvoiceLineItem = Invoice["lineItems"][number];
 type User = Doc<"users">;
 type CleanupAction = "cancel" | "void" | "mark_test" | "unmark_test";
 
@@ -250,6 +251,23 @@ function eventMessage(event: InvoiceEvent) {
   return `${action} by ${actor}.${reason ? ` Reason: ${reason}` : ""}`;
 }
 
+function lineItemRegionLabel(item: InvoiceLineItem) {
+  return item.regionName || item.dataCenterName || item.regionId || "Unassigned";
+}
+
+function hasLineItemRegion(item: InvoiceLineItem) {
+  return Boolean(item.regionName || item.dataCenterName || item.regionId);
+}
+
+function buildRegionTotals(lineItems: InvoiceLineItem[]) {
+  const totals = new Map<string, number>();
+  for (const item of lineItems) {
+    const label = lineItemRegionLabel(item);
+    totals.set(label, (totals.get(label) ?? 0) + item.monthlyTotal);
+  }
+  return [...totals.entries()].map(([label, total]) => ({ label, total }));
+}
+
 function paymentReceivingDetails(payment: InvoicePayment) {
   if (
     !payment.receivingAccountNumber &&
@@ -392,6 +410,10 @@ function InvoiceDetailContent() {
     currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
   const isTestHidden = Boolean(invoice.isTest || invoice.hiddenAt);
   const usersById = new Map(users.map((user) => [user._id, user]));
+  const showRegionBreakdown = invoice.lineItems.some(hasLineItemRegion);
+  const regionTotals = showRegionBreakdown
+    ? buildRegionTotals(invoice.lineItems)
+    : [];
 
   const handleIssueInvoice = async () => {
     setIsIssuing(true);
@@ -757,6 +779,9 @@ function InvoiceDetailContent() {
                 <tr className="border-b bg-muted/30">
                   <th className="p-3 text-left font-medium">Item</th>
                   <th className="p-3 text-left font-medium">Category</th>
+                  {showRegionBreakdown ? (
+                    <th className="p-3 text-left font-medium">Region</th>
+                  ) : null}
                   <th className="p-3 text-left font-medium">Unit</th>
                   <th className="p-3 text-right font-medium">Qty</th>
                   <th className="p-3 text-right font-medium">Unit Price</th>
@@ -774,6 +799,11 @@ function InvoiceDetailContent() {
                     <td className="p-3 text-muted-foreground">
                       {item.serviceCategory}
                     </td>
+                    {showRegionBreakdown ? (
+                      <td className="p-3 text-muted-foreground">
+                        {lineItemRegionLabel(item)}
+                      </td>
+                    ) : null}
                     <td className="p-3 text-muted-foreground">
                       {item.billingUnit}
                     </td>
@@ -794,6 +824,29 @@ function InvoiceDetailContent() {
           </div>
         </CardContent>
       </Card>
+
+      {showRegionBreakdown ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Region Totals</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {regionTotals.map((region) => (
+                <div
+                  key={region.label}
+                  className="rounded-md border bg-muted/20 p-3"
+                >
+                  <div className="text-sm font-medium">{region.label}</div>
+                  <div className="mt-1 text-lg font-semibold">
+                    {formatCurrency(region.total)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>

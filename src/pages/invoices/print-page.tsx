@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 
 type Invoice = Doc<"invoices">;
 type InvoiceStatus = Invoice["status"];
+type InvoiceLineItem = Invoice["lineItems"][number];
 
 const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
 const FALLBACK_SELLER = {
@@ -105,6 +106,23 @@ function sourceLabel(invoice: Invoice) {
 
 function referenceLabel(invoice: Invoice) {
   return invoice.sourceReference ?? "-";
+}
+
+function lineItemRegionLabel(item: InvoiceLineItem) {
+  return item.regionName || item.dataCenterName || item.regionId || "Unassigned";
+}
+
+function hasLineItemRegion(item: InvoiceLineItem) {
+  return Boolean(item.regionName || item.dataCenterName || item.regionId);
+}
+
+function buildRegionTotals(lineItems: InvoiceLineItem[]) {
+  const totals = new Map<string, number>();
+  for (const item of lineItems) {
+    const label = lineItemRegionLabel(item);
+    totals.set(label, (totals.get(label) ?? 0) + item.monthlyTotal);
+  }
+  return [...totals.entries()].map(([label, total]) => ({ label, total }));
 }
 
 function sellerDetails(invoice: Invoice) {
@@ -277,6 +295,10 @@ function InvoicePrintContent() {
     invoice.status === "draft" ? "Draft Preview" : `Invoice ${invoiceNumber}`;
   const dueSource = invoice.dueDate ?? invoice.issueDate ?? invoice.createdAt;
   const seller = sellerDetails(invoice);
+  const showRegionBreakdown = invoice.lineItems.some(hasLineItemRegion);
+  const regionTotals = showRegionBreakdown
+    ? buildRegionTotals(invoice.lineItems)
+    : [];
 
   return (
     <div className="invoice-print-shell">
@@ -483,10 +505,61 @@ function InvoicePrintContent() {
           color: #111827;
         }
 
+        .line-region {
+          color: #07999d;
+          font-size: 11px;
+          font-weight: 600;
+          margin-top: 3px;
+        }
+
+        .invoice-summary-row {
+          display: flex;
+          justify-content: flex-end;
+          margin-top: 14mm;
+        }
+
+        .invoice-summary-row.has-region-totals {
+          align-items: start;
+          display: grid;
+          gap: 14mm;
+          grid-template-columns: minmax(0, 1fr) 82mm;
+          justify-content: stretch;
+        }
+
+        .region-totals {
+          border-top: 1px solid #d1d5db;
+          font-size: 12px;
+          padding-top: 7px;
+        }
+
+        .region-totals-title {
+          color: #07999d;
+          font-weight: 700;
+          margin-bottom: 5px;
+          text-transform: uppercase;
+        }
+
+        .region-total-row {
+          display: flex;
+          gap: 10px;
+          justify-content: space-between;
+          line-height: 1.5;
+        }
+
+        .region-total-label {
+          color: #374151;
+        }
+
+        .region-total-amount {
+          color: #111827;
+          font-weight: 600;
+          white-space: nowrap;
+        }
+
         .invoice-total {
           margin-left: auto;
-          margin-top: 14mm;
           max-width: 82mm;
+          width: 100%;
         }
 
         .invoice-total-row {
@@ -630,6 +703,11 @@ function InvoicePrintContent() {
                     <div className="line-subtitle">
                       {item.serviceCategory || item.billingUnit}
                     </div>
+                    {showRegionBreakdown ? (
+                      <div className="line-region">
+                        Region: {lineItemRegionLabel(item)}
+                      </div>
+                    ) : null}
                   </td>
                   <td>{formatQuantity(item.quantity)}</td>
                   <td>{formatUnitPrice(item.monthlyUnitPrice)}</td>
@@ -639,10 +717,30 @@ function InvoicePrintContent() {
             </tbody>
           </table>
 
-          <div className="invoice-total" aria-label="Invoice total">
-            <div className="invoice-total-row">
-              <span>Total</span>
-              <span>{formatCurrency(invoice.grandTotal)}</span>
+          <div
+            className={`invoice-summary-row${
+              showRegionBreakdown ? " has-region-totals" : ""
+            }`}
+          >
+            {showRegionBreakdown ? (
+              <section className="region-totals" aria-label="Region totals">
+                <div className="region-totals-title">Region Totals</div>
+                {regionTotals.map((region) => (
+                  <div className="region-total-row" key={region.label}>
+                    <span className="region-total-label">{region.label}</span>
+                    <span className="region-total-amount">
+                      {formatCurrency(region.total)}
+                    </span>
+                  </div>
+                ))}
+              </section>
+            ) : null}
+
+            <div className="invoice-total" aria-label="Invoice total">
+              <div className="invoice-total-row">
+                <span>Total</span>
+                <span>{formatCurrency(invoice.grandTotal)}</span>
+              </div>
             </div>
           </div>
 

@@ -42,6 +42,9 @@ const mocks = vi.hoisted(() => ({
           quantity: number;
           amount: number;
           alreadyLogged: boolean;
+          regionId?: string;
+          regionName?: string;
+          dataCenterName?: string;
         }>;
         needsManualEntry: Array<{
           serviceType: string;
@@ -173,6 +176,9 @@ describe("UsageAutoFillPage", () => {
           quantity: 2,
           amount: 718.8476,
           alreadyLogged: false,
+          regionId: "hoa-mog-2",
+          regionName: "Hoa-Mogadishu-2",
+          dataCenterName: "Mogadishu DC 2",
         },
         {
           serviceType: "VPN",
@@ -210,6 +216,9 @@ describe("UsageAutoFillPage", () => {
             catalogItemId: "catalog-1",
             quantity: 2,
             amount: 718.8476,
+            regionId: "hoa-mog-2",
+            regionName: "Hoa-Mogadishu-2",
+            dataCenterName: "Mogadishu DC 2",
           },
           {
             serviceType: "VPN",

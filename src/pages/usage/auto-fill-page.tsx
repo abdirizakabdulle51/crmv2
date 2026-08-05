@@ -29,10 +29,15 @@ type BulkPreviewRow = {
   quantity: number;
   amount: number;
   alreadyLogged: boolean;
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
 };
 
 const rowKey = (row: BulkPreviewRow) =>
-  `${row.serviceType}:${row.catalogItemId}`;
+  `${row.serviceType}:${row.catalogItemId}:${
+    row.regionId ?? row.regionName ?? row.dataCenterName ?? ""
+  }`;
 
 export default function UsageAutoFillPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -137,6 +142,9 @@ export default function UsageAutoFillPage() {
                   catalogItemId: row.catalogItemId,
                   quantity: row.quantity,
                   amount: row.amount,
+                  regionId: row.regionId,
+                  regionName: row.regionName,
+                  dataCenterName: row.dataCenterName,
                 })),
               });
               toast.success(`Created ${result.inserted} usage entries`);
@@ -331,6 +339,9 @@ export default function UsageAutoFillPage() {
                       catalogItemId: row.catalogItemId,
                       quantity: row.quantity,
                       amount: row.amount,
+                      regionId: row.regionId,
+                      regionName: row.regionName,
+                      dataCenterName: row.dataCenterName,
                     })),
                   });
                   toast.success(`Created ${result.inserted} usage entries`);

@@ -312,6 +312,118 @@ describe("InvoiceDetailPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the legacy line item table layout when no region metadata exists", () => {
+    renderDetailPage();
+
+    const lineItemsCard = screen
+      .getByText("Line Item Snapshot")
+      .closest("[data-slot='card']");
+    expect(lineItemsCard).not.toBeNull();
+    expect(
+      within(lineItemsCard as HTMLElement).queryByText("Region"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Region Totals")).not.toBeInTheDocument();
+  });
+
+  it("shows region column and region totals when invoice line items include region metadata", () => {
+    mocks.invoice = invoice({
+      lineItems: [
+        {
+          catalogItemId: "catalog-1" as Id<"serviceCatalog">,
+          itemName: "Cloud Server",
+          serviceCategory: "Compute",
+          billingUnit: "month",
+          quantity: 2,
+          monthlyUnitPrice: 600,
+          monthlyTotal: 1200,
+          yearlyTotal: 14400,
+          regionId: "hoa-mog-2",
+          regionName: "Hoa-Mogadishu-2",
+          dataCenterName: "Mogadishu DC 2",
+        },
+        {
+          catalogItemId: "catalog-2" as Id<"serviceCatalog">,
+          itemName: "Block Storage",
+          serviceCategory: "Storage",
+          billingUnit: "GB",
+          quantity: 100,
+          monthlyUnitPrice: 2,
+          monthlyTotal: 200,
+          yearlyTotal: 2400,
+          regionId: "mog-hq3",
+          regionName: "Mogadishu-region-hq3",
+        },
+        {
+          catalogItemId: "catalog-3" as Id<"serviceCatalog">,
+          itemName: "Backup",
+          serviceCategory: "Backup",
+          billingUnit: "GB",
+          quantity: 50,
+          monthlyUnitPrice: 1,
+          monthlyTotal: 50,
+          yearlyTotal: 600,
+        },
+        {
+          catalogItemId: "catalog-4" as Id<"serviceCatalog">,
+          itemName: "More Compute",
+          serviceCategory: "Compute",
+          billingUnit: "month",
+          quantity: 1,
+          monthlyUnitPrice: 300,
+          monthlyTotal: 300,
+          yearlyTotal: 3600,
+          regionName: "Hoa-Mogadishu-2",
+        },
+      ],
+      subtotal: 1750,
+      monthlyTotal: 1750,
+      grandTotal: 1750,
+      balanceDue: 1550,
+    });
+
+    renderDetailPage();
+
+    const lineItemsCard = screen
+      .getByText("Line Item Snapshot")
+      .closest("[data-slot='card']");
+    expect(lineItemsCard).not.toBeNull();
+    expect(
+      within(lineItemsCard as HTMLElement).getByText("Region"),
+    ).toBeInTheDocument();
+    expect(
+      within(lineItemsCard as HTMLElement).getAllByText("Hoa-Mogadishu-2"),
+    ).toHaveLength(2);
+    expect(
+      within(lineItemsCard as HTMLElement).getByText("Mogadishu-region-hq3"),
+    ).toBeInTheDocument();
+    expect(
+      within(lineItemsCard as HTMLElement).getByText("Unassigned"),
+    ).toBeInTheDocument();
+
+    const regionTotals = screen
+      .getByText("Region Totals")
+      .closest("[data-slot='card']");
+    expect(regionTotals).not.toBeNull();
+    expect(
+      within(regionTotals as HTMLElement).getByText("Hoa-Mogadishu-2"),
+    ).toBeInTheDocument();
+    expect(
+      within(regionTotals as HTMLElement).getByText("$1,500.00"),
+    ).toBeInTheDocument();
+    expect(
+      within(regionTotals as HTMLElement).getByText("Mogadishu-region-hq3"),
+    ).toBeInTheDocument();
+    expect(
+      within(regionTotals as HTMLElement).getByText("$200.00"),
+    ).toBeInTheDocument();
+    expect(
+      within(regionTotals as HTMLElement).getByText("Unassigned"),
+    ).toBeInTheDocument();
+    expect(
+      within(regionTotals as HTMLElement).getByText("$50.00"),
+    ).toBeInTheDocument();
+  });
+
   it("shows Draft when an invoice has no invoice number", () => {
     mocks.invoice = invoice({
       invoiceNumber: undefined,

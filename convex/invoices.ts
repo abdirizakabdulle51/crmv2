@@ -108,6 +108,9 @@ const invoiceLineItemValidator = v.object({
   monthlyUnitPrice: v.number(),
   monthlyTotal: v.number(),
   yearlyTotal: v.number(),
+  regionId: v.optional(v.string()),
+  regionName: v.optional(v.string()),
+  dataCenterName: v.optional(v.string()),
 });
 
 async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {

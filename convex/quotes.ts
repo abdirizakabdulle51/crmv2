@@ -57,7 +57,22 @@ const lineItemValidator = v.object({
   monthlyUnitPrice: v.number(),
   monthlyTotal: v.number(),
   yearlyTotal: v.number(),
+  regionId: v.optional(v.string()),
+  regionName: v.optional(v.string()),
+  dataCenterName: v.optional(v.string()),
 });
+
+function optionalRegionFields(entry: {
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
+}) {
+  return {
+    ...(entry.regionId ? { regionId: entry.regionId } : {}),
+    ...(entry.regionName ? { regionName: entry.regionName } : {}),
+    ...(entry.dataCenterName ? { dataCenterName: entry.dataCenterName } : {}),
+  };
+}
 
 function normalizeCatalogName(value: string) {
   return value.trim().toLowerCase();
@@ -229,6 +244,7 @@ export const buildQuotePreviewFromUsage = query({
         yearlyTotal: catalogItem.yearlyPrice
           ? entry.quantity * catalogItem.yearlyPrice
           : monthlyTotal * 12,
+        ...optionalRegionFields(entry),
       });
     }
 

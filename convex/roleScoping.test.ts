@@ -420,6 +420,9 @@ describe("role scoping", () => {
             catalogItemId,
             quantity: 2,
             amount: 6,
+            regionId: "hoa-mog-2",
+            regionName: "Hoa-Mogadishu-2",
+            dataCenterName: "Mogadishu DC 2",
           },
         ],
       },
@@ -442,6 +445,9 @@ describe("role scoping", () => {
       quantity: 2,
       amount: 6,
       isManualOverride: false,
+      regionId: "hoa-mog-2",
+      regionName: "Hoa-Mogadishu-2",
+      dataCenterName: "Mogadishu DC 2",
     });
 
     await expect(

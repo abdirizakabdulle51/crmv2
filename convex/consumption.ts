@@ -4,6 +4,29 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
 import { assertCanManageUsage } from "./authorization";
 
+function trimOptional(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function regionFieldsFromArgs(args: {
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
+}) {
+  return {
+    ...(trimOptional(args.regionId)
+      ? { regionId: trimOptional(args.regionId) }
+      : {}),
+    ...(trimOptional(args.regionName)
+      ? { regionName: trimOptional(args.regionName) }
+      : {}),
+    ...(trimOptional(args.dataCenterName)
+      ? { dataCenterName: trimOptional(args.dataCenterName) }
+      : {}),
+  };
+}
+
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
 ): Promise<Doc<"users">> {
@@ -86,6 +109,9 @@ export const create = mutation({
     quantity: v.optional(v.number()),
     catalogItemId: v.optional(v.id("serviceCatalog")),
     isManualOverride: v.optional(v.boolean()),
+    regionId: v.optional(v.string()),
+    regionName: v.optional(v.string()),
+    dataCenterName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const currentUser = await getCurrentUserOrThrow(ctx);
@@ -98,6 +124,7 @@ export const create = mutation({
       quantity: args.quantity,
       catalogItemId: args.catalogItemId,
       isManualOverride: args.isManualOverride,
+      ...regionFieldsFromArgs(args),
     });
   },
 });
@@ -113,6 +140,9 @@ export const bulkCreateFromManageOne = mutation({
         catalogItemId: v.id("serviceCatalog"),
         quantity: v.number(),
         amount: v.number(),
+        regionId: v.optional(v.string()),
+        regionName: v.optional(v.string()),
+        dataCenterName: v.optional(v.string()),
       }),
     ),
   },
@@ -130,6 +160,7 @@ export const bulkCreateFromManageOne = mutation({
         quantity: row.quantity,
         catalogItemId: row.catalogItemId,
         isManualOverride: false,
+        ...regionFieldsFromArgs(row),
       });
       inserted++;
     }

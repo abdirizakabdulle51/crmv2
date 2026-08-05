@@ -131,6 +131,9 @@ describe("buildQuotePreviewFromUsage", () => {
         quantity: 2,
         catalogItemId: eipCatalogId,
         isManualOverride: false,
+        regionId: "hoa-mog-2",
+        regionName: "Hoa-Mogadishu-2",
+        dataCenterName: "Mogadishu DC 2",
       });
       await ctx.db.insert("consumption", {
         companyId,
@@ -183,6 +186,9 @@ describe("buildQuotePreviewFromUsage", () => {
         monthlyUnitPrice: 3,
         monthlyTotal: 6,
         yearlyTotal: 60,
+        regionId: "hoa-mog-2",
+        regionName: "Hoa-Mogadishu-2",
+        dataCenterName: "Mogadishu DC 2",
       },
       {
         catalogItemId: expect.any(String),
@@ -209,6 +215,34 @@ describe("buildQuotePreviewFromUsage", () => {
     ]);
     expect(preview.monthlyGrandTotal).toBe(13.2);
     expect(preview.yearlyGrandTotal).toBe(146.39999999999998);
+  });
+
+  it("stores region metadata on created quote line items", async () => {
+    const t = convexTest({ schema, modules });
+    const seed = await t.run(seedQuoteCreateScope);
+    const quoteId = await t
+      .withIdentity({ tokenIdentifier: "ceo-token" })
+      .mutation(api.quotes.create, {
+        companyId: seed.companyId,
+        lineItems: [
+          {
+            ...seed.lineItem,
+            regionId: "mog-hq3",
+            regionName: "Mogadishu-region-hq3",
+            dataCenterName: "HQ3",
+          },
+        ],
+        monthlyGrandTotal: 10,
+        yearlyGrandTotal: 120,
+      });
+
+    const quote = await t.run(async (ctx) => await ctx.db.get(quoteId));
+
+    expect(quote?.lineItems[0]).toMatchObject({
+      regionId: "mog-hq3",
+      regionName: "Mogadishu-region-hq3",
+      dataCenterName: "HQ3",
+    });
   });
 
   it("surfaces existing generated quote warning for the same company and source month only", async () => {

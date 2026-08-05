@@ -170,6 +170,91 @@ describe("InvoicePrintPage", () => {
     expect(screen.queryByText("quote-1")).not.toBeInTheDocument();
   });
 
+  it("hides region information for legacy invoices without region metadata", () => {
+    renderPrintPage();
+
+    expect(screen.queryByText(/Region:/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Region totals")).not.toBeInTheDocument();
+  });
+
+  it("shows region information and totals when line items include region metadata", () => {
+    mocks.invoice = invoice({
+      lineItems: [
+        {
+          catalogItemId: "catalog-1" as Id<"serviceCatalog">,
+          itemName: "S6_48U_160G",
+          serviceCategory: "Memory Optimized ECS Machine",
+          billingUnit: "month",
+          quantity: 2,
+          monthlyUnitPrice: 1563.78,
+          monthlyTotal: 3127.56,
+          yearlyTotal: 37530.72,
+          regionId: "hoa-mog-2",
+          regionName: "Hoa-Mogadishu-2",
+        },
+        {
+          catalogItemId: "catalog-2" as Id<"serviceCatalog">,
+          itemName: "SSD (Block Storage / NVMe)",
+          serviceCategory: "SSD Storage.",
+          billingUnit: "GB",
+          quantity: 9216,
+          monthlyUnitPrice: 0.125,
+          monthlyTotal: 1152,
+          yearlyTotal: 13824,
+          regionId: "mog-hq3",
+          regionName: "Mogadishu-region-hq3",
+        },
+        {
+          catalogItemId: "catalog-3" as Id<"serviceCatalog">,
+          itemName: "Backup",
+          serviceCategory: "Backup",
+          billingUnit: "GB",
+          quantity: 50,
+          monthlyUnitPrice: 1,
+          monthlyTotal: 50,
+          yearlyTotal: 600,
+        },
+        {
+          catalogItemId: "catalog-4" as Id<"serviceCatalog">,
+          itemName: "More Compute",
+          serviceCategory: "Compute",
+          billingUnit: "month",
+          quantity: 1,
+          monthlyUnitPrice: 100,
+          monthlyTotal: 100,
+          yearlyTotal: 1200,
+          regionName: "Hoa-Mogadishu-2",
+        },
+      ],
+      subtotal: 4429.56,
+      monthlyTotal: 4429.56,
+      grandTotal: 4429.56,
+      balanceDue: 4429.56,
+    });
+
+    renderPrintPage();
+
+    expect(screen.getAllByText("Region: Hoa-Mogadishu-2")).toHaveLength(2);
+    expect(
+      screen.getByText("Region: Mogadishu-region-hq3"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Region: Unassigned")).toBeInTheDocument();
+
+    const regionTotals = screen.getByLabelText("Region totals");
+    expect(within(regionTotals).getByText("Region Totals")).toBeInTheDocument();
+    expect(within(regionTotals).getByText("Hoa-Mogadishu-2")).toBeInTheDocument();
+    expect(within(regionTotals).getByText("$ 3,227.56")).toBeInTheDocument();
+    expect(
+      within(regionTotals).getByText("Mogadishu-region-hq3"),
+    ).toBeInTheDocument();
+    expect(within(regionTotals).getByText("$ 1,152.00")).toBeInTheDocument();
+    expect(within(regionTotals).getByText("Unassigned")).toBeInTheDocument();
+    expect(within(regionTotals).getByText("$ 50.00")).toBeInTheDocument();
+    expect(screen.getByLabelText("Invoice total")).toHaveTextContent(
+      "$ 4,429.56",
+    );
+  });
+
   it("renders official print output for sent and paid-like statuses", () => {
     mocks.invoice = invoice({ status: "sent" });
     const { rerender } = renderPrintPage();

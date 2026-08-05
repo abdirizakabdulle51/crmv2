@@ -31,6 +31,9 @@ type UsageHint = {
   pricing: "auto" | "manual";
   suggestedCatalogItemId?: Id<"serviceCatalog">;
   lineItems?: UsageHintLineItem[];
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
 };
 
 type UsageHintLineItem = {
@@ -39,6 +42,9 @@ type UsageHintLineItem = {
   pricing: "auto" | "manual";
   suggestedCatalogItemId?: Id<"serviceCatalog">;
   needsManualPricing?: boolean;
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
 };
 
 type PendingUsageLineItem = {
@@ -52,6 +58,9 @@ type PendingUsageLineItem = {
   isManualOverride: boolean;
   fromManageOne: boolean;
   needsManualPricing: boolean;
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
 };
 
 type UsageEntryDialogProps = {
@@ -236,6 +245,9 @@ export default function UsageEntryDialog({
             isManualOverride: false,
             fromManageOne: lineItem.pricing === "auto",
             needsManualPricing: lineItem.needsManualPricing === true,
+            regionId: lineItem.regionId,
+            regionName: lineItem.regionName,
+            dataCenterName: lineItem.dataCenterName,
           };
         }),
       );
@@ -292,6 +304,9 @@ export default function UsageEntryDialog({
             quantity: parseFloat(lineItem.quantity),
             catalogItemId: lineItem.catalogItemId as Id<"serviceCatalog">,
             isManualOverride: lineItem.isManualOverride,
+            regionId: lineItem.regionId,
+            regionName: lineItem.regionName,
+            dataCenterName: lineItem.dataCenterName,
           });
         }
         toast.success("Usage entries added");
@@ -328,6 +343,9 @@ export default function UsageEntryDialog({
           ? (catalogItemId as Id<"serviceCatalog">)
           : undefined,
         isManualOverride: catalogItemId ? isManualOverride : undefined,
+        regionId: selectedHint?.regionId,
+        regionName: selectedHint?.regionName,
+        dataCenterName: selectedHint?.dataCenterName,
       });
       toast.success("Usage entry added");
       // Reset form (keep company and month for batch entry)

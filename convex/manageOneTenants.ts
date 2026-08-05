@@ -12,6 +12,9 @@ export type UsageHint = {
   pricing: UsageHintPricing;
   suggestedCatalogItemId?: Id<"serviceCatalog">;
   lineItems?: UsageHintLineItem[];
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
 };
 
 export type UsageHintLineItem = {
@@ -20,6 +23,9 @@ export type UsageHintLineItem = {
   pricing: UsageHintPricing;
   suggestedCatalogItemId?: Id<"serviceCatalog">;
   needsManualPricing?: boolean;
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
 };
 
 type UsageHintResource = {
@@ -29,6 +35,8 @@ type UsageHintResource = {
 };
 
 type UsageHintTenant = {
+  regionId?: string;
+  regionName?: string;
   resources?: UsageHintResource[];
   ecsFlavors?: {
     flavorName: string;
@@ -58,6 +66,9 @@ export type BulkUsagePreviewRow = {
   quantity: number;
   amount: number;
   alreadyLogged: boolean;
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
 };
 
 export type BulkUsageManualItem = {
@@ -207,6 +218,36 @@ function normalizeCatalogMatch(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function optionalRegionFields(source: {
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
+}) {
+  return {
+    ...(source.regionId ? { regionId: source.regionId } : {}),
+    ...(source.regionName ? { regionName: source.regionName } : {}),
+    ...(source.dataCenterName ? { dataCenterName: source.dataCenterName } : {}),
+  };
+}
+
+function regionKey(source: {
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
+}) {
+  return source.regionId ?? source.regionName ?? source.dataCenterName ?? "";
+}
+
+function usagePreviewKey(source: {
+  serviceType: string;
+  catalogItemId?: Id<"serviceCatalog">;
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
+}) {
+  return `${source.serviceType}:${source.catalogItemId ?? ""}:${regionKey(source)}`;
+}
+
 export function buildUsageHintsForCompany(
   tenants: UsageHintTenant[],
   catalog: UsageHintCatalogItem[],
@@ -226,6 +267,7 @@ export function buildUsageHintsForCompany(
   );
 
   for (const tenant of tenants) {
+    const tenantRegionFields = optionalRegionFields(tenant);
     const tenantResources = tenant.resources ?? [];
     const wafBasicQuantity = tenantResources
       .filter(
@@ -251,6 +293,7 @@ export function buildUsageHintsForCompany(
         quantity: wafBasicQuantity + wafEnterpriseQuantity,
         pricing: "manual",
         needsManualPricing: true,
+        ...tenantRegionFields,
       });
     } else if (wafBasicQuantity > 0) {
       wafLineItems.push({
@@ -260,6 +303,7 @@ export function buildUsageHintsForCompany(
         ...(basicWafCatalogItem
           ? { suggestedCatalogItemId: basicWafCatalogItem._id }
           : { needsManualPricing: true }),
+        ...tenantRegionFields,
       });
     } else if (wafEnterpriseQuantity > 0) {
       wafLineItems.push({
@@ -269,6 +313,7 @@ export function buildUsageHintsForCompany(
         ...(enterpriseWafCatalogItem
           ? { suggestedCatalogItemId: enterpriseWafCatalogItem._id }
           : { needsManualPricing: true }),
+        ...tenantRegionFields,
       });
     }
 
@@ -288,6 +333,7 @@ export function buildUsageHintsForCompany(
         pricing: catalogItem ? "auto" : "manual",
         ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
         ...(!catalogItem ? { needsManualPricing: true } : {}),
+        ...tenantRegionFields,
       });
     }
 
@@ -311,6 +357,7 @@ export function buildUsageHintsForCompany(
         pricing: catalogItem ? "auto" : "manual",
         ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
         ...(!catalogItem ? { needsManualPricing: true } : {}),
+        ...tenantRegionFields,
       });
     }
 
@@ -337,14 +384,16 @@ export function buildUsageHintsForCompany(
         continue;
       }
 
-      const existing = totals.get(rule.serviceCategory);
+      const key = `${rule.serviceCategory}:${regionKey(tenantRegionFields)}`;
+      const existing = totals.get(key);
       if (existing) {
         existing.quantity += resource.used;
       } else {
-        totals.set(rule.serviceCategory, {
+        totals.set(key, {
           serviceCategory: rule.serviceCategory,
           quantity: resource.used,
           pricing: rule.pricing,
+          ...tenantRegionFields,
         });
       }
     }
@@ -432,12 +481,21 @@ export function buildBulkUsagePreview(
   existingEntries: Array<{
     serviceType: string;
     catalogItemId?: Id<"serviceCatalog">;
+    regionId?: string;
+    regionName?: string;
+    dataCenterName?: string;
   }>,
 ): { rows: BulkUsagePreviewRow[]; needsManualEntry: BulkUsageManualItem[] } {
   const existingKeys = new Set(
     existingEntries
       .filter((entry) => entry.catalogItemId)
-      .map((entry) => `${entry.serviceType}:${entry.catalogItemId}`),
+      .map((entry) =>
+        usagePreviewKey({
+          serviceType: entry.serviceType,
+          catalogItemId: entry.catalogItemId,
+          ...optionalRegionFields(entry),
+        }),
+      ),
   );
   const rows: BulkUsagePreviewRow[] = [];
   const needsManualEntry: BulkUsageManualItem[] = [];
@@ -452,6 +510,7 @@ export function buildBulkUsagePreview(
               quantity: hint.quantity,
               pricing: hint.pricing,
               suggestedCatalogItemId: hint.suggestedCatalogItemId,
+              ...optionalRegionFields(hint),
             },
           ]
         : []);
@@ -493,8 +552,13 @@ export function buildBulkUsagePreview(
         quantity: lineItem.quantity,
         amount: lineItem.quantity * catalogItem.monthlyPrice,
         alreadyLogged: existingKeys.has(
-          `${hint.serviceCategory}:${catalogItem._id}`,
+          usagePreviewKey({
+            serviceType: hint.serviceCategory,
+            catalogItemId: catalogItem._id,
+            ...optionalRegionFields(lineItem),
+          }),
         ),
+        ...optionalRegionFields(lineItem),
       });
     }
   }

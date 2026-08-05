@@ -155,6 +155,63 @@ describe("buildUsageHintsForCompany", () => {
     expect(hints.map((hint) => hint.serviceCategory)).not.toContain("LTS");
   });
 
+  it("preserves ManageOne region metadata in bulk usage preview rows", () => {
+    const catalog = [catalogItem("sfs", "SFS", "SFS_SATA", "per GB", 2)];
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          regionId: "hoa-mog-2",
+          regionName: "Hoa-Mogadishu-2",
+          resources: [
+            { serviceId: "sfs", resource: "gigabytes", used: 10 },
+          ],
+        },
+        {
+          regionId: "mog-hq3",
+          regionName: "Mogadishu-region-hq3",
+          resources: [
+            { serviceId: "sfs", resource: "gigabytes", used: 20 },
+          ],
+        },
+      ],
+      catalog,
+    );
+
+    const preview = buildBulkUsagePreview(hints, catalog, [
+      {
+        serviceType: "SFS",
+        catalogItemId: "sfs" as Id<"serviceCatalog">,
+        regionId: "hoa-mog-2",
+        regionName: "Hoa-Mogadishu-2",
+      },
+    ]);
+
+    expect(preview.rows).toEqual(
+      expect.arrayContaining([
+        {
+          serviceType: "SFS",
+          catalogItemId: "sfs",
+          catalogItemName: "SFS_SATA",
+          quantity: 10,
+          amount: 20,
+          alreadyLogged: true,
+          regionId: "hoa-mog-2",
+          regionName: "Hoa-Mogadishu-2",
+        },
+        {
+          serviceType: "SFS",
+          catalogItemId: "sfs",
+          catalogItemName: "SFS_SATA",
+          quantity: 20,
+          amount: 40,
+          alreadyLogged: false,
+          regionId: "mog-hq3",
+          regionName: "Mogadishu-region-hq3",
+        },
+      ]),
+    );
+  });
+
   it("maps raw EIP bandwidth Mbps values to real catalog tiers", () => {
     const catalog = [
       catalogItem("eip-bw-1", "EIP Bandwidth", "1 - 5 Mbps"),

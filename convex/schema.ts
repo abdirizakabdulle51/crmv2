@@ -463,6 +463,9 @@ export default defineSchema({
     quantity: v.optional(v.number()),
     catalogItemId: v.optional(v.id("serviceCatalog")),
     isManualOverride: v.optional(v.boolean()),
+    regionId: v.optional(v.string()),
+    regionName: v.optional(v.string()),
+    dataCenterName: v.optional(v.string()),
   })
     .index("by_company", ["companyId"])
     .index("by_company_month", ["companyId", "month"])
@@ -593,6 +596,9 @@ export default defineSchema({
         monthlyUnitPrice: v.number(),
         monthlyTotal: v.number(),
         yearlyTotal: v.number(),
+        regionId: v.optional(v.string()),
+        regionName: v.optional(v.string()),
+        dataCenterName: v.optional(v.string()),
       }),
     ),
     subtotal: v.number(),
@@ -799,6 +805,9 @@ export default defineSchema({
         monthlyUnitPrice: v.number(),
         monthlyTotal: v.number(),
         yearlyTotal: v.number(),
+        regionId: v.optional(v.string()),
+        regionName: v.optional(v.string()),
+        dataCenterName: v.optional(v.string()),
       }),
     ),
     monthlyGrandTotal: v.number(),

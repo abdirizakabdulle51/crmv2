@@ -109,6 +109,9 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       monthlyUnitPrice: 10,
       monthlyTotal: 20,
       yearlyTotal: 200,
+      regionId: "hoa-mog-2",
+      regionName: "Hoa-Mogadishu-2",
+      dataCenterName: "Mogadishu DC 2",
     };
     const acceptedQuoteA = await ctx.db.insert("quotes", {
       companyId: companyA,
@@ -445,6 +448,9 @@ describe("invoices", () => {
         itemName: "ECS Small",
         quantity: 2,
         monthlyTotal: 20,
+        regionId: "hoa-mog-2",
+        regionName: "Hoa-Mogadishu-2",
+        dataCenterName: "Mogadishu DC 2",
       }),
     ]);
   });
