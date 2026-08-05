@@ -150,6 +150,58 @@ async function getCompanyOrThrow(ctx: Ctx, companyId: Id<"companies">) {
   return company;
 }
 
+async function resolveInvoiceProfileForCompany(
+  ctx: Ctx,
+  company: Doc<"companies">,
+) {
+  const countryProfiles = await ctx.db
+    .query("invoiceProfiles")
+    .withIndex("by_country", (q) => q.eq("countryId", company.countryId))
+    .collect();
+  const countryMatch = countryProfiles.find((profile) => profile.isActive);
+  if (countryMatch) return countryMatch;
+
+  const defaults = await ctx.db
+    .query("invoiceProfiles")
+    .withIndex("by_default_active", (q) =>
+      q.eq("isDefault", true).eq("isActive", true),
+    )
+    .collect();
+  return defaults[0] ?? null;
+}
+
+async function resolveInvoiceProfileForIssue(
+  ctx: Ctx,
+  invoice: Doc<"invoices">,
+  company: Doc<"companies">,
+) {
+  if (invoice.invoiceProfileId) {
+    const selectedProfile = await ctx.db.get(invoice.invoiceProfileId);
+    if (selectedProfile) return selectedProfile;
+  }
+  return await resolveInvoiceProfileForCompany(ctx, company);
+}
+
+function sellerSnapshotFromProfile(profile: Doc<"invoiceProfiles">) {
+  return {
+    sellerLegalName: profile.legalName,
+    sellerAddressLines: [...profile.addressLines],
+    sellerPhone: profile.phone,
+    sellerEmail: profile.email,
+    sellerWebsite: profile.website,
+    sellerSlogan: profile.slogan,
+    sellerTaxId: profile.taxId,
+    sellerBankName: profile.bankName,
+    sellerBankAccountNumber: profile.bankAccountNumber,
+    sellerBankAccountName: profile.bankAccountName,
+    sellerBankLocation: profile.bankLocation,
+    sellerCurrency: profile.currency,
+    sellerCurrencyNote: profile.currencyNote,
+    sellerPaymentInstructions: profile.paymentInstructions,
+    sellerFooterText: profile.footerText,
+  } satisfies Partial<Doc<"invoices">>;
+}
+
 async function assertCanAccessInvoice(
   ctx: Ctx,
   user: Doc<"users">,
@@ -580,6 +632,7 @@ export const createDraftFromQuote = mutation({
 
     const company = await getCompanyOrThrow(ctx, quote.companyId);
     assertCanManageCompany(user, company);
+    const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
 
     const now = Date.now();
     const grandTotal = quote.monthlyGrandTotal;
@@ -588,6 +641,7 @@ export const createDraftFromQuote = mutation({
       sourceQuoteId: quote._id,
       sourceMonth: quote.sourceMonth,
       sourceReference: quote.quoteNumber,
+      invoiceProfileId: invoiceProfile?._id,
       createdBy: user._id,
       status: "draft",
       dueDate: args.dueDate,
@@ -710,9 +764,21 @@ export const issueInvoice = mutation({
     const now = Date.now();
     const invoiceNumber =
       invoice.invoiceNumber ?? (await nextInvoiceNumber(ctx, now));
+    const invoiceProfile = await resolveInvoiceProfileForIssue(
+      ctx,
+      invoice,
+      company,
+    );
+    const profilePatch = invoiceProfile
+      ? {
+          invoiceProfileId: invoice.invoiceProfileId ?? invoiceProfile._id,
+          ...sellerSnapshotFromProfile(invoiceProfile),
+        }
+      : {};
     await ctx.db.patch(args.invoiceId, {
       status: "issued",
       invoiceNumber,
+      ...profilePatch,
       issueDate: now,
       dueDate:
         invoice.dueDate ??

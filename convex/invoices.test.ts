@@ -219,6 +219,35 @@ async function issueInvoiceWithStatus(
   return invoiceId;
 }
 
+function invoiceProfileInput(overrides: Record<string, unknown> = {}) {
+  return {
+    name: "Somalia Invoice Profile",
+    isDefault: false,
+    isActive: true,
+    legalName: "HTG CLOUDS LIMITED",
+    slogan: "Built for us, Ready for the World.",
+    addressLines: [
+      "Airport road, Next to Ali Jimale Masque",
+      "Wadajir District",
+      "Mogadishu, Somalia",
+    ],
+    phone: "+252 61 5558484",
+    email: "finance@htgclouds.com",
+    website: "https://htgclouds.com/",
+    taxId: "TIN-123",
+    bankName: "Salaam Somali Bank",
+    bankAccountNumber: "33111777",
+    bankAccountName: "HTG CLOUDS LIMITED",
+    bankLocation: "MOGADISHU - SOMALIA",
+    currency: "USD",
+    currencyNote: "All fees are listed in USD",
+    paymentInstructions:
+      "PLEASE PAY BILLS ON DUE DATE BY DEPOSITING IT TO OUR SALAAM SOMALI BANK ACCOUNT.",
+    footerText: "Thank you for your business.",
+    ...overrides,
+  };
+}
+
 function mockRelaySuccess() {
   const fetchMock = vi.fn().mockResolvedValue(
     new Response(JSON.stringify({ success: true }), {
@@ -437,6 +466,51 @@ describe("invoices", () => {
     });
   });
 
+  it("stores the matching invoice profile on draft invoices", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const profileId = await asUser(t, s.ceo).mutation(
+      api.invoiceProfiles.createInvoiceProfile,
+      invoiceProfileInput({ countryId: s.countryA }),
+    );
+
+    const invoiceId = await createDraftForA(t, s);
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+
+    expect(invoice.invoiceProfileId).toBe(profileId);
+  });
+
+  it("stores the default invoice profile on drafts when no country match exists", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const profileId = await asUser(t, s.ceo).mutation(
+      api.invoiceProfiles.createInvoiceProfile,
+      invoiceProfileInput({ isDefault: true }),
+    );
+
+    const invoiceId = await createDraftForA(t, s);
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+
+    expect(invoice.invoiceProfileId).toBe(profileId);
+  });
+
+  it("creates draft invoices when no invoice profile exists", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    const invoiceId = await createDraftForA(t, s);
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+
+    expect(invoice.invoiceProfileId).toBeUndefined();
+    expect(invoice.status).toBe("draft");
+  });
+
   it("updates draft invoices and records an update event", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -497,6 +571,90 @@ describe("invoices", () => {
       "draft_created",
       "issued",
     ]);
+  });
+
+  it("snapshots seller fields when issuing with the selected invoice profile", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const profileId = await asUser(t, s.ceo).mutation(
+      api.invoiceProfiles.createInvoiceProfile,
+      invoiceProfileInput({ countryId: s.countryA }),
+    );
+    const invoiceId = await createDraftForA(t, s);
+
+    await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice).toMatchObject({
+      invoiceProfileId: profileId,
+      sellerLegalName: "HTG CLOUDS LIMITED",
+      sellerAddressLines: [
+        "Airport road, Next to Ali Jimale Masque",
+        "Wadajir District",
+        "Mogadishu, Somalia",
+      ],
+      sellerPhone: "+252 61 5558484",
+      sellerEmail: "finance@htgclouds.com",
+      sellerWebsite: "https://htgclouds.com/",
+      sellerSlogan: "Built for us, Ready for the World.",
+      sellerTaxId: "TIN-123",
+      sellerBankName: "Salaam Somali Bank",
+      sellerBankAccountNumber: "33111777",
+      sellerBankAccountName: "HTG CLOUDS LIMITED",
+      sellerBankLocation: "MOGADISHU - SOMALIA",
+      sellerCurrency: "USD",
+      sellerCurrencyNote: "All fees are listed in USD",
+      sellerPaymentInstructions:
+        "PLEASE PAY BILLS ON DUE DATE BY DEPOSITING IT TO OUR SALAAM SOMALI BANK ACCOUNT.",
+      sellerFooterText: "Thank you for your business.",
+    });
+  });
+
+  it("resolves and snapshots an invoice profile at issue time when a draft has no profile", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await createDraftForA(t, s);
+    const profileId = await asUser(t, s.ceo).mutation(
+      api.invoiceProfiles.createInvoiceProfile,
+      invoiceProfileInput({
+        countryId: s.countryA,
+        legalName: "HTG SOMALIA LIMITED",
+      }),
+    );
+
+    await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.invoiceProfileId).toBe(profileId);
+    expect(invoice.sellerLegalName).toBe("HTG SOMALIA LIMITED");
+  });
+
+  it("does not change issued invoice seller snapshot when the profile changes later", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const profileId = await asUser(t, s.ceo).mutation(
+      api.invoiceProfiles.createInvoiceProfile,
+      invoiceProfileInput({ countryId: s.countryA }),
+    );
+    const invoiceId = await createDraftForA(t, s);
+    await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+
+    await asUser(t, s.ceo).mutation(api.invoiceProfiles.updateInvoiceProfile, {
+      profileId,
+      ...invoiceProfileInput({
+        countryId: s.countryA,
+        legalName: "CHANGED LEGAL NAME",
+      }),
+    });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.sellerLegalName).toBe("HTG CLOUDS LIMITED");
   });
 
   it("sets a default Net 7 due date when issuing an invoice without a due date", async () => {
@@ -1308,6 +1466,10 @@ describe("invoices", () => {
   it("sends an issued invoice through the relay", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
+    await asUser(t, s.ceo).mutation(
+      api.invoiceProfiles.createInvoiceProfile,
+      invoiceProfileInput({ countryId: s.countryA }),
+    );
     const invoiceId = await issueDraftForA(t, s);
     const fetchMock = mockRelaySuccess();
 
@@ -1358,6 +1520,10 @@ describe("invoices", () => {
       billingEmail: "billing-a@example.com",
       grandTotal: 20,
       balanceDue: 20,
+      sellerLegalName: "HTG CLOUDS LIMITED",
+      sellerBankAccountNumber: "33111777",
+      sellerPaymentInstructions:
+        "PLEASE PAY BILLS ON DUE DATE BY DEPOSITING IT TO OUR SALAAM SOMALI BANK ACCOUNT.",
     });
     expect(payload.invoice.lineItems[0]).toMatchObject({
       itemName: "ECS Small",
