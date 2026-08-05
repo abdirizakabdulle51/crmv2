@@ -174,7 +174,55 @@ describe("InvoicePrintPage", () => {
     renderPrintPage();
 
     expect(screen.queryByText(/Region:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Region")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Region totals")).not.toBeInTheDocument();
+  });
+
+  it("shows one invoice-level region when all line items use the same region", () => {
+    mocks.invoice = invoice({
+      lineItems: [
+        {
+          catalogItemId: "catalog-1" as Id<"serviceCatalog">,
+          itemName: "EIP - Active",
+          serviceCategory: "EIP",
+          billingUnit: "per IP/month",
+          quantity: 1,
+          monthlyUnitPrice: 5,
+          monthlyTotal: 5,
+          yearlyTotal: 60,
+          regionId: "hoa-mog-2",
+          regionName: "Hoa-Mogadishu-2",
+        },
+        {
+          catalogItemId: "catalog-2" as Id<"serviceCatalog">,
+          itemName: "S6_large.1",
+          serviceCategory: "ECS",
+          billingUnit: "per instance/month",
+          quantity: 1,
+          monthlyUnitPrice: 8.025,
+          monthlyTotal: 8.03,
+          yearlyTotal: 96.3,
+          regionId: "hoa-mog-2",
+          regionName: "Hoa-Mogadishu-2",
+        },
+      ],
+      subtotal: 13.03,
+      monthlyTotal: 13.03,
+      grandTotal: 13.03,
+      balanceDue: 13.03,
+    });
+
+    renderPrintPage();
+
+    const metadata = screen.getByText("Reference").closest("dl");
+    expect(metadata).not.toBeNull();
+    expect(within(metadata as HTMLElement).getByText("Region")).toBeInTheDocument();
+    expect(
+      within(metadata as HTMLElement).getByText("Hoa-Mogadishu-2"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Region: Hoa-Mogadishu-2")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Region totals")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Invoice total")).toHaveTextContent("$ 13.03");
   });
 
   it("shows region information and totals when line items include region metadata", () => {

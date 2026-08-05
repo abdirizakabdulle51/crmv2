@@ -125,6 +125,28 @@ function buildRegionTotals(lineItems: InvoiceLineItem[]) {
   return [...totals.entries()].map(([label, total]) => ({ label, total }));
 }
 
+type RegionSummary =
+  | { kind: "none" }
+  | { kind: "single"; label: string }
+  | { kind: "mixed" };
+
+function invoiceRegionSummary(lineItems: InvoiceLineItem[]): RegionSummary {
+  if (!lineItems.some(hasLineItemRegion)) {
+    return { kind: "none" };
+  }
+
+  const labels = lineItems.map(lineItemRegionLabel);
+  const uniqueLabels = new Set(labels);
+  const onlyAssignedSingleRegion =
+    uniqueLabels.size === 1 && !uniqueLabels.has("Unassigned");
+
+  if (onlyAssignedSingleRegion) {
+    return { kind: "single", label: labels[0] };
+  }
+
+  return { kind: "mixed" };
+}
+
 function sellerDetails(invoice: Invoice) {
   return {
     legalName: invoice.sellerLegalName ?? FALLBACK_SELLER.legalName,
@@ -295,7 +317,9 @@ function InvoicePrintContent() {
     invoice.status === "draft" ? "Draft Preview" : `Invoice ${invoiceNumber}`;
   const dueSource = invoice.dueDate ?? invoice.issueDate ?? invoice.createdAt;
   const seller = sellerDetails(invoice);
-  const showRegionBreakdown = invoice.lineItems.some(hasLineItemRegion);
+  const regionSummary = invoiceRegionSummary(invoice.lineItems);
+  const showSingleRegion = regionSummary.kind === "single";
+  const showRegionBreakdown = regionSummary.kind === "mixed";
   const regionTotals = showRegionBreakdown
     ? buildRegionTotals(invoice.lineItems)
     : [];
@@ -684,6 +708,12 @@ function InvoicePrintContent() {
               <dt>Reference</dt>
               <dd>{referenceLabel(invoice)}</dd>
             </div>
+            {showSingleRegion ? (
+              <div>
+                <dt>Region</dt>
+                <dd>{regionSummary.label}</dd>
+              </div>
+            ) : null}
           </dl>
 
           <table className="invoice-table">
