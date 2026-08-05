@@ -165,6 +165,32 @@ async function createSubmittedExpense(
   return expenseId;
 }
 
+async function createReceiptRequiredCategory(
+  t: ReturnType<typeof convexTest>,
+  s: Seed,
+) {
+  return await asUser(t, s.ceo).mutation(api.expenses.createExpenseCategory, {
+    name: "Receipt Required",
+    code: "RECEIPT_REQUIRED",
+    requiresReceipt: true,
+  });
+}
+
+async function uploadReceipt(
+  t: ReturnType<typeof convexTest>,
+  s: Seed,
+  expenseId: Id<"expenseRequests">,
+  user: Doc<"users"> = s.amA,
+) {
+  return await asUser(t, user).mutation(api.expenses.saveReceiptMetadata, {
+    expenseId,
+    storageId: await storeTestFile(t),
+    fileName: "receipt.pdf",
+    mimeType: "application/pdf",
+    size: 1024,
+  });
+}
+
 describe("expenses", () => {
   it("allows an Account Manager to create and submit own expense", async () => {
     const t = convexTest(schema, modules);
@@ -366,6 +392,88 @@ describe("expenses", () => {
       "approved",
       "marked_paid",
     ]);
+  });
+
+  it("blocks submitting receipt-required expenses until a receipt is uploaded", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const requiredCategory = await createReceiptRequiredCategory(t, s);
+    const expenseId = await createDraftExpense(t, s, s.amA, {
+      categoryId: requiredCategory,
+    });
+
+    await expect(
+      asUser(t, s.amA).mutation(api.expenses.submitExpenseRequest, {
+        expenseId,
+      }),
+    ).rejects.toThrow(
+      "A receipt is required before this expense can be submitted.",
+    );
+
+    await uploadReceipt(t, s, expenseId);
+    await asUser(t, s.amA).mutation(api.expenses.submitExpenseRequest, {
+      expenseId,
+    });
+
+    const expense = await asUser(t, s.amA).query(
+      api.expenses.getExpenseRequest,
+      { expenseId },
+    );
+    expect(expense.status).toBe("submitted");
+  });
+
+  it("blocks approving receipt-required expenses until a receipt is uploaded", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const requiredCategory = await createReceiptRequiredCategory(t, s);
+    const expenseId = await createDraftExpense(t, s, s.amA, {
+      categoryId: requiredCategory,
+    });
+    await uploadReceipt(t, s, expenseId);
+    await asUser(t, s.amA).mutation(api.expenses.submitExpenseRequest, {
+      expenseId,
+    });
+    const receipts = await asUser(t, s.amA).query(api.expenses.listReceipts, {
+      expenseId,
+    });
+    await asUser(t, s.amA).mutation(api.expenses.archiveReceipt, {
+      receiptId: receipts[0]._id,
+    });
+
+    await expect(
+      asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
+        expenseId,
+      }),
+    ).rejects.toThrow(
+      "A receipt is required before this expense can be approved.",
+    );
+
+    await uploadReceipt(t, s, expenseId);
+    await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
+      expenseId,
+    });
+
+    const expense = await asUser(t, s.ceo).query(
+      api.expenses.getExpenseRequest,
+      { expenseId },
+    );
+    expect(expense.status).toBe("approved");
+  });
+
+  it("keeps non-receipt-required categories unchanged", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await createSubmittedExpense(t, s);
+
+    await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
+      expenseId,
+    });
+
+    const expense = await asUser(t, s.ceo).query(
+      api.expenses.getExpenseRequest,
+      { expenseId },
+    );
+    expect(expense.status).toBe("approved");
   });
 
   it("enforces category create and update permissions", async () => {

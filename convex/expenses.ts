@@ -139,6 +139,14 @@ async function assertActiveCategory(
   return category;
 }
 
+async function countActiveReceipts(ctx: Ctx, expenseId: Id<"expenseRequests">) {
+  const receipts = await ctx.db
+    .query("expenseReceipts")
+    .withIndex("by_expense", (q) => q.eq("expenseId", expenseId))
+    .collect();
+  return receipts.filter((receipt) => receipt.archivedAt === undefined).length;
+}
+
 async function getExpenseOrThrow(ctx: Ctx, expenseId: Id<"expenseRequests">) {
   const expense = await ctx.db.get(expenseId);
   if (!expense) {
@@ -376,6 +384,25 @@ async function insertExpenseEvent(
   });
 }
 
+async function assertReceiptRequirementSatisfied(
+  ctx: Ctx,
+  expense: Doc<"expenseRequests">,
+  action: "submit" | "approve",
+) {
+  const category = await getCategoryOrThrow(ctx, expense.categoryId);
+  if (!category.requiresReceipt) {
+    return;
+  }
+  const activeReceiptCount = await countActiveReceipts(ctx, expense._id);
+  if (activeReceiptCount > 0) {
+    return;
+  }
+  throw new ConvexError({
+    code: "BAD_REQUEST",
+    message: `A receipt is required before this expense can be ${action === "submit" ? "submitted" : "approved"}.`,
+  });
+}
+
 export const listExpenseCategories = query({
   args: { includeInactive: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
@@ -575,6 +602,7 @@ export const submitExpenseRequest = mutation({
         message: "Only the requester can submit this expense",
       });
     }
+    await assertReceiptRequirementSatisfied(ctx, expense, "submit");
     const now = Date.now();
     await ctx.db.patch(args.expenseId, {
       status: "submitted",
@@ -601,6 +629,7 @@ export const approveExpenseRequest = mutation({
     const expense = await getExpenseOrThrow(ctx, args.expenseId);
     assertExpenseStatus(expense, "submitted", "approved");
     await assertCanApproveExpense(ctx, user, expense);
+    await assertReceiptRequirementSatisfied(ctx, expense, "approve");
     const now = Date.now();
     const note = normalizeOptionalText(args.note);
     await ctx.db.patch(args.expenseId, {

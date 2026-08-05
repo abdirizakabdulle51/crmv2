@@ -467,6 +467,9 @@ function NewExpenseDialog({
   const [vendor, setVendor] = useState("");
   const [companyId, setCompanyId] = useState("none");
   const [description, setDescription] = useState("");
+  const selectedCategory = categories.find(
+    (category) => category._id === categoryId,
+  );
 
   const resetForm = () => {
     setTitle("");
@@ -557,6 +560,12 @@ function NewExpenseDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                {selectedCategory?.requiresReceipt ? (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                    This category requires a receipt before the expense can be
+                    submitted or approved.
+                  </p>
+                ) : null}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="expense-date">Expense date</Label>

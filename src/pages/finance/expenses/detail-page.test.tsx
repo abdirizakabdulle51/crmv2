@@ -124,12 +124,17 @@ function crmUser(
   };
 }
 
-function category(id: string, name: string): Doc<"expenseCategories"> {
+function category(
+  id: string,
+  name: string,
+  requiresReceipt = false,
+): Doc<"expenseCategories"> {
   return {
     _id: id as Id<"expenseCategories">,
     _creationTime: 1,
     name,
     isActive: true,
+    requiresReceipt,
     createdBy: "ceo" as Id<"users">,
     createdAt: 1,
     updatedAt: 1,
@@ -391,6 +396,27 @@ describe("ExpenseDetailPage", () => {
     );
   });
 
+  it("shows receipt-required hints on detail and edit views", async () => {
+    const user = userEvent.setup();
+    mocks.categories = [category("category-1", "Travel", true)];
+    renderDetailPage();
+
+    expect(screen.getAllByText(/Receipt required/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        "This expense category requires a receipt. Upload a receipt before submitting or approving this expense.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit Draft" }));
+
+    expect(
+      screen.getByText(
+        "This category requires a receipt before the expense can be submitted or approved.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows approve and reject for Country GM on submitted expenses", async () => {
     const user = userEvent.setup();
     mocks.currentUser = crmUser("gm", "country_gm", "GM");
@@ -583,12 +609,16 @@ describe("ExpenseDetailPage", () => {
 
   it("shows backend errors as friendly toasts", async () => {
     const user = userEvent.setup();
-    mocks.submitExpenseRequest.mockRejectedValueOnce(new Error("Denied"));
+    mocks.submitExpenseRequest.mockRejectedValueOnce(
+      new Error("A receipt is required before this expense can be submitted."),
+    );
 
     renderDetailPage();
 
     await user.click(screen.getByRole("button", { name: "Submit" }));
 
-    expect(mocks.toastError).toHaveBeenCalledWith("Denied");
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "A receipt is required before this expense can be submitted.",
+    );
   });
 });

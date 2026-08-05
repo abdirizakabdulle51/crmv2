@@ -81,12 +81,14 @@ function category(
   id: string,
   name: string,
   isActive = true,
+  requiresReceipt = false,
 ): Doc<"expenseCategories"> {
   return {
     _id: id as Id<"expenseCategories">,
     _creationTime: 1,
     name,
     isActive,
+    requiresReceipt,
     createdBy: "user-1" as Id<"users">,
     createdAt: 1,
     updatedAt: 1,
@@ -264,6 +266,24 @@ describe("ExpensesPage", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/finance/expenses/expense-new",
     );
+  });
+
+  it("shows a receipt-required hint in the new expense dialog", async () => {
+    const user = userEvent.setup();
+    mocks.categories = [
+      category("category-1", "Travel"),
+      category("category-2", "Customer Visit", true, true),
+    ];
+    renderExpensesPage();
+
+    await user.click(screen.getByRole("button", { name: "New Expense" }));
+    await chooseSelectOption(/Expense category/i, "Customer Visit");
+
+    expect(
+      screen.getByText(
+        "This category requires a receipt before the expense can be submitted or approved.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows empty category guidance and disables new expense", () => {
