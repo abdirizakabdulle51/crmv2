@@ -202,6 +202,12 @@ function renderDetailPage() {
   );
 }
 
+function expectDetailValue(label: string, value: string) {
+  const detail = screen.getByText(label).parentElement;
+  expect(detail).toBeTruthy();
+  expect(within(detail as HTMLElement).getByText(value)).toBeInTheDocument();
+}
+
 describe("ExpenseDetailPage", () => {
   beforeEach(() => {
     mocks.currentUser = crmUser("am", "account_manager", "Amina");
@@ -237,6 +243,71 @@ describe("ExpenseDetailPage", () => {
     expect(screen.getByText("Taxi to customer meeting")).toBeInTheDocument();
     expect(screen.getByText("Expense request created.")).toBeInTheDocument();
     expect(screen.getByText(/By Amina/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["draft", {}],
+    ["submitted", { submittedAt: Date.UTC(2026, 7, 5, 9) }],
+  ] as const)(
+    "shows empty workflow actors for %s expenses before actions happen",
+    (_statusLabel, overrides) => {
+      mocks.expense = expense({
+        status: _statusLabel,
+        ...overrides,
+      });
+
+      renderDetailPage();
+
+      expectDetailValue("Approved By", "-");
+      expectDetailValue("Rejected By", "-");
+      expectDetailValue("Paid By", "-");
+      expect(screen.queryByText("Unknown user")).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows approved actor only after approval has happened", () => {
+    mocks.expense = expense({
+      status: "approved",
+      approvedBy: "gm" as Id<"users">,
+      approvedAt: Date.UTC(2026, 7, 5, 10),
+    });
+
+    renderDetailPage();
+
+    expectDetailValue("Approved By", "GM");
+    expectDetailValue("Rejected By", "-");
+    expectDetailValue("Paid By", "-");
+  });
+
+  it("shows unknown user only when a rejected actor cannot be resolved", () => {
+    mocks.expense = expense({
+      status: "rejected",
+      rejectedBy: "missing-user" as Id<"users">,
+      rejectedAt: Date.UTC(2026, 7, 5, 10),
+      rejectionReason: "No receipt",
+    });
+
+    renderDetailPage();
+
+    expectDetailValue("Approved By", "-");
+    expectDetailValue("Rejected By", "Unknown user");
+    expectDetailValue("Paid By", "-");
+  });
+
+  it("shows paid actor after payment has happened", () => {
+    mocks.expense = expense({
+      status: "paid",
+      approvedBy: "gm" as Id<"users">,
+      approvedAt: Date.UTC(2026, 7, 5, 10),
+      paidBy: "ceo" as Id<"users">,
+      paidAt: Date.UTC(2026, 7, 5, 11),
+    });
+
+    renderDetailPage();
+
+    expectDetailValue("Approved By", "GM");
+    expectDetailValue("Rejected By", "-");
+    expectDetailValue("Paid By", "CEO");
   });
 
   it("submits a draft expense for the requester", async () => {

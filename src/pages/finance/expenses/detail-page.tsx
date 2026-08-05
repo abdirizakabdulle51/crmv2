@@ -132,6 +132,14 @@ function userDisplay(user?: Doc<"users">) {
   return user?.name || user?.email || "Unknown user";
 }
 
+function actionUserDisplay(
+  userId: Id<"users"> | undefined,
+  userMap: Map<Id<"users">, Doc<"users">>,
+) {
+  if (!userId) return "-";
+  return userDisplay(userMap.get(userId));
+}
+
 function isAdminRole(role: Doc<"users">["role"] | undefined) {
   return role === "ceo" || role === "head_of_business";
 }
@@ -410,21 +418,15 @@ export default function ExpenseDetailPage() {
             <Detail label="Submitted" value={formatDateTime(expense.submittedAt)} />
             <Detail
               label="Approved By"
-              value={userDisplay(
-                expense.approvedBy ? userMap.get(expense.approvedBy) : undefined,
-              )}
+              value={actionUserDisplay(expense.approvedBy, userMap)}
             />
             <Detail
               label="Rejected By"
-              value={userDisplay(
-                expense.rejectedBy ? userMap.get(expense.rejectedBy) : undefined,
-              )}
+              value={actionUserDisplay(expense.rejectedBy, userMap)}
             />
             <Detail
               label="Paid By"
-              value={userDisplay(
-                expense.paidBy ? userMap.get(expense.paidBy) : undefined,
-              )}
+              value={actionUserDisplay(expense.paidBy, userMap)}
             />
             <Detail label="Payment Method" value={expense.paymentMethod} />
             <Detail label="Payment Reference" value={expense.paymentReference} />
