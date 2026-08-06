@@ -19,6 +19,7 @@ export type UsageHint = {
 
 export type UsageHintLineItem = {
   label: string;
+  serviceCategory?: string;
   quantity: number;
   pricing: UsageHintPricing;
   suggestedCatalogItemId?: Id<"serviceCatalog">;
@@ -202,7 +203,10 @@ function findCatalogItemForHint(
     return itemName
       ? catalog.find(
           (item) =>
-            item.serviceCategory === "EIP Bandwidth" &&
+            (item.serviceCategory === "EIP Bandwidth" ||
+              item.serviceCategory === "EIP (bandwidth)" ||
+              (item.serviceCategory === "EIP" &&
+                item.itemName.toLowerCase().includes("mbps"))) &&
             item.itemName === itemName,
         )
       : undefined;
@@ -216,6 +220,26 @@ function findCatalogItemForHint(
 
 function normalizeCatalogMatch(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isCceFlavorName(value: string) {
+  return normalizeCatalogMatch(value).startsWith("s2");
+}
+
+function findEcsCatalogItemForFlavor(
+  flavorName: string,
+  catalog: UsageHintCatalogItem[],
+) {
+  const normalizedFlavor = normalizeCatalogMatch(flavorName);
+  const expectedCategories = isCceFlavorName(flavorName)
+    ? ["ECS-CCE", "ECS"]
+    : ["ECS"];
+
+  return catalog.find(
+    (item) =>
+      expectedCategories.includes(item.serviceCategory) &&
+      normalizeCatalogMatch(item.itemName) === normalizedFlavor,
+  );
 }
 
 function optionalRegionFields(source: {
@@ -256,7 +280,6 @@ export function buildUsageHintsForCompany(
   const ecsLineItems: UsageHintLineItem[] = [];
   const evsLineItems: UsageHintLineItem[] = [];
   const wafLineItems: UsageHintLineItem[] = [];
-  const ecsCatalog = catalog.filter((item) => item.serviceCategory === "ECS");
   const evsCatalog = catalog.filter((item) => item.serviceCategory === "EVS");
   const basicWafCatalogItem = catalog.find(
     (item) => item.serviceCategory === "WAF" && item.itemName === "Basic WAF",
@@ -322,13 +345,12 @@ export function buildUsageHintsForCompany(
         continue;
       }
 
-      const catalogItem = ecsCatalog.find(
-        (item) =>
-          item.itemName.toLowerCase() === flavor.flavorName.toLowerCase(),
-      );
+      const catalogItem = findEcsCatalogItemForFlavor(flavor.flavorName, catalog);
+      const serviceCategory = catalogItem?.serviceCategory ?? "ECS";
 
       ecsLineItems.push({
         label: flavor.flavorName,
+        ...(serviceCategory !== "ECS" ? { serviceCategory } : {}),
         quantity: flavor.count,
         pricing: catalogItem ? "auto" : "manual",
         ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
@@ -363,6 +385,13 @@ export function buildUsageHintsForCompany(
 
     for (const resource of tenantResources) {
       if (resource.used <= 0) {
+        continue;
+      }
+      if (
+        resource.serviceId === "cce" &&
+        resource.resource === "hybrid.resource.type.cce.cluster" &&
+        ecsLineItems.some((item) => item.serviceCategory === "ECS-CCE")
+      ) {
         continue;
       }
       if (
@@ -419,18 +448,43 @@ export function buildUsageHintsForCompany(
     const existingEcsHintIndex = hints.findIndex(
       (hint) => hint.serviceCategory === "ECS",
     );
+    const ecsOnlyLineItems = ecsLineItems.filter(
+      (item) => item.serviceCategory !== "ECS-CCE",
+    );
+    const cceLineItems = ecsLineItems.filter(
+      (item) => item.serviceCategory === "ECS-CCE",
+    );
     const ecsHint = {
       serviceCategory: "ECS",
-      quantity: ecsLineItems.reduce((sum, item) => sum + item.quantity, 0),
-      pricing: ecsLineItems.every((item) => item.pricing === "auto")
+      quantity: ecsOnlyLineItems.reduce((sum, item) => sum + item.quantity, 0),
+      pricing: ecsOnlyLineItems.every((item) => item.pricing === "auto")
         ? ("auto" as const)
         : ("manual" as const),
-      lineItems: ecsLineItems,
+      lineItems: ecsOnlyLineItems,
     };
-    if (existingEcsHintIndex >= 0) {
+    if (ecsOnlyLineItems.length > 0 && existingEcsHintIndex >= 0) {
       hints[existingEcsHintIndex] = ecsHint;
-    } else {
+    } else if (ecsOnlyLineItems.length > 0) {
       hints.unshift(ecsHint);
+    }
+
+    if (cceLineItems.length > 0) {
+      const existingCceHintIndex = hints.findIndex(
+        (hint) => hint.serviceCategory === "ECS-CCE",
+      );
+      const cceHint = {
+        serviceCategory: "ECS-CCE",
+        quantity: cceLineItems.reduce((sum, item) => sum + item.quantity, 0),
+        pricing: cceLineItems.every((item) => item.pricing === "auto")
+          ? ("auto" as const)
+          : ("manual" as const),
+        lineItems: cceLineItems,
+      };
+      if (existingCceHintIndex >= 0) {
+        hints[existingCceHintIndex] = cceHint;
+      } else {
+        hints.unshift(cceHint);
+      }
     }
   }
 
@@ -524,11 +578,12 @@ export function buildBulkUsagePreview(
     }
 
     for (const lineItem of lineItems) {
+      const serviceType = lineItem.serviceCategory ?? hint.serviceCategory;
       if (lineItem.pricing !== "auto" || !lineItem.suggestedCatalogItemId) {
         needsManualEntry.push({
-          serviceType: hint.serviceCategory,
+          serviceType,
           label: lineItem.label,
-          reason: `${hint.serviceCategory} ${lineItem.label} detected but has no catalog match - add manually.`,
+          reason: `${serviceType} ${lineItem.label} detected but has no catalog match - add manually.`,
         });
         continue;
       }
@@ -538,22 +593,22 @@ export function buildBulkUsagePreview(
       );
       if (!catalogItem || catalogItem.monthlyPrice == null) {
         needsManualEntry.push({
-          serviceType: hint.serviceCategory,
+          serviceType,
           label: lineItem.label,
-          reason: `${hint.serviceCategory} ${lineItem.label} detected but catalog pricing is unavailable - add manually.`,
+          reason: `${serviceType} ${lineItem.label} detected but catalog pricing is unavailable - add manually.`,
         });
         continue;
       }
 
       rows.push({
-        serviceType: hint.serviceCategory,
+        serviceType,
         catalogItemId: catalogItem._id,
         catalogItemName: catalogItem.itemName,
         quantity: lineItem.quantity,
         amount: lineItem.quantity * catalogItem.monthlyPrice,
         alreadyLogged: existingKeys.has(
           usagePreviewKey({
-            serviceType: hint.serviceCategory,
+            serviceType,
             catalogItemId: catalogItem._id,
             ...optionalRegionFields(lineItem),
           }),

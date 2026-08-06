@@ -274,6 +274,91 @@ describe("buildUsageHintsForCompany", () => {
     });
   });
 
+  it("maps EIP bandwidth tiers when catalog stores Mbps items under EIP", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [
+            { serviceId: "vpc", resource: "bandwidth_size", used: 20 },
+          ],
+        },
+      ],
+      [
+        catalogItem("eip-bw-1", "EIP", "1 - 5 Mbps"),
+        catalogItem("eip-bw-2", "EIP", "6 - 50 Mbps"),
+        catalogItem("eip-bw-3", "EIP", "51 - 200 Mbps"),
+      ],
+    );
+
+    expect(hints).toContainEqual({
+      serviceCategory: "EIP (bandwidth)",
+      quantity: 20,
+      pricing: "auto",
+      suggestedCatalogItemId: "eip-bw-2",
+    });
+  });
+
+  it("auto-prices CCE node flavors from ECS-CCE catalog SKUs and skips duplicate cluster manual note", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [
+            {
+              serviceId: "cce",
+              resource: "hybrid.resource.type.cce.cluster",
+              used: 8,
+            },
+          ],
+          ecsFlavors: [
+            { flavorName: "s2.xlarge.2", vcpus: 4, ramMb: 8192, count: 5 },
+            { flavorName: "S2.2xlarge.2", vcpus: 8, ramMb: 16384, count: 17 },
+            { flavorName: "S6_large.1", vcpus: 2, ramMb: 2048, count: 1 },
+          ],
+        },
+      ],
+      [
+        catalogItem("cce-s2x", "ECS-CCE", "S2_xlarge.2"),
+        catalogItem("cce-s22x", "ECS-CCE", "S2.2xlarge.2"),
+        catalogItem("ecs-s6", "ECS", "S6_large.1"),
+      ],
+    );
+
+    expect(hints.find((hint) => hint.serviceCategory === "ECS-CCE")).toEqual({
+      serviceCategory: "ECS-CCE",
+      quantity: 22,
+      pricing: "auto",
+      lineItems: [
+        {
+          label: "s2.xlarge.2",
+          serviceCategory: "ECS-CCE",
+          quantity: 5,
+          pricing: "auto",
+          suggestedCatalogItemId: "cce-s2x",
+        },
+        {
+          label: "S2.2xlarge.2",
+          serviceCategory: "ECS-CCE",
+          quantity: 17,
+          pricing: "auto",
+          suggestedCatalogItemId: "cce-s22x",
+        },
+      ],
+    });
+    expect(hints.find((hint) => hint.serviceCategory === "ECS")).toEqual({
+      serviceCategory: "ECS",
+      quantity: 1,
+      pricing: "auto",
+      lineItems: [
+        {
+          label: "S6_large.1",
+          quantity: 1,
+          pricing: "auto",
+          suggestedCatalogItemId: "ecs-s6",
+        },
+      ],
+    });
+  });
+
   it("turns ECS flavor breakdowns into matched auto lines and unmatched manual lines", () => {
     const hints = buildUsageHintsForCompany(
       [
