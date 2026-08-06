@@ -399,7 +399,9 @@ function InvoicePrintContent() {
         .invoice-page {
           background: #fff;
           box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
-          height: 297mm;
+          display: flex;
+          flex-direction: column;
+          min-height: 297mm;
           margin: 0 auto 20px;
           padding: 16mm 14mm 18mm;
           position: relative;
@@ -496,6 +498,11 @@ function InvoicePrintContent() {
           border-collapse: collapse;
           font-size: 13px;
           width: 100%;
+        }
+
+        .invoice-table tr {
+          break-inside: avoid;
+          page-break-inside: avoid;
         }
 
         .invoice-table th {
@@ -598,12 +605,10 @@ function InvoicePrintContent() {
 
         .payment-note {
           border-top: 1px solid #d1d5db;
-          bottom: 34mm;
           font-size: 13px;
-          left: 14mm;
           line-height: 1.45;
+          margin-top: 16mm;
           padding-top: 5mm;
-          position: absolute;
           width: 118mm;
         }
 
@@ -628,15 +633,12 @@ function InvoicePrintContent() {
         .invoice-footer {
           align-items: center;
           border-top: 1px solid #111827;
-          bottom: 15mm;
           display: flex;
           font-size: 13px;
           font-weight: 600;
           justify-content: space-between;
-          left: 14mm;
+          margin-top: auto;
           padding-top: 8px;
-          position: absolute;
-          right: 14mm;
         }
 
         .bank-details {
