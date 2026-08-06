@@ -50,6 +50,11 @@ type UsageHintTenant = {
     totalGb: number;
     count: number;
   }[];
+  eipBandwidths?: {
+    tierName: string;
+    count: number;
+    totalMbps: number;
+  }[];
 };
 
 type UsageHintCatalogItem = {
@@ -279,6 +284,7 @@ export function buildUsageHintsForCompany(
   const totals = new Map<string, UsageHint>();
   const ecsLineItems: UsageHintLineItem[] = [];
   const evsLineItems: UsageHintLineItem[] = [];
+  const eipBandwidthLineItems: UsageHintLineItem[] = [];
   const wafLineItems: UsageHintLineItem[] = [];
   const evsCatalog = catalog.filter((item) => item.serviceCategory === "EVS");
   const basicWafCatalogItem = catalog.find(
@@ -383,6 +389,30 @@ export function buildUsageHintsForCompany(
       });
     }
 
+    for (const bandwidth of tenant.eipBandwidths ?? []) {
+      if (bandwidth.count <= 0) {
+        continue;
+      }
+
+      const normalizedTierName = normalizeCatalogMatch(bandwidth.tierName);
+      const catalogItem = catalog.find(
+        (item) =>
+          normalizeCatalogMatch(item.itemName) === normalizedTierName &&
+          (item.serviceCategory.toLowerCase().includes("bandwidth") ||
+            item.serviceCategory.toLowerCase().includes("eip") ||
+            item.itemName.toLowerCase().includes("mbps")),
+      );
+
+      eipBandwidthLineItems.push({
+        label: bandwidth.tierName,
+        quantity: bandwidth.count,
+        pricing: catalogItem ? "auto" : "manual",
+        ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
+        ...(!catalogItem ? { needsManualPricing: true } : {}),
+        ...tenantRegionFields,
+      });
+    }
+
     for (const resource of tenantResources) {
       if (resource.used <= 0) {
         continue;
@@ -399,6 +429,13 @@ export function buildUsageHintsForCompany(
         (resource.resource === "waf.instance.100" ||
           resource.resource === "waf.instance.500" ||
           (resource.resource === "waf.instance" && hasWafTierSignal))
+      ) {
+        continue;
+      }
+      if (
+        resource.serviceId === "vpc" &&
+        resource.resource === "bandwidth_size" &&
+        eipBandwidthLineItems.length > 0
       ) {
         continue;
       }
@@ -504,6 +541,28 @@ export function buildUsageHintsForCompany(
       hints[existingEvsHintIndex] = evsHint;
     } else {
       hints.unshift(evsHint);
+    }
+  }
+
+  if (eipBandwidthLineItems.length > 0) {
+    const existingEipBandwidthHintIndex = hints.findIndex(
+      (hint) => hint.serviceCategory === "EIP (bandwidth)",
+    );
+    const eipBandwidthHint = {
+      serviceCategory: "EIP (bandwidth)",
+      quantity: eipBandwidthLineItems.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      ),
+      pricing: eipBandwidthLineItems.every((item) => item.pricing === "auto")
+        ? ("auto" as const)
+        : ("manual" as const),
+      lineItems: eipBandwidthLineItems,
+    };
+    if (existingEipBandwidthHintIndex >= 0) {
+      hints[existingEipBandwidthHintIndex] = eipBandwidthHint;
+    } else {
+      hints.push(eipBandwidthHint);
     }
   }
 
@@ -693,6 +752,15 @@ export const bulkUpsert = internalMutation({
               volumeType: v.string(),
               totalGb: v.number(),
               count: v.number(),
+            }),
+          ),
+        ),
+        eipBandwidths: v.optional(
+          v.array(
+            v.object({
+              tierName: v.string(),
+              count: v.number(),
+              totalMbps: v.number(),
             }),
           ),
         ),

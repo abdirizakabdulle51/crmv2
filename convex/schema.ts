@@ -144,6 +144,15 @@ export default defineSchema({
         }),
       ),
     ),
+    eipBandwidths: v.optional(
+      v.array(
+        v.object({
+          tierName: v.string(),
+          count: v.number(),
+          totalMbps: v.number(),
+        }),
+      ),
+    ),
     lastSyncedAt: v.number(),
     linkedCompanyId: v.optional(v.id("companies")),
   })

@@ -322,6 +322,55 @@ describe("buildUsageHintsForCompany", () => {
     });
   });
 
+  it("auto-prices EIP bandwidth native tier breakdown and skips aggregate bandwidth warning", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [{ serviceId: "vpc", resource: "bandwidth_size", used: 260 }],
+          eipBandwidths: [
+            { tierName: "1 - 5 Mbps", count: 3, totalMbps: 9 },
+            { tierName: "6 - 50 Mbps", count: 7, totalMbps: 140 },
+            { tierName: "51 - 200 Mbps", count: 2, totalMbps: 111 },
+          ],
+        },
+      ],
+      [
+        catalogItem("eip-bw-1", "EIP Bandwidth", "1 - 5 Mbps"),
+        catalogItem("eip-bw-2", "EIP", "6 - 50 Mbps"),
+        catalogItem("eip-bw-3", "Network Bandwidth", "51 - 200 Mbps"),
+      ],
+    );
+
+    expect(hints).toContainEqual({
+      serviceCategory: "EIP (bandwidth)",
+      quantity: 12,
+      pricing: "auto",
+      lineItems: [
+        {
+          label: "1 - 5 Mbps",
+          quantity: 3,
+          pricing: "auto",
+          suggestedCatalogItemId: "eip-bw-1",
+        },
+        {
+          label: "6 - 50 Mbps",
+          quantity: 7,
+          pricing: "auto",
+          suggestedCatalogItemId: "eip-bw-2",
+        },
+        {
+          label: "51 - 200 Mbps",
+          quantity: 2,
+          pricing: "auto",
+          suggestedCatalogItemId: "eip-bw-3",
+        },
+      ],
+    });
+    expect(
+      hints.filter((hint) => hint.serviceCategory === "EIP (bandwidth)"),
+    ).toHaveLength(1);
+  });
+
   it("auto-prices CCE node flavors from ECS-CCE catalog SKUs and skips duplicate cluster manual note", () => {
     const hints = buildUsageHintsForCompany(
       [
