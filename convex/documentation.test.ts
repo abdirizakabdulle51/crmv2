@@ -394,6 +394,18 @@ describe("documentation", () => {
     expect(finance.group).toBe("Team Guide");
     expect(finance.visibility).toBe("public");
     expect(finance.content).toContain("Finance is where the CRM handles");
+    expect(finance.content).toContain("Income by Region / Data Center");
+    expect(finance.content).toContain("Export Region Income CSV");
+    expect(finance.content).toContain("Unassigned means the invoice is old");
+
+    const invoices = await asUser(t, users.am).query(
+      api.documentation.getBySlug,
+      { slug: "page-invoices" },
+    );
+    expect(invoices.content).toContain("Invoice Profiles live under Finance");
+    expect(invoices.content).toContain("Company country profile");
+    expect(invoices.content).toContain("Resource region and data center split");
+    expect(invoices.content).toContain("Hoa-Mogadishu-2");
 
     const secondRun = await t.mutation(
       internal.documentation.replaceNavigationSection,

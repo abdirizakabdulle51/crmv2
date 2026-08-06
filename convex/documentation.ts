@@ -981,6 +981,7 @@ The CRM creates a draft invoice from the accepted quote and takes a snapshot of:
 - Quote totals
 - Source month
 - Friendly quote reference, such as Q-2026-00001
+- Resource region or data center metadata, when usage has it
 
 The original quote relationship remains stored internally, but customers do not see internal system IDs.
 
@@ -1001,6 +1002,35 @@ Check:
 - Notes
 
 Warning: make sure the customer snapshot and line items are correct before issuing. After issuing, the invoice becomes locked.
+
+### Invoice profiles
+
+Invoice Profiles live under Finance -> Invoice Profiles.
+
+CEO and Head of Business can create and edit invoice profiles.
+
+Invoice profiles store the seller/business details used on official invoices:
+
+- Legal name
+- Country or region match
+- Address
+- Email
+- Phone
+- Website
+- Slogan
+- Bank details
+- Payment instructions
+- Footer text
+
+When an invoice is issued, the CRM selects the profile using this order:
+
+1. Company country profile.
+2. Default invoice profile.
+3. Legacy HTG fallback details.
+
+The selected seller, bank, and payment details are snapshotted onto the invoice when it is issued.
+
+Editing an invoice profile later affects future invoices only. It does not change invoices that were already issued.
 
 ### Step 5: Issue invoice
 
@@ -1023,6 +1053,28 @@ After issuing, click Print / Export PDF.
 This opens the customer-facing invoice print page. Use the browser print dialog to print or save as PDF.
 
 The printed invoice uses the locked invoice snapshot and displays friendly source/reference values, not internal IDs.
+
+### Resource region and data center split
+
+Usage rows can carry resource region or data center metadata.
+
+When that data exists:
+
+- Quote line items preserve the region/data center.
+- Invoice line items preserve the region/data center.
+- Invoice Detail shows a Region column.
+- Invoice Detail shows Region Totals.
+- Print / Export PDF shows the region cleanly.
+- The invoice PDF emailed to the customer also shows the region cleanly.
+
+If all invoice lines come from one region, the PDF can show one Region field near the invoice metadata.
+
+If multiple regions exist, the invoice shows Region Totals, such as:
+
+- Hoa-Mogadishu-2: $70
+- Mogadishu-region-hq3: $30
+
+Old invoices without region data may show no region, or they may appear as Unassigned in reports.
 
 ### Step 7: Send invoice email
 
@@ -1290,6 +1342,14 @@ Older invoices created before friendly quote references may show a blank referen
 
 This is expected. New invoices created from new quotes use friendly quote references such as Q-2026-00001.
 
+### One-region invoice
+
+If all line items are from Hoa-Mogadishu-2, the invoice can show Hoa-Mogadishu-2 once near the invoice metadata.
+
+### Multi-region invoice
+
+If one invoice includes Hoa-Mogadishu-2 and Mogadishu-region-hq3, the invoice detail and PDF show Region Totals so the customer and team can see the split.
+
 ### Invoice is overdue but customer already paid
 
 Record the payment immediately.
@@ -1459,9 +1519,10 @@ Use Finance Reports to review operational income and expense data.
 It includes:
 
 - Monthly income vs expenses.
+- Income by Region / Data Center.
 - Top expense categories.
 - Expense status summary.
-- CSV exports for invoice payments and paid expenses.
+- CSV exports for invoice payments, region income, and paid expenses.
 
 ## 3. Expense Workflow
 
@@ -1641,6 +1702,27 @@ This shows paid expenses grouped by category.
 
 Use it to see where operational spending is going.
 
+### Income by Region / Data Center
+
+This section shows allocated invoice payment income by resource region or data center.
+
+It shows:
+
+- Region / Data Center
+- Allocated Income
+- Payments
+- Invoices
+
+Important: invoice payments are recorded at invoice level. The CRM allocates region income proportionally using the invoice line item monthly totals.
+
+Example:
+
+- Invoice line totals: Hoa-Mogadishu-2 = $70 and Mogadishu-region-hq3 = $30.
+- Customer payment: $50.
+- Allocated income: Hoa-Mogadishu-2 = $35 and Mogadishu-region-hq3 = $15.
+
+Unassigned means the invoice is old, has no region metadata, or has no usable regional line totals.
+
 ### Expense Status Summary
 
 This shows how many expenses are in each status and the total amount per status:
@@ -1667,6 +1749,7 @@ Finance Reports includes CSV exports for finance/accounting work.
 Available exports:
 
 - **Export Invoice Payments CSV**
+- **Export Region Income CSV**
 - **Export Paid Expenses CSV**
 
 These exports are for accounting review and processing.
@@ -1688,6 +1771,30 @@ This export includes payment records such as:
 - Recorded at
 
 Old payment rows may have blank receiving bank fields if the payment was recorded before receiving bank details were added.
+
+### Region Income CSV
+
+This export includes one row per payment-region allocation.
+
+Use it when finance needs to understand invoice payment income by region or data center.
+
+It includes:
+
+- Payment date
+- Invoice number
+- Customer/company
+- Country
+- Region / Data Center
+- Allocated amount
+- Original payment amount
+- Payment method
+- Customer reference
+- Recorded by
+- Recorded at
+- Invoice status
+- Source reference
+
+Existing exports are unchanged. Invoice Payments CSV still exports payment records, and Paid Expenses CSV still exports paid expense records.
 
 ### Paid Expenses CSV
 
@@ -1752,6 +1859,12 @@ Expense records still store their currency, but reporting is designed for USD op
 Older invoice payments may not have receiving bank details because those fields were added later.
 
 This is expected for historical rows.
+
+### Region income shows Unassigned
+
+Unassigned means the invoice payment came from an old invoice, an invoice with no region metadata, or an invoice whose line items cannot be allocated by region.
+
+This is expected for historical invoice data.
 
 ### CSV export opens in Excel or LibreOffice
 
@@ -1832,8 +1945,18 @@ The expense becomes Paid and appears in Finance Reports and paid expense exports
 3. CEO/HOB may select a country filter if needed.
 4. Review Income, Expenses, Net, categories, and statuses.
 5. Click Export Invoice Payments CSV.
-6. Click Export Paid Expenses CSV.
-7. Send the CSV files to the accounting team or import them into the accounting workflow.
+6. Click Export Region Income CSV if finance needs region or data center income split.
+7. Click Export Paid Expenses CSV.
+8. Send the CSV files to the accounting team or import them into the accounting workflow.
+
+### Example 7: Review income by region
+
+1. Open Finance -> Finance Reports.
+2. Select the month range.
+3. Review Income by Region / Data Center.
+4. If the invoice is from Hoa-Mogadishu-2 only, that region appears with the allocated income.
+5. If the invoice includes Hoa-Mogadishu-2 and Mogadishu-region-hq3, both regions appear with their allocated income.
+6. If the invoice is old and has no region data, it appears as Unassigned.
 
 Remember: the export is operational CRM data. Accounting still completes final accounting treatment outside the CRM.`,
   },
