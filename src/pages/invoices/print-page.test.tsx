@@ -282,11 +282,14 @@ describe("InvoicePrintPage", () => {
 
     renderPrintPage();
 
-    expect(screen.getAllByText("Region: Hoa-Mogadishu-2")).toHaveLength(2);
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("Region")).toBeInTheDocument();
+    expect(within(table).getAllByText("Hoa-Mogadishu-2")).toHaveLength(2);
     expect(
-      screen.getByText("Region: Mogadishu-region-hq3"),
+      within(table).getByText("Mogadishu-region-hq3"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Region: Unassigned")).toBeInTheDocument();
+    expect(within(table).getByText("Unassigned")).toBeInTheDocument();
+    expect(screen.queryByText(/Region:/)).not.toBeInTheDocument();
 
     const regionTotals = screen.getByLabelText("Region totals");
     expect(within(regionTotals).getByText("Region Totals")).toBeInTheDocument();

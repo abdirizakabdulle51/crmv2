@@ -500,6 +500,10 @@ function InvoicePrintContent() {
           width: 100%;
         }
 
+        .invoice-table.has-region-column {
+          font-size: 12px;
+        }
+
         .invoice-table tr {
           break-inside: avoid;
           page-break-inside: avoid;
@@ -513,18 +517,44 @@ function InvoicePrintContent() {
           text-align: left;
         }
 
-        .invoice-table th:nth-child(2),
-        .invoice-table th:nth-child(3),
-        .invoice-table th:nth-child(4),
-        .invoice-table td:nth-child(2),
-        .invoice-table td:nth-child(3),
-        .invoice-table td:nth-child(4) {
+        .invoice-table:not(.has-region-column) th:nth-child(2),
+        .invoice-table:not(.has-region-column) th:nth-child(3),
+        .invoice-table:not(.has-region-column) th:nth-child(4),
+        .invoice-table:not(.has-region-column) td:nth-child(2),
+        .invoice-table:not(.has-region-column) td:nth-child(3),
+        .invoice-table:not(.has-region-column) td:nth-child(4),
+        .invoice-table.has-region-column th:nth-child(3),
+        .invoice-table.has-region-column th:nth-child(4),
+        .invoice-table.has-region-column th:nth-child(5),
+        .invoice-table.has-region-column td:nth-child(3),
+        .invoice-table.has-region-column td:nth-child(4),
+        .invoice-table.has-region-column td:nth-child(5) {
           text-align: right;
         }
 
         .invoice-table td {
           padding: 10px 0 6px;
           vertical-align: top;
+        }
+
+        .invoice-table.has-region-column th:nth-child(1) {
+          width: 36%;
+        }
+
+        .invoice-table.has-region-column th:nth-child(2) {
+          width: 20%;
+        }
+
+        .invoice-table.has-region-column th:nth-child(3) {
+          width: 13%;
+        }
+
+        .invoice-table.has-region-column th:nth-child(4) {
+          width: 14%;
+        }
+
+        .invoice-table.has-region-column th:nth-child(5) {
+          width: 17%;
         }
 
         .line-title {
@@ -536,11 +566,12 @@ function InvoicePrintContent() {
           color: #111827;
         }
 
-        .line-region {
+        .line-region-cell {
           color: #07999d;
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 600;
-          margin-top: 3px;
+          line-height: 1.35;
+          overflow-wrap: anywhere;
         }
 
         .invoice-summary-row {
@@ -718,10 +749,15 @@ function InvoicePrintContent() {
             ) : null}
           </dl>
 
-          <table className="invoice-table">
+          <table
+            className={`invoice-table${
+              showRegionBreakdown ? " has-region-column" : ""
+            }`}
+          >
             <thead>
               <tr>
                 <th>Description</th>
+                {showRegionBreakdown ? <th>Region</th> : null}
                 <th>Quantity</th>
                 <th>Unit Price</th>
                 <th>Amount</th>
@@ -735,12 +771,12 @@ function InvoicePrintContent() {
                     <div className="line-subtitle">
                       {item.serviceCategory || item.billingUnit}
                     </div>
-                    {showRegionBreakdown ? (
-                      <div className="line-region">
-                        Region: {lineItemRegionLabel(item)}
-                      </div>
-                    ) : null}
                   </td>
+                  {showRegionBreakdown ? (
+                    <td className="line-region-cell">
+                      {lineItemRegionLabel(item)}
+                    </td>
+                  ) : null}
                   <td>{formatQuantity(item.quantity)}</td>
                   <td>{formatUnitPrice(item.monthlyUnitPrice)}</td>
                   <td>{formatCurrency(item.monthlyTotal)}</td>
