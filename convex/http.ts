@@ -26,6 +26,7 @@ type ManageOneTenantInput = {
   resources?: ManageOneResourceInput[];
   ecsFlavors?: ManageOneEcsFlavorInput[];
   evsVolumeTypes?: ManageOneEvsVolumeTypeInput[];
+  eipBandwidths?: ManageOneEipBandwidthInput[];
 };
 
 type ManageOneResourceInput = {
@@ -46,6 +47,12 @@ type ManageOneEvsVolumeTypeInput = {
   volumeType: string;
   totalGb: number;
   count: number;
+};
+
+type ManageOneEipBandwidthInput = {
+  tierName: string;
+  count: number;
+  totalMbps: number;
 };
 
 type AiRecommendationSyncInput = {
@@ -371,7 +378,45 @@ function optionalEvsVolumeTypes(
   });
 }
 
-function normalizeTenant(value: unknown): ManageOneTenantInput {
+function optionalEipBandwidths(
+  tenant: Record<string, unknown>,
+): ManageOneEipBandwidthInput[] | undefined {
+  const value = tenant.eipBandwidths;
+  if (value == null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("eipBandwidths must be an array");
+  }
+
+  return value.map((bandwidthValue) => {
+    if (!isRecord(bandwidthValue)) {
+      throw new Error("Each eipBandwidth must be an object");
+    }
+
+    const tierName = bandwidthValue.tierName;
+    const count = bandwidthValue.count;
+    const totalMbps = bandwidthValue.totalMbps;
+
+    if (typeof tierName !== "string") {
+      throw new Error("eipBandwidths.tierName must be a string");
+    }
+    if (typeof count !== "number") {
+      throw new Error("eipBandwidths.count must be a number");
+    }
+    if (typeof totalMbps !== "number") {
+      throw new Error("eipBandwidths.totalMbps must be a number");
+    }
+
+    return {
+      tierName,
+      count,
+      totalMbps,
+    };
+  });
+}
+
+export function normalizeTenant(value: unknown): ManageOneTenantInput {
   if (!isRecord(value)) {
     throw new Error("Each tenant must be an object");
   }
@@ -423,6 +468,9 @@ function normalizeTenant(value: unknown): ManageOneTenantInput {
       : {}),
     ...(optionalEvsVolumeTypes(value) !== undefined
       ? { evsVolumeTypes: optionalEvsVolumeTypes(value) }
+      : {}),
+    ...(optionalEipBandwidths(value) !== undefined
+      ? { eipBandwidths: optionalEipBandwidths(value) }
       : {}),
   };
 }

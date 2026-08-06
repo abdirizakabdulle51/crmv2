@@ -127,8 +127,7 @@ describe("buildUsageHintsForCompany", () => {
         {
           serviceCategory: "EIP (bandwidth)",
           quantity: 20,
-          pricing: "auto",
-          suggestedCatalogItemId: "eip-bw-2",
+          pricing: "manual",
         },
         { serviceCategory: "WAF", quantity: 1, pricing: "manual" },
         {
@@ -212,69 +211,7 @@ describe("buildUsageHintsForCompany", () => {
     );
   });
 
-  it("maps raw EIP bandwidth Mbps values to real catalog tiers", () => {
-    const catalog = [
-      catalogItem("eip-bw-1", "EIP Bandwidth", "1 - 5 Mbps"),
-      catalogItem("eip-bw-2", "EIP Bandwidth", "6 - 50 Mbps"),
-      catalogItem("eip-bw-3", "EIP Bandwidth", "51 - 200 Mbps"),
-    ];
-
-    expect(
-      buildUsageHintsForCompany(
-        [
-          {
-            resources: [
-              { serviceId: "vpc", resource: "bandwidth_size", used: 5 },
-            ],
-          },
-        ],
-        catalog,
-      ),
-    ).toContainEqual({
-      serviceCategory: "EIP (bandwidth)",
-      quantity: 5,
-      pricing: "auto",
-      suggestedCatalogItemId: "eip-bw-1",
-    });
-
-    expect(
-      buildUsageHintsForCompany(
-        [
-          {
-            resources: [
-              { serviceId: "vpc", resource: "bandwidth_size", used: 6 },
-            ],
-          },
-        ],
-        catalog,
-      ),
-    ).toContainEqual({
-      serviceCategory: "EIP (bandwidth)",
-      quantity: 6,
-      pricing: "auto",
-      suggestedCatalogItemId: "eip-bw-2",
-    });
-
-    expect(
-      buildUsageHintsForCompany(
-        [
-          {
-            resources: [
-              { serviceId: "vpc", resource: "bandwidth_size", used: 200 },
-            ],
-          },
-        ],
-        catalog,
-      ),
-    ).toContainEqual({
-      serviceCategory: "EIP (bandwidth)",
-      quantity: 200,
-      pricing: "auto",
-      suggestedCatalogItemId: "eip-bw-3",
-    });
-  });
-
-  it("maps EIP bandwidth tiers when catalog stores Mbps items under EIP", () => {
+  it("keeps aggregate EIP bandwidth manual even when tier catalog items exist", () => {
     const hints = buildUsageHintsForCompany(
       [
         {
@@ -293,12 +230,11 @@ describe("buildUsageHintsForCompany", () => {
     expect(hints).toContainEqual({
       serviceCategory: "EIP (bandwidth)",
       quantity: 20,
-      pricing: "auto",
-      suggestedCatalogItemId: "eip-bw-2",
+      pricing: "manual",
     });
   });
 
-  it("maps EIP bandwidth tiers by normalized Mbps item name across catalog category variants", () => {
+  it("shows a diagnostic for aggregate EIP bandwidth without native tier breakdown", () => {
     const hints = buildUsageHintsForCompany(
       [
         {
@@ -313,22 +249,21 @@ describe("buildUsageHintsForCompany", () => {
         catalogItem("eip-bw-3", "Network", "51-200 mbps"),
       ],
     );
+    const preview = buildBulkUsagePreview(hints, [], []);
 
-    expect(hints).toContainEqual({
-      serviceCategory: "EIP (bandwidth)",
-      quantity: 32,
-      pricing: "auto",
-      suggestedCatalogItemId: "eip-bw-2",
+    expect(preview.needsManualEntry).toContainEqual({
+      serviceType: "EIP (bandwidth)",
+      label: "EIP (bandwidth)",
+      reason:
+        "Aggregate EIP bandwidth detected, but per-bandwidth tier breakdown is unavailable - re-run ManageOne sync or review manually.",
     });
   });
 
-  it("maps EIP bandwidth tiers when catalog item names include an EIP Bandwidth prefix", () => {
+  it("maps native EIP bandwidth tiers when catalog item names include an EIP Bandwidth prefix", () => {
     const hints = buildUsageHintsForCompany(
       [
         {
-          resources: [
-            { serviceId: "vpc", resource: "bandwidth_size", used: 32 },
-          ],
+          eipBandwidths: [{ tierName: "6 - 50 Mbps", count: 4, totalMbps: 32 }],
         },
       ],
       [
@@ -340,9 +275,16 @@ describe("buildUsageHintsForCompany", () => {
 
     expect(hints).toContainEqual({
       serviceCategory: "EIP (bandwidth)",
-      quantity: 32,
+      quantity: 4,
       pricing: "auto",
-      suggestedCatalogItemId: "eip-bw-2",
+      lineItems: [
+        {
+          label: "6 - 50 Mbps",
+          quantity: 4,
+          pricing: "auto",
+          suggestedCatalogItemId: "eip-bw-2",
+        },
+      ],
     });
   });
 

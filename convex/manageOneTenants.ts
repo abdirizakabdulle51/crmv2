@@ -155,7 +155,7 @@ const USAGE_HINT_RULES: HintRule[] = [
     serviceId: "vpc",
     resource: "bandwidth_size",
     serviceCategory: "EIP (bandwidth)",
-    pricing: "auto",
+    pricing: "manual",
   },
   {
     serviceId: "vpc",
@@ -630,6 +630,16 @@ export function buildBulkUsagePreview(
         : []);
 
     if (!lineItems.length && hint.pricing === "manual") {
+      if (hint.serviceCategory === "EIP (bandwidth)") {
+        needsManualEntry.push({
+          serviceType: hint.serviceCategory,
+          label: hint.serviceCategory,
+          reason:
+            "Aggregate EIP bandwidth detected, but per-bandwidth tier breakdown is unavailable - re-run ManageOne sync or review manually.",
+        });
+        continue;
+      }
+
       needsManualEntry.push({
         serviceType: hint.serviceCategory,
         label: hint.serviceCategory,
