@@ -55,4 +55,46 @@ describe("normalizeTenant", () => {
       },
     });
   });
+
+  it("preserves EVS disk managed fee and Cloud Bastion Host breakdowns", () => {
+    expect(
+      normalizeTenant({
+        vdcId: "vdc-waafi",
+        name: "WAAFI",
+        evsDiskManagedFees: {
+          count: 440,
+          resourceTypeName: "CLOUD_EVS_INSTANCE",
+        },
+        cloudBastionHosts: {
+          count: 1,
+          resourceTypeName: "CLOUD_CBH",
+          items: [
+            {
+              id: "cbh-1",
+              name: "bastion-basic",
+              resourceTypeName: "CLOUD_CBH",
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      vdcId: "vdc-waafi",
+      name: "WAAFI",
+      evsDiskManagedFees: {
+        count: 440,
+        resourceTypeName: "CLOUD_EVS_INSTANCE",
+      },
+      cloudBastionHosts: {
+        count: 1,
+        resourceTypeName: "CLOUD_CBH",
+        items: [
+          {
+            id: "cbh-1",
+            name: "bastion-basic",
+            resourceTypeName: "CLOUD_CBH",
+          },
+        ],
+      },
+    });
+  });
 });

@@ -248,6 +248,81 @@ describe("buildUsageHintsForCompany", () => {
     );
   });
 
+  it("auto-prices EVS disk managed fee and Cloud Bastion Host breakdowns", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          evsDiskManagedFees: {
+            count: 440,
+            resourceTypeName: "CLOUD_EVS_INSTANCE",
+          },
+          cloudBastionHosts: {
+            count: 1,
+            resourceTypeName: "CLOUD_CBH",
+            items: [
+              {
+                id: "cbh-1",
+                name: "bastion-basic",
+                resourceTypeName: "CLOUD_CBH",
+              },
+            ],
+          },
+        },
+      ],
+      [
+        catalogItem("evs-fee", "EVS", "EVS - Disk Managed Fee", "per disk", 1),
+        catalogItem("cbh", "CBH", "Cloud Bastion Host", "per instance", 45),
+      ],
+    );
+
+    const preview = buildBulkUsagePreview(hints, [
+      catalogItem("evs-fee", "EVS", "EVS - Disk Managed Fee", "per disk", 1),
+      catalogItem("cbh", "CBH", "Cloud Bastion Host", "per instance", 45),
+    ], []);
+
+    expect(hints).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          serviceCategory: "EVS",
+          lineItems: expect.arrayContaining([
+            expect.objectContaining({
+              label: "EVS - Disk Managed Fee",
+              serviceCategory: "EVS",
+              quantity: 440,
+              pricing: "auto",
+              suggestedCatalogItemId: "evs-fee",
+            }),
+          ]),
+        }),
+        {
+          serviceCategory: "CBH",
+          quantity: 1,
+          pricing: "auto",
+          suggestedCatalogItemId: "cbh",
+        },
+      ]),
+    );
+    expect(preview.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          serviceType: "EVS",
+          catalogItemId: "evs-fee",
+          catalogItemName: "EVS - Disk Managed Fee",
+          quantity: 440,
+          amount: 440,
+        }),
+        expect.objectContaining({
+          serviceType: "CBH",
+          catalogItemId: "cbh",
+          catalogItemName: "Cloud Bastion Host",
+          quantity: 1,
+          amount: 45,
+        }),
+      ]),
+    );
+    expect(preview.needsManualEntry).toEqual([]);
+  });
+
   it("ignores aggregate EIP bandwidth even when tier catalog items exist", () => {
     const hints = buildUsageHintsForCompany(
       [

@@ -144,6 +144,12 @@ export default defineSchema({
         }),
       ),
     ),
+    evsDiskManagedFees: v.optional(
+      v.object({
+        count: v.number(),
+        resourceTypeName: v.string(),
+      }),
+    ),
     eipBandwidths: v.optional(
       v.array(
         v.object({
@@ -154,6 +160,21 @@ export default defineSchema({
       ),
     ),
     vpnGateways: v.optional(
+      v.object({
+        count: v.number(),
+        resourceTypeName: v.string(),
+        items: v.optional(
+          v.array(
+            v.object({
+              id: v.string(),
+              name: v.string(),
+              resourceTypeName: v.string(),
+            }),
+          ),
+        ),
+      }),
+    ),
+    cloudBastionHosts: v.optional(
       v.object({
         count: v.number(),
         resourceTypeName: v.string(),

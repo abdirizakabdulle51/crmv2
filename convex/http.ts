@@ -26,8 +26,10 @@ type ManageOneTenantInput = {
   resources?: ManageOneResourceInput[];
   ecsFlavors?: ManageOneEcsFlavorInput[];
   evsVolumeTypes?: ManageOneEvsVolumeTypeInput[];
+  evsDiskManagedFees?: ManageOneEvsDiskManagedFeeInput;
   eipBandwidths?: ManageOneEipBandwidthInput[];
   vpnGateways?: ManageOneVpnGatewayInput;
+  cloudBastionHosts?: ManageOneCloudBastionHostInput;
 };
 
 type ManageOneResourceInput = {
@@ -50,6 +52,11 @@ type ManageOneEvsVolumeTypeInput = {
   count: number;
 };
 
+type ManageOneEvsDiskManagedFeeInput = {
+  count: number;
+  resourceTypeName: string;
+};
+
 type ManageOneEipBandwidthInput = {
   tierName: string;
   count: number;
@@ -57,6 +64,16 @@ type ManageOneEipBandwidthInput = {
 };
 
 type ManageOneVpnGatewayInput = {
+  count: number;
+  resourceTypeName: string;
+  items?: {
+    id: string;
+    name: string;
+    resourceTypeName: string;
+  }[];
+};
+
+type ManageOneCloudBastionHostInput = {
   count: number;
   resourceTypeName: string;
   items?: {
@@ -389,6 +406,33 @@ function optionalEvsVolumeTypes(
   });
 }
 
+function optionalEvsDiskManagedFees(
+  tenant: Record<string, unknown>,
+): ManageOneEvsDiskManagedFeeInput | undefined {
+  const value = tenant.evsDiskManagedFees;
+  if (value == null) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("evsDiskManagedFees must be an object");
+  }
+
+  const count = value.count;
+  const resourceTypeName = value.resourceTypeName;
+
+  if (typeof count !== "number") {
+    throw new Error("evsDiskManagedFees.count must be a number");
+  }
+  if (typeof resourceTypeName !== "string") {
+    throw new Error("evsDiskManagedFees.resourceTypeName must be a string");
+  }
+
+  return {
+    count,
+    resourceTypeName,
+  };
+}
+
 function optionalEipBandwidths(
   tenant: Record<string, unknown>,
 ): ManageOneEipBandwidthInput[] | undefined {
@@ -489,6 +533,68 @@ function optionalVpnGateways(
   };
 }
 
+function optionalCloudBastionHosts(
+  tenant: Record<string, unknown>,
+): ManageOneCloudBastionHostInput | undefined {
+  const value = tenant.cloudBastionHosts;
+  if (value == null) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("cloudBastionHosts must be an object");
+  }
+
+  const count = value.count;
+  const resourceTypeName = value.resourceTypeName;
+  const items = value.items;
+
+  if (typeof count !== "number") {
+    throw new Error("cloudBastionHosts.count must be a number");
+  }
+  if (typeof resourceTypeName !== "string") {
+    throw new Error("cloudBastionHosts.resourceTypeName must be a string");
+  }
+  if (items != null && !Array.isArray(items)) {
+    throw new Error("cloudBastionHosts.items must be an array");
+  }
+
+  return {
+    count,
+    resourceTypeName,
+    ...(Array.isArray(items)
+      ? {
+          items: items.map((itemValue) => {
+            if (!isRecord(itemValue)) {
+              throw new Error("Each cloudBastionHosts item must be an object");
+            }
+
+            const id = itemValue.id;
+            const name = itemValue.name;
+            const itemResourceTypeName = itemValue.resourceTypeName;
+
+            if (typeof id !== "string") {
+              throw new Error("cloudBastionHosts.items.id must be a string");
+            }
+            if (typeof name !== "string") {
+              throw new Error("cloudBastionHosts.items.name must be a string");
+            }
+            if (typeof itemResourceTypeName !== "string") {
+              throw new Error(
+                "cloudBastionHosts.items.resourceTypeName must be a string",
+              );
+            }
+
+            return {
+              id,
+              name,
+              resourceTypeName: itemResourceTypeName,
+            };
+          }),
+        }
+      : {}),
+  };
+}
+
 export function normalizeTenant(value: unknown): ManageOneTenantInput {
   if (!isRecord(value)) {
     throw new Error("Each tenant must be an object");
@@ -542,11 +648,17 @@ export function normalizeTenant(value: unknown): ManageOneTenantInput {
     ...(optionalEvsVolumeTypes(value) !== undefined
       ? { evsVolumeTypes: optionalEvsVolumeTypes(value) }
       : {}),
+    ...(optionalEvsDiskManagedFees(value) !== undefined
+      ? { evsDiskManagedFees: optionalEvsDiskManagedFees(value) }
+      : {}),
     ...(optionalEipBandwidths(value) !== undefined
       ? { eipBandwidths: optionalEipBandwidths(value) }
       : {}),
     ...(optionalVpnGateways(value) !== undefined
       ? { vpnGateways: optionalVpnGateways(value) }
+      : {}),
+    ...(optionalCloudBastionHosts(value) !== undefined
+      ? { cloudBastionHosts: optionalCloudBastionHosts(value) }
       : {}),
   };
 }

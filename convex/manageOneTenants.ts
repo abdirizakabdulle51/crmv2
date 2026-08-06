@@ -50,12 +50,25 @@ type UsageHintTenant = {
     totalGb: number;
     count: number;
   }[];
+  evsDiskManagedFees?: {
+    count: number;
+    resourceTypeName: string;
+  };
   eipBandwidths?: {
     tierName: string;
     count: number;
     totalMbps: number;
   }[];
   vpnGateways?: {
+    count: number;
+    resourceTypeName: string;
+    items?: {
+      id: string;
+      name: string;
+      resourceTypeName: string;
+      }[];
+  };
+  cloudBastionHosts?: {
     count: number;
     resourceTypeName: string;
     items?: {
@@ -229,6 +242,23 @@ function findCatalogItemForHint(
     );
   }
 
+  if (hint.serviceCategory === "EVS Disk Managed Fee") {
+    return catalog.find(
+      (item) =>
+        item.serviceCategory === "EVS" &&
+        normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("EVS - Disk Managed Fee"),
+    );
+  }
+
+  if (hint.serviceCategory === "CBH") {
+    const matches = catalog.filter(
+      (item) =>
+        normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("Cloud Bastion Host") &&
+        (item.serviceCategory === "CBH" || normalizeCatalogMatch(item.serviceCategory).includes("bastion")),
+    );
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
   const matches = catalog.filter(
     (item) => item.serviceCategory === hint.serviceCategory,
   );
@@ -299,6 +329,10 @@ export function buildUsageHintsForCompany(
   const eipBandwidthLineItems: UsageHintLineItem[] = [];
   const wafLineItems: UsageHintLineItem[] = [];
   const evsCatalog = catalog.filter((item) => item.serviceCategory === "EVS");
+  const evsDiskManagedFeeCatalogItem = evsCatalog.find(
+    (item) =>
+      normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("EVS - Disk Managed Fee"),
+  );
   const basicWafCatalogItem = catalog.find(
     (item) => item.serviceCategory === "WAF" && item.itemName === "Basic WAF",
   );
@@ -338,6 +372,36 @@ export function buildUsageHintsForCompany(
         totals.set(key, {
           serviceCategory: "VPN Gateway",
           quantity: vpnGatewayCount,
+          pricing: "auto",
+          ...tenantRegionFields,
+        });
+      }
+    }
+
+    const evsDiskManagedFeeCount = tenant.evsDiskManagedFees?.count ?? 0;
+    if (evsDiskManagedFeeCount > 0) {
+      evsLineItems.push({
+        label: "EVS - Disk Managed Fee",
+        serviceCategory: "EVS",
+        quantity: evsDiskManagedFeeCount,
+        pricing: evsDiskManagedFeeCatalogItem ? "auto" : "manual",
+        ...(evsDiskManagedFeeCatalogItem
+          ? { suggestedCatalogItemId: evsDiskManagedFeeCatalogItem._id }
+          : { needsManualPricing: true }),
+        ...tenantRegionFields,
+      });
+    }
+
+    const cloudBastionHostCount = tenant.cloudBastionHosts?.count ?? 0;
+    if (cloudBastionHostCount > 0) {
+      const key = `CBH:${regionKey(tenantRegionFields)}`;
+      const existing = totals.get(key);
+      if (existing) {
+        existing.quantity += cloudBastionHostCount;
+      } else {
+        totals.set(key, {
+          serviceCategory: "CBH",
+          quantity: cloudBastionHostCount,
           pricing: "auto",
           ...tenantRegionFields,
         });
@@ -783,6 +847,12 @@ export const bulkUpsert = internalMutation({
             }),
           ),
         ),
+        evsDiskManagedFees: v.optional(
+          v.object({
+            count: v.number(),
+            resourceTypeName: v.string(),
+          }),
+        ),
         eipBandwidths: v.optional(
           v.array(
             v.object({
@@ -793,6 +863,21 @@ export const bulkUpsert = internalMutation({
           ),
         ),
         vpnGateways: v.optional(
+          v.object({
+            count: v.number(),
+            resourceTypeName: v.string(),
+            items: v.optional(
+              v.array(
+                v.object({
+                  id: v.string(),
+                  name: v.string(),
+                  resourceTypeName: v.string(),
+                }),
+              ),
+            ),
+          }),
+        ),
+        cloudBastionHosts: v.optional(
           v.object({
             count: v.number(),
             resourceTypeName: v.string(),
