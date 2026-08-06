@@ -97,4 +97,70 @@ describe("normalizeTenant", () => {
       },
     });
   });
+
+  it("preserves resource-space regions on ECS and EVS breakdown items", () => {
+    expect(
+      normalizeTenant({
+        vdcId: "vdc-ncsc",
+        name: "NationalCivilServiceCommission",
+        regionName: "Mogadishu-region-hq3",
+        ecsFlavors: [
+          {
+            flavorName: "S6_large.1",
+            vcpus: 2,
+            ramMb: 4096,
+            count: 1,
+            regionId: "hoa-mogadishu-2",
+            regionName: "Hoa-Mogadishu-2",
+          },
+        ],
+        evsVolumeTypes: [
+          {
+            volumeType: "SSD",
+            totalGb: 9984,
+            count: 9,
+            regionId: "htgcloud-region-02",
+            regionName: "Mogadishu-region-hq3",
+          },
+        ],
+        evsDiskManagedFees: {
+          count: 12,
+          resourceTypeName: "CLOUD_EVS_INSTANCE",
+          items: [
+            {
+              count: 3,
+              resourceTypeName: "CLOUD_EVS_INSTANCE",
+              regionId: "hoa-mogadishu-2",
+              regionName: "Hoa-Mogadishu-2",
+            },
+            {
+              count: 9,
+              resourceTypeName: "CLOUD_EVS_INSTANCE",
+              regionId: "htgcloud-region-02",
+              regionName: "Mogadishu-region-hq3",
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({
+      ecsFlavors: [
+        {
+          regionId: "hoa-mogadishu-2",
+          regionName: "Hoa-Mogadishu-2",
+        },
+      ],
+      evsVolumeTypes: [
+        {
+          regionId: "htgcloud-region-02",
+          regionName: "Mogadishu-region-hq3",
+        },
+      ],
+      evsDiskManagedFees: {
+        items: [
+          { regionName: "Hoa-Mogadishu-2" },
+          { regionName: "Mogadishu-region-hq3" },
+        ],
+      },
+    });
+  });
 });

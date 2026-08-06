@@ -206,6 +206,75 @@ describe("buildUsageHintsForCompany", () => {
     );
   });
 
+  it("uses resource-space regions on native ECS, EVS, and EVS fee breakdowns", () => {
+    const catalog = [
+      catalogItem("ecs-hoa", "ECS", "S6_large.1", "per instance/month", 8),
+      catalogItem("evs-fee", "EVS", "EVS - Disk Managed Fee", "per disk/month", 1),
+      catalogItem("evs-ssd", "EVS", "SSD (Block Storage / NVMe)", "per GB/month", 0.072),
+    ];
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          regionId: "tenant-region",
+          regionName: "Mogadishu-region-hq3",
+          ecsFlavors: [
+            {
+              flavorName: "S6_large.1",
+              vcpus: 2,
+              ramMb: 4096,
+              count: 1,
+              regionId: "hoa-mogadishu-2",
+              regionName: "Hoa-Mogadishu-2",
+            },
+          ],
+          evsVolumeTypes: [
+            {
+              volumeType: "SSD",
+              totalGb: 100,
+              count: 3,
+              regionId: "htgcloud-region-02",
+              regionName: "Mogadishu-region-hq3",
+            },
+          ],
+          evsDiskManagedFees: {
+            count: 3,
+            resourceTypeName: "CLOUD_EVS_INSTANCE",
+            items: [
+              {
+                count: 3,
+                resourceTypeName: "CLOUD_EVS_INSTANCE",
+                regionId: "htgcloud-region-02",
+                regionName: "Mogadishu-region-hq3",
+              },
+            ],
+          },
+        },
+      ],
+      catalog,
+    );
+    const preview = buildBulkUsagePreview(hints, catalog, []);
+
+    expect(preview.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          catalogItemName: "S6_large.1",
+          quantity: 1,
+          regionName: "Hoa-Mogadishu-2",
+        }),
+        expect.objectContaining({
+          catalogItemName: "EVS - Disk Managed Fee",
+          quantity: 3,
+          regionName: "Mogadishu-region-hq3",
+        }),
+        expect.objectContaining({
+          catalogItemName: "SSD (Block Storage / NVMe)",
+          quantity: 100,
+          regionName: "Mogadishu-region-hq3",
+        }),
+      ]),
+    );
+  });
+
   it("auto-prices VPN Gateway breakdown separately from General VPN Connection", () => {
     const hints = buildUsageHintsForCompany(
       [

@@ -132,6 +132,8 @@ export default defineSchema({
           vcpus: v.number(),
           ramMb: v.number(),
           count: v.number(),
+          regionId: v.optional(v.string()),
+          regionName: v.optional(v.string()),
         }),
       ),
     ),
@@ -141,6 +143,8 @@ export default defineSchema({
           volumeType: v.string(),
           totalGb: v.number(),
           count: v.number(),
+          regionId: v.optional(v.string()),
+          regionName: v.optional(v.string()),
         }),
       ),
     ),
@@ -148,6 +152,18 @@ export default defineSchema({
       v.object({
         count: v.number(),
         resourceTypeName: v.string(),
+        regionId: v.optional(v.string()),
+        regionName: v.optional(v.string()),
+        items: v.optional(
+          v.array(
+            v.object({
+              count: v.number(),
+              resourceTypeName: v.string(),
+              regionId: v.optional(v.string()),
+              regionName: v.optional(v.string()),
+            }),
+          ),
+        ),
       }),
     ),
     eipBandwidths: v.optional(

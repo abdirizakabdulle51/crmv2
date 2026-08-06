@@ -44,15 +44,27 @@ type UsageHintTenant = {
     vcpus: number;
     ramMb: number;
     count: number;
+    regionId?: string;
+    regionName?: string;
   }[];
   evsVolumeTypes?: {
     volumeType: string;
     totalGb: number;
     count: number;
+    regionId?: string;
+    regionName?: string;
   }[];
   evsDiskManagedFees?: {
     count: number;
     resourceTypeName: string;
+    regionId?: string;
+    regionName?: string;
+    items?: {
+      count: number;
+      resourceTypeName: string;
+      regionId?: string;
+      regionName?: string;
+    }[];
   };
   eipBandwidths?: {
     tierName: string;
@@ -390,8 +402,22 @@ export function buildUsageHintsForCompany(
       }
     }
 
-    const evsDiskManagedFeeCount = tenant.evsDiskManagedFees?.count ?? 0;
-    if (evsDiskManagedFeeCount > 0) {
+    const evsDiskManagedFeeItems =
+      tenant.evsDiskManagedFees?.items &&
+      tenant.evsDiskManagedFees.items.length > 0
+        ? tenant.evsDiskManagedFees.items
+        : tenant.evsDiskManagedFees
+          ? [tenant.evsDiskManagedFees]
+          : [];
+    for (const evsDiskManagedFee of evsDiskManagedFeeItems) {
+      const evsDiskManagedFeeCount = evsDiskManagedFee.count ?? 0;
+      if (evsDiskManagedFeeCount <= 0) {
+        continue;
+      }
+      const feeRegionFields = {
+        ...tenantRegionFields,
+        ...optionalRegionFields(evsDiskManagedFee),
+      };
       evsLineItems.push({
         label: "EVS - Disk Managed Fee",
         serviceCategory: "EVS",
@@ -400,7 +426,7 @@ export function buildUsageHintsForCompany(
         ...(evsDiskManagedFeeCatalogItem
           ? { suggestedCatalogItemId: evsDiskManagedFeeCatalogItem._id }
           : { needsManualPricing: true }),
-        ...tenantRegionFields,
+        ...feeRegionFields,
       });
     }
 
@@ -466,6 +492,7 @@ export function buildUsageHintsForCompany(
         ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
         ...(!catalogItem ? { needsManualPricing: true } : {}),
         ...tenantRegionFields,
+        ...optionalRegionFields(flavor),
       });
     }
 
@@ -490,6 +517,7 @@ export function buildUsageHintsForCompany(
         ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
         ...(!catalogItem ? { needsManualPricing: true } : {}),
         ...tenantRegionFields,
+        ...optionalRegionFields(volumeType),
       });
     }
 
@@ -847,6 +875,8 @@ export const bulkUpsert = internalMutation({
               vcpus: v.number(),
               ramMb: v.number(),
               count: v.number(),
+              regionId: v.optional(v.string()),
+              regionName: v.optional(v.string()),
             }),
           ),
         ),
@@ -856,6 +886,8 @@ export const bulkUpsert = internalMutation({
               volumeType: v.string(),
               totalGb: v.number(),
               count: v.number(),
+              regionId: v.optional(v.string()),
+              regionName: v.optional(v.string()),
             }),
           ),
         ),
@@ -863,6 +895,18 @@ export const bulkUpsert = internalMutation({
           v.object({
             count: v.number(),
             resourceTypeName: v.string(),
+            regionId: v.optional(v.string()),
+            regionName: v.optional(v.string()),
+            items: v.optional(
+              v.array(
+                v.object({
+                  count: v.number(),
+                  resourceTypeName: v.string(),
+                  regionId: v.optional(v.string()),
+                  regionName: v.optional(v.string()),
+                }),
+              ),
+            ),
           }),
         ),
         eipBandwidths: v.optional(

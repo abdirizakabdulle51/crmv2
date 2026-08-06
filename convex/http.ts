@@ -44,17 +44,29 @@ type ManageOneEcsFlavorInput = {
   vcpus: number;
   ramMb: number;
   count: number;
+  regionId?: string;
+  regionName?: string;
 };
 
 type ManageOneEvsVolumeTypeInput = {
   volumeType: string;
   totalGb: number;
   count: number;
+  regionId?: string;
+  regionName?: string;
 };
 
 type ManageOneEvsDiskManagedFeeInput = {
   count: number;
   resourceTypeName: string;
+  regionId?: string;
+  regionName?: string;
+  items?: {
+    count: number;
+    resourceTypeName: string;
+    regionId?: string;
+    regionName?: string;
+  }[];
 };
 
 type ManageOneEipBandwidthInput = {
@@ -251,6 +263,17 @@ function optionalString(
   return value;
 }
 
+function optionalRecordString(record: Record<string, unknown>, key: "regionId" | "regionName") {
+  const value = record[key];
+  if (value == null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be a string`);
+  }
+  return value;
+}
+
 function optionalNumber(
   tenant: Record<string, unknown>,
   key: keyof Pick<
@@ -364,6 +387,12 @@ function optionalEcsFlavors(
       vcpus,
       ramMb,
       count,
+      ...(optionalRecordString(flavorValue, "regionId") !== undefined
+        ? { regionId: optionalRecordString(flavorValue, "regionId") }
+        : {}),
+      ...(optionalRecordString(flavorValue, "regionName") !== undefined
+        ? { regionName: optionalRecordString(flavorValue, "regionName") }
+        : {}),
     };
   });
 }
@@ -402,6 +431,12 @@ function optionalEvsVolumeTypes(
       volumeType,
       totalGb,
       count,
+      ...(optionalRecordString(volumeValue, "regionId") !== undefined
+        ? { regionId: optionalRecordString(volumeValue, "regionId") }
+        : {}),
+      ...(optionalRecordString(volumeValue, "regionName") !== undefined
+        ? { regionName: optionalRecordString(volumeValue, "regionName") }
+        : {}),
     };
   });
 }
@@ -427,9 +462,50 @@ function optionalEvsDiskManagedFees(
     throw new Error("evsDiskManagedFees.resourceTypeName must be a string");
   }
 
+  const items = value.items;
+  if (items != null && !Array.isArray(items)) {
+    throw new Error("evsDiskManagedFees.items must be an array");
+  }
+
   return {
     count,
     resourceTypeName,
+    ...(optionalRecordString(value, "regionId") !== undefined
+      ? { regionId: optionalRecordString(value, "regionId") }
+      : {}),
+    ...(optionalRecordString(value, "regionName") !== undefined
+      ? { regionName: optionalRecordString(value, "regionName") }
+      : {}),
+    ...(Array.isArray(items)
+      ? {
+          items: items.map((itemValue) => {
+            if (!isRecord(itemValue)) {
+              throw new Error("Each evsDiskManagedFees item must be an object");
+            }
+
+            const itemCount = itemValue.count;
+            const itemResourceTypeName = itemValue.resourceTypeName;
+
+            if (typeof itemCount !== "number") {
+              throw new Error("evsDiskManagedFees.items.count must be a number");
+            }
+            if (typeof itemResourceTypeName !== "string") {
+              throw new Error("evsDiskManagedFees.items.resourceTypeName must be a string");
+            }
+
+            return {
+              count: itemCount,
+              resourceTypeName: itemResourceTypeName,
+              ...(optionalRecordString(itemValue, "regionId") !== undefined
+                ? { regionId: optionalRecordString(itemValue, "regionId") }
+                : {}),
+              ...(optionalRecordString(itemValue, "regionName") !== undefined
+                ? { regionName: optionalRecordString(itemValue, "regionName") }
+                : {}),
+            };
+          }),
+        }
+      : {}),
   };
 }
 
