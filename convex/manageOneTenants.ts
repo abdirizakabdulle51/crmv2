@@ -209,7 +209,9 @@ function findCatalogItemForHint(
     return itemName
       ? catalog.find(
           (item) =>
-            normalizeCatalogMatch(item.itemName) === normalizedItemName &&
+            normalizeCatalogMatch(item.itemName).includes(
+              normalizedItemName,
+            ) &&
             (item.serviceCategory.toLowerCase().includes("bandwidth") ||
               item.serviceCategory.toLowerCase().includes("eip") ||
               item.itemName.toLowerCase().includes("mbps")),
@@ -397,7 +399,7 @@ export function buildUsageHintsForCompany(
       const normalizedTierName = normalizeCatalogMatch(bandwidth.tierName);
       const catalogItem = catalog.find(
         (item) =>
-          normalizeCatalogMatch(item.itemName) === normalizedTierName &&
+          normalizeCatalogMatch(item.itemName).includes(normalizedTierName) &&
           (item.serviceCategory.toLowerCase().includes("bandwidth") ||
             item.serviceCategory.toLowerCase().includes("eip") ||
             item.itemName.toLowerCase().includes("mbps")),

@@ -322,6 +322,30 @@ describe("buildUsageHintsForCompany", () => {
     });
   });
 
+  it("maps EIP bandwidth tiers when catalog item names include an EIP Bandwidth prefix", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [
+            { serviceId: "vpc", resource: "bandwidth_size", used: 32 },
+          ],
+        },
+      ],
+      [
+        catalogItem("eip-bw-1", "EIP", "EIP Bandwidth - 1 - 5 Mbps"),
+        catalogItem("eip-bw-2", "EIP", "EIP Bandwidth - 6 - 50 Mbps"),
+        catalogItem("eip-bw-3", "EIP", "EIP Bandwidth - 51 - 200 Mbps"),
+      ],
+    );
+
+    expect(hints).toContainEqual({
+      serviceCategory: "EIP (bandwidth)",
+      quantity: 32,
+      pricing: "auto",
+      suggestedCatalogItemId: "eip-bw-2",
+    });
+  });
+
   it("auto-prices EIP bandwidth native tier breakdown and skips aggregate bandwidth warning", () => {
     const hints = buildUsageHintsForCompany(
       [
