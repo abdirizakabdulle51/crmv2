@@ -62,14 +62,14 @@ describe("AppLayout", () => {
     );
   }
 
-  it("renders the notification bell in the top-right app content area", () => {
+  it("renders the notification bell in the top-right app content area", async () => {
     const { container } = renderLayout();
 
     expect(screen.getByText("Amina Yusuf")).toBeInTheDocument();
     const topNotificationArea = screen.getByTestId(
       "app-top-notification-area",
     );
-    const bell = screen.getByRole("button", { name: "Notifications" });
+    const bell = await screen.findByRole("button", { name: "Notifications" });
     expect(topNotificationArea).toContainElement(bell);
     expect(container.querySelector("aside")).not.toContainElement(bell);
     expect(screen.getByRole("button", { name: "Theme" })).toBeInTheDocument();

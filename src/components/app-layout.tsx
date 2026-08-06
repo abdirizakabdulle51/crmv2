@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import {
   LayoutDashboard,
   Building2,
@@ -32,7 +32,12 @@ import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
 import { ThemeToggle } from "@/components/theme-toggle.tsx";
 import { BrandLogo } from "@/components/brand-logo.tsx";
-import { NotificationBell } from "@/components/notification-bell.tsx";
+
+const NotificationBell = lazy(() =>
+  import("@/components/notification-bell.tsx").then((module) => ({
+    default: module.NotificationBell,
+  })),
+);
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -283,7 +288,17 @@ export default function AppLayout() {
             data-testid="app-top-notification-area"
           >
             <div className="rounded-lg border bg-background/95 p-1 shadow-sm backdrop-blur">
-              <NotificationBell />
+              <Suspense
+                fallback={
+                  <div
+                    className="h-7 w-7"
+                    aria-hidden="true"
+                    data-testid="notification-bell-loading"
+                  />
+                }
+              >
+                <NotificationBell />
+              </Suspense>
             </div>
           </div>
         ) : null}
