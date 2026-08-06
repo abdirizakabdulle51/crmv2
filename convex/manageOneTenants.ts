@@ -328,15 +328,16 @@ export function buildUsageHintsForCompany(
       .reduce((sum, resource) => sum + resource.used, 0);
     const hasWafTierSignal = wafBasicQuantity > 0 || wafEnterpriseQuantity > 0;
 
-    if ((tenant.vpnGateways?.count ?? 0) > 0) {
+    const vpnGatewayCount = tenant.vpnGateways?.count ?? 0;
+    if (vpnGatewayCount > 0) {
       const key = `VPN Gateway:${regionKey(tenantRegionFields)}`;
       const existing = totals.get(key);
       if (existing) {
-        existing.quantity += tenant.vpnGateways.count;
+        existing.quantity += vpnGatewayCount;
       } else {
         totals.set(key, {
           serviceCategory: "VPN Gateway",
-          quantity: tenant.vpnGateways.count,
+          quantity: vpnGatewayCount,
           pricing: "auto",
           ...tenantRegionFields,
         });
