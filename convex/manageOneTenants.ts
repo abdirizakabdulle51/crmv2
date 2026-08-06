@@ -204,19 +204,18 @@ function findCatalogItemForHint(
           : quantity >= 51 && quantity <= 200
             ? "51 - 200 Mbps"
             : null;
-    const normalizedItemName = itemName ? normalizeCatalogMatch(itemName) : null;
+    if (!itemName) {
+      return undefined;
+    }
 
-    return itemName
-      ? catalog.find(
-          (item) =>
-            normalizeCatalogMatch(item.itemName).includes(
-              normalizedItemName,
-            ) &&
-            (item.serviceCategory.toLowerCase().includes("bandwidth") ||
-              item.serviceCategory.toLowerCase().includes("eip") ||
-              item.itemName.toLowerCase().includes("mbps")),
-        )
-      : undefined;
+    const normalizedItemName = normalizeCatalogMatch(itemName);
+    return catalog.find(
+      (item) =>
+        normalizeCatalogMatch(item.itemName).includes(normalizedItemName) &&
+        (item.serviceCategory.toLowerCase().includes("bandwidth") ||
+          item.serviceCategory.toLowerCase().includes("eip") ||
+          item.itemName.toLowerCase().includes("mbps")),
+    );
   }
 
   const matches = catalog.filter(
