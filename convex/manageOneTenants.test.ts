@@ -298,6 +298,30 @@ describe("buildUsageHintsForCompany", () => {
     });
   });
 
+  it("maps EIP bandwidth tiers by normalized Mbps item name across catalog category variants", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [
+            { serviceId: "vpc", resource: "bandwidth_size", used: 32 },
+          ],
+        },
+      ],
+      [
+        catalogItem("eip-bw-1", "Network", "1-5 mbps"),
+        catalogItem("eip-bw-2", "Network Bandwidth", "6-50 mbps"),
+        catalogItem("eip-bw-3", "Network", "51-200 mbps"),
+      ],
+    );
+
+    expect(hints).toContainEqual({
+      serviceCategory: "EIP (bandwidth)",
+      quantity: 32,
+      pricing: "auto",
+      suggestedCatalogItemId: "eip-bw-2",
+    });
+  });
+
   it("auto-prices CCE node flavors from ECS-CCE catalog SKUs and skips duplicate cluster manual note", () => {
     const hints = buildUsageHintsForCompany(
       [
