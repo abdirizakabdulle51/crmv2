@@ -206,6 +206,48 @@ describe("buildUsageHintsForCompany", () => {
     );
   });
 
+  it("auto-prices VPN Gateway breakdown separately from General VPN Connection", () => {
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [{ serviceId: "vpc", resource: "vpn", used: 32 }],
+          vpnGateways: {
+            count: 10,
+            resourceTypeName: "CLOUD_VPN_SERVICE",
+            items: [
+              {
+                id: "vpn-1",
+                name: "vpngw-cef6",
+                resourceTypeName: "CLOUD_VPN_SERVICE",
+              },
+            ],
+          },
+        },
+      ],
+      [
+        catalogItem("vpn", "VPN", "General VPN Connection", "per connection", 36.5),
+        catalogItem("vpn-gateway", "VPN Gateway", "VPN Gateway", "per gateway", 65),
+      ],
+    );
+
+    expect(hints).toEqual(
+      expect.arrayContaining([
+        {
+          serviceCategory: "VPN",
+          quantity: 32,
+          pricing: "auto",
+          suggestedCatalogItemId: "vpn",
+        },
+        {
+          serviceCategory: "VPN Gateway",
+          quantity: 10,
+          pricing: "auto",
+          suggestedCatalogItemId: "vpn-gateway",
+        },
+      ]),
+    );
+  });
+
   it("ignores aggregate EIP bandwidth even when tier catalog items exist", () => {
     const hints = buildUsageHintsForCompany(
       [

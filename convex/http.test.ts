@@ -21,4 +21,38 @@ describe("normalizeTenant", () => {
       ],
     });
   });
+
+  it("preserves VPN Gateway breakdowns from ManageOne sync payloads", () => {
+    expect(
+      normalizeTenant({
+        vdcId: "vdc-waafi",
+        name: "WAAFI",
+        vpnGateways: {
+          count: 2,
+          resourceTypeName: "CLOUD_VPN_SERVICE",
+          items: [
+            {
+              id: "vpn-1",
+              name: "vpngw-cef6",
+              resourceTypeName: "CLOUD_VPN_SERVICE",
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      vdcId: "vdc-waafi",
+      name: "WAAFI",
+      vpnGateways: {
+        count: 2,
+        resourceTypeName: "CLOUD_VPN_SERVICE",
+        items: [
+          {
+            id: "vpn-1",
+            name: "vpngw-cef6",
+            resourceTypeName: "CLOUD_VPN_SERVICE",
+          },
+        ],
+      },
+    });
+  });
 });

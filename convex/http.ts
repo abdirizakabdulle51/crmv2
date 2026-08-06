@@ -27,6 +27,7 @@ type ManageOneTenantInput = {
   ecsFlavors?: ManageOneEcsFlavorInput[];
   evsVolumeTypes?: ManageOneEvsVolumeTypeInput[];
   eipBandwidths?: ManageOneEipBandwidthInput[];
+  vpnGateways?: ManageOneVpnGatewayInput;
 };
 
 type ManageOneResourceInput = {
@@ -53,6 +54,16 @@ type ManageOneEipBandwidthInput = {
   tierName: string;
   count: number;
   totalMbps: number;
+};
+
+type ManageOneVpnGatewayInput = {
+  count: number;
+  resourceTypeName: string;
+  items?: {
+    id: string;
+    name: string;
+    resourceTypeName: string;
+  }[];
 };
 
 type AiRecommendationSyncInput = {
@@ -416,6 +427,68 @@ function optionalEipBandwidths(
   });
 }
 
+function optionalVpnGateways(
+  tenant: Record<string, unknown>,
+): ManageOneVpnGatewayInput | undefined {
+  const value = tenant.vpnGateways;
+  if (value == null) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("vpnGateways must be an object");
+  }
+
+  const count = value.count;
+  const resourceTypeName = value.resourceTypeName;
+  const items = value.items;
+
+  if (typeof count !== "number") {
+    throw new Error("vpnGateways.count must be a number");
+  }
+  if (typeof resourceTypeName !== "string") {
+    throw new Error("vpnGateways.resourceTypeName must be a string");
+  }
+  if (items != null && !Array.isArray(items)) {
+    throw new Error("vpnGateways.items must be an array");
+  }
+
+  return {
+    count,
+    resourceTypeName,
+    ...(Array.isArray(items)
+      ? {
+          items: items.map((itemValue) => {
+            if (!isRecord(itemValue)) {
+              throw new Error("Each vpnGateways item must be an object");
+            }
+
+            const id = itemValue.id;
+            const name = itemValue.name;
+            const itemResourceTypeName = itemValue.resourceTypeName;
+
+            if (typeof id !== "string") {
+              throw new Error("vpnGateways.items.id must be a string");
+            }
+            if (typeof name !== "string") {
+              throw new Error("vpnGateways.items.name must be a string");
+            }
+            if (typeof itemResourceTypeName !== "string") {
+              throw new Error(
+                "vpnGateways.items.resourceTypeName must be a string",
+              );
+            }
+
+            return {
+              id,
+              name,
+              resourceTypeName: itemResourceTypeName,
+            };
+          }),
+        }
+      : {}),
+  };
+}
+
 export function normalizeTenant(value: unknown): ManageOneTenantInput {
   if (!isRecord(value)) {
     throw new Error("Each tenant must be an object");
@@ -471,6 +544,9 @@ export function normalizeTenant(value: unknown): ManageOneTenantInput {
       : {}),
     ...(optionalEipBandwidths(value) !== undefined
       ? { eipBandwidths: optionalEipBandwidths(value) }
+      : {}),
+    ...(optionalVpnGateways(value) !== undefined
+      ? { vpnGateways: optionalVpnGateways(value) }
       : {}),
   };
 }

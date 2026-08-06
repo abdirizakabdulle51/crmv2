@@ -55,6 +55,15 @@ type UsageHintTenant = {
     count: number;
     totalMbps: number;
   }[];
+  vpnGateways?: {
+    count: number;
+    resourceTypeName: string;
+    items?: {
+      id: string;
+      name: string;
+      resourceTypeName: string;
+    }[];
+  };
 };
 
 type UsageHintCatalogItem = {
@@ -212,6 +221,14 @@ function findCatalogItemForHint(
     );
   }
 
+  if (hint.serviceCategory === "VPN Gateway") {
+    return catalog.find(
+      (item) =>
+        item.serviceCategory === "VPN Gateway" &&
+        normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("VPN Gateway"),
+    );
+  }
+
   const matches = catalog.filter(
     (item) => item.serviceCategory === hint.serviceCategory,
   );
@@ -310,6 +327,21 @@ export function buildUsageHintsForCompany(
       )
       .reduce((sum, resource) => sum + resource.used, 0);
     const hasWafTierSignal = wafBasicQuantity > 0 || wafEnterpriseQuantity > 0;
+
+    if ((tenant.vpnGateways?.count ?? 0) > 0) {
+      const key = `VPN Gateway:${regionKey(tenantRegionFields)}`;
+      const existing = totals.get(key);
+      if (existing) {
+        existing.quantity += tenant.vpnGateways.count;
+      } else {
+        totals.set(key, {
+          serviceCategory: "VPN Gateway",
+          quantity: tenant.vpnGateways.count,
+          pricing: "auto",
+          ...tenantRegionFields,
+        });
+      }
+    }
 
     if (wafBasicQuantity > 0 && wafEnterpriseQuantity > 0) {
       wafLineItems.push({
@@ -758,6 +790,21 @@ export const bulkUpsert = internalMutation({
               totalMbps: v.number(),
             }),
           ),
+        ),
+        vpnGateways: v.optional(
+          v.object({
+            count: v.number(),
+            resourceTypeName: v.string(),
+            items: v.optional(
+              v.array(
+                v.object({
+                  id: v.string(),
+                  name: v.string(),
+                  resourceTypeName: v.string(),
+                }),
+              ),
+            ),
+          }),
         ),
       }),
     ),

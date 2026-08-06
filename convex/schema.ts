@@ -153,6 +153,21 @@ export default defineSchema({
         }),
       ),
     ),
+    vpnGateways: v.optional(
+      v.object({
+        count: v.number(),
+        resourceTypeName: v.string(),
+        items: v.optional(
+          v.array(
+            v.object({
+              id: v.string(),
+              name: v.string(),
+              resourceTypeName: v.string(),
+            }),
+          ),
+        ),
+      }),
+    ),
     lastSyncedAt: v.number(),
     linkedCompanyId: v.optional(v.id("companies")),
   })
