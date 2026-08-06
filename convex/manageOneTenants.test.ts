@@ -124,11 +124,6 @@ describe("buildUsageHintsForCompany", () => {
           pricing: "auto",
           suggestedCatalogItemId: "eip-active",
         },
-        {
-          serviceCategory: "EIP (bandwidth)",
-          quantity: 20,
-          pricing: "manual",
-        },
         { serviceCategory: "WAF", quantity: 1, pricing: "manual" },
         {
           serviceCategory: "ELB",
@@ -211,7 +206,7 @@ describe("buildUsageHintsForCompany", () => {
     );
   });
 
-  it("keeps aggregate EIP bandwidth manual even when tier catalog items exist", () => {
+  it("ignores aggregate EIP bandwidth even when tier catalog items exist", () => {
     const hints = buildUsageHintsForCompany(
       [
         {
@@ -227,14 +222,12 @@ describe("buildUsageHintsForCompany", () => {
       ],
     );
 
-    expect(hints).toContainEqual({
-      serviceCategory: "EIP (bandwidth)",
-      quantity: 20,
-      pricing: "manual",
-    });
+    expect(hints.map((hint) => hint.serviceCategory)).not.toContain(
+      "EIP (bandwidth)",
+    );
   });
 
-  it("shows a diagnostic for aggregate EIP bandwidth without native tier breakdown", () => {
+  it("does not show a manual diagnostic for aggregate EIP bandwidth without native tier breakdown", () => {
     const hints = buildUsageHintsForCompany(
       [
         {
@@ -251,12 +244,11 @@ describe("buildUsageHintsForCompany", () => {
     );
     const preview = buildBulkUsagePreview(hints, [], []);
 
-    expect(preview.needsManualEntry).toContainEqual({
-      serviceType: "EIP (bandwidth)",
-      label: "EIP (bandwidth)",
-      reason:
-        "Aggregate EIP bandwidth detected, but per-bandwidth tier breakdown is unavailable - re-run ManageOne sync or review manually.",
-    });
+    expect(preview.needsManualEntry).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ serviceType: "EIP (bandwidth)" }),
+      ]),
+    );
   });
 
   it("maps native EIP bandwidth tiers when catalog item names include an EIP Bandwidth prefix", () => {
