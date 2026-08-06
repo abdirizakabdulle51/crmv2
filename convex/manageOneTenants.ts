@@ -289,6 +289,18 @@ function findEcsCatalogItemForFlavor(
   );
 }
 
+function findUniqueCatalogItemByName(
+  catalog: UsageHintCatalogItem[],
+  itemName: string,
+) {
+  const normalizedItemName = normalizeCatalogMatch(itemName);
+  const matches = catalog.filter(
+    (item) => normalizeCatalogMatch(item.itemName) === normalizedItemName,
+  );
+
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 function optionalRegionFields(source: {
   regionId?: string;
   regionName?: string;
@@ -329,9 +341,9 @@ export function buildUsageHintsForCompany(
   const eipBandwidthLineItems: UsageHintLineItem[] = [];
   const wafLineItems: UsageHintLineItem[] = [];
   const evsCatalog = catalog.filter((item) => item.serviceCategory === "EVS");
-  const evsDiskManagedFeeCatalogItem = evsCatalog.find(
-    (item) =>
-      normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("EVS - Disk Managed Fee"),
+  const evsDiskManagedFeeCatalogItem = findUniqueCatalogItemByName(
+    catalog,
+    "EVS - Disk Managed Fee",
   );
   const basicWafCatalogItem = catalog.find(
     (item) => item.serviceCategory === "WAF" && item.itemName === "Basic WAF",

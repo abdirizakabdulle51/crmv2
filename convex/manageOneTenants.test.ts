@@ -323,6 +323,41 @@ describe("buildUsageHintsForCompany", () => {
     expect(preview.needsManualEntry).toEqual([]);
   });
 
+  it("matches EVS disk managed fee by catalog item name even when category differs", () => {
+    const catalog = [
+      catalogItem(
+        "evs-fee",
+        "Disk Managed Fee",
+        "EVS - Disk Managed Fee",
+        "per disk",
+        1,
+      ),
+    ];
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          evsDiskManagedFees: {
+            count: 440,
+            resourceTypeName: "CLOUD_EVS_INSTANCE",
+          },
+        },
+      ],
+      catalog,
+    );
+    const preview = buildBulkUsagePreview(hints, catalog, []);
+
+    expect(preview.rows).toEqual([
+      expect.objectContaining({
+        serviceType: "EVS",
+        catalogItemId: "evs-fee",
+        catalogItemName: "EVS - Disk Managed Fee",
+        quantity: 440,
+        amount: 440,
+      }),
+    ]);
+    expect(preview.needsManualEntry).toEqual([]);
+  });
+
   it("ignores aggregate EIP bandwidth even when tier catalog items exist", () => {
     const hints = buildUsageHintsForCompany(
       [
