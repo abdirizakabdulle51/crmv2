@@ -20,7 +20,7 @@ type InvoiceLineItem = Invoice["lineItems"][number];
 
 const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
 const FALLBACK_SELLER = {
-  legalName: "HTG Clouds",
+  legalName: "HTG CLOUDS LIMITED",
   addressLines: [
     "Airport road, Next to Ali Jimale Masque",
     "Wadajir District",
@@ -28,8 +28,8 @@ const FALLBACK_SELLER = {
     "Somalia",
   ],
   phone: "+252 61 5558484",
-  email: "Mohamed.hussein@htgclouds.com",
-  website: "https://htgclouds.com/",
+  email: "finance@htgclouds.com",
+  website: "https://htgclouds.com",
   slogan: "Built for us, Ready for the World.",
   bankName: "Salaam Somali Bank",
   bankAccountNumber: "33111777",
@@ -175,6 +175,21 @@ function sellerDetails(invoice: Invoice) {
 
 type SellerDetails = ReturnType<typeof sellerDetails>;
 
+function toTitleCase(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function formatFooterLocation(value?: string) {
+  const parts = value
+    ?.split(/\s+-\s+|,/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!parts || parts.length === 0) return undefined;
+  return parts.map(toTitleCase).join(", ");
+}
+
 function Header({ seller }: { seller: SellerDetails }) {
   return (
     <header className="invoice-header">
@@ -208,7 +223,14 @@ function BillTo({ invoice }: { invoice: Invoice }) {
 function Footer({ page, seller }: { page: 1 | 2; seller: SellerDetails }) {
   const footerText =
     seller.footerText ??
-    [seller.phone, seller.email, seller.website].filter(Boolean).join(" | ");
+    [
+      seller.legalName,
+      formatFooterLocation(seller.bankLocation),
+      seller.email,
+      seller.website,
+    ]
+      .filter(Boolean)
+      .join(" | ");
   return (
     <footer className="invoice-footer">
       <span>{footerText}</span>

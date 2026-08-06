@@ -439,6 +439,24 @@ describe("InvoicePrintPage", () => {
     ).toBe(2);
   });
 
+  it("uses a business identity footer when no custom footer text is present", () => {
+    mocks.invoice = invoice({
+      sellerLegalName: "HTG KENYA LIMITED",
+      sellerEmail: "billing-ke@htgclouds.com",
+      sellerWebsite: "https://ke.htgclouds.com",
+      sellerBankLocation: "NAIROBI - KENYA",
+      sellerFooterText: undefined,
+    });
+
+    renderPrintPage();
+
+    expect(
+      screen.getAllByText(
+        "HTG KENYA LIMITED | Nairobi, Kenya | billing-ke@htgclouds.com | https://ke.htgclouds.com",
+      ).length,
+    ).toBe(2);
+  });
+
   it("falls back to existing HTG seller details for legacy invoices", () => {
     renderPrintPage();
 
@@ -450,7 +468,7 @@ describe("InvoicePrintPage", () => {
     ).toBeGreaterThan(0);
     expect(
       screen.getAllByText(
-        "+252 61 5558484 | Mohamed.hussein@htgclouds.com | https://htgclouds.com/",
+        "HTG CLOUDS LIMITED | Mogadishu, Somalia | finance@htgclouds.com | https://htgclouds.com",
       ).length,
     ).toBe(2);
   });
