@@ -1067,9 +1067,9 @@ When that data exists:
 - Print / Export PDF shows the region cleanly.
 - The invoice PDF emailed to the customer also shows the region cleanly.
 
-If all invoice lines come from one region, the PDF can show one Region field near the invoice metadata.
+If all invoice lines come from one region, the PDF shows one Region field near the invoice metadata.
 
-If multiple regions exist, the invoice shows Region Totals, such as:
+If multiple regions exist, the PDF adds a Region column before Quantity and shows Region Totals, such as:
 
 - Hoa-Mogadishu-2: $70
 - Mogadishu-region-hq3: $30
