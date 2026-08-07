@@ -89,6 +89,19 @@ type UsageHintTenant = {
       resourceTypeName: string;
     }[];
   };
+  natGateways?: {
+    count: number;
+    resourceTypeName: string;
+    items?: {
+      id: string;
+      name: string;
+      resourceTypeName: string;
+      spec?: string;
+      catalogItemName?: string;
+      regionId?: string;
+      regionName?: string;
+    }[];
+  };
 };
 
 type UsageHintCatalogItem = {
@@ -351,6 +364,7 @@ export function buildUsageHintsForCompany(
   const ecsLineItems: UsageHintLineItem[] = [];
   const evsLineItems: UsageHintLineItem[] = [];
   const eipBandwidthLineItems: UsageHintLineItem[] = [];
+  const natGatewayLineItems: UsageHintLineItem[] = [];
   const wafLineItems: UsageHintLineItem[] = [];
   const evsCatalog = catalog.filter((item) => item.serviceCategory === "EVS");
   const evsDiskManagedFeeCatalogItem = findUniqueCatalogItemByName(
@@ -444,6 +458,27 @@ export function buildUsageHintsForCompany(
           ...tenantRegionFields,
         });
       }
+    }
+
+    for (const natGateway of tenant.natGateways?.items ?? []) {
+      const catalogItemName = natGateway.catalogItemName ?? "";
+      const catalogItem = catalog.find(
+        (item) =>
+          item.serviceCategory === "NAT" &&
+          normalizeCatalogMatch(item.itemName) ===
+            normalizeCatalogMatch(catalogItemName),
+      );
+
+      natGatewayLineItems.push({
+        label: catalogItemName || natGateway.name || "NAT Gateway",
+        serviceCategory: "NAT",
+        quantity: 1,
+        pricing: catalogItem ? "auto" : "manual",
+        ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
+        ...(!catalogItem ? { needsManualPricing: true } : {}),
+        ...tenantRegionFields,
+        ...optionalRegionFields(natGateway),
+      });
     }
 
     if (wafBasicQuantity > 0 && wafEnterpriseQuantity > 0) {
@@ -698,6 +733,28 @@ export function buildUsageHintsForCompany(
     }
   }
 
+  if (natGatewayLineItems.length > 0) {
+    const existingNatHintIndex = hints.findIndex(
+      (hint) => hint.serviceCategory === "NAT",
+    );
+    const natHint = {
+      serviceCategory: "NAT",
+      quantity: natGatewayLineItems.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      ),
+      pricing: natGatewayLineItems.every((item) => item.pricing === "auto")
+        ? ("auto" as const)
+        : ("manual" as const),
+      lineItems: natGatewayLineItems,
+    };
+    if (existingNatHintIndex >= 0) {
+      hints[existingNatHintIndex] = natHint;
+    } else {
+      hints.push(natHint);
+    }
+  }
+
   if (wafLineItems.length > 0) {
     const existingWafHintIndex = hints.findIndex(
       (hint) => hint.serviceCategory === "WAF",
@@ -943,6 +1000,25 @@ export const bulkUpsert = internalMutation({
                   id: v.string(),
                   name: v.string(),
                   resourceTypeName: v.string(),
+                }),
+              ),
+            ),
+          }),
+        ),
+        natGateways: v.optional(
+          v.object({
+            count: v.number(),
+            resourceTypeName: v.string(),
+            items: v.optional(
+              v.array(
+                v.object({
+                  id: v.string(),
+                  name: v.string(),
+                  resourceTypeName: v.string(),
+                  spec: v.optional(v.string()),
+                  catalogItemName: v.optional(v.string()),
+                  regionId: v.optional(v.string()),
+                  regionName: v.optional(v.string()),
                 }),
               ),
             ),

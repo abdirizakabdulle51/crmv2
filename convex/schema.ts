@@ -205,6 +205,25 @@ export default defineSchema({
         ),
       }),
     ),
+    natGateways: v.optional(
+      v.object({
+        count: v.number(),
+        resourceTypeName: v.string(),
+        items: v.optional(
+          v.array(
+            v.object({
+              id: v.string(),
+              name: v.string(),
+              resourceTypeName: v.string(),
+              spec: v.optional(v.string()),
+              catalogItemName: v.optional(v.string()),
+              regionId: v.optional(v.string()),
+              regionName: v.optional(v.string()),
+            }),
+          ),
+        ),
+      }),
+    ),
     lastSyncedAt: v.number(),
     linkedCompanyId: v.optional(v.id("companies")),
   })

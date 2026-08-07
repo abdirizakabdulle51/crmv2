@@ -56,6 +56,48 @@ describe("normalizeTenant", () => {
     });
   });
 
+  it("preserves NAT Gateway breakdowns from ManageOne sync payloads", () => {
+    expect(
+      normalizeTenant({
+        vdcId: "vdc-credit-score",
+        name: "HS-Credit-Score-Program",
+        natGateways: {
+          count: 1,
+          resourceTypeName: "CLOUD_NAT_GATEWAY",
+          items: [
+            {
+              id: "nat-1",
+              name: "NAT_Credit_Score",
+              resourceTypeName: "CLOUD_NAT_GATEWAY",
+              spec: "1",
+              catalogItemName: "Small (150 Mbps)",
+              regionId: "hoa-mogadishu-2",
+              regionName: "Hoa-Mogadishu-2",
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      vdcId: "vdc-credit-score",
+      name: "HS-Credit-Score-Program",
+      natGateways: {
+        count: 1,
+        resourceTypeName: "CLOUD_NAT_GATEWAY",
+        items: [
+          {
+            id: "nat-1",
+            name: "NAT_Credit_Score",
+            resourceTypeName: "CLOUD_NAT_GATEWAY",
+            spec: "1",
+            catalogItemName: "Small (150 Mbps)",
+            regionId: "hoa-mogadishu-2",
+            regionName: "Hoa-Mogadishu-2",
+          },
+        ],
+      },
+    });
+  });
+
   it("preserves EVS disk managed fee and Cloud Bastion Host breakdowns", () => {
     expect(
       normalizeTenant({

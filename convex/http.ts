@@ -30,6 +30,7 @@ type ManageOneTenantInput = {
   eipBandwidths?: ManageOneEipBandwidthInput[];
   vpnGateways?: ManageOneVpnGatewayInput;
   cloudBastionHosts?: ManageOneCloudBastionHostInput;
+  natGateways?: ManageOneNatGatewayInput;
 };
 
 type ManageOneResourceInput = {
@@ -92,6 +93,20 @@ type ManageOneCloudBastionHostInput = {
     id: string;
     name: string;
     resourceTypeName: string;
+  }[];
+};
+
+type ManageOneNatGatewayInput = {
+  count: number;
+  resourceTypeName: string;
+  items?: {
+    id: string;
+    name: string;
+    resourceTypeName: string;
+    spec?: string;
+    catalogItemName?: string;
+    regionId?: string;
+    regionName?: string;
   }[];
 };
 
@@ -671,6 +686,78 @@ function optionalCloudBastionHosts(
   };
 }
 
+function optionalNatGateways(
+  tenant: Record<string, unknown>,
+): ManageOneNatGatewayInput | undefined {
+  const value = tenant.natGateways;
+  if (value == null) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("natGateways must be an object");
+  }
+
+  const count = value.count;
+  const resourceTypeName = value.resourceTypeName;
+  const items = value.items;
+
+  if (typeof count !== "number") {
+    throw new Error("natGateways.count must be a number");
+  }
+  if (typeof resourceTypeName !== "string") {
+    throw new Error("natGateways.resourceTypeName must be a string");
+  }
+  if (items != null && !Array.isArray(items)) {
+    throw new Error("natGateways.items must be an array");
+  }
+
+  return {
+    count,
+    resourceTypeName,
+    ...(Array.isArray(items)
+      ? {
+          items: items.map((itemValue) => {
+            if (!isRecord(itemValue)) {
+              throw new Error("Each natGateways item must be an object");
+            }
+
+            const id = itemValue.id;
+            const name = itemValue.name;
+            const itemResourceTypeName = itemValue.resourceTypeName;
+
+            if (typeof id !== "string") {
+              throw new Error("natGateways.items.id must be a string");
+            }
+            if (typeof name !== "string") {
+              throw new Error("natGateways.items.name must be a string");
+            }
+            if (typeof itemResourceTypeName !== "string") {
+              throw new Error("natGateways.items.resourceTypeName must be a string");
+            }
+
+            return {
+              id,
+              name,
+              resourceTypeName: itemResourceTypeName,
+              ...(optionalRecordString(itemValue, "spec") !== undefined
+                ? { spec: optionalRecordString(itemValue, "spec") }
+                : {}),
+              ...(optionalRecordString(itemValue, "catalogItemName") !== undefined
+                ? { catalogItemName: optionalRecordString(itemValue, "catalogItemName") }
+                : {}),
+              ...(optionalRecordString(itemValue, "regionId") !== undefined
+                ? { regionId: optionalRecordString(itemValue, "regionId") }
+                : {}),
+              ...(optionalRecordString(itemValue, "regionName") !== undefined
+                ? { regionName: optionalRecordString(itemValue, "regionName") }
+                : {}),
+            };
+          }),
+        }
+      : {}),
+  };
+}
+
 export function normalizeTenant(value: unknown): ManageOneTenantInput {
   if (!isRecord(value)) {
     throw new Error("Each tenant must be an object");
@@ -735,6 +822,9 @@ export function normalizeTenant(value: unknown): ManageOneTenantInput {
       : {}),
     ...(optionalCloudBastionHosts(value) !== undefined
       ? { cloudBastionHosts: optionalCloudBastionHosts(value) }
+      : {}),
+    ...(optionalNatGateways(value) !== undefined
+      ? { natGateways: optionalNatGateways(value) }
       : {}),
   };
 }

@@ -317,6 +317,65 @@ describe("buildUsageHintsForCompany", () => {
     );
   });
 
+  it("auto-prices NAT Gateway breakdowns by ManageOne spec catalog name", () => {
+    const catalog = [
+      catalogItem("nat-small", "NAT", "Small (150 Mbps)", "per instance/month", 7),
+    ];
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          regionId: "tenant-region",
+          regionName: "Mogadishu-region-hq3",
+          natGateways: {
+            count: 1,
+            resourceTypeName: "CLOUD_NAT_GATEWAY",
+            items: [
+              {
+                id: "nat-1",
+                name: "NAT_Credit_Score",
+                resourceTypeName: "CLOUD_NAT_GATEWAY",
+                spec: "1",
+                catalogItemName: "Small (150 Mbps)",
+                regionId: "hoa-mogadishu-2",
+                regionName: "Hoa-Mogadishu-2",
+              },
+            ],
+          },
+        },
+      ],
+      catalog,
+    );
+    const preview = buildBulkUsagePreview(hints, catalog, []);
+
+    expect(hints).toContainEqual({
+      serviceCategory: "NAT",
+      quantity: 1,
+      pricing: "auto",
+      lineItems: [
+        {
+          label: "Small (150 Mbps)",
+          serviceCategory: "NAT",
+          quantity: 1,
+          pricing: "auto",
+          suggestedCatalogItemId: "nat-small",
+          regionId: "hoa-mogadishu-2",
+          regionName: "Hoa-Mogadishu-2",
+        },
+      ],
+    });
+    expect(preview.rows).toContainEqual(
+      expect.objectContaining({
+        serviceType: "NAT",
+        catalogItemId: "nat-small",
+        catalogItemName: "Small (150 Mbps)",
+        quantity: 1,
+        amount: 7,
+        regionName: "Hoa-Mogadishu-2",
+      }),
+    );
+    expect(preview.needsManualEntry).toEqual([]);
+  });
+
   it("auto-prices EVS disk managed fee and Cloud Bastion Host breakdowns", () => {
     const hints = buildUsageHintsForCompany(
       [
