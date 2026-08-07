@@ -278,7 +278,7 @@ function optionalString(
   return value;
 }
 
-function optionalRecordString(record: Record<string, unknown>, key: "regionId" | "regionName") {
+function optionalRecordString(record: Record<string, unknown>, key: string) {
   const value = record[key];
   if (value == null) {
     return undefined;
