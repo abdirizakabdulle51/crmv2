@@ -61,6 +61,24 @@ const storagePoolValidator = v.object({
   oversubscriptionAllocatedRatio: v.optional(v.number()),
 });
 
+const ecsFlavorAvailabilityValidator = v.object({
+  name: v.string(),
+  vcpus: v.number(),
+  ramGb: v.number(),
+  cpuVendor: v.optional(v.string()),
+  available: v.boolean(),
+  matchedName: v.optional(v.string()),
+  availabilityZones: v.optional(v.array(v.string())),
+  estimatedFitCount: v.optional(v.number()),
+  status: v.optional(
+    v.union(
+      v.literal("available"),
+      v.literal("low_capacity"),
+      v.literal("not_offered"),
+    ),
+  ),
+});
+
 export const append = internalMutation({
   args: {
     snapshots: v.array(
@@ -80,6 +98,13 @@ export const append = internalMutation({
         storageOversubscriptionCapacityGb: v.optional(v.number()),
         storageOversubscriptionRatio: v.optional(v.number()),
         storagePools: v.optional(v.array(storagePoolValidator)),
+        ecsFlavorAvailabilityStatus: v.optional(
+          v.union(v.literal("verified"), v.literal("unavailable")),
+        ),
+        ecsFlavorAvailabilityMessage: v.optional(v.string()),
+        ecsFlavorAvailability: v.optional(
+          v.array(ecsFlavorAvailabilityValidator),
+        ),
         snapshotAt: v.number(),
       }),
     ),

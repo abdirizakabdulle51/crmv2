@@ -100,6 +100,21 @@ describe("Cloud Health", () => {
               usedRatio: 2,
             },
           ],
+          ecsFlavorAvailabilityStatus: "verified",
+          ecsFlavorAvailabilityMessage: "ManageOne returned 74 ECS flavor(s).",
+          ecsFlavorAvailability: [
+            {
+              name: "C6_2xlarge.4",
+              vcpus: 8,
+              ramGb: 32,
+              cpuVendor: "Intel",
+              available: true,
+              matchedName: "C6_2xlarge.4",
+              availabilityZones: ["AZ_Mogadishu_2a"],
+              estimatedFitCount: 20,
+              status: "available",
+            },
+          ],
         },
       ],
     });
@@ -127,6 +142,16 @@ describe("Cloud Health", () => {
       {
         volumeType: "SATA",
         usedPercent: 2,
+      },
+    ]);
+    expect(gmRegions[0].ecsFlavorAvailabilityStatus).toBe("verified");
+    expect(gmRegions[0].ecsFlavorAvailability).toMatchObject([
+      {
+        name: "C6_2xlarge.4",
+        vcpus: 8,
+        ramGb: 32,
+        available: true,
+        estimatedFitCount: 20,
       },
     ]);
 

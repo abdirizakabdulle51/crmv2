@@ -134,6 +134,21 @@ type CloudCapacityRegionInput = {
   storageOversubscriptionCapacityGb?: number;
   storageOversubscriptionRatio?: number;
   storagePools?: CloudCapacityStoragePoolInput[];
+  ecsFlavorAvailabilityStatus?: "verified" | "unavailable";
+  ecsFlavorAvailabilityMessage?: string;
+  ecsFlavorAvailability?: CloudCapacityEcsFlavorInput[];
+};
+
+type CloudCapacityEcsFlavorInput = {
+  name: string;
+  vcpus: number;
+  ramGb: number;
+  cpuVendor?: string;
+  available: boolean;
+  matchedName?: string;
+  availabilityZones?: string[];
+  estimatedFitCount?: number;
+  status?: "available" | "low_capacity" | "not_offered";
 };
 
 type CloudCapacityStoragePoolInput = {
@@ -984,6 +999,61 @@ function normalizeCloudCapacityStoragePool(
   };
 }
 
+function normalizeCloudCapacityEcsFlavor(
+  value: unknown,
+): CloudCapacityEcsFlavorInput {
+  if (!isRecord(value)) {
+    throw new Error("Each ECS flavor availability row must be an object");
+  }
+
+  const availabilityZones = value.availabilityZones;
+  if (availabilityZones !== undefined && !Array.isArray(availabilityZones)) {
+    throw new Error("availabilityZones must be an array");
+  }
+
+  const status = optionalUnknownString(value, "status");
+  if (
+    status !== undefined &&
+    status !== "available" &&
+    status !== "low_capacity" &&
+    status !== "not_offered"
+  ) {
+    throw new Error("status must be available, low_capacity, or not_offered");
+  }
+
+  const available = value.available;
+  if (typeof available !== "boolean") {
+    throw new Error("available must be a boolean");
+  }
+
+  return {
+    name: requireUnknownString(value, "name"),
+    vcpus: requireUnknownNumber(value, "vcpus"),
+    ramGb: requireUnknownNumber(value, "ramGb"),
+    ...(optionalUnknownString(value, "cpuVendor") !== undefined
+      ? { cpuVendor: optionalUnknownString(value, "cpuVendor") }
+      : {}),
+    available,
+    ...(optionalUnknownString(value, "matchedName") !== undefined
+      ? { matchedName: optionalUnknownString(value, "matchedName") }
+      : {}),
+    ...(availabilityZones !== undefined
+      ? {
+          availabilityZones: availabilityZones.map((zone) => {
+            if (typeof zone !== "string") {
+              throw new Error("availabilityZones entries must be strings");
+            }
+            return zone;
+          }),
+        }
+      : {}),
+    ...(optionalUnknownNumber(value, "estimatedFitCount") !== undefined
+      ? { estimatedFitCount: optionalUnknownNumber(value, "estimatedFitCount") }
+      : {}),
+    ...(status !== undefined ? { status } : {}),
+  };
+}
+
 export function normalizeCloudCapacityRegion(
   value: unknown,
 ): CloudCapacityRegionInput {
@@ -994,6 +1064,26 @@ export function normalizeCloudCapacityRegion(
   const storagePools = value.storagePools;
   if (storagePools !== undefined && !Array.isArray(storagePools)) {
     throw new Error("storagePools must be an array");
+  }
+  const ecsFlavorAvailability = value.ecsFlavorAvailability;
+  if (
+    ecsFlavorAvailability !== undefined &&
+    !Array.isArray(ecsFlavorAvailability)
+  ) {
+    throw new Error("ecsFlavorAvailability must be an array");
+  }
+  const ecsFlavorAvailabilityStatus = optionalUnknownString(
+    value,
+    "ecsFlavorAvailabilityStatus",
+  );
+  if (
+    ecsFlavorAvailabilityStatus !== undefined &&
+    ecsFlavorAvailabilityStatus !== "verified" &&
+    ecsFlavorAvailabilityStatus !== "unavailable"
+  ) {
+    throw new Error(
+      "ecsFlavorAvailabilityStatus must be verified or unavailable",
+    );
   }
 
   return {
@@ -1060,6 +1150,25 @@ export function normalizeCloudCapacityRegion(
       : {}),
     ...(storagePools !== undefined
       ? { storagePools: storagePools.map(normalizeCloudCapacityStoragePool) }
+      : {}),
+    ...(ecsFlavorAvailabilityStatus !== undefined
+      ? { ecsFlavorAvailabilityStatus }
+      : {}),
+    ...(optionalUnknownString(value, "ecsFlavorAvailabilityMessage") !==
+    undefined
+      ? {
+          ecsFlavorAvailabilityMessage: optionalUnknownString(
+            value,
+            "ecsFlavorAvailabilityMessage",
+          ),
+        }
+      : {}),
+    ...(ecsFlavorAvailability !== undefined
+      ? {
+          ecsFlavorAvailability: ecsFlavorAvailability.map(
+            normalizeCloudCapacityEcsFlavor,
+          ),
+        }
       : {}),
   };
 }

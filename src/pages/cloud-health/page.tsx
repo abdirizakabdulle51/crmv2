@@ -563,6 +563,112 @@ function StoragePoolBreakdown({
   );
 }
 
+function EcsFlavorAvailability({
+  status,
+  message,
+  flavors,
+}: {
+  status?: "verified" | "unavailable";
+  message?: string;
+  flavors:
+    | Array<{
+        name: string;
+        vcpus: number;
+        ramGb: number;
+        cpuVendor?: string;
+        available: boolean;
+        estimatedFitCount?: number;
+        status?: "available" | "low_capacity" | "not_offered";
+      }>
+    | undefined;
+}) {
+  if (!status && (!flavors || flavors.length === 0)) {
+    return null;
+  }
+
+  const available = flavors?.filter((flavor) => flavor.available) ?? [];
+  const watchedFlavors =
+    flavors
+      ?.filter(
+        (flavor) =>
+          flavor.vcpus === 8 ||
+          flavor.vcpus === 16 ||
+          flavor.name === "S6_large.1",
+      )
+      .slice(0, 10) ?? [];
+
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-semibold uppercase text-muted-foreground">
+          ECS Flavor Availability
+        </div>
+        {status === "verified" ? (
+          <Badge variant="outline">
+            {available.length}/{flavors?.length ?? 0} available
+          </Badge>
+        ) : (
+          <Badge variant="secondary">Unable to verify</Badge>
+        )}
+      </div>
+
+      {status === "unavailable" ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          ManageOne did not return flavor availability for this region.
+          {message ? ` ${message}` : ""}
+        </div>
+      ) : watchedFlavors.length > 0 ? (
+        <div className="overflow-x-auto rounded-md border">
+          <table className="w-full min-w-[560px] text-sm">
+            <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Flavor</th>
+                <th className="px-3 py-2 font-medium">Size</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 text-right font-medium">
+                  Fit Estimate
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {watchedFlavors.map((flavor) => (
+                <tr key={flavor.name} className="border-t">
+                  <td className="px-3 py-2 font-medium">{flavor.name}</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {flavor.vcpus} vCPU / {flavor.ramGb} GB
+                  </td>
+                  <td className="px-3 py-2">
+                    <Badge
+                      variant={
+                        flavor.status === "not_offered"
+                          ? "secondary"
+                          : flavor.status === "low_capacity"
+                            ? "outline"
+                            : "default"
+                      }
+                    >
+                      {flavor.status === "not_offered"
+                        ? "Not offered"
+                        : flavor.status === "low_capacity"
+                          ? "Low capacity"
+                          : "Available"}
+                    </Badge>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {flavor.available
+                      ? `${formatNumber(flavor.estimatedFitCount)} possible`
+                      : "-"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type AlarmShortcut =
   | "all"
   | "critical"
@@ -3412,6 +3518,11 @@ export default function CloudHealthPage() {
                         />
                       </div>
                       <StoragePoolBreakdown pools={region.storagePools} />
+                      <EcsFlavorAvailability
+                        status={region.ecsFlavorAvailabilityStatus}
+                        message={region.ecsFlavorAvailabilityMessage}
+                        flavors={region.ecsFlavorAvailability}
+                      />
                     </CardContent>
                   </Card>
                 ))}

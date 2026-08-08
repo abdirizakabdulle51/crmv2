@@ -261,6 +261,31 @@ export default defineSchema({
         }),
       ),
     ),
+    ecsFlavorAvailabilityStatus: v.optional(
+      v.union(v.literal("verified"), v.literal("unavailable")),
+    ),
+    ecsFlavorAvailabilityMessage: v.optional(v.string()),
+    ecsFlavorAvailability: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          vcpus: v.number(),
+          ramGb: v.number(),
+          cpuVendor: v.optional(v.string()),
+          available: v.boolean(),
+          matchedName: v.optional(v.string()),
+          availabilityZones: v.optional(v.array(v.string())),
+          estimatedFitCount: v.optional(v.number()),
+          status: v.optional(
+            v.union(
+              v.literal("available"),
+              v.literal("low_capacity"),
+              v.literal("not_offered"),
+            ),
+          ),
+        }),
+      ),
+    ),
     lastSyncedAt: v.number(),
   }).index("by_region_id", ["regionId"]),
 
@@ -291,6 +316,31 @@ export default defineSchema({
           oversubscriptionAllocatedGb: v.optional(v.number()),
           oversubscriptionFreeGb: v.optional(v.number()),
           oversubscriptionAllocatedRatio: v.optional(v.number()),
+        }),
+      ),
+    ),
+    ecsFlavorAvailabilityStatus: v.optional(
+      v.union(v.literal("verified"), v.literal("unavailable")),
+    ),
+    ecsFlavorAvailabilityMessage: v.optional(v.string()),
+    ecsFlavorAvailability: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          vcpus: v.number(),
+          ramGb: v.number(),
+          cpuVendor: v.optional(v.string()),
+          available: v.boolean(),
+          matchedName: v.optional(v.string()),
+          availabilityZones: v.optional(v.array(v.string())),
+          estimatedFitCount: v.optional(v.number()),
+          status: v.optional(
+            v.union(
+              v.literal("available"),
+              v.literal("low_capacity"),
+              v.literal("not_offered"),
+            ),
+          ),
         }),
       ),
     ),

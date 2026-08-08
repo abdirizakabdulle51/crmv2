@@ -236,6 +236,21 @@ describe("normalizeCloudCapacityRegion", () => {
             oversubscriptionAllocatedRatio: 10,
           },
         ],
+        ecsFlavorAvailabilityStatus: "verified",
+        ecsFlavorAvailabilityMessage: "ManageOne returned 74 ECS flavor(s).",
+        ecsFlavorAvailability: [
+          {
+            name: "C6_2xlarge.4",
+            vcpus: 8,
+            ramGb: 32,
+            cpuVendor: "Intel",
+            available: true,
+            matchedName: "C6_2xlarge.4",
+            availabilityZones: ["AZ_Mogadishu_2a"],
+            estimatedFitCount: 20,
+            status: "available",
+          },
+        ],
       }),
     ).toMatchObject({
       regionId: "region-hq3",
@@ -250,6 +265,17 @@ describe("normalizeCloudCapacityRegion", () => {
         {
           volumeType: "SATA",
           oversubscriptionAllocatedRatio: 10,
+        },
+      ],
+      ecsFlavorAvailabilityStatus: "verified",
+      ecsFlavorAvailability: [
+        {
+          name: "C6_2xlarge.4",
+          vcpus: 8,
+          ramGb: 32,
+          available: true,
+          estimatedFitCount: 20,
+          status: "available",
         },
       ],
     });
