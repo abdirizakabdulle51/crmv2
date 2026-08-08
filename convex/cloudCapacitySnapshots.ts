@@ -49,6 +49,18 @@ function assertCanViewCloudHealth(user: Doc<"users">) {
   });
 }
 
+const storagePoolValidator = v.object({
+  volumeType: v.string(),
+  usedGb: v.number(),
+  totalGb: v.number(),
+  freeGb: v.number(),
+  usedRatio: v.number(),
+  oversubscriptionTotalGb: v.optional(v.number()),
+  oversubscriptionAllocatedGb: v.optional(v.number()),
+  oversubscriptionFreeGb: v.optional(v.number()),
+  oversubscriptionAllocatedRatio: v.optional(v.number()),
+});
+
 export const append = internalMutation({
   args: {
     snapshots: v.array(
@@ -67,6 +79,7 @@ export const append = internalMutation({
         storageTotalGb: v.number(),
         storageOversubscriptionCapacityGb: v.optional(v.number()),
         storageOversubscriptionRatio: v.optional(v.number()),
+        storagePools: v.optional(v.array(storagePoolValidator)),
         snapshotAt: v.number(),
       }),
     ),

@@ -496,6 +496,73 @@ function RingGauge({
   );
 }
 
+function StoragePoolBreakdown({
+  pools,
+}: {
+  pools:
+    | Array<{
+        volumeType: string;
+        usedGb: number;
+        totalGb: number;
+        freeGb: number;
+        usedPercent?: number;
+        usedRatio: number;
+      }>
+    | undefined;
+}) {
+  if (!pools || pools.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <div className="text-xs font-semibold uppercase text-muted-foreground">
+        Storage Pools
+      </div>
+      <div className="grid gap-2">
+        {pools.map((pool) => {
+          const percent = pool.usedPercent ?? pool.usedRatio;
+          const color = statusColor(percent);
+
+          return (
+            <div
+              key={pool.volumeType}
+              className="grid gap-2 rounded-md border px-3 py-2 sm:grid-cols-[minmax(8rem,1fr)_minmax(14rem,1.8fr)] sm:items-center"
+            >
+              <div className="min-w-0">
+                <div className="font-medium">{pool.volumeType}</div>
+                <div className="text-xs text-muted-foreground">
+                  {formatNumber(pool.freeGb, " GB")} free
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                  <span>
+                    {formatNumber(pool.usedGb, " GB")} /{" "}
+                    {formatNumber(pool.totalGb, " GB")}
+                  </span>
+                  <span className="font-medium text-foreground">
+                    {formatNumber(percent, "%")}
+                  </span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${Math.min(Math.max(percent, 0), 100)}%`,
+                      backgroundColor: color,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 type AlarmShortcut =
   | "all"
   | "critical"
@@ -3302,44 +3369,49 @@ export default function CloudHealthPage() {
                         </span>
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="grid gap-3 md:grid-cols-3">
-                      <RingGauge
-                        label="CPU"
-                        percent={region.cpuUsedPercent}
-                        detail={`${formatNumber(region.cpuUsed)} / ${formatNumber(region.cpuTotal)} cores`}
-                        oversubscriptionRatio={region.cpuOversubscriptionRatio}
-                        onClick={() =>
-                          navigate(
-                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
-                          )
-                        }
-                      />
-                      <RingGauge
-                        label="Memory"
-                        percent={region.memoryUsedPercent}
-                        detail={`${formatNumber(region.memoryUsedGb, " GB")} / ${formatNumber(region.memoryTotalGb, " GB")}`}
-                        oversubscriptionRatio={
-                          region.memoryOversubscriptionRatio
-                        }
-                        onClick={() =>
-                          navigate(
-                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
-                          )
-                        }
-                      />
-                      <RingGauge
-                        label="Storage"
-                        percent={region.storageUsedPercent}
-                        detail={`${formatNumber(region.storageUsedGb, " GB")} / ${formatNumber(region.storageTotalGb, " GB")}`}
-                        oversubscriptionRatio={
-                          region.storageOversubscriptionRatio
-                        }
-                        onClick={() =>
-                          navigate(
-                            `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
-                          )
-                        }
-                      />
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <RingGauge
+                          label="CPU"
+                          percent={region.cpuUsedPercent}
+                          detail={`${formatNumber(region.cpuUsed)} / ${formatNumber(region.cpuTotal)} cores`}
+                          oversubscriptionRatio={
+                            region.cpuOversubscriptionRatio
+                          }
+                          onClick={() =>
+                            navigate(
+                              `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
+                            )
+                          }
+                        />
+                        <RingGauge
+                          label="Memory"
+                          percent={region.memoryUsedPercent}
+                          detail={`${formatNumber(region.memoryUsedGb, " GB")} / ${formatNumber(region.memoryTotalGb, " GB")}`}
+                          oversubscriptionRatio={
+                            region.memoryOversubscriptionRatio
+                          }
+                          onClick={() =>
+                            navigate(
+                              `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
+                            )
+                          }
+                        />
+                        <RingGauge
+                          label="Storage"
+                          percent={region.storageUsedPercent}
+                          detail={`${formatNumber(region.storageUsedGb, " GB")} / ${formatNumber(region.storageTotalGb, " GB")}`}
+                          oversubscriptionRatio={
+                            region.storageOversubscriptionRatio
+                          }
+                          onClick={() =>
+                            navigate(
+                              `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
+                            )
+                          }
+                        />
+                      </div>
+                      <StoragePoolBreakdown pools={region.storagePools} />
                     </CardContent>
                   </Card>
                 ))}

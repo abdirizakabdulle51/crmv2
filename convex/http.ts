@@ -133,6 +133,19 @@ type CloudCapacityRegionInput = {
   storageTotalGb: number;
   storageOversubscriptionCapacityGb?: number;
   storageOversubscriptionRatio?: number;
+  storagePools?: CloudCapacityStoragePoolInput[];
+};
+
+type CloudCapacityStoragePoolInput = {
+  volumeType: string;
+  usedGb: number;
+  totalGb: number;
+  freeGb: number;
+  usedRatio: number;
+  oversubscriptionTotalGb?: number;
+  oversubscriptionAllocatedGb?: number;
+  oversubscriptionFreeGb?: number;
+  oversubscriptionAllocatedRatio?: number;
 };
 
 type CloudCapacitySnapshotInput = CloudCapacityRegionInput & {
@@ -921,11 +934,66 @@ function optionalUnknownString(
   return value;
 }
 
-function normalizeCloudCapacityRegion(
+function normalizeCloudCapacityStoragePool(
+  value: unknown,
+): CloudCapacityStoragePoolInput {
+  if (!isRecord(value)) {
+    throw new Error("Each storage pool must be an object");
+  }
+
+  return {
+    volumeType: requireUnknownString(value, "volumeType"),
+    usedGb: requireUnknownNumber(value, "usedGb"),
+    totalGb: requireUnknownNumber(value, "totalGb"),
+    freeGb: requireUnknownNumber(value, "freeGb"),
+    usedRatio: requireUnknownNumber(value, "usedRatio"),
+    ...(optionalUnknownNumber(value, "oversubscriptionTotalGb") !== undefined
+      ? {
+          oversubscriptionTotalGb: optionalUnknownNumber(
+            value,
+            "oversubscriptionTotalGb",
+          ),
+        }
+      : {}),
+    ...(optionalUnknownNumber(value, "oversubscriptionAllocatedGb") !==
+    undefined
+      ? {
+          oversubscriptionAllocatedGb: optionalUnknownNumber(
+            value,
+            "oversubscriptionAllocatedGb",
+          ),
+        }
+      : {}),
+    ...(optionalUnknownNumber(value, "oversubscriptionFreeGb") !== undefined
+      ? {
+          oversubscriptionFreeGb: optionalUnknownNumber(
+            value,
+            "oversubscriptionFreeGb",
+          ),
+        }
+      : {}),
+    ...(optionalUnknownNumber(value, "oversubscriptionAllocatedRatio") !==
+    undefined
+      ? {
+          oversubscriptionAllocatedRatio: optionalUnknownNumber(
+            value,
+            "oversubscriptionAllocatedRatio",
+          ),
+        }
+      : {}),
+  };
+}
+
+export function normalizeCloudCapacityRegion(
   value: unknown,
 ): CloudCapacityRegionInput {
   if (!isRecord(value)) {
     throw new Error("Each capacity region must be an object");
+  }
+
+  const storagePools = value.storagePools;
+  if (storagePools !== undefined && !Array.isArray(storagePools)) {
+    throw new Error("storagePools must be an array");
   }
 
   return {
@@ -989,6 +1057,9 @@ function normalizeCloudCapacityRegion(
             "storageOversubscriptionRatio",
           ),
         }
+      : {}),
+    ...(storagePools !== undefined
+      ? { storagePools: storagePools.map(normalizeCloudCapacityStoragePool) }
       : {}),
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTenant } from "./http";
+import { normalizeCloudCapacityRegion, normalizeTenant } from "./http";
 
 describe("normalizeTenant", () => {
   it("preserves EIP bandwidth tier breakdowns from ManageOne sync payloads", () => {
@@ -203,6 +203,55 @@ describe("normalizeTenant", () => {
           { regionName: "Mogadishu-region-hq3" },
         ],
       },
+    });
+  });
+});
+
+describe("normalizeCloudCapacityRegion", () => {
+  it("preserves storage pool capacity breakdowns from Cloud Capacity sync payloads", () => {
+    expect(
+      normalizeCloudCapacityRegion({
+        regionId: "region-hq3",
+        regionName: "Mogadishu-region-hq3",
+        cpuUsed: 10,
+        cpuTotal: 100,
+        memoryUsedGb: 20,
+        memoryTotalGb: 200,
+        storageUsedGb: 160000,
+        storageTotalGb: 1600000,
+        storagePools: [
+          {
+            volumeType: "SSD",
+            usedGb: 10000,
+            totalGb: 500000,
+            freeGb: 490000,
+            usedRatio: 2,
+          },
+          {
+            volumeType: "SATA",
+            usedGb: 512,
+            totalGb: 200000,
+            freeGb: 199488,
+            usedRatio: 0.3,
+            oversubscriptionAllocatedRatio: 10,
+          },
+        ],
+      }),
+    ).toMatchObject({
+      regionId: "region-hq3",
+      storagePools: [
+        {
+          volumeType: "SSD",
+          usedGb: 10000,
+          totalGb: 500000,
+          freeGb: 490000,
+          usedRatio: 2,
+        },
+        {
+          volumeType: "SATA",
+          oversubscriptionAllocatedRatio: 10,
+        },
+      ],
     });
   });
 });

@@ -246,6 +246,21 @@ export default defineSchema({
     storageTotalGb: v.number(),
     storageOversubscriptionCapacityGb: v.optional(v.number()),
     storageOversubscriptionRatio: v.optional(v.number()),
+    storagePools: v.optional(
+      v.array(
+        v.object({
+          volumeType: v.string(),
+          usedGb: v.number(),
+          totalGb: v.number(),
+          freeGb: v.number(),
+          usedRatio: v.number(),
+          oversubscriptionTotalGb: v.optional(v.number()),
+          oversubscriptionAllocatedGb: v.optional(v.number()),
+          oversubscriptionFreeGb: v.optional(v.number()),
+          oversubscriptionAllocatedRatio: v.optional(v.number()),
+        }),
+      ),
+    ),
     lastSyncedAt: v.number(),
   }).index("by_region_id", ["regionId"]),
 
@@ -264,6 +279,21 @@ export default defineSchema({
     storageTotalGb: v.number(),
     storageOversubscriptionCapacityGb: v.optional(v.number()),
     storageOversubscriptionRatio: v.optional(v.number()),
+    storagePools: v.optional(
+      v.array(
+        v.object({
+          volumeType: v.string(),
+          usedGb: v.number(),
+          totalGb: v.number(),
+          freeGb: v.number(),
+          usedRatio: v.number(),
+          oversubscriptionTotalGb: v.optional(v.number()),
+          oversubscriptionAllocatedGb: v.optional(v.number()),
+          oversubscriptionFreeGb: v.optional(v.number()),
+          oversubscriptionAllocatedRatio: v.optional(v.number()),
+        }),
+      ),
+    ),
     snapshotAt: v.number(),
   }).index("by_region_snapshot_at", ["regionId", "snapshotAt"]),
 

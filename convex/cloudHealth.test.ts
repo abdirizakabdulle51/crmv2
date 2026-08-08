@@ -84,6 +84,22 @@ describe("Cloud Health", () => {
           storageUsedGb: 6000,
           storageTotalGb: 10000,
           storageOversubscriptionRatio: 72.8,
+          storagePools: [
+            {
+              volumeType: "SSD",
+              usedGb: 1000,
+              totalGb: 5000,
+              freeGb: 4000,
+              usedRatio: 20,
+            },
+            {
+              volumeType: "SATA",
+              usedGb: 100,
+              totalGb: 5000,
+              freeGb: 4900,
+              usedRatio: 2,
+            },
+          ],
         },
       ],
     });
@@ -103,6 +119,16 @@ describe("Cloud Health", () => {
       storageUsedPercent: 60,
       storageOversubscriptionRatio: 72.8,
     });
+    expect(gmRegions[0].storagePools).toMatchObject([
+      {
+        volumeType: "SSD",
+        usedPercent: 20,
+      },
+      {
+        volumeType: "SATA",
+        usedPercent: 2,
+      },
+    ]);
 
     await expect(
       asUser(t, users.am).query(api.cloudCapacity.list, {}),
@@ -566,6 +592,15 @@ describe("Cloud Health", () => {
           memoryTotalGb: 1000,
           storageUsedGb: 4000,
           storageTotalGb: 10000,
+          storagePools: [
+            {
+              volumeType: "SSD",
+              usedGb: 4000,
+              totalGb: 10000,
+              freeGb: 6000,
+              usedRatio: 40,
+            },
+          ],
           snapshotAt: secondSnapshot,
         },
         {
