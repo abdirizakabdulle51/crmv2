@@ -1747,12 +1747,14 @@ export default function CloudHealthPage() {
   const [activeTab, setActiveTab] = useState<CloudHealthTab>(
     isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview",
   );
-  const needsAlarmData = activeTab === "overview" || activeTab === "alarms";
+  const [prefetchCloudHealthTabs, setPrefetchCloudHealthTabs] = useState(false);
+  const shouldLoadAllTabs = activeTab === "overview" || prefetchCloudHealthTabs;
+  const needsAlarmData = shouldLoadAllTabs || activeTab === "alarms";
   const needsCapacityData =
-    activeTab === "overview" || activeTab === "capacity";
+    shouldLoadAllTabs || activeTab === "capacity";
   const needsHostGroupData =
-    activeTab === "overview" || activeTab === "host-groups";
-  const needsNetworkData = activeTab === "overview" || activeTab === "network";
+    shouldLoadAllTabs || activeTab === "host-groups";
+  const needsNetworkData = shouldLoadAllTabs || activeTab === "network";
   const capacity = useQuery(
     api.cloudCapacity.list,
     canView && needsCapacityData ? {} : "skip",
@@ -2229,6 +2231,18 @@ export default function CloudHealthPage() {
     setActiveTab(isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview");
   }, [tabFromQuery]);
 
+  useEffect(() => {
+    if (!canView || prefetchCloudHealthTabs) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setPrefetchCloudHealthTabs(true);
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [canView, prefetchCloudHealthTabs]);
+
   const updateActiveTab = useCallback(
     (tab: CloudHealthTab, options: { manual?: boolean } = {}) => {
       if (options.manual) {
@@ -2388,26 +2402,25 @@ export default function CloudHealthPage() {
     );
   }
 
-  const isCloudHealthLoading =
-    (needsCapacityData && !capacity) ||
-    (needsAlarmData && (!alarmsSummary || !allActiveAlarms)) ||
-    (needsHostGroupData && (!hostGroups || !hostGroupsSummary)) ||
-    (needsNetworkData && (!targets || !statuses || !latencyHistory)) ||
-    (SHOW_SERVICE_DNS_HEALTH &&
-      needsNetworkData &&
-      (!serviceTargets || !serviceStatuses));
-
-  if (isCloudHealthLoading) {
-    return (
-      <div className="space-y-4 p-6 md:p-8">
-        <Skeleton className="h-8 w-48" />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Skeleton className="h-64" />
-          <Skeleton className="h-64" />
-        </div>
-      </div>
-    );
-  }
+  const activeTabLoading =
+    (activeTab === "overview" &&
+      (!capacity ||
+        !alarmsSummary ||
+        !allActiveAlarms ||
+        !hostGroups ||
+        !hostGroupsSummary ||
+        !targets ||
+        !statuses ||
+        !latencyHistory ||
+        (SHOW_SERVICE_DNS_HEALTH && (!serviceTargets || !serviceStatuses)))) ||
+    (activeTab === "alarms" && (!alarmsSummary || !allActiveAlarms)) ||
+    (activeTab === "capacity" && !capacity) ||
+    (activeTab === "network" &&
+      (!targets ||
+        !statuses ||
+        !latencyHistory ||
+        (SHOW_SERVICE_DNS_HEALTH && (!serviceTargets || !serviceStatuses)))) ||
+    (activeTab === "host-groups" && (!hostGroups || !hostGroupsSummary));
 
   const handleCreateTarget = async () => {
     if (!name.trim() || !ip.trim()) {
@@ -2685,6 +2698,11 @@ export default function CloudHealthPage() {
             {monitoringModeEnabled ? (
               <span className="inline-flex h-10 items-center rounded-full border border-primary/30 bg-primary/5 px-3 text-xs font-medium text-primary">
                 Monitoring Mode On · Extended session
+              </span>
+            ) : null}
+            {activeTabLoading ? (
+              <span className="inline-flex h-10 items-center rounded-full border bg-muted/40 px-3 text-xs font-medium text-muted-foreground">
+                Loading latest data...
               </span>
             ) : null}
           </div>
@@ -3481,7 +3499,12 @@ export default function CloudHealthPage() {
               <Activity className="h-5 w-5 text-primary" />
               <h2 className="text-lg font-semibold">Infrastructure Capacity</h2>
             </div>
-            {visibleCapacity.length === 0 ? (
+            {activeTab === "capacity" && !capacity ? (
+              <div className="grid gap-4 xl:grid-cols-2">
+                <Skeleton className="h-[28rem] rounded-lg" />
+                <Skeleton className="h-[28rem] rounded-lg" />
+              </div>
+            ) : visibleCapacity.length === 0 ? (
               <Card>
                 <CardContent className="py-10 text-center text-muted-foreground">
                   No capacity regions synced yet.
