@@ -66,6 +66,15 @@ type UsageHintTenant = {
       regionName?: string;
     }[];
   };
+  obsBuckets?: {
+    bucketName: string;
+    totalGb: number;
+    usedMb?: number;
+    storageClass?: string;
+    catalogItemName?: string;
+    regionId?: string;
+    regionName?: string;
+  }[];
   eipBandwidths?: {
     tierName: string;
     count: number;
@@ -110,6 +119,7 @@ type UsageHintCatalogItem = {
   itemName: string;
   billingUnit?: string;
   monthlyPrice?: number;
+  specs?: string;
 };
 
 export type BulkUsagePreviewRow = {
@@ -326,6 +336,63 @@ function findUniqueCatalogItemByName(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+function findObsCatalogItem(
+  bucket: NonNullable<UsageHintTenant["obsBuckets"]>[number],
+  catalog: UsageHintCatalogItem[],
+) {
+  const normalizedItemName = normalizeCatalogMatch(
+    bucket.catalogItemName ?? "Fusion bucket",
+  );
+  const normalizedStorageClass = normalizeCatalogMatch(
+    bucket.storageClass ?? "Standard",
+  );
+  const matches = catalog.filter(
+    (item) =>
+      item.serviceCategory === "OBS" &&
+      item.billingUnit?.toLowerCase().includes("gb") &&
+      normalizeCatalogMatch(item.itemName) === normalizedItemName,
+  );
+  const classMatches = matches.filter((item) =>
+    normalizeCatalogMatch(`${item.itemName} ${item.specs ?? ""}`).includes(
+      normalizedStorageClass,
+    ),
+  );
+
+  if (classMatches.length === 1) {
+    return classMatches[0];
+  }
+
+  if (normalizedStorageClass.includes("archive")) {
+    return (
+      classMatches[0] ??
+      matches.find((item) =>
+        normalizeCatalogMatch(`${item.itemName} ${item.specs ?? ""}`).includes(
+          "archive",
+        ),
+      )
+    );
+  }
+
+  const standardMatches = matches.filter(
+    (item) =>
+      !normalizeCatalogMatch(`${item.itemName} ${item.specs ?? ""}`).includes(
+        "archive",
+      ),
+  );
+  if (standardMatches.length === 1) {
+    return standardMatches[0];
+  }
+  if (standardMatches.length > 1) {
+    return [...standardMatches].sort(
+      (a, b) => (b.monthlyPrice ?? 0) - (a.monthlyPrice ?? 0),
+    )[0];
+  }
+
+  return [...matches].sort(
+    (a, b) => (b.monthlyPrice ?? 0) - (a.monthlyPrice ?? 0),
+  )[0];
+}
+
 function optionalRegionFields(source: {
   regionId?: string;
   regionName?: string;
@@ -363,6 +430,7 @@ export function buildUsageHintsForCompany(
   const totals = new Map<string, UsageHint>();
   const ecsLineItems: UsageHintLineItem[] = [];
   const evsLineItems: UsageHintLineItem[] = [];
+  const obsLineItems: UsageHintLineItem[] = [];
   const eipBandwidthLineItems: UsageHintLineItem[] = [];
   const natGatewayLineItems: UsageHintLineItem[] = [];
   const wafLineItems: UsageHintLineItem[] = [];
@@ -441,6 +509,27 @@ export function buildUsageHintsForCompany(
           ? { suggestedCatalogItemId: evsDiskManagedFeeCatalogItem._id }
           : { needsManualPricing: true }),
         ...feeRegionFields,
+      });
+    }
+
+    for (const bucket of tenant.obsBuckets ?? []) {
+      if (bucket.totalGb <= 0) {
+        continue;
+      }
+
+      const catalogItem = findObsCatalogItem(bucket, catalog);
+      const bucketRegionFields = {
+        ...tenantRegionFields,
+        ...optionalRegionFields(bucket),
+      };
+      obsLineItems.push({
+        label: bucket.catalogItemName ?? "Fusion bucket",
+        serviceCategory: "OBS",
+        quantity: bucket.totalGb,
+        pricing: catalogItem ? "auto" : "manual",
+        ...(catalogItem ? { suggestedCatalogItemId: catalogItem._id } : {}),
+        ...(!catalogItem ? { needsManualPricing: true } : {}),
+        ...bucketRegionFields,
       });
     }
 
@@ -606,6 +695,13 @@ export function buildUsageHintsForCompany(
       ) {
         continue;
       }
+      if (
+        resource.serviceId === "obsv3" &&
+        resource.resource === "capacity" &&
+        obsLineItems.length > 0
+      ) {
+        continue;
+      }
 
       const rule = USAGE_HINT_RULES.find(
         (candidate) =>
@@ -708,6 +804,25 @@ export function buildUsageHintsForCompany(
       hints[existingEvsHintIndex] = evsHint;
     } else {
       hints.unshift(evsHint);
+    }
+  }
+
+  if (obsLineItems.length > 0) {
+    const existingObsHintIndex = hints.findIndex(
+      (hint) => hint.serviceCategory === "OBS",
+    );
+    const obsHint = {
+      serviceCategory: "OBS",
+      quantity: obsLineItems.reduce((sum, item) => sum + item.quantity, 0),
+      pricing: obsLineItems.every((item) => item.pricing === "auto")
+        ? ("auto" as const)
+        : ("manual" as const),
+      lineItems: obsLineItems,
+    };
+    if (existingObsHintIndex >= 0) {
+      hints[existingObsHintIndex] = obsHint;
+    } else {
+      hints.push(obsHint);
     }
   }
 
@@ -965,6 +1080,19 @@ export const bulkUpsert = internalMutation({
               ),
             ),
           }),
+        ),
+        obsBuckets: v.optional(
+          v.array(
+            v.object({
+              bucketName: v.string(),
+              totalGb: v.number(),
+              usedMb: v.optional(v.number()),
+              storageClass: v.optional(v.string()),
+              catalogItemName: v.optional(v.string()),
+              regionId: v.optional(v.string()),
+              regionName: v.optional(v.string()),
+            }),
+          ),
         ),
         eipBandwidths: v.optional(
           v.array(

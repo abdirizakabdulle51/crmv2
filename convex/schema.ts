@@ -166,6 +166,19 @@ export default defineSchema({
         ),
       }),
     ),
+    obsBuckets: v.optional(
+      v.array(
+        v.object({
+          bucketName: v.string(),
+          totalGb: v.number(),
+          usedMb: v.optional(v.number()),
+          storageClass: v.optional(v.string()),
+          catalogItemName: v.optional(v.string()),
+          regionId: v.optional(v.string()),
+          regionName: v.optional(v.string()),
+        }),
+      ),
+    ),
     eipBandwidths: v.optional(
       v.array(
         v.object({

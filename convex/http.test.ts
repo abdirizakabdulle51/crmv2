@@ -140,6 +140,40 @@ describe("normalizeTenant", () => {
     });
   });
 
+  it("preserves OBS bucket breakdowns from ManageOne sync payloads", () => {
+    expect(
+      normalizeTenant({
+        vdcId: "vdc-mizan",
+        name: "Mizan-Geomatics",
+        obsBuckets: [
+          {
+            bucketName: "mizan-main",
+            totalGb: 1225.282,
+            usedMb: 1254688.125,
+            storageClass: "Standard",
+            catalogItemName: "Fusion bucket",
+            regionId: "hoa-mogadishu-2",
+            regionName: "Hoa-Mogadishu-2",
+          },
+        ],
+      }),
+    ).toEqual({
+      vdcId: "vdc-mizan",
+      name: "Mizan-Geomatics",
+      obsBuckets: [
+        {
+          bucketName: "mizan-main",
+          totalGb: 1225.282,
+          usedMb: 1254688.125,
+          storageClass: "Standard",
+          catalogItemName: "Fusion bucket",
+          regionId: "hoa-mogadishu-2",
+          regionName: "Hoa-Mogadishu-2",
+        },
+      ],
+    });
+  });
+
   it("preserves resource-space regions on ECS and EVS breakdown items", () => {
     expect(
       normalizeTenant({

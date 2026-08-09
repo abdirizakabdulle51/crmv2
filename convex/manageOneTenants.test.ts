@@ -11,6 +11,7 @@ function catalogItem(
   itemName: string,
   billingUnit?: string,
   monthlyPrice?: number,
+  specs?: string,
 ) {
   return {
     _id: id as Id<"serviceCatalog">,
@@ -18,6 +19,7 @@ function catalogItem(
     itemName,
     ...(billingUnit ? { billingUnit } : {}),
     ...(monthlyPrice != null ? { monthlyPrice } : {}),
+    ...(specs ? { specs } : {}),
   };
 }
 
@@ -370,6 +372,73 @@ describe("buildUsageHintsForCompany", () => {
         catalogItemName: "Small (150 Mbps)",
         quantity: 1,
         amount: 7,
+        regionName: "Hoa-Mogadishu-2",
+      }),
+    );
+    expect(preview.needsManualEntry).toEqual([]);
+  });
+
+  it("auto-prices OBS3 bucket capacity from structured bucket breakdowns", () => {
+    const catalog = [
+      catalogItem(
+        "obs-standard",
+        "OBS",
+        "Fusion bucket",
+        "per GB/month",
+        0.012,
+        "Standard",
+      ),
+      catalogItem(
+        "obs-archive",
+        "OBS",
+        "Fusion bucket",
+        "per GB/month",
+        0.0035,
+        "Archive",
+      ),
+    ];
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          resources: [{ serviceId: "obsv3", resource: "capacity", used: 9999 }],
+          obsBuckets: [
+            {
+              bucketName: "mizan-main",
+              totalGb: 1225.282,
+              usedMb: 1254688.125,
+              storageClass: "Standard",
+              catalogItemName: "Fusion bucket",
+              regionName: "Hoa-Mogadishu-2",
+            },
+          ],
+        },
+      ],
+      catalog,
+    );
+    const preview = buildBulkUsagePreview(hints, catalog, []);
+
+    expect(hints.find((hint) => hint.serviceCategory === "OBS")).toEqual({
+      serviceCategory: "OBS",
+      quantity: 1225.282,
+      pricing: "auto",
+      lineItems: [
+        {
+          label: "Fusion bucket",
+          serviceCategory: "OBS",
+          quantity: 1225.282,
+          pricing: "auto",
+          suggestedCatalogItemId: "obs-standard",
+          regionName: "Hoa-Mogadishu-2",
+        },
+      ],
+    });
+    expect(preview.rows).toContainEqual(
+      expect.objectContaining({
+        serviceType: "OBS",
+        catalogItemId: "obs-standard",
+        catalogItemName: "Fusion bucket",
+        quantity: 1225.282,
+        amount: 14.703384,
         regionName: "Hoa-Mogadishu-2",
       }),
     );

@@ -27,6 +27,7 @@ type ManageOneTenantInput = {
   ecsFlavors?: ManageOneEcsFlavorInput[];
   evsVolumeTypes?: ManageOneEvsVolumeTypeInput[];
   evsDiskManagedFees?: ManageOneEvsDiskManagedFeeInput;
+  obsBuckets?: ManageOneObsBucketInput[];
   eipBandwidths?: ManageOneEipBandwidthInput[];
   vpnGateways?: ManageOneVpnGatewayInput;
   cloudBastionHosts?: ManageOneCloudBastionHostInput;
@@ -68,6 +69,16 @@ type ManageOneEvsDiskManagedFeeInput = {
     regionId?: string;
     regionName?: string;
   }[];
+};
+
+type ManageOneObsBucketInput = {
+  bucketName: string;
+  totalGb: number;
+  usedMb?: number;
+  storageClass?: string;
+  catalogItemName?: string;
+  regionId?: string;
+  regionName?: string;
 };
 
 type ManageOneEipBandwidthInput = {
@@ -590,6 +601,54 @@ function optionalEipBandwidths(
   });
 }
 
+function optionalObsBuckets(
+  tenant: Record<string, unknown>,
+): ManageOneObsBucketInput[] | undefined {
+  const value = tenant.obsBuckets;
+  if (value == null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("obsBuckets must be an array");
+  }
+
+  return value.map((bucketValue) => {
+    if (!isRecord(bucketValue)) {
+      throw new Error("Each obsBuckets item must be an object");
+    }
+
+    const bucketName = bucketValue.bucketName;
+    const totalGb = bucketValue.totalGb;
+
+    if (typeof bucketName !== "string") {
+      throw new Error("obsBuckets.bucketName must be a string");
+    }
+    if (typeof totalGb !== "number") {
+      throw new Error("obsBuckets.totalGb must be a number");
+    }
+
+    return {
+      bucketName,
+      totalGb,
+      ...(typeof bucketValue.usedMb === "number"
+        ? { usedMb: bucketValue.usedMb }
+        : {}),
+      ...(typeof bucketValue.storageClass === "string"
+        ? { storageClass: bucketValue.storageClass }
+        : {}),
+      ...(typeof bucketValue.catalogItemName === "string"
+        ? { catalogItemName: bucketValue.catalogItemName }
+        : {}),
+      ...(typeof bucketValue.regionId === "string"
+        ? { regionId: bucketValue.regionId }
+        : {}),
+      ...(typeof bucketValue.regionName === "string"
+        ? { regionName: bucketValue.regionName }
+        : {}),
+    };
+  });
+}
+
 function optionalVpnGateways(
   tenant: Record<string, unknown>,
 ): ManageOneVpnGatewayInput | undefined {
@@ -841,6 +900,9 @@ export function normalizeTenant(value: unknown): ManageOneTenantInput {
       : {}),
     ...(optionalEvsDiskManagedFees(value) !== undefined
       ? { evsDiskManagedFees: optionalEvsDiskManagedFees(value) }
+      : {}),
+    ...(optionalObsBuckets(value) !== undefined
+      ? { obsBuckets: optionalObsBuckets(value) }
       : {}),
     ...(optionalEipBandwidths(value) !== undefined
       ? { eipBandwidths: optionalEipBandwidths(value) }
