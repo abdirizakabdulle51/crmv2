@@ -1744,34 +1744,49 @@ export default function CloudHealthPage() {
   const tabFromQuery = searchParams.get("tab");
   const canView = canViewCloudHealth(currentUser?.role);
   const canManage = canManagePingTargets(currentUser?.role);
-  const capacity = useQuery(api.cloudCapacity.list, canView ? {} : "skip");
+  const [activeTab, setActiveTab] = useState<CloudHealthTab>(
+    isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview",
+  );
+  const needsAlarmData = activeTab === "overview" || activeTab === "alarms";
+  const needsCapacityData =
+    activeTab === "overview" || activeTab === "capacity";
+  const needsHostGroupData =
+    activeTab === "overview" || activeTab === "host-groups";
+  const needsNetworkData = activeTab === "overview" || activeTab === "network";
+  const capacity = useQuery(
+    api.cloudCapacity.list,
+    canView && needsCapacityData ? {} : "skip",
+  );
   const alarmsSummary = useQuery(
     api.cloudAlarms.summary,
-    canView ? {} : "skip",
+    canView && needsAlarmData ? {} : "skip",
   );
   const hostGroups = useQuery(
     api.cloudHostGroups.listActive,
-    canView ? {} : "skip",
+    canView && needsHostGroupData ? {} : "skip",
   );
   const hostGroupsSummary = useQuery(
     api.cloudHostGroups.summary,
-    canView ? {} : "skip",
+    canView && needsHostGroupData ? {} : "skip",
   );
-  const targets = useQuery(api.pingTargets.list, canView ? {} : "skip");
+  const targets = useQuery(
+    api.pingTargets.list,
+    canView && needsNetworkData ? {} : "skip",
+  );
   const statuses = useQuery(
     api.pingResults.latestStatusByTarget,
-    canView ? {} : "skip",
+    canView && needsNetworkData ? {} : "skip",
   );
   const createTarget = useMutation(api.pingTargets.create);
   const setActive = useMutation(api.pingTargets.setActive);
   const removeTarget = useMutation(api.pingTargets.remove);
   const serviceTargets = useQuery(
     api.serviceHealthTargets.list,
-    canView && SHOW_SERVICE_DNS_HEALTH ? {} : "skip",
+    canView && SHOW_SERVICE_DNS_HEALTH && needsNetworkData ? {} : "skip",
   );
   const serviceStatuses = useQuery(
     api.serviceHealthResults.latestStatusByTarget,
-    canView && SHOW_SERVICE_DNS_HEALTH ? {} : "skip",
+    canView && SHOW_SERVICE_DNS_HEALTH && needsNetworkData ? {} : "skip",
   );
   const createServiceTarget = useMutation(api.serviceHealthTargets.create);
   const setServiceTargetActive = useMutation(
@@ -1801,9 +1816,6 @@ export default function CloudHealthPage() {
   const [hostGroupSummaryShortcut, setHostGroupSummaryShortcut] =
     useState<HostGroupSummaryShortcut>("attention");
   const [hostGroupSearch, setHostGroupSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<CloudHealthTab>(
-    isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview",
-  );
   const [autoRotateEnabled, setAutoRotateEnabled] = useState(false);
   const [autoRotateRemainingSeconds, setAutoRotateRemainingSeconds] = useState(
     AUTO_ROTATE_INTERVAL_SECONDS,
@@ -1834,7 +1846,7 @@ export default function CloudHealthPage() {
   );
   const allActiveAlarms = useQuery(
     api.cloudAlarms.listActive,
-    canView ? {} : "skip",
+    canView && needsAlarmData ? {} : "skip",
   );
   const monitoredActiveAlarms = useMemo(() => {
     return (allActiveAlarms ?? []).filter((alarm) =>
@@ -2030,7 +2042,7 @@ export default function CloudHealthPage() {
   );
   const latencyHistory = useQuery(
     api.pingResults.historyForActiveTargetsInRange,
-    canView ? latencyRange : "skip",
+    canView && needsNetworkData ? latencyRange : "skip",
   );
   const chartData = useMemo(
     () =>
@@ -2136,6 +2148,17 @@ export default function CloudHealthPage() {
   }, [hostGroupRegionFilter, hostGroupRiskFilter, hostGroupSearch, hostGroups]);
   const visibleServiceTargets = serviceTargets ?? [];
   const visibleServiceStatuses = serviceStatuses ?? [];
+  const visibleCapacity = capacity ?? [];
+  const visibleStatuses = statuses ?? [];
+  const visibleHostGroupsSummary = hostGroupsSummary ?? {
+    totalHostGroups: 0,
+    critical: 0,
+    watch: 0,
+    healthy: 0,
+    totalHosts: 0,
+    lastSyncedAt: undefined,
+    topRisk: [] as CloudHostGroup[],
+  };
   const serviceHistory = useQuery(
     api.serviceHealthResults.recentHistory,
     canView && SHOW_SERVICE_DNS_HEALTH && selectedServiceTargetId
@@ -2365,16 +2388,16 @@ export default function CloudHealthPage() {
     );
   }
 
-  if (
-    !capacity ||
-    !alarmsSummary ||
-    !allActiveAlarms ||
-    !hostGroups ||
-    !hostGroupsSummary ||
-    !targets ||
-    !statuses ||
-    (SHOW_SERVICE_DNS_HEALTH && (!serviceTargets || !serviceStatuses))
-  ) {
+  const isCloudHealthLoading =
+    (needsCapacityData && !capacity) ||
+    (needsAlarmData && (!alarmsSummary || !allActiveAlarms)) ||
+    (needsHostGroupData && (!hostGroups || !hostGroupsSummary)) ||
+    (needsNetworkData && (!targets || !statuses || !latencyHistory)) ||
+    (SHOW_SERVICE_DNS_HEALTH &&
+      needsNetworkData &&
+      (!serviceTargets || !serviceStatuses));
+
+  if (isCloudHealthLoading) {
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-8 w-48" />
@@ -2941,18 +2964,19 @@ export default function CloudHealthPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="text-2xl font-semibold">
-                    {hostGroupsSummary.critical}/{hostGroupsSummary.watch}
+                    {visibleHostGroupsSummary.critical}/
+                    {visibleHostGroupsSummary.watch}
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Critical / watch host groups
                   </p>
-                  {hostGroupsSummary.topRisk.length === 0 ? (
+                  {visibleHostGroupsSummary.topRisk.length === 0 ? (
                     <div className="text-xs text-muted-foreground">
                       No host group data synced yet.
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {hostGroupsSummary.topRisk.map((hostGroup) => (
+                      {visibleHostGroupsSummary.topRisk.map((hostGroup) => (
                         <button
                           key={hostGroup._id}
                           type="button"
@@ -3457,7 +3481,7 @@ export default function CloudHealthPage() {
               <Activity className="h-5 w-5 text-primary" />
               <h2 className="text-lg font-semibold">Infrastructure Capacity</h2>
             </div>
-            {capacity.length === 0 ? (
+            {visibleCapacity.length === 0 ? (
               <Card>
                 <CardContent className="py-10 text-center text-muted-foreground">
                   No capacity regions synced yet.
@@ -3465,7 +3489,7 @@ export default function CloudHealthPage() {
               </Card>
             ) : (
               <div className="grid gap-4 xl:grid-cols-2">
-                {capacity.map((region) => (
+                {visibleCapacity.map((region) => (
                   <Card key={region._id}>
                     <CardHeader>
                       <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
@@ -3541,33 +3565,33 @@ export default function CloudHealthPage() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
               <AlarmShortcutCard
                 title="Total Host Groups"
-                value={hostGroupsSummary.totalHostGroups}
-                detail={`Synced ${formatDateTime(hostGroupsSummary.lastSyncedAt)}`}
+                value={visibleHostGroupsSummary.totalHostGroups}
+                detail={`Synced ${formatDateTime(visibleHostGroupsSummary.lastSyncedAt)}`}
                 active={hostGroupSummaryShortcut === "totalHostGroups"}
                 onClick={() => applyHostGroupSummaryShortcut("totalHostGroups")}
               />
               <AlarmShortcutCard
                 title="Critical"
-                value={hostGroupsSummary.critical}
+                value={visibleHostGroupsSummary.critical}
                 active={hostGroupSummaryShortcut === "critical"}
                 onClick={() => applyHostGroupSummaryShortcut("critical")}
                 valueClassName="text-destructive"
               />
               <AlarmShortcutCard
                 title="Watch"
-                value={hostGroupsSummary.watch}
+                value={visibleHostGroupsSummary.watch}
                 active={hostGroupSummaryShortcut === "watch"}
                 onClick={() => applyHostGroupSummaryShortcut("watch")}
               />
               <AlarmShortcutCard
                 title="Healthy"
-                value={hostGroupsSummary.healthy}
+                value={visibleHostGroupsSummary.healthy}
                 active={hostGroupSummaryShortcut === "healthy"}
                 onClick={() => applyHostGroupSummaryShortcut("healthy")}
               />
               <AlarmShortcutCard
                 title="Total Hosts"
-                value={hostGroupsSummary.totalHosts}
+                value={visibleHostGroupsSummary.totalHosts}
                 active={hostGroupSummaryShortcut === "totalHosts"}
                 onClick={() => applyHostGroupSummaryShortcut("totalHosts")}
               />
@@ -3762,12 +3786,12 @@ export default function CloudHealthPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {statuses.length === 0 ? (
+                {visibleStatuses.length === 0 ? (
                   <div className="py-8 text-center text-sm text-muted-foreground">
                     No ping targets configured yet.
                   </div>
                 ) : (
-                  statuses.map((status) => (
+                  visibleStatuses.map((status) => (
                     <div
                       key={status.target._id}
                       className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
