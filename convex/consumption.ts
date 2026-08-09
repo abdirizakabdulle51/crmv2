@@ -217,3 +217,42 @@ export const remove = mutation({
     await ctx.db.delete(args.id);
   },
 });
+
+/** Remove multiple consumption entries after checking each entry's company scope */
+export const bulkRemove = mutation({
+  args: { ids: v.array(v.id("consumption")) },
+  handler: async (ctx, args) => {
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    const uniqueIds = [...new Set(args.ids)];
+
+    if (uniqueIds.length === 0) {
+      return { deleted: 0 };
+    }
+
+    if (uniqueIds.length > 100) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Delete up to 100 usage entries at a time",
+      });
+    }
+
+    const entries = [];
+    for (const id of uniqueIds) {
+      const entry = await ctx.db.get(id);
+      if (!entry) {
+        throw new ConvexError({
+          code: "NOT_FOUND",
+          message: "One or more usage entries were not found",
+        });
+      }
+      await assertCanManageUsage(ctx, currentUser, entry.companyId);
+      entries.push(entry);
+    }
+
+    for (const entry of entries) {
+      await ctx.db.delete(entry._id);
+    }
+
+    return { deleted: entries.length };
+  },
+});

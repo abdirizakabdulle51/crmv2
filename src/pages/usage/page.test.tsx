@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -24,6 +24,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
     consumption: {
       list: "consumption.list",
       remove: "consumption.remove",
+      bulkRemove: "consumption.bulkRemove",
       bulkCreateFromManageOne: "consumption.bulkCreateFromManageOne",
     },
     manageOneTenants: {
@@ -35,6 +36,8 @@ vi.mock("@/convex/_generated/api.js", () => ({
 const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
   consumption: [] as Doc<"consumption">[],
+  removeMutation: vi.fn(),
+  bulkRemoveMutation: vi.fn(async () => ({ deleted: 0 })),
   bulkPreview: undefined as
     | {
         rows: Array<{
@@ -55,7 +58,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useMutation: () => vi.fn(),
+  useMutation: (mutation: string) => {
+    if (mutation === "consumption.remove") {
+      return mocks.removeMutation;
+    }
+    if (mutation === "consumption.bulkRemove") {
+      return mocks.bulkRemoveMutation;
+    }
+    return vi.fn();
+  },
   useQuery: (query: string) => {
     if (query === "companies.list") {
       return mocks.companies;
@@ -83,7 +94,20 @@ vi.mock("./_components/usage-import-dialog.tsx", () => ({
 }));
 
 vi.mock("@/components/confirm-delete-dialog.tsx", () => ({
-  default: () => null,
+  default: ({
+    open,
+    onConfirm,
+    title,
+  }: {
+    open: boolean;
+    onConfirm: () => void;
+    title?: string;
+  }) =>
+    open ? (
+      <div role="dialog" aria-label={title}>
+        <button onClick={onConfirm}>Confirm Delete</button>
+      </div>
+    ) : null,
 }));
 
 vi.mock("sonner", () => ({
@@ -101,6 +125,10 @@ function LocationProbe() {
 }
 
 function renderUsagePage() {
+  mocks.removeMutation.mockReset();
+  mocks.bulkRemoveMutation.mockReset();
+  mocks.bulkRemoveMutation.mockResolvedValue({ deleted: 0 });
+
   return render(
     <MemoryRouter initialEntries={["/usage"]}>
       <Routes>
@@ -195,6 +223,37 @@ describe("UsagePage company filter indicators", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/usage/auto-fill?company=company-1&month=",
     );
+  });
+});
+
+describe("UsagePage bulk delete", () => {
+  it("selects visible usage entries and deletes them in one confirmed action", async () => {
+    const user = userEvent.setup();
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.consumption = [
+      usage("usage-1", aicc._id, "2026-08", "ECS", 100),
+      usage("usage-2", aicc._id, "2026-08", "EVS", 200),
+    ];
+    mocks.bulkRemoveMutation.mockResolvedValue({ deleted: 2 });
+
+    renderUsagePage();
+
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Select all visible usage entries",
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Delete Selected (2)" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Confirm Delete" }));
+
+    await waitFor(() => {
+      expect(mocks.bulkRemoveMutation).toHaveBeenCalledWith({
+        ids: ["usage-1", "usage-2"],
+      });
+    });
   });
 });
 
