@@ -471,23 +471,25 @@ function RingGauge({
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary/60 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="grid min-h-28 w-full grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary/60 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-[5rem_minmax(0,1fr)]"
     >
       <div
-        className="grid h-20 w-20 shrink-0 place-items-center rounded-full"
+        className="grid h-18 w-18 place-items-center rounded-full sm:h-20 sm:w-20"
         style={{
           background: `conic-gradient(${color} ${Math.min(percent, 100) * 3.6}deg, color-mix(in oklch, var(--muted) 80%, transparent) 0deg)`,
         }}
       >
-        <div className="grid h-14 w-14 place-items-center rounded-full bg-card text-sm font-semibold">
+        <div className="grid h-12 w-12 place-items-center rounded-full bg-card text-sm font-semibold sm:h-14 sm:w-14">
           {percent}%
         </div>
       </div>
-      <div className="min-w-0">
-        <div className="font-medium">{label}</div>
-        <div className="text-xs text-muted-foreground">{detail}</div>
+      <div className="min-w-0 space-y-0.5">
+        <div className="truncate font-medium">{label}</div>
+        <div className="break-words text-xs leading-5 text-muted-foreground">
+          {detail}
+        </div>
         {oversubscriptionRatio != null ? (
-          <div className="text-xs text-muted-foreground">
+          <div className="text-xs leading-5 text-muted-foreground">
             {formatNumber(oversubscriptionRatio, "%")} oversubscribed
           </div>
         ) : null}
@@ -3535,7 +3537,7 @@ export default function CloudHealthPage() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-3">
+                      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
                         <RingGauge
                           label="CPU"
                           percent={region.cpuUsedPercent}
