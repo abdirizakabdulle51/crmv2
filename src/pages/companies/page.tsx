@@ -26,6 +26,7 @@ import {
 import { Plus, Search, Building2, Upload } from "lucide-react";
 import CompanyDialog from "./_components/company-dialog.tsx";
 import ImportDialog from "./_components/import-dialog.tsx";
+import { sortCompaniesByName } from "@/components/company-combobox.tsx";
 
 type Company = Doc<"companies">;
 
@@ -76,19 +77,22 @@ export default function CompaniesPage() {
   const sectorMap = new Map(sectors.map((s) => [s._id, s]));
   const userMap = new Map(users.map((u) => [u._id, u]));
 
-  const filtered = companies.filter((c) => {
-    if (search) {
-      const term = search.toLowerCase();
-      const matchesName = c.name.toLowerCase().includes(term);
-      const matchesContact = c.contactName?.toLowerCase().includes(term);
-      if (!matchesName && !matchesContact) return false;
-    }
-    if (statusFilter !== "all" && c.contractStatus !== statusFilter)
-      return false;
-    if (sectorFilter !== "all" && c.sectorId !== sectorFilter) return false;
-    if (countryFilter !== "all" && c.countryId !== countryFilter) return false;
-    return true;
-  });
+  const filtered = sortCompaniesByName(
+    companies.filter((c) => {
+      if (search) {
+        const term = search.toLowerCase();
+        const matchesName = c.name.toLowerCase().includes(term);
+        const matchesContact = c.contactName?.toLowerCase().includes(term);
+        if (!matchesName && !matchesContact) return false;
+      }
+      if (statusFilter !== "all" && c.contractStatus !== statusFilter)
+        return false;
+      if (sectorFilter !== "all" && c.sectorId !== sectorFilter) return false;
+      if (countryFilter !== "all" && c.countryId !== countryFilter)
+        return false;
+      return true;
+    }),
+  );
 
   const handleEdit = (company: Company) => {
     navigate(`/companies/${company._id}`);

@@ -95,6 +95,33 @@ function renderQuotesPage() {
 }
 
 describe("QuotesPage", () => {
+  it("shows the company filter alphabetically and supports search", async () => {
+    const user = userEvent.setup();
+    mocks.companies = [
+      company("company-1", "WAAFI"),
+      company("company-2", "AICC"),
+      company("company-3", "Mizan-Geomatics"),
+    ];
+    mocks.quotes = [];
+
+    renderQuotesPage();
+
+    await user.click(screen.getAllByRole("combobox")[0]);
+
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["All Companies", "AICC", "Mizan-Geomatics", "WAAFI"]);
+
+    await user.type(screen.getByPlaceholderText("Search companies..."), "miz");
+
+    expect(
+      screen.getByRole("option", { name: "Mizan-Geomatics" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "AICC" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("formats quote list currency values to exactly two decimals", () => {
     const aicc = company("company-1", "AICC");
     mocks.companies = [aicc];

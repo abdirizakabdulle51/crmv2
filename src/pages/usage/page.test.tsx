@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -194,13 +200,13 @@ describe("UsagePage company filter indicators", () => {
     const [companySelect, monthSelect] = screen.getAllByRole("combobox");
     await user.click(monthSelect);
     await user.click(screen.getByRole("option", { name: "2026-07" }));
-    await user.click(companySelect);
+    await user.click(screen.getAllByRole("combobox")[0]);
 
     const hormuudOption = screen.getByRole("option", { name: /Hormuud/i });
     const waafiOption = screen.getByRole("option", { name: /^WAAFI$/i });
     const emptyOption = screen.getByRole("option", { name: /^No Data Co$/i });
 
-    expect(within(hormuudOption).getByText("✓ 2 entries")).toBeInTheDocument();
+    expect(within(hormuudOption).getByText("2 entries")).toBeInTheDocument();
     expect(within(waafiOption).queryByText(/entries/)).not.toBeInTheDocument();
     expect(within(emptyOption).queryByText(/entries/)).not.toBeInTheDocument();
   });
@@ -214,7 +220,7 @@ describe("UsagePage company filter indicators", () => {
     renderUsagePage();
 
     const [companySelect] = screen.getAllByRole("combobox");
-    await user.click(companySelect);
+    await user.click(screen.getAllByRole("combobox")[0]);
     await user.click(screen.getByRole("option", { name: "AICC" }));
     await user.click(
       screen.getByRole("button", { name: /Auto-fill from ManageOne/i }),
@@ -352,13 +358,13 @@ describe("UsagePage pagination", () => {
     expect(screen.getAllByText("Showing 51-59 of 59 entries")).toHaveLength(2);
 
     const [companySelect, monthSelect] = screen.getAllByRole("combobox");
-    await user.click(companySelect);
+    await user.click(screen.getAllByRole("combobox")[0]);
     await user.click(screen.getByRole("option", { name: /WAAFI/i }));
 
     expect(screen.getAllByText("Showing 1-3 of 3 entries")).toHaveLength(2);
     expect(screen.getByText("WAAFI Service 1")).toBeInTheDocument();
 
-    await user.click(companySelect);
+    await user.click(screen.getAllByRole("combobox")[0]);
     await user.click(screen.getByRole("option", { name: "All Companies" }));
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getAllByText("Showing 51-59 of 59 entries")).toHaveLength(2);

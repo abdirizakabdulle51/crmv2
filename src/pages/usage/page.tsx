@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button.tsx";
 import { Checkbox } from "@/components/ui/checkbox.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import { CompanyCombobox } from "@/components/company-combobox.tsx";
 import {
   Select,
   SelectContent,
@@ -204,33 +205,19 @@ export default function UsagePage() {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <Select
+        <CompanyCombobox
+          companies={companies}
           value={companyFilter}
           onValueChange={(value) => {
             setCompanyFilter(value);
             setCurrentPage(1);
             clearSelection();
           }}
-        >
-          <SelectTrigger className="w-[200px]">
-            <SelectValue placeholder="All Companies" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Companies</SelectItem>
-            {companies.map((c) => (
-              <SelectItem key={c._id} value={c._id}>
-                <span className="flex w-full items-center justify-between gap-3">
-                  <span>{c.name}</span>
-                  {(usageCountByCompany.get(c._id) ?? 0) > 0 && (
-                    <Badge variant="outline" className="text-[10px]">
-                      ✓ {usageCountByCompany.get(c._id)} entries
-                    </Badge>
-                  )}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          getCompanyMeta={(company) => {
+            const count = usageCountByCompany.get(company._id) ?? 0;
+            return count > 0 ? `${count} entries` : null;
+          }}
+        />
         <Select
           value={monthFilter}
           onValueChange={(value) => {
@@ -292,10 +279,7 @@ export default function UsagePage() {
           Auto-fill from ManageOne
         </Button>
         {isAdmin && selectedIds.size > 0 && (
-          <Button
-            variant="destructive"
-            onClick={() => setBulkDeleteOpen(true)}
-          >
+          <Button variant="destructive" onClick={() => setBulkDeleteOpen(true)}>
             <Trash2 className="h-4 w-4 mr-2" />
             Delete Selected ({selectedIds.size})
           </Button>
