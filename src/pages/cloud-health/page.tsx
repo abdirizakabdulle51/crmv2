@@ -620,26 +620,29 @@ function EcsFlavorAvailability({
           {message ? ` ${message}` : ""}
         </div>
       ) : watchedFlavors.length > 0 ? (
-        <div className="overflow-x-auto rounded-md border">
-          <table className="w-full min-w-[560px] text-sm">
-            <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-medium">Flavor</th>
-                <th className="px-3 py-2 font-medium">Size</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 text-right font-medium">
-                  Fit Estimate
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {watchedFlavors.map((flavor) => (
-                <tr key={flavor.name} className="border-t">
-                  <td className="px-3 py-2 font-medium">{flavor.name}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
+        <div className="rounded-md border">
+          <div className="hidden grid-cols-[1.3fr_1fr_auto_1fr] gap-3 rounded-t-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground xl:grid">
+            <div>Flavor</div>
+            <div>Size</div>
+            <div>Status</div>
+            <div className="text-right">Fit Estimate</div>
+          </div>
+          <div className="divide-y">
+            {watchedFlavors.map((flavor) => (
+              <div
+                key={flavor.name}
+                className="grid gap-2 px-3 py-3 text-sm xl:grid-cols-[1.3fr_1fr_auto_1fr] xl:items-center xl:gap-3 xl:py-2"
+              >
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{flavor.name}</div>
+                  <div className="text-xs text-muted-foreground xl:hidden">
                     {flavor.vcpus} vCPU / {flavor.ramGb} GB
-                  </td>
-                  <td className="px-3 py-2">
+                  </div>
+                </div>
+                <div className="hidden text-muted-foreground xl:block">
+                  {flavor.vcpus} vCPU / {flavor.ramGb} GB
+                </div>
+                <div>
                     <Badge
                       variant={
                         flavor.status === "not_offered"
@@ -655,16 +658,16 @@ function EcsFlavorAvailability({
                           ? "Low capacity"
                           : "Available"}
                     </Badge>
-                  </td>
-                  <td className="px-3 py-2 text-right">
+                </div>
+                <div className="text-xs text-muted-foreground xl:text-right xl:text-sm xl:text-foreground">
+                  <span className="xl:hidden">Fit: </span>
                     {flavor.available
                       ? `${formatNumber(flavor.estimatedFitCount)} possible`
                       : "-"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
     </div>
