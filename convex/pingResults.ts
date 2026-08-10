@@ -88,27 +88,39 @@ export const latestStatusByTarget = query({
     assertCanViewCloudHealth(user);
 
     const targets = await ctx.db.query("pingTargets").collect();
-    const allResults = await ctx.db.query("pingResults").collect();
     const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
 
-    return targets
-      .map((target) => {
-        const targetResults = allResults
-          .filter((result) => result.targetId === target._id)
-          .sort((a, b) => b.checkedAt - a.checkedAt);
-        const latest = targetResults[0] ?? null;
-        const recentResults = targetResults.filter(
-          (result) => result.checkedAt >= dayAgo,
-        );
+    if (targets.length === 0) {
+      return [];
+    }
 
-        return {
-          target,
-          latest,
-          uptime24hPercent: uptimePercent(recentResults),
-          samples24h: recentResults.length,
-        };
-      })
-      .sort((a, b) => a.target.name.localeCompare(b.target.name));
+    const rows = [];
+    for (const target of targets) {
+      const [latest, recentResults] = await Promise.all([
+        ctx.db
+          .query("pingResults")
+          .withIndex("by_target_checked_at", (q) =>
+            q.eq("targetId", target._id),
+          )
+          .order("desc")
+          .first(),
+        ctx.db
+          .query("pingResults")
+          .withIndex("by_target_checked_at", (q) =>
+            q.eq("targetId", target._id).gte("checkedAt", dayAgo),
+          )
+          .collect(),
+      ]);
+
+      rows.push({
+        target,
+        latest,
+        uptime24hPercent: uptimePercent(recentResults),
+        samples24h: recentResults.length,
+      });
+    }
+
+    return rows.sort((a, b) => a.target.name.localeCompare(b.target.name));
   },
 });
 
@@ -125,9 +137,10 @@ export const recentHistory = query({
     const results = await ctx.db
       .query("pingResults")
       .withIndex("by_target_checked_at", (q) => q.eq("targetId", args.targetId))
-      .collect();
+      .order("desc")
+      .take(limit);
 
-    return results.sort((a, b) => b.checkedAt - a.checkedAt).slice(0, limit);
+    return results;
   },
 });
 
@@ -145,9 +158,26 @@ export const recentHistoryForActiveTargets = query({
       .withIndex("by_active", (q) => q.eq("active", true))
       .collect();
     const activeTargets = targets.sort((a, b) => a.name.localeCompare(b.name));
-    const activeTargetIds = new Set(activeTargets.map((target) => target._id));
-    const results = (await ctx.db.query("pingResults").collect())
-      .filter((result) => activeTargetIds.has(result.targetId))
+    if (activeTargets.length === 0) {
+      return {
+        targets: [],
+        buckets: [],
+      };
+    }
+
+    const results = (
+      await Promise.all(
+        activeTargets.map((target) =>
+          ctx.db
+            .query("pingResults")
+            .withIndex("by_target_checked_at", (q) =>
+              q.eq("targetId", target._id),
+            )
+            .collect(),
+        ),
+      )
+    )
+      .flat()
       .sort((a, b) => b.checkedAt - a.checkedAt);
 
     const buckets = new Map<
@@ -217,10 +247,19 @@ export const historyForActiveTargetsInRange = query({
       .withIndex("by_active", (q) => q.eq("active", true))
       .collect();
     const activeTargets = targets.sort((a, b) => a.name.localeCompare(b.name));
-    const activeTargetIds = new Set(activeTargets.map((target) => target._id));
     const rangeMs = Math.max(0, args.to - args.from);
     const bucketSizeMs =
       rangeMs <= 24 * 60 * 60 * 1000 ? 60 * 1000 : 60 * 60 * 1000;
+
+    if (activeTargets.length === 0) {
+      return {
+        bucketSizeMs,
+        targets: [],
+        buckets: [],
+      };
+    }
+
+    const activeTargetIds = new Set(activeTargets.map((target) => target._id));
     const results = (
       await ctx.db
         .query("pingResults")

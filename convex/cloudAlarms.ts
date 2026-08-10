@@ -203,12 +203,8 @@ export const listActive = query({
       .query("cloudAlarms")
       .withIndex("by_active", (q) => q.eq("active", true))
       .collect();
-    const companies = await ctx.db.query("companies").collect();
-    const companyNames = new Map(
-      companies.map((company) => [company._id, company.name]),
-    );
 
-    return activeAlarms
+    const filteredAlarms = activeAlarms
       .filter((alarm) =>
         args.severity == null ? true : alarm.severity === args.severity,
       )
@@ -219,7 +215,26 @@ export const listActive = query({
       )
       .filter((alarm) =>
         args.category == null ? true : alarm.category === args.category,
-      )
+      );
+
+    if (filteredAlarms.length === 0) {
+      return [];
+    }
+
+    const linkedCompanyIds = new Set(
+      filteredAlarms
+        .map((alarm) => alarm.linkedCompanyId)
+        .filter((companyId): companyId is Id<"companies"> => Boolean(companyId)),
+    );
+    const companyPairs = await Promise.all(
+      [...linkedCompanyIds].map(async (companyId) => {
+        const company = await ctx.db.get(companyId);
+        return [companyId, company?.name ?? null] as const;
+      }),
+    );
+    const companyNames = new Map(companyPairs);
+
+    return filteredAlarms
       .map((alarm) => ({
         ...alarm,
         linkedCompanyName: alarm.linkedCompanyId

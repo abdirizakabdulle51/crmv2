@@ -2246,7 +2246,7 @@ export default function CloudHealthPage() {
 
     const timeoutId = window.setTimeout(() => {
       setPrefetchCloudHealthTabs(true);
-    }, 250);
+    }, 3000);
 
     return () => window.clearTimeout(timeoutId);
   }, [canView, prefetchCloudHealthTabs]);
