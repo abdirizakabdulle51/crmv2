@@ -1763,13 +1763,17 @@ export default function CloudHealthPage() {
     needsOverviewData || activeTab === "network" || prefetchCloudHealthTabs;
   const needsNetworkHistoryData =
     activeTab === "network" || prefetchCloudHealthTabs;
+  const overview = useQuery(
+    api.cloudCapacity.cloudHealthOverview,
+    canView && needsOverviewData ? {} : "skip",
+  );
   const capacity = useQuery(
     api.cloudCapacity.list,
-    canView && needsCapacityData ? {} : "skip",
+    canView && !needsOverviewData && needsCapacityData ? {} : "skip",
   );
   const alarmsSummary = useQuery(
     api.cloudAlarms.summary,
-    canView && needsAlarmData ? {} : "skip",
+    canView && !needsOverviewData && needsAlarmData ? {} : "skip",
   );
   const hostGroups = useQuery(
     api.cloudHostGroups.listActive,
@@ -1777,7 +1781,7 @@ export default function CloudHealthPage() {
   );
   const hostGroupsSummary = useQuery(
     api.cloudHostGroups.summary,
-    canView && needsHostGroupSummaryData ? {} : "skip",
+    canView && !needsOverviewData && needsHostGroupSummaryData ? {} : "skip",
   );
   const targets = useQuery(
     api.pingTargets.list,
@@ -1785,7 +1789,7 @@ export default function CloudHealthPage() {
   );
   const statuses = useQuery(
     api.pingResults.latestStatusByTarget,
-    canView && needsNetworkStatusData ? {} : "skip",
+    canView && !needsOverviewData && needsNetworkStatusData ? {} : "skip",
   );
   const createTarget = useMutation(api.pingTargets.create);
   const setActive = useMutation(api.pingTargets.setActive);
@@ -1796,7 +1800,9 @@ export default function CloudHealthPage() {
   );
   const serviceStatuses = useQuery(
     api.serviceHealthResults.latestStatusByTarget,
-    canView && SHOW_SERVICE_DNS_HEALTH && needsNetworkStatusData ? {} : "skip",
+    canView && SHOW_SERVICE_DNS_HEALTH && !needsOverviewData && needsNetworkStatusData
+      ? {}
+      : "skip",
   );
   const createServiceTarget = useMutation(api.serviceHealthTargets.create);
   const setServiceTargetActive = useMutation(
@@ -1856,13 +1862,18 @@ export default function CloudHealthPage() {
   );
   const allActiveAlarms = useQuery(
     api.cloudAlarms.listActive,
-    canView && needsAlarmData ? {} : "skip",
+    canView && !needsOverviewData && needsAlarmData ? {} : "skip",
   );
+  const overviewCapacity = overview?.capacity ?? capacity;
+  const overviewActiveAlarms = overview?.activeAlarms ?? allActiveAlarms;
+  const overviewHostGroupsSummary =
+    overview?.hostGroupsSummary ?? hostGroupsSummary;
+  const overviewStatuses = overview?.statuses ?? statuses;
   const monitoredActiveAlarms = useMemo(() => {
-    return (allActiveAlarms ?? []).filter((alarm) =>
+    return (overviewActiveAlarms ?? []).filter((alarm) =>
       MONITORED_ALARM_REGIONS.includes(alarm.logicalRegionName ?? ""),
     );
-  }, [allActiveAlarms]);
+  }, [overviewActiveAlarms]);
   const monitoredAlarmsSummary = useMemo(() => {
     const active = monitoredActiveAlarms.length;
     const critical = monitoredActiveAlarms.filter(
@@ -2092,7 +2103,7 @@ export default function CloudHealthPage() {
     return getLatencyAxisDomain(values);
   }, [chartData, hiddenLatencyTargetIds, latencyTargets]);
   const networkSummary = useMemo(() => {
-    const rows = statuses ?? [];
+    const rows = overviewStatuses ?? [];
     return {
       total: rows.length,
       up: rows.filter((status) => status.latest?.success).length,
@@ -2100,9 +2111,9 @@ export default function CloudHealthPage() {
         .length,
       paused: rows.filter((status) => !status.target.active).length,
     };
-  }, [statuses]);
+  }, [overviewStatuses]);
   const capacitySummary = useMemo(() => {
-    const rows = capacity ?? [];
+    const rows = overviewCapacity ?? [];
     const regionCount = rows.length;
     const warningRegions = rows.filter(
       (region) =>
@@ -2118,7 +2129,7 @@ export default function CloudHealthPage() {
     ).length;
 
     return { regionCount, warningRegions, criticalRegions };
-  }, [capacity]);
+  }, [overviewCapacity]);
   const hostGroupRegions = useMemo(() => {
     const regions = new Map<string, string>();
     for (const hostGroup of hostGroups ?? []) {
@@ -2158,9 +2169,9 @@ export default function CloudHealthPage() {
   }, [hostGroupRegionFilter, hostGroupRiskFilter, hostGroupSearch, hostGroups]);
   const visibleServiceTargets = serviceTargets ?? [];
   const visibleServiceStatuses = serviceStatuses ?? [];
-  const visibleCapacity = capacity ?? [];
-  const visibleStatuses = statuses ?? [];
-  const visibleHostGroupsSummary = hostGroupsSummary ?? {
+  const visibleCapacity = overviewCapacity ?? [];
+  const visibleStatuses = overviewStatuses ?? [];
+  const visibleHostGroupsSummary = overviewHostGroupsSummary ?? {
     totalHostGroups: 0,
     critical: 0,
     watch: 0,
@@ -2412,11 +2423,7 @@ export default function CloudHealthPage() {
 
   const activeTabLoading =
     (activeTab === "overview" &&
-      (!capacity ||
-        !alarmsSummary ||
-        !allActiveAlarms ||
-        !hostGroupsSummary ||
-        !statuses ||
+      (!overview ||
         (SHOW_SERVICE_DNS_HEALTH && !serviceStatuses))) ||
     (activeTab === "alarms" && (!alarmsSummary || !allActiveAlarms)) ||
     (activeTab === "capacity" && !capacity) ||

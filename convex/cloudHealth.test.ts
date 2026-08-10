@@ -921,4 +921,36 @@ describe("Cloud Health", () => {
       asUser(t, users.am).query(api.cloudAlarms.summary, {}),
     ).rejects.toThrow(/Cloud Health/);
   });
+
+  it("loads the cloud health overview in one slim query", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+
+    const overview = await asUser(t, users.gm).query(
+      api.cloudCapacity.cloudHealthOverview,
+      {},
+    );
+
+    expect(overview).toMatchObject({
+      capacity: [],
+      alarmsSummary: {
+        active: 0,
+        critical: 0,
+        major: 0,
+        tenantLinked: 0,
+        platform: 0,
+        regions: 0,
+      },
+      activeAlarms: [],
+      hostGroupsSummary: {
+        totalHostGroups: 0,
+        critical: 0,
+        watch: 0,
+        healthy: 0,
+        totalHosts: 0,
+        topRisk: [],
+      },
+      statuses: [],
+    });
+  });
 });

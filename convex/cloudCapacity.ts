@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel.d.ts";
+import type { Doc, Id } from "./_generated/dataModel.d.ts";
 
 function canViewCloudHealth(user: Doc<"users">) {
   return (
@@ -166,5 +166,167 @@ export const list = query({
         })),
       }))
       .sort((a, b) => a.regionName.localeCompare(b.regionName));
+  },
+});
+
+function uptimePercent(results: Doc<"pingResults">[]) {
+  if (results.length === 0) {
+    return null;
+  }
+  const successful = results.filter((result) => result.success).length;
+  return Math.round((successful / results.length) * 1000) / 10;
+}
+
+function riskSortValue(riskLevel: Doc<"cloudHostGroups">["riskLevel"]) {
+  if (riskLevel === "critical") return 0;
+  if (riskLevel === "watch") return 1;
+  return 2;
+}
+
+export const cloudHealthOverview = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanViewCloudHealth(user);
+
+    const [regions, activeAlarms, hostGroups, targets] = await Promise.all([
+      ctx.db.query("cloudCapacityRegions").collect(),
+      ctx.db
+        .query("cloudAlarms")
+        .withIndex("by_active", (q) => q.eq("active", true))
+        .collect(),
+      ctx.db
+        .query("cloudHostGroups")
+        .withIndex("by_active", (q) => q.eq("active", true))
+        .collect(),
+      ctx.db.query("pingTargets").collect(),
+    ]);
+
+    const companyIds = new Set(
+      activeAlarms
+        .map((alarm) => alarm.linkedCompanyId)
+        .filter((companyId): companyId is Id<"companies"> =>
+          Boolean(companyId),
+        ),
+    );
+    const companyPairs = await Promise.all(
+      [...companyIds].map(async (companyId) => {
+        const company = await ctx.db.get(companyId);
+        return [companyId, company?.name ?? null] as const;
+      }),
+    );
+    const companyNames = new Map(companyPairs);
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const statuses = await Promise.all(
+      targets.map(async (target) => {
+        const [latest, recentResults] = await Promise.all([
+          ctx.db
+            .query("pingResults")
+            .withIndex("by_target_checked_at", (q) =>
+              q.eq("targetId", target._id),
+            )
+            .order("desc")
+            .first(),
+          ctx.db
+            .query("pingResults")
+            .withIndex("by_target_checked_at", (q) =>
+              q.eq("targetId", target._id).gte("checkedAt", dayAgo),
+            )
+            .collect(),
+        ]);
+
+        return {
+          target,
+          latest,
+          uptime24hPercent: uptimePercent(recentResults),
+          samples24h: recentResults.length,
+        };
+      }),
+    );
+    const topRisk = [...hostGroups]
+      .sort(
+        (a, b) =>
+          riskSortValue(a.riskLevel) - riskSortValue(b.riskLevel) ||
+          Math.max(b.cpuMaxPercent, b.memoryMaxPercent) -
+            Math.max(a.cpuMaxPercent, a.memoryMaxPercent),
+      )
+      .slice(0, 3)
+      .map((hostGroup) => ({
+        _id: hostGroup._id,
+        hostGroupId: hostGroup.hostGroupId,
+        hostGroupName: hostGroup.hostGroupName,
+        regionName: hostGroup.regionName,
+        riskLevel: hostGroup.riskLevel,
+      }));
+
+    return {
+      capacity: regions
+        .map((region) => ({
+          ...region,
+          cpuUsedPercent: percentage(region.cpuUsed, region.cpuTotal),
+          memoryUsedPercent: percentage(
+            region.memoryUsedGb,
+            region.memoryTotalGb,
+          ),
+          storageUsedPercent: percentage(
+            region.storageUsedGb,
+            region.storageTotalGb,
+          ),
+          storagePools: region.storagePools?.map((pool) => ({
+            ...pool,
+            usedPercent: percentage(pool.usedGb, pool.totalGb),
+          })),
+        }))
+        .sort((a, b) => a.regionName.localeCompare(b.regionName)),
+      alarmsSummary: {
+        active: activeAlarms.length,
+        critical: activeAlarms.filter((alarm) => alarm.severity === 1).length,
+        major: activeAlarms.filter((alarm) => alarm.severity === 2).length,
+        tenantLinked: activeAlarms.filter((alarm) => alarm.linkedCompanyId)
+          .length,
+        platform: activeAlarms.filter((alarm) => !alarm.linkedCompanyId)
+          .length,
+        regions: new Set(
+          activeAlarms
+            .map((alarm) => alarm.logicalRegionName ?? alarm.logicalRegionId)
+            .filter(Boolean),
+        ).size,
+        lastSyncedAt: activeAlarms.reduce(
+          (latest, alarm) => Math.max(latest, alarm.lastSyncedAt),
+          0,
+        ),
+      },
+      activeAlarms: activeAlarms
+        .map((alarm) => ({
+          ...alarm,
+          linkedCompanyName: alarm.linkedCompanyId
+            ? (companyNames.get(alarm.linkedCompanyId) ?? null)
+            : null,
+        }))
+        .sort((a, b) => b.latestOccurUtc - a.latestOccurUtc),
+      hostGroupsSummary: {
+        totalHostGroups: hostGroups.length,
+        critical: hostGroups.filter(
+          (hostGroup) => hostGroup.riskLevel === "critical",
+        ).length,
+        watch: hostGroups.filter((hostGroup) => hostGroup.riskLevel === "watch")
+          .length,
+        healthy: hostGroups.filter(
+          (hostGroup) => hostGroup.riskLevel === "healthy",
+        ).length,
+        totalHosts: hostGroups.reduce(
+          (total, hostGroup) => total + hostGroup.hostCount,
+          0,
+        ),
+        lastSyncedAt: hostGroups.reduce(
+          (latest, hostGroup) => Math.max(latest, hostGroup.lastSyncedAt),
+          0,
+        ),
+        topRisk,
+      },
+      statuses: statuses.sort((a, b) =>
+        a.target.name.localeCompare(b.target.name),
+      ),
+    };
   },
 });
