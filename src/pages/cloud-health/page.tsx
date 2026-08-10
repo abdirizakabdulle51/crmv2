@@ -1748,13 +1748,21 @@ export default function CloudHealthPage() {
     isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview",
   );
   const [prefetchCloudHealthTabs, setPrefetchCloudHealthTabs] = useState(false);
-  const shouldLoadAllTabs = activeTab === "overview" || prefetchCloudHealthTabs;
-  const needsAlarmData = shouldLoadAllTabs || activeTab === "alarms";
+  const needsOverviewData = activeTab === "overview";
+  const needsAlarmData =
+    needsOverviewData || activeTab === "alarms" || prefetchCloudHealthTabs;
   const needsCapacityData =
-    shouldLoadAllTabs || activeTab === "capacity";
-  const needsHostGroupData =
-    shouldLoadAllTabs || activeTab === "host-groups";
-  const needsNetworkData = shouldLoadAllTabs || activeTab === "network";
+    needsOverviewData || activeTab === "capacity" || prefetchCloudHealthTabs;
+  const needsHostGroupSummaryData =
+    needsOverviewData ||
+    activeTab === "host-groups" ||
+    prefetchCloudHealthTabs;
+  const needsHostGroupListData =
+    activeTab === "host-groups" || prefetchCloudHealthTabs;
+  const needsNetworkStatusData =
+    needsOverviewData || activeTab === "network" || prefetchCloudHealthTabs;
+  const needsNetworkHistoryData =
+    activeTab === "network" || prefetchCloudHealthTabs;
   const capacity = useQuery(
     api.cloudCapacity.list,
     canView && needsCapacityData ? {} : "skip",
@@ -1765,30 +1773,30 @@ export default function CloudHealthPage() {
   );
   const hostGroups = useQuery(
     api.cloudHostGroups.listActive,
-    canView && needsHostGroupData ? {} : "skip",
+    canView && needsHostGroupListData ? {} : "skip",
   );
   const hostGroupsSummary = useQuery(
     api.cloudHostGroups.summary,
-    canView && needsHostGroupData ? {} : "skip",
+    canView && needsHostGroupSummaryData ? {} : "skip",
   );
   const targets = useQuery(
     api.pingTargets.list,
-    canView && needsNetworkData ? {} : "skip",
+    canView && needsNetworkHistoryData ? {} : "skip",
   );
   const statuses = useQuery(
     api.pingResults.latestStatusByTarget,
-    canView && needsNetworkData ? {} : "skip",
+    canView && needsNetworkStatusData ? {} : "skip",
   );
   const createTarget = useMutation(api.pingTargets.create);
   const setActive = useMutation(api.pingTargets.setActive);
   const removeTarget = useMutation(api.pingTargets.remove);
   const serviceTargets = useQuery(
     api.serviceHealthTargets.list,
-    canView && SHOW_SERVICE_DNS_HEALTH && needsNetworkData ? {} : "skip",
+    canView && SHOW_SERVICE_DNS_HEALTH && needsNetworkHistoryData ? {} : "skip",
   );
   const serviceStatuses = useQuery(
     api.serviceHealthResults.latestStatusByTarget,
-    canView && SHOW_SERVICE_DNS_HEALTH && needsNetworkData ? {} : "skip",
+    canView && SHOW_SERVICE_DNS_HEALTH && needsNetworkStatusData ? {} : "skip",
   );
   const createServiceTarget = useMutation(api.serviceHealthTargets.create);
   const setServiceTargetActive = useMutation(
@@ -2044,7 +2052,7 @@ export default function CloudHealthPage() {
   );
   const latencyHistory = useQuery(
     api.pingResults.historyForActiveTargetsInRange,
-    canView && needsNetworkData ? latencyRange : "skip",
+    canView && needsNetworkHistoryData ? latencyRange : "skip",
   );
   const chartData = useMemo(
     () =>
@@ -2407,12 +2415,9 @@ export default function CloudHealthPage() {
       (!capacity ||
         !alarmsSummary ||
         !allActiveAlarms ||
-        !hostGroups ||
         !hostGroupsSummary ||
-        !targets ||
         !statuses ||
-        !latencyHistory ||
-        (SHOW_SERVICE_DNS_HEALTH && (!serviceTargets || !serviceStatuses)))) ||
+        (SHOW_SERVICE_DNS_HEALTH && !serviceStatuses))) ||
     (activeTab === "alarms" && (!alarmsSummary || !allActiveAlarms)) ||
     (activeTab === "capacity" && !capacity) ||
     (activeTab === "network" &&
