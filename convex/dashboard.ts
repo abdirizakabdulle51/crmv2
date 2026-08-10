@@ -161,6 +161,27 @@ function canViewCloudHealth(user: Doc<"users">) {
   );
 }
 
+async function getLatestPingResultsByTarget(
+  ctx: QueryCtx,
+  targets: Doc<"pingTargets">[],
+) {
+  const latestByTarget = new Map<Id<"pingTargets">, Doc<"pingResults">>();
+
+  for (const target of targets) {
+    const latest = await ctx.db
+      .query("pingResults")
+      .withIndex("by_target_checked_at", (q) => q.eq("targetId", target._id))
+      .order("desc")
+      .first();
+
+    if (latest) {
+      latestByTarget.set(target._id, latest);
+    }
+  }
+
+  return latestByTarget;
+}
+
 function isActiveTask(task: Task) {
   return (
     task.archivedAt === undefined &&
@@ -206,8 +227,10 @@ async function getVisibleTasks(
     return tasks.filter(
       (task) =>
         visibleUserIds.has(task.createdBy) ||
-        (task.assigneeId !== undefined && visibleUserIds.has(task.assigneeId)) ||
-        (task.reportToId !== undefined && visibleUserIds.has(task.reportToId)) ||
+        (task.assigneeId !== undefined &&
+          visibleUserIds.has(task.assigneeId)) ||
+        (task.reportToId !== undefined &&
+          visibleUserIds.has(task.reportToId)) ||
         (task.companyId !== undefined && visibleCompanyIds.has(task.companyId)),
     );
   }
@@ -412,14 +435,11 @@ export const summary = query({
     if (canViewCloudHealth(user)) {
       const regions = await ctx.db.query("cloudCapacityRegions").collect();
       const pingTargets = await ctx.db.query("pingTargets").collect();
-      const pingResults = await ctx.db.query("pingResults").collect();
-      const latestByTarget = new Map<Id<"pingTargets">, Doc<"pingResults">>();
-      for (const result of pingResults) {
-        const existing = latestByTarget.get(result.targetId);
-        if (!existing || result.checkedAt > existing.checkedAt) {
-          latestByTarget.set(result.targetId, result);
-        }
-      }
+      const activePingTargets = pingTargets.filter((target) => target.active);
+      const latestByTarget = await getLatestPingResultsByTarget(
+        ctx,
+        activePingTargets,
+      );
       const regionSummaries = regions.map((region) => {
         const maxUsedPercent = Math.max(
           percentage(region.cpuUsed, region.cpuTotal),
@@ -438,7 +458,6 @@ export const summary = query({
                 : ("healthy" as const),
         };
       });
-      const activePingTargets = pingTargets.filter((target) => target.active);
       const downTargets = activePingTargets.filter(
         (target) => latestByTarget.get(target._id)?.success === false,
       ).length;
