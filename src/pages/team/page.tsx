@@ -34,6 +34,7 @@ const ROLES: UserRole[] = [
   "country_gm",
   "head_of_business",
   "ceo",
+  "monitoring",
 ];
 
 function generateTemporaryPassword() {

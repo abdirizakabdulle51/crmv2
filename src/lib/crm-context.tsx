@@ -7,7 +7,8 @@ export type UserRole =
   | "account_manager"
   | "country_gm"
   | "head_of_business"
-  | "ceo";
+  | "ceo"
+  | "monitoring";
 
 export type CrmUser = Doc<"users">;
 
@@ -51,6 +52,8 @@ export function getRoleLabel(role: UserRole | undefined): string {
       return "Head of Business";
     case "ceo":
       return "CEO";
+    case "monitoring":
+      return "Monitoring";
     default:
       return "Unassigned";
   }

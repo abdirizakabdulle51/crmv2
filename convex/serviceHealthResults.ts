@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel.d.ts";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, query } from "./_generated/server";
+import { canViewCloudHealth } from "./authorization";
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -31,21 +32,14 @@ async function getCurrentUserOrThrow(
   return user;
 }
 
-function canViewCloudHealth(user: Doc<"users">) {
-  return (
-    user.role === "ceo" ||
-    user.role === "head_of_business" ||
-    user.role === "country_gm"
-  );
-}
-
 function assertCanViewCloudHealth(user: Doc<"users">) {
   if (canViewCloudHealth(user)) {
     return;
   }
   throw new ConvexError({
     code: "FORBIDDEN",
-    message: "Only Country GM, Head of Business, or CEO can view Cloud Health",
+    message:
+      "Only Monitoring, Country GM, Head of Business, or CEO can view Cloud Health",
   });
 }
 

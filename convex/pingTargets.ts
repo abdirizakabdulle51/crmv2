@@ -2,18 +2,10 @@ import { ConvexError, v } from "convex/values";
 import { internalQuery, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
-
-function canViewCloudHealth(user: Doc<"users">) {
-  return (
-    user.role === "ceo" ||
-    user.role === "head_of_business" ||
-    user.role === "country_gm"
-  );
-}
-
-function canManagePingTargets(user: Doc<"users">) {
-  return user.role === "ceo" || user.role === "head_of_business";
-}
+import {
+  canManageCloudHealthTargets,
+  canViewCloudHealth,
+} from "./authorization";
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -49,12 +41,13 @@ function assertCanViewCloudHealth(user: Doc<"users">) {
   }
   throw new ConvexError({
     code: "FORBIDDEN",
-    message: "Only Country GM, Head of Business, or CEO can view Cloud Health",
+    message:
+      "Only Monitoring, Country GM, Head of Business, or CEO can view Cloud Health",
   });
 }
 
 function assertCanManagePingTargets(user: Doc<"users">) {
-  if (canManagePingTargets(user)) {
+  if (canManageCloudHealthTargets(user)) {
     return;
   }
   throw new ConvexError({

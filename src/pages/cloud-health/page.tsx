@@ -36,6 +36,10 @@ import {
   Wifi,
 } from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
+import {
+  canManageCloudHealthTargets,
+  canViewCloudHealth,
+} from "@/lib/role-access.ts";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -65,14 +69,6 @@ import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Tabs, TabsContent } from "@/components/ui/tabs.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 import { toast } from "sonner";
-
-function canViewCloudHealth(role: string | undefined) {
-  return role === "ceo" || role === "head_of_business" || role === "country_gm";
-}
-
-function canManagePingTargets(role: string | undefined) {
-  return role === "ceo" || role === "head_of_business";
-}
 
 type ServiceCheckType = "http" | "tcp" | "dns";
 type CloudAlarmWithCompany = Doc<"cloudAlarms"> & {
@@ -1748,7 +1744,7 @@ export default function CloudHealthPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromQuery = searchParams.get("tab");
   const canView = canViewCloudHealth(currentUser?.role);
-  const canManage = canManagePingTargets(currentUser?.role);
+  const canManage = canManageCloudHealthTargets(currentUser?.role);
   const [activeTab, setActiveTab] = useState<CloudHealthTab>(
     isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview",
   );
@@ -1888,7 +1884,7 @@ export default function CloudHealthPage() {
       (alarm) => alarm.severity === 2,
     ).length;
     const tenantLinked = monitoredActiveAlarms.filter(
-      (alarm) => alarm.linkedCompanyId,
+      (alarm) => "linkedCompanyId" in alarm && alarm.linkedCompanyId,
     ).length;
     const regions = new Set(
       monitoredActiveAlarms
@@ -1947,7 +1943,10 @@ export default function CloudHealthPage() {
           return false;
         }
 
-        if (alarmShortcut === "linked" && !alarm.linkedCompanyId) {
+        if (
+          alarmShortcut === "linked" &&
+          !("linkedCompanyId" in alarm && alarm.linkedCompanyId)
+        ) {
           return false;
         }
 

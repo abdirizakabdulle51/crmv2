@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import AppLayout from "./app-layout.tsx";
 
@@ -18,7 +18,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/crm-context.tsx", () => ({
   useCrm: () => ({ currentUser: mocks.currentUser }),
-  getRoleLabel: () => "Account Manager",
+  getRoleLabel: (role: string) =>
+    role === "monitoring" ? "Monitoring" : "Account Manager",
 }));
 
 vi.mock("@/hooks/use-auth.ts", () => ({
@@ -55,7 +56,15 @@ describe("AppLayout", () => {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/" element={<AppLayout />}>
-            <Route path="*" element={<div>Current page</div>} />
+            <Route
+              path="*"
+              element={
+                <>
+                  <div>Current page</div>
+                  <LocationProbe />
+                </>
+              }
+            />
           </Route>
         </Routes>
       </MemoryRouter>,
@@ -74,6 +83,44 @@ describe("AppLayout", () => {
     expect(container.querySelector("aside")).not.toContainElement(bell);
     expect(screen.getByRole("button", { name: "Theme" })).toBeInTheDocument();
     expect(screen.getByTitle("Sign out")).toBeInTheDocument();
+  });
+
+  it("limits monitoring users to Cloud Health and Documentation navigation", () => {
+    mocks.currentUser = {
+      ...mocks.currentUser,
+      role: "monitoring",
+    };
+    const { container } = renderLayout("/cloud-health");
+    const sidebar = container.querySelector("aside") as HTMLElement;
+
+    expect(within(sidebar).getByRole("link", { name: "Cloud Health" }))
+      .toBeInTheDocument();
+    expect(within(sidebar).getByRole("link", { name: "Documentation" }))
+      .toBeInTheDocument();
+    expect(within(sidebar).queryByRole("link", { name: "Dashboard" }))
+      .not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("link", { name: "Companies" }))
+      .not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("link", { name: "Invoices" }))
+      .not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("link", { name: "Tasks" }))
+      .not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole("link", { name: "Team" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Notifications" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("redirects monitoring users away from restricted direct URLs", async () => {
+    mocks.currentUser = {
+      ...mocks.currentUser,
+      role: "monitoring",
+    };
+    renderLayout("/companies");
+
+    expect(await screen.findByTestId("current-path")).toHaveTextContent(
+      "/cloud-health",
+    );
   });
 
   it("renders Sales and Revenue headers as collapsible controls", () => {
@@ -238,3 +285,8 @@ describe("AppLayout", () => {
     ).toEqual(expect.arrayContaining(["Sales", "Revenue"]));
   });
 });
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="current-path">{location.pathname}</div>;
+}

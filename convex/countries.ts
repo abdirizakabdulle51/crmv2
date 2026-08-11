@@ -1,16 +1,36 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { assertNotMonitoring } from "./authorization";
+
+async function getCurrentUserOrThrow(ctx: QueryCtx | MutationCtx) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new ConvexError({
+      code: "UNAUTHENTICATED",
+      message: "User not logged in",
+    });
+  }
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_token", (q) =>
+      q.eq("tokenIdentifier", identity.tokenIdentifier),
+    )
+    .unique();
+  if (!user) {
+    throw new ConvexError({
+      code: "NOT_FOUND",
+      message: "User profile not found",
+    });
+  }
+  assertNotMonitoring(user);
+  return user;
+}
 
 export const list = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "User not logged in",
-      });
-    }
+    await getCurrentUserOrThrow(ctx);
     return await ctx.db.query("countries").collect();
   },
 });
@@ -21,13 +41,7 @@ export const create = mutation({
     region: v.string(),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "User not logged in",
-      });
-    }
+    await getCurrentUserOrThrow(ctx);
     return await ctx.db.insert("countries", {
       name: args.name,
       region: args.region,
@@ -42,13 +56,7 @@ export const update = mutation({
     region: v.string(),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "User not logged in",
-      });
-    }
+    await getCurrentUserOrThrow(ctx);
     await ctx.db.patch(args.id, { name: args.name, region: args.region });
   },
 });
@@ -56,13 +64,7 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("countries") },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new ConvexError({
-        code: "UNAUTHENTICATED",
-        message: "User not logged in",
-      });
-    }
+    await getCurrentUserOrThrow(ctx);
     await ctx.db.delete(args.id);
   },
 });

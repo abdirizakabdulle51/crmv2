@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
+import { canViewCloudHealth } from "@/lib/role-access.ts";
 
 type CloudHostGroup = Doc<"cloudHostGroups">;
 type CloudHealthTab =
@@ -30,10 +31,6 @@ const CLOUD_HEALTH_TABS: CloudHealthTab[] = [
   "network",
   "host-groups",
 ];
-
-function canViewCloudHealth(role: string | undefined) {
-  return role === "ceo" || role === "head_of_business" || role === "country_gm";
-}
 
 function isCloudHealthTab(value: string | null): value is CloudHealthTab {
   return CLOUD_HEALTH_TABS.includes(value as CloudHealthTab);

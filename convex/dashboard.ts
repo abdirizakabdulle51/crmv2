@@ -2,7 +2,11 @@ import { ConvexError, v } from "convex/values";
 import { query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
-import { canManageUser, isCeoOrHob } from "./authorization";
+import {
+  assertNotMonitoring,
+  canManageUser,
+  isCeoOrHob,
+} from "./authorization";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 
 type LeadStage = Doc<"leads">["stage"];
@@ -41,6 +45,7 @@ async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
     });
   }
 
+  assertNotMonitoring(user);
   return user;
 }
 

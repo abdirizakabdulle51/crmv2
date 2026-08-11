@@ -5,6 +5,7 @@ import type { Doc } from "./_generated/dataModel.d.ts";
 import {
   assertAccountManagerIsInActorScope,
   assertCanManageLead,
+  assertNotMonitoring,
   canViewCompany,
 } from "./authorization";
 
@@ -30,6 +31,7 @@ async function getCurrentUserOrThrow(
       message: "User profile not found",
     });
   }
+  assertNotMonitoring(user);
   return user;
 }
 

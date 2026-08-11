@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { Suspense, lazy, useEffect, useState } from "react";
 import {
   LayoutDashboard,
@@ -32,6 +32,12 @@ import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
 import { ThemeToggle } from "@/components/theme-toggle.tsx";
 import { BrandLogo } from "@/components/brand-logo.tsx";
+import {
+  canViewCloudHealth,
+  isAdminRole,
+  isMonitoringAllowedPath,
+  isMonitoringRole,
+} from "@/lib/role-access.ts";
 
 const NotificationBell = lazy(() =>
   import("@/components/notification-bell.tsx").then((module) => ({
@@ -152,18 +158,19 @@ export default function AppLayout() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => loadCollapsedGroups(),
   );
-  const visibleNavItems = NAV_ITEMS.filter(
-    (item) =>
-      !item.adminOnly ||
-      currentUser?.role === "ceo" ||
-      currentUser?.role === "head_of_business",
-  ).filter(
-    (item) =>
-      !item.cloudHealthOnly ||
-      currentUser?.role === "ceo" ||
-      currentUser?.role === "head_of_business" ||
-      currentUser?.role === "country_gm",
-  );
+
+  const visibleNavItems = NAV_ITEMS.filter((item) => {
+    if (isMonitoringRole(currentUser?.role)) {
+      return item.to === "/cloud-health" || item.to === "/documentation";
+    }
+    if (item.adminOnly) {
+      return isAdminRole(currentUser?.role);
+    }
+    if (item.cloudHealthOnly) {
+      return canViewCloudHealth(currentUser?.role);
+    }
+    return true;
+  });
   const dashboardItem = visibleNavItems.find(
     (item) => item.to === "/dashboard",
   );
@@ -174,6 +181,13 @@ export default function AppLayout() {
       JSON.stringify([...collapsedGroups]),
     );
   }, [collapsedGroups]);
+
+  if (
+    isMonitoringRole(currentUser?.role) &&
+    !isMonitoringAllowedPath(location.pathname)
+  ) {
+    return <Navigate to="/cloud-health" replace />;
+  }
 
   const toggleGroup = (label: string) => {
     setCollapsedGroups((current) => {
@@ -282,7 +296,7 @@ export default function AppLayout() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto pb-16 md:pb-0">
-        {currentUser ? (
+        {currentUser && !isMonitoringRole(currentUser.role) ? (
           <div
             className="sticky top-0 z-40 flex justify-end px-4 pt-4 sm:px-6 md:px-8"
             data-testid="app-top-notification-area"

@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
-import { canViewCompany } from "./authorization";
+import { assertNotMonitoring, canViewCompany } from "./authorization";
 
 const ruleSnapshotValidator = v.array(
   v.object({
@@ -44,6 +44,7 @@ async function getCurrentUserOrThrow(
     });
   }
 
+  assertNotMonitoring(user);
   return user;
 }
 

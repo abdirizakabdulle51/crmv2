@@ -2,7 +2,11 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
-import { canViewCompany, isCeoOrHob } from "./authorization";
+import {
+  assertNotMonitoring,
+  canViewCompany,
+  isCeoOrHob,
+} from "./authorization";
 
 type Ctx = QueryCtx | MutationCtx;
 type InvoiceProfileInput = {
@@ -74,6 +78,7 @@ async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {
       message: "User profile not found",
     });
   }
+  assertNotMonitoring(user);
   return user;
 }
 

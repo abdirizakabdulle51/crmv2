@@ -2,7 +2,11 @@ import { ConvexError, v } from "convex/values";
 import { query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
-import { canViewCompany, isCeoOrHob } from "./authorization";
+import {
+  assertNotMonitoring,
+  canViewCompany,
+  isCeoOrHob,
+} from "./authorization";
 
 type ExpenseStatus = Doc<"expenseRequests">["status"];
 type FinanceReportScope = {
@@ -48,6 +52,7 @@ async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
       message: "User profile not found",
     });
   }
+  assertNotMonitoring(user);
   return user;
 }
 

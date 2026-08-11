@@ -2,14 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
-
-function canViewCloudHealth(user: Doc<"users">) {
-  return (
-    user.role === "ceo" ||
-    user.role === "head_of_business" ||
-    user.role === "country_gm"
-  );
-}
+import { canViewCloudHealth, isMonitoring } from "./authorization";
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -45,7 +38,8 @@ function assertCanViewCloudHealth(user: Doc<"users">) {
   }
   throw new ConvexError({
     code: "FORBIDDEN",
-    message: "Only Country GM, Head of Business, or CEO can view Cloud Health",
+    message:
+      "Only Monitoring, Country GM, Head of Business, or CEO can view Cloud Health",
   });
 }
 
@@ -202,13 +196,15 @@ export const cloudHealthOverview = query({
       ctx.db.query("pingTargets").collect(),
     ]);
 
-    const companyIds = new Set(
-      activeAlarms
-        .map((alarm) => alarm.linkedCompanyId)
-        .filter((companyId): companyId is Id<"companies"> =>
-          Boolean(companyId),
-        ),
-    );
+    const companyIds = isMonitoring(user)
+      ? new Set<Id<"companies">>()
+      : new Set(
+          activeAlarms
+            .map((alarm) => alarm.linkedCompanyId)
+            .filter((companyId): companyId is Id<"companies"> =>
+              Boolean(companyId),
+            ),
+        );
     const companyPairs = await Promise.all(
       [...companyIds].map(async (companyId) => {
         const company = await ctx.db.get(companyId);
@@ -297,12 +293,26 @@ export const cloudHealthOverview = query({
         ),
       },
       activeAlarms: activeAlarms
-        .map((alarm) => ({
-          ...alarm,
-          linkedCompanyName: alarm.linkedCompanyId
-            ? (companyNames.get(alarm.linkedCompanyId) ?? null)
-            : null,
-        }))
+        .map((alarm) => {
+          const row = {
+            ...alarm,
+            linkedCompanyName: alarm.linkedCompanyId
+              ? (companyNames.get(alarm.linkedCompanyId) ?? null)
+              : null,
+          };
+          if (!isMonitoring(user)) {
+            return row;
+          }
+          const { linkedCompanyId: _linkedCompanyId, ...redacted } = row;
+          return {
+            ...redacted,
+            linkedCompanyName: null,
+            vdcId: "",
+            vdcName: "",
+            tenantId: "",
+            tenant: "",
+          };
+        })
         .sort((a, b) => b.latestOccurUtc - a.latestOccurUtc),
       hostGroupsSummary: {
         totalHostGroups: hostGroups.length,

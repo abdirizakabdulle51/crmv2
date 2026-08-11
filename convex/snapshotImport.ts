@@ -1,5 +1,34 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel.d.ts";
+import { assertNotMonitoring } from "./authorization";
+
+async function assertSnapshotImportAllowed(ctx: MutationCtx) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new ConvexError({
+      code: "UNAUTHENTICATED",
+      message: "User not logged in",
+    });
+  }
+
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_token", (q) =>
+      q.eq("tokenIdentifier", identity.tokenIdentifier),
+    )
+    .unique();
+
+  if (!user) {
+    throw new ConvexError({
+      code: "NOT_FOUND",
+      message: "User profile not found",
+    });
+  }
+
+  assertNotMonitoring(user as Doc<"users">);
+}
 
 const row = <T extends ReturnType<typeof v.object>>(doc: T) =>
   v.object({
@@ -88,6 +117,7 @@ const salesTargetRow = row(
 export const insertCountries = mutation({
   args: { rows: v.array(countryRow) },
   handler: async (ctx, args) => {
+    await assertSnapshotImportAllowed(ctx);
     const ids: Record<string, string> = {};
     for (const { oldId, doc } of args.rows) {
       ids[oldId] = await ctx.db.insert("countries", doc);
@@ -99,6 +129,7 @@ export const insertCountries = mutation({
 export const insertSectors = mutation({
   args: { rows: v.array(sectorRow) },
   handler: async (ctx, args) => {
+    await assertSnapshotImportAllowed(ctx);
     const ids: Record<string, string> = {};
     for (const { oldId, doc } of args.rows) {
       ids[oldId] = await ctx.db.insert("sectors", doc);
@@ -110,6 +141,7 @@ export const insertSectors = mutation({
 export const insertCompanies = mutation({
   args: { rows: v.array(companyRow) },
   handler: async (ctx, args) => {
+    await assertSnapshotImportAllowed(ctx);
     const ids: Record<string, string> = {};
     for (const { oldId, doc } of args.rows) {
       ids[oldId] = await ctx.db.insert("companies", doc);
@@ -121,6 +153,7 @@ export const insertCompanies = mutation({
 export const insertLeads = mutation({
   args: { rows: v.array(leadRow) },
   handler: async (ctx, args) => {
+    await assertSnapshotImportAllowed(ctx);
     const ids: Record<string, string> = {};
     for (const { oldId, doc } of args.rows) {
       ids[oldId] = await ctx.db.insert("leads", doc);
@@ -132,6 +165,7 @@ export const insertLeads = mutation({
 export const insertServiceCatalog = mutation({
   args: { rows: v.array(serviceCatalogRow) },
   handler: async (ctx, args) => {
+    await assertSnapshotImportAllowed(ctx);
     const ids: Record<string, string> = {};
     for (const { oldId, doc } of args.rows) {
       ids[oldId] = await ctx.db.insert("serviceCatalog", doc);
@@ -143,6 +177,7 @@ export const insertServiceCatalog = mutation({
 export const insertSalesTargets = mutation({
   args: { rows: v.array(salesTargetRow) },
   handler: async (ctx, args) => {
+    await assertSnapshotImportAllowed(ctx);
     const ids: Record<string, string> = {};
     for (const { oldId, doc } of args.rows) {
       ids[oldId] = await ctx.db.insert("salesTargets", doc);

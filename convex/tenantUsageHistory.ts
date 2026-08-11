@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
+import { assertNotMonitoring } from "./authorization";
 
 type Ctx = QueryCtx | MutationCtx;
 type TenantUsageHistoryRow = Doc<"tenantUsageHistory">;
@@ -31,6 +32,7 @@ async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {
     });
   }
 
+  assertNotMonitoring(user);
   return user;
 }
 

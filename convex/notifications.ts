@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
+import { assertNotMonitoring } from "./authorization";
 
 const notificationTypeValidator = v.union(
   v.literal("task_assigned"),
@@ -35,6 +36,7 @@ async function getCurrentUserOrThrow(
     });
   }
 
+  assertNotMonitoring(user);
   return user;
 }
 

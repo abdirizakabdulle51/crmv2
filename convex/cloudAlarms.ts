@@ -2,14 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
-
-function canViewCloudHealth(user: Doc<"users">) {
-  return (
-    user.role === "ceo" ||
-    user.role === "head_of_business" ||
-    user.role === "country_gm"
-  );
-}
+import { canViewCloudHealth, isMonitoring } from "./authorization";
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -45,8 +38,28 @@ function assertCanViewCloudHealth(user: Doc<"users">) {
   }
   throw new ConvexError({
     code: "FORBIDDEN",
-    message: "Only Country GM, Head of Business, or CEO can view Cloud Health",
+    message:
+      "Only Monitoring, Country GM, Head of Business, or CEO can view Cloud Health",
   });
+}
+
+function redactAlarmForMonitoring<T extends Doc<"cloudAlarms">>(
+  alarm: T & { linkedCompanyName?: string | null },
+  user: Doc<"users">,
+) {
+  if (!isMonitoring(user)) {
+    return alarm;
+  }
+
+  const { linkedCompanyId: _linkedCompanyId, ...redacted } = alarm;
+  return {
+    ...redacted,
+    linkedCompanyName: null,
+    vdcId: "",
+    vdcName: "",
+    tenantId: "",
+    tenant: "",
+  };
 }
 
 const alarmInputValidator = v.object({
@@ -221,11 +234,15 @@ export const listActive = query({
       return [];
     }
 
-    const linkedCompanyIds = new Set(
-      filteredAlarms
-        .map((alarm) => alarm.linkedCompanyId)
-        .filter((companyId): companyId is Id<"companies"> => Boolean(companyId)),
-    );
+    const linkedCompanyIds = isMonitoring(user)
+      ? new Set<Id<"companies">>()
+      : new Set(
+          filteredAlarms
+            .map((alarm) => alarm.linkedCompanyId)
+            .filter((companyId): companyId is Id<"companies"> =>
+              Boolean(companyId),
+            ),
+        );
     const companyPairs = await Promise.all(
       [...linkedCompanyIds].map(async (companyId) => {
         const company = await ctx.db.get(companyId);
@@ -241,6 +258,7 @@ export const listActive = query({
           ? (companyNames.get(alarm.linkedCompanyId) ?? null)
           : null,
       }))
+      .map((alarm) => redactAlarmForMonitoring(alarm, user))
       .sort((a, b) => b.latestOccurUtc - a.latestOccurUtc);
   },
 });
@@ -259,7 +277,9 @@ export const listActiveByRegion = query({
         q.eq("logicalRegionId", args.logicalRegionId).eq("active", true),
       )
       .collect();
-    const companies = await ctx.db.query("companies").collect();
+    const companies = isMonitoring(user)
+      ? []
+      : await ctx.db.query("companies").collect();
     const companyNames = new Map(
       companies.map((company) => [company._id, company.name]),
     );
@@ -271,6 +291,7 @@ export const listActiveByRegion = query({
           ? (companyNames.get(alarm.linkedCompanyId) ?? null)
           : null,
       }))
+      .map((alarm) => redactAlarmForMonitoring(alarm, user))
       .sort((a, b) => b.latestOccurUtc - a.latestOccurUtc);
   },
 });

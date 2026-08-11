@@ -31,10 +31,7 @@ import {
 } from "@/components/ui/card.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
-
-function canViewCloudHealth(role: string | undefined) {
-  return role === "ceo" || role === "head_of_business" || role === "country_gm";
-}
+import { canViewCloudHealth } from "@/lib/role-access.ts";
 
 function formatNumber(value: number | undefined | null, suffix = "") {
   if (value == null) return "-";
@@ -95,7 +92,7 @@ function ConsumerTable({
   unit: string;
   rows:
     | Array<{
-        tenantId: string;
+        tenantId?: string;
         tenantName: string;
         companyName: string | null;
         value: number;
@@ -128,8 +125,11 @@ function ConsumerTable({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr key={row.tenantId} className="border-t">
+                {rows.map((row, index) => (
+                  <tr
+                    key={row.tenantId ?? `${row.tenantName}-${index}`}
+                    className="border-t"
+                  >
                     <td className="px-3 py-2 font-medium">{row.tenantName}</td>
                     <td className="px-3 py-2 text-muted-foreground">
                       {row.companyName ?? "Unlinked"}

@@ -2,7 +2,11 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
-import { assertCanManageLead, isCeoOrHob } from "./authorization";
+import {
+  assertCanManageLead,
+  assertNotMonitoring,
+  isCeoOrHob,
+} from "./authorization";
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -26,6 +30,7 @@ async function getCurrentUserOrThrow(
       message: "User profile not found",
     });
   }
+  assertNotMonitoring(user);
   return user;
 }
 

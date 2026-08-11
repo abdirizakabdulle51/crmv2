@@ -21,6 +21,7 @@ export default defineSchema({
         v.literal("country_gm"),
         v.literal("head_of_business"),
         v.literal("ceo"),
+        v.literal("monitoring"),
       ),
     ),
     countryId: v.optional(v.id("countries")),

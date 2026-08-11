@@ -2,14 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
-
-function canViewCloudHealth(user: Doc<"users">) {
-  return (
-    user.role === "ceo" ||
-    user.role === "head_of_business" ||
-    user.role === "country_gm"
-  );
-}
+import { canViewCloudHealth, isMonitoring } from "./authorization";
 
 async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
@@ -43,7 +36,8 @@ function assertCanViewCloudHealth(user: Doc<"users">) {
   }
   throw new ConvexError({
     code: "FORBIDDEN",
-    message: "Only Country GM, Head of Business, or CEO can view Cloud Health",
+    message:
+      "Only Monitoring, Country GM, Head of Business, or CEO can view Cloud Health",
   });
 }
 
@@ -135,7 +129,7 @@ export const topConsumersByRegion = query({
         .map((company) => [company._id, company.name]),
     );
 
-    return tenants
+    const visibleConsumers = tenants
       .map((tenant) => ({
         tenantId: tenant._id,
         tenantName: tenant.name,
@@ -148,5 +142,22 @@ export const topConsumersByRegion = query({
       .filter((consumer) => consumer.value > 0)
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
+
+    if (!isMonitoring(user)) {
+      return visibleConsumers;
+    }
+
+    return visibleConsumers.map((consumer, index) => {
+      const {
+        tenantId: _tenantId,
+        linkedCompanyId: _linkedCompanyId,
+        ...redacted
+      } = consumer;
+      return {
+        ...redacted,
+        tenantName: `Consumer ${index + 1}`,
+        companyName: null,
+      };
+    });
   },
 });

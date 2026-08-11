@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
-import { assertCanManageCompany } from "./authorization";
+import { assertCanManageCompany, assertNotMonitoring } from "./authorization";
 import { buildCloudAdvisorRecommendationKey } from "./cloudAdvisorKeys";
 
 const statusValidator = v.union(
@@ -37,6 +37,7 @@ async function getCurrentUserOrThrow(ctx: MutationCtx): Promise<Doc<"users">> {
     });
   }
 
+  assertNotMonitoring(user);
   return user;
 }
 

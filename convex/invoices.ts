@@ -12,6 +12,7 @@ import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { internal } from "./_generated/api";
 import {
   assertCanManageCompany,
+  assertNotMonitoring,
   canViewCompany,
   isCeoOrHob,
 } from "./authorization";
@@ -134,6 +135,7 @@ async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {
       message: "User profile not found",
     });
   }
+  assertNotMonitoring(user);
   return user;
 }
 

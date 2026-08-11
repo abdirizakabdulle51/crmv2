@@ -37,12 +37,18 @@ async function seedUsers(t: ReturnType<typeof convexTest>) {
       role: "account_manager",
       countryId: country,
     });
+    const monitoringId = await ctx.db.insert("users", {
+      name: "Monitoring",
+      tokenIdentifier: "monitoring-token",
+      role: "monitoring",
+    });
 
     return {
       ceo: (await ctx.db.get(ceoId))!,
       hob: (await ctx.db.get(hobId))!,
       gm: (await ctx.db.get(gmId))!,
       am: (await ctx.db.get(amId))!,
+      monitoring: (await ctx.db.get(monitoringId))!,
     };
   });
 }
@@ -154,6 +160,13 @@ describe("Cloud Health", () => {
         estimatedFitCount: 20,
       },
     ]);
+
+    const monitoringRegions = await asUser(t, users.monitoring).query(
+      api.cloudCapacity.list,
+      {},
+    );
+    expect(monitoringRegions).toHaveLength(1);
+    expect(monitoringRegions[0].regionId).toBe("som-1");
 
     await expect(
       asUser(t, users.am).query(api.cloudCapacity.list, {}),
@@ -747,6 +760,18 @@ describe("Cloud Health", () => {
       value: 9000,
     });
 
+    const monitoringConsumers = await asUser(t, users.monitoring).query(
+      api.regionConsumers.topConsumersByRegion,
+      { regionName: "Hoa-Mogadishu-2", metric: "storage" },
+    );
+    expect(monitoringConsumers[0]).toMatchObject({
+      tenantName: "Consumer 1",
+      companyName: null,
+      value: 9000,
+    });
+    expect(monitoringConsumers[0]).not.toHaveProperty("tenantId");
+    expect(monitoringConsumers[0]).not.toHaveProperty("linkedCompanyId");
+
     await expect(
       asUser(t, users.am).query(api.regionConsumers.topConsumersByRegion, {
         regionName: "Hoa-Mogadishu-2",
@@ -870,6 +895,22 @@ describe("Cloud Health", () => {
       linkedCompanyName: "WAAFI",
     });
 
+    const monitoringAlarms = await asUser(t, users.monitoring).query(
+      api.cloudAlarms.listActive,
+      {},
+    );
+    expect(monitoringAlarms).toHaveLength(2);
+    const linkedMonitoringAlarm = monitoringAlarms.find(
+      (alarm) => alarm.csn === 234900364,
+    );
+    expect(linkedMonitoringAlarm).toMatchObject({
+      csn: 234900364,
+      linkedCompanyName: null,
+      tenant: "",
+      vdcName: "",
+    });
+    expect(linkedMonitoringAlarm).not.toHaveProperty("linkedCompanyId");
+
     const regionAlarms = await asUser(t, users.hob).query(
       api.cloudAlarms.listActiveByRegion,
       { logicalRegionId: "region-hash-1" },
@@ -877,6 +918,22 @@ describe("Cloud Health", () => {
     expect(regionAlarms.map((alarm) => alarm.csn)).toEqual([
       234900365, 234900364,
     ]);
+
+    const monitoringRegionAlarms = await asUser(t, users.monitoring).query(
+      api.cloudAlarms.listActiveByRegion,
+      { logicalRegionId: "region-hash-1" },
+    );
+    expect(monitoringRegionAlarms).toHaveLength(2);
+    const linkedMonitoringRegionAlarm = monitoringRegionAlarms.find(
+      (alarm) => alarm.csn === 234900364,
+    );
+    expect(linkedMonitoringRegionAlarm).toMatchObject({
+      csn: 234900364,
+      linkedCompanyName: null,
+      tenant: "",
+      vdcName: "",
+    });
+    expect(linkedMonitoringRegionAlarm).not.toHaveProperty("linkedCompanyId");
 
     const secondSync = await t.mutation(internal.cloudAlarms.bulkSync, {
       syncedAt: 1785520300000,

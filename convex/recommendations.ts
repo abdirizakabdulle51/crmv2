@@ -2,7 +2,7 @@ import { ConvexError } from "convex/values";
 import { internalQuery, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
-import { isCeoOrHob } from "./authorization";
+import { assertNotMonitoring, isCeoOrHob } from "./authorization";
 import { buildCloudAdvisorRecommendationKey } from "./cloudAdvisorKeys";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 
@@ -29,6 +29,7 @@ async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
     });
   }
 
+  assertNotMonitoring(user);
   return user;
 }
 

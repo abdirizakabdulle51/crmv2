@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
+import { assertNotMonitoring } from "./authorization";
 
 async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
@@ -23,6 +24,7 @@ async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
       message: "User profile not found",
     });
   }
+  assertNotMonitoring(user);
   return user;
 }
 

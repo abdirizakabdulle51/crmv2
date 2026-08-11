@@ -26,6 +26,7 @@ const roleValidator = v.union(
   v.literal("country_gm"),
   v.literal("head_of_business"),
   v.literal("ceo"),
+  v.literal("monitoring"),
 );
 
 function normalizeEmail(email: string) {
@@ -188,7 +189,12 @@ export const createTeamMember = action({
     const profile: {
       name: string;
       email: string;
-      role: "account_manager" | "country_gm" | "head_of_business" | "ceo";
+      role:
+        | "account_manager"
+        | "country_gm"
+        | "head_of_business"
+        | "ceo"
+        | "monitoring";
       mustChangePassword: boolean;
       countryId?: Id<"countries">;
     } = {

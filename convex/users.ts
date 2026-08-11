@@ -1,6 +1,10 @@
 import { ConvexError, v } from "convex/values";
 import { internalQuery, mutation, query } from "./_generated/server";
-import { canManageUser, isCeoOrHob } from "./authorization";
+import {
+  assertNotMonitoring,
+  canManageUser,
+  isCeoOrHob,
+} from "./authorization";
 
 export const updateCurrentUser = mutation({
   args: {},
@@ -160,6 +164,7 @@ export const listAll = query({
         message: "User profile not found",
       });
     }
+    assertNotMonitoring(currentUser);
     const users = await ctx.db.query("users").collect();
     return users.filter((user) => canManageUser(currentUser, user, "view"));
   },
@@ -173,6 +178,7 @@ export const updateRole = mutation({
       v.literal("country_gm"),
       v.literal("head_of_business"),
       v.literal("ceo"),
+      v.literal("monitoring"),
     ),
   },
   handler: async (ctx, args) => {

@@ -8,6 +8,32 @@ export function isCeoOrHob(user: Doc<"users">) {
   return user.role === "ceo" || user.role === "head_of_business";
 }
 
+export function isMonitoring(user: Doc<"users">) {
+  return user.role === "monitoring";
+}
+
+export function assertNotMonitoring(user: Doc<"users">) {
+  if (!isMonitoring(user)) {
+    return;
+  }
+  throw new ConvexError({
+    code: "FORBIDDEN",
+    message: "Monitoring users can only access Cloud Health and Documentation",
+  });
+}
+
+export function canViewCloudHealth(user: Doc<"users">) {
+  return (
+    isCeoOrHob(user) ||
+    user.role === "country_gm" ||
+    user.role === "monitoring"
+  );
+}
+
+export function canManageCloudHealthTargets(user: Doc<"users">) {
+  return isCeoOrHob(user);
+}
+
 export function canViewCompany(user: Doc<"users">, company: Doc<"companies">) {
   if (isCeoOrHob(user)) {
     return true;

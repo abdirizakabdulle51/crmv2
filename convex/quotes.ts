@@ -2,7 +2,11 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
-import { assertCanManageCompany, canViewCompany } from "./authorization";
+import {
+  assertCanManageCompany,
+  assertNotMonitoring,
+  canViewCompany,
+} from "./authorization";
 import { buildCloudAdvisorRecommendationKey } from "./cloudAdvisorKeys";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 
@@ -28,6 +32,7 @@ async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {
       message: "User profile not found",
     });
   }
+  assertNotMonitoring(user);
   return user;
 }
 
