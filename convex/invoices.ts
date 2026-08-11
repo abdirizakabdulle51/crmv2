@@ -638,6 +638,9 @@ export const createDraftFromQuote = mutation({
     const company = await getCompanyOrThrow(ctx, quote.companyId);
     assertCanManageCompany(user, company);
     const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
+    const sellerSnapshot = invoiceProfile
+      ? sellerSnapshotFromProfile(invoiceProfile)
+      : {};
 
     const now = Date.now();
     const grandTotal = quote.monthlyGrandTotal;
@@ -647,6 +650,7 @@ export const createDraftFromQuote = mutation({
       sourceMonth: quote.sourceMonth,
       sourceReference: quote.quoteNumber,
       invoiceProfileId: invoiceProfile?._id,
+      ...sellerSnapshot,
       createdBy: user._id,
       status: "draft",
       dueDate: args.dueDate,

@@ -475,9 +475,15 @@ describe("invoices", () => {
   it("stores the matching invoice profile on draft invoices", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
+    const profile = invoiceProfileInput({
+      countryId: s.countryA,
+      legalName: "HTG CLOUDS SOMALILAND LIMITED",
+      addressLines: ["Hargeisa Office", "Somaliland"],
+      bankLocation: "HARGEISA - SOMALILAND",
+    });
     const profileId = await asUser(t, s.ceo).mutation(
       api.invoiceProfiles.createInvoiceProfile,
-      invoiceProfileInput({ countryId: s.countryA }),
+      profile,
     );
 
     const invoiceId = await createDraftForA(t, s);
@@ -486,14 +492,23 @@ describe("invoices", () => {
     });
 
     expect(invoice.invoiceProfileId).toBe(profileId);
+    expect(invoice.sellerLegalName).toBe(profile.legalName);
+    expect(invoice.sellerAddressLines).toEqual(profile.addressLines);
+    expect(invoice.sellerBankLocation).toBe(profile.bankLocation);
   });
 
   it("stores the default invoice profile on drafts when no country match exists", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
+    const profile = invoiceProfileInput({
+      isDefault: true,
+      legalName: "HTG CLOUDS DEFAULT LIMITED",
+      addressLines: ["Default Office", "Mogadishu, Somalia"],
+      bankAccountNumber: "DEFAULT-33111777",
+    });
     const profileId = await asUser(t, s.ceo).mutation(
       api.invoiceProfiles.createInvoiceProfile,
-      invoiceProfileInput({ isDefault: true }),
+      profile,
     );
 
     const invoiceId = await createDraftForA(t, s);
@@ -502,6 +517,9 @@ describe("invoices", () => {
     });
 
     expect(invoice.invoiceProfileId).toBe(profileId);
+    expect(invoice.sellerLegalName).toBe(profile.legalName);
+    expect(invoice.sellerAddressLines).toEqual(profile.addressLines);
+    expect(invoice.sellerBankAccountNumber).toBe(profile.bankAccountNumber);
   });
 
   it("creates draft invoices when no invoice profile exists", async () => {
