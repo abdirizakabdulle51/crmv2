@@ -589,10 +589,23 @@ function EcsFlavorAvailability({
     flavors
       ?.filter(
         (flavor) =>
+          !flavor.available ||
+          flavor.status === "low_capacity" ||
           flavor.vcpus === 8 ||
           flavor.vcpus === 16 ||
           flavor.name === "S6_large.1",
       )
+      .sort((left, right) => {
+        const priority = (flavor: {
+          available: boolean;
+          status?: "available" | "low_capacity" | "not_offered";
+        }) => {
+          if (!flavor.available || flavor.status === "not_offered") return 0;
+          if (flavor.status === "low_capacity") return 1;
+          return 2;
+        };
+        return priority(left) - priority(right);
+      })
       .slice(0, 10) ?? [];
 
   return (
