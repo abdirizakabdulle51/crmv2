@@ -683,6 +683,410 @@ function EcsFlavorAvailability({
   );
 }
 
+type CapacityRegionForCheck = {
+  _id: string;
+  regionId: string;
+  regionName: string;
+  cpuUsed: number;
+  cpuTotal: number;
+  memoryUsedGb: number;
+  memoryTotalGb: number;
+  storagePools?: Array<{
+    volumeType: string;
+    freeGb: number;
+    usedGb: number;
+    totalGb: number;
+  }>;
+  ecsFlavorAvailability?: Array<{
+    name: string;
+    vcpus: number;
+    ramGb: number;
+    available: boolean;
+    estimatedFitCount?: number;
+    status?: "available" | "low_capacity" | "not_offered";
+  }>;
+};
+type ManageOneTenantForCheck = Doc<"manageOneTenants">;
+type TenantQuotaRow = NonNullable<ManageOneTenantForCheck["quotas"]>[number];
+
+function parsePositiveNumber(value: string, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function quotaResourceKey(value: string | undefined) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function quotaMatchesRegion(quota: TenantQuotaRow, region: CapacityRegionForCheck) {
+  return (
+    quota.regionId === region.regionId ||
+    quota.regionName?.trim().toLowerCase() ===
+      region.regionName.trim().toLowerCase()
+  );
+}
+
+function summarizeQuota(
+  quotas: TenantQuotaRow[],
+  serviceId: "ecs" | "evs",
+  resourceIds: string[],
+  region: CapacityRegionForCheck,
+) {
+  const expectedResources = new Set(resourceIds.map(quotaResourceKey));
+  const matchingQuotas = quotas.filter(
+    (quota) =>
+      quota.serviceId === serviceId &&
+      expectedResources.has(quotaResourceKey(quota.resourceId)) &&
+      quotaMatchesRegion(quota, region),
+  );
+
+  if (matchingQuotas.length === 0) {
+    return { found: false, unlimited: false, used: 0, remaining: 0 };
+  }
+
+  const unlimited = matchingQuotas.some((quota) => quota.limit === -1);
+  return {
+    found: true,
+    unlimited,
+    used: matchingQuotas.reduce((total, quota) => total + quota.used, 0),
+    remaining: unlimited
+      ? -1
+      : matchingQuotas.reduce((total, quota) => total + quota.remaining, 0),
+  };
+}
+
+function ResourceFeasibilityCheck({
+  regions,
+  tenants,
+}: {
+  regions: CapacityRegionForCheck[];
+  tenants?: ManageOneTenantForCheck[];
+}) {
+  const defaultRegion =
+    regions.find((region) => region.regionName === "Mogadishu-region-hq3") ??
+    regions[0];
+  const [regionId, setRegionId] = useState(defaultRegion?.regionId ?? "");
+  const selectedRegion =
+    regions.find((region) => region.regionId === regionId) ?? defaultRegion;
+  const flavorOptions = selectedRegion?.ecsFlavorAvailability ?? [];
+  const defaultFlavor =
+    flavorOptions.find((flavor) => flavor.name === "C6_2xlarge.4") ??
+    flavorOptions[0];
+  const [flavorName, setFlavorName] = useState(defaultFlavor?.name ?? "");
+  const storagePools = selectedRegion?.storagePools ?? [];
+  const defaultPool =
+    storagePools.find((pool) => pool.volumeType.toUpperCase().includes("SSD")) ??
+    storagePools[0];
+  const [volumeType, setVolumeType] = useState(defaultPool?.volumeType ?? "");
+  const [instances, setInstances] = useState("3");
+  const [storageTbPerInstance, setStorageTbPerInstance] = useState("184");
+  const [maxDiskTb, setMaxDiskTb] = useState("32");
+  const [tenantId, setTenantId] = useState("");
+
+  const selectedFlavor =
+    flavorOptions.find((flavor) => flavor.name === flavorName) ?? defaultFlavor;
+  const selectedPool =
+    storagePools.find((pool) => pool.volumeType === volumeType) ?? defaultPool;
+  const selectedTenant =
+    tenants?.find((tenant) => tenant._id === tenantId) ?? tenants?.[0];
+  const tenantQuotas = selectedTenant?.quotas ?? [];
+
+  const check = useMemo(() => {
+    const instanceCount = Math.ceil(parsePositiveNumber(instances, 1));
+    const storageTb = parsePositiveNumber(storageTbPerInstance, 0);
+    const maxDiskSizeTb = parsePositiveNumber(maxDiskTb, 32);
+    const disksPerInstance =
+      storageTb > 0 && maxDiskSizeTb > 0
+        ? Math.ceil(storageTb / maxDiskSizeTb)
+        : 0;
+    const fullDisks = Math.max(disksPerInstance - 1, 0);
+    const finalDiskTb =
+      disksPerInstance > 0 ? storageTb - fullDisks * maxDiskSizeTb : 0;
+    const totalStorageGb = storageTb * 1024 * instanceCount;
+    const totalDisks = disksPerInstance * instanceCount;
+    const cpuNeeded = (selectedFlavor?.vcpus ?? 0) * instanceCount;
+    const ramNeededGb = (selectedFlavor?.ramGb ?? 0) * instanceCount;
+    const cpuFree = selectedRegion
+      ? selectedRegion.cpuTotal - selectedRegion.cpuUsed
+      : 0;
+    const ramFreeGb = selectedRegion
+      ? selectedRegion.memoryTotalGb - selectedRegion.memoryUsedGb
+      : 0;
+    const flavorCanFit =
+      selectedFlavor?.available === true &&
+      (selectedFlavor.estimatedFitCount === undefined ||
+        selectedFlavor.estimatedFitCount >= instanceCount);
+    const storageCanFit =
+      selectedPool !== undefined && selectedPool.freeGb >= totalStorageGb;
+    const ecsInstanceQuota = selectedRegion
+      ? summarizeQuota(tenantQuotas, "ecs", ["instances"], selectedRegion)
+      : null;
+    const ecsCpuQuota = selectedRegion
+      ? summarizeQuota(tenantQuotas, "ecs", ["cores", "core"], selectedRegion)
+      : null;
+    const ecsRamQuota = selectedRegion
+      ? summarizeQuota(tenantQuotas, "ecs", ["ram"], selectedRegion)
+      : null;
+    const evsStorageQuota =
+      selectedRegion && selectedPool
+        ? summarizeQuota(
+            tenantQuotas,
+            "evs",
+            [selectedPool.volumeType, "gigabytes", "volume_gigabytes"],
+            selectedRegion,
+          )
+        : null;
+    const evsVolumeQuota = selectedRegion
+      ? summarizeQuota(tenantQuotas, "evs", ["volumes"], selectedRegion)
+      : null;
+    const quotaChecks = [
+      ecsInstanceQuota
+        ? ecsInstanceQuota.unlimited || ecsInstanceQuota.remaining >= instanceCount
+        : false,
+      ecsCpuQuota ? ecsCpuQuota.unlimited || ecsCpuQuota.remaining >= cpuNeeded : false,
+      ecsRamQuota ? ecsRamQuota.unlimited || ecsRamQuota.remaining >= ramNeededGb : false,
+      evsStorageQuota
+        ? evsStorageQuota.unlimited || evsStorageQuota.remaining >= totalStorageGb
+        : false,
+      evsVolumeQuota
+        ? evsVolumeQuota.unlimited || evsVolumeQuota.remaining >= totalDisks
+        : false,
+    ];
+    const quotaCanFit =
+      tenantQuotas.length > 0 &&
+      quotaChecks.every(Boolean);
+
+    return {
+      instanceCount,
+      storageTb,
+      maxDiskSizeTb,
+      disksPerInstance,
+      fullDisks,
+      finalDiskTb,
+      totalStorageGb,
+      totalDisks,
+      cpuNeeded,
+      ramNeededGb,
+      cpuFree,
+      ramFreeGb,
+      flavorCanFit,
+      storageCanFit,
+      quotaCanFit,
+      ecsInstanceQuota,
+      ecsCpuQuota,
+      ecsRamQuota,
+      evsStorageQuota,
+      evsVolumeQuota,
+    };
+  }, [
+    instances,
+    maxDiskTb,
+    selectedFlavor,
+    selectedPool,
+    selectedRegion,
+    storageTbPerInstance,
+    tenantQuotas,
+  ]);
+
+  if (!selectedRegion) {
+    return null;
+  }
+
+  const providerCapacityOk = check.flavorCanFit && check.storageCanFit;
+  const quotaDetail = selectedTenant
+    ? `Tenant ${selectedTenant.name}: ECS instances ${quotaDetailText(check.ecsInstanceQuota)}, vCPU ${quotaDetailText(check.ecsCpuQuota)}, RAM ${quotaDetailText(check.ecsRamQuota)}, ${selectedPool?.volumeType ?? "storage"} ${quotaDetailText(check.evsStorageQuota)}, disks ${quotaDetailText(check.evsVolumeQuota)}`
+    : "Select a synced tenant to verify ECS and EVS quota.";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Resource Feasibility Check</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          {tenants && tenants.length > 0 ? (
+            <div className="space-y-2 xl:col-span-2">
+              <Label>Tenant quota</Label>
+              <Select
+                value={selectedTenant?._id ?? ""}
+                onValueChange={setTenantId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select tenant" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tenants.map((tenant) => (
+                    <SelectItem key={tenant._id} value={tenant._id}>
+                      {tenant.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+          <div className="space-y-2 xl:col-span-2">
+            <Label>Region</Label>
+            <Select value={regionId} onValueChange={setRegionId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select region" />
+              </SelectTrigger>
+              <SelectContent>
+                {regions.map((region) => (
+                  <SelectItem key={region.regionId} value={region.regionId}>
+                    {region.regionName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2 xl:col-span-2">
+            <Label>Flavor</Label>
+            <Select
+              value={selectedFlavor?.name ?? ""}
+              onValueChange={setFlavorName}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select flavor" />
+              </SelectTrigger>
+              <SelectContent>
+                {flavorOptions.map((flavor) => (
+                  <SelectItem key={flavor.name} value={flavor.name}>
+                    {flavor.name} ({flavor.vcpus} vCPU / {flavor.ramGb} GB)
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Volume type</Label>
+            <Select
+              value={selectedPool?.volumeType ?? ""}
+              onValueChange={setVolumeType}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Type" />
+              </SelectTrigger>
+              <SelectContent>
+                {storagePools.map((pool) => (
+                  <SelectItem key={pool.volumeType} value={pool.volumeType}>
+                    {pool.volumeType}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Instances</Label>
+            <Input
+              min={1}
+              type="number"
+              value={instances}
+              onChange={(event) => setInstances(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Storage / ECS (TB)</Label>
+            <Input
+              min={0}
+              type="number"
+              value={storageTbPerInstance}
+              onChange={(event) => setStorageTbPerInstance(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Max disk (TB)</Label>
+            <Input
+              min={1}
+              type="number"
+              value={maxDiskTb}
+              onChange={(event) => setMaxDiskTb(event.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <FeasibilityResult
+            ok={check.flavorCanFit}
+            title="Flavor"
+            detail={
+              selectedFlavor
+                ? `${selectedFlavor.name}: ${selectedFlavor.available ? "available" : "not available"}; fit ${formatNumber(selectedFlavor.estimatedFitCount)} ECS`
+                : "No flavor selected"
+            }
+          />
+          <FeasibilityResult
+            ok={check.storageCanFit}
+            title="Storage pool"
+            detail={
+              selectedPool
+                ? `Need ${formatNumber(check.totalStorageGb, " GB")} / free ${formatNumber(selectedPool.freeGb, " GB")}`
+                : "No storage pool selected"
+            }
+          />
+          <FeasibilityResult
+            ok
+            title="Disk split"
+            detail={`${check.disksPerInstance} disk(s) per ECS, ${check.totalDisks} total. Layout: ${check.fullDisks} x ${formatNumber(check.maxDiskSizeTb, " TB")} + ${formatNumber(check.finalDiskTb, " TB")}`}
+          />
+          <FeasibilityResult
+            ok={check.quotaCanFit}
+            title="Tenant quota"
+            detail={quotaDetail}
+            variant={selectedTenant && tenantQuotas.length > 0 ? "normal" : "warning"}
+          />
+        </div>
+
+        <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+          <span className="font-medium">
+            {providerCapacityOk
+              ? "Provider capacity looks sufficient."
+              : "Provider capacity is not sufficient."}
+          </span>{" "}
+          CPU needed {formatNumber(check.cpuNeeded)} vCPU, RAM needed{" "}
+          {formatNumber(check.ramNeededGb, " GB")}. Free now:{" "}
+          {formatNumber(check.cpuFree)} vCPU and{" "}
+          {formatNumber(check.ramFreeGb, " GB")} RAM. Final confirmation still
+          requires the normal ManageOne provision/create action.
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function quotaDetailText(
+  quota: ReturnType<typeof summarizeQuota> | null,
+) {
+  if (!quota?.found) return "not found";
+  if (quota.unlimited) return `unlimited, used ${formatNumber(quota.used)}`;
+  return `remaining ${formatNumber(quota.remaining)}, used ${formatNumber(quota.used)}`;
+}
+
+function FeasibilityResult({
+  ok,
+  title,
+  detail,
+  variant = "normal",
+}: {
+  ok: boolean;
+  title: string;
+  detail: string;
+  variant?: "normal" | "warning";
+}) {
+  return (
+    <div className="rounded-md border p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-sm font-medium">{title}</div>
+        <Badge
+          variant={ok ? "default" : variant === "warning" ? "outline" : "destructive"}
+        >
+          {ok ? "Pass" : variant === "warning" ? "Needs quota" : "Fail"}
+        </Badge>
+      </div>
+      <div className="text-xs text-muted-foreground">{detail}</div>
+    </div>
+  );
+}
+
 type AlarmShortcut =
   | "all"
   | "critical"
@@ -1752,12 +2156,13 @@ function HostGroupDetailSheet({
 }
 
 export default function CloudHealthPage() {
-  const { currentUser } = useCrm();
+  const { currentUser, isAdmin } = useCrm();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromQuery = searchParams.get("tab");
   const canView = canViewCloudHealth(currentUser?.role);
   const canManage = canManageCloudHealthTargets(currentUser?.role);
+  const canViewTenantQuotas = isAdmin;
   const [activeTab, setActiveTab] = useState<CloudHealthTab>(
     isCloudHealthTab(tabFromQuery) ? tabFromQuery : "overview",
   );
@@ -1784,6 +2189,10 @@ export default function CloudHealthPage() {
   const capacity = useQuery(
     api.cloudCapacity.list,
     canView && !needsOverviewData && needsCapacityData ? {} : "skip",
+  );
+  const manageOneTenants = useQuery(
+    api.manageOneTenants.list,
+    canView && canViewTenantQuotas && activeTab === "capacity" ? {} : "skip",
   );
   const alarmsSummary = useQuery(
     api.cloudAlarms.summary,
@@ -3540,68 +3949,74 @@ export default function CloudHealthPage() {
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid gap-4 xl:grid-cols-2">
-                {visibleCapacity.map((region) => (
-                  <Card key={region._id}>
-                    <CardHeader>
-                      <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
-                        {region.regionName}
-                        <span className="text-xs font-normal text-muted-foreground">
-                          Synced {formatDateTime(region.lastSyncedAt)}
-                        </span>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-                        <RingGauge
-                          label="CPU"
-                          percent={region.cpuUsedPercent}
-                          detail={`${formatNumber(region.cpuUsed)} / ${formatNumber(region.cpuTotal)} cores`}
-                          oversubscriptionRatio={
-                            region.cpuOversubscriptionRatio
-                          }
-                          onClick={() =>
-                            navigate(
-                              `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
-                            )
-                          }
+              <div className="space-y-4">
+                <ResourceFeasibilityCheck
+                  regions={visibleCapacity}
+                  tenants={manageOneTenants ?? undefined}
+                />
+                <div className="grid gap-4 xl:grid-cols-2">
+                  {visibleCapacity.map((region) => (
+                    <Card key={region._id}>
+                      <CardHeader>
+                        <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+                          {region.regionName}
+                          <span className="text-xs font-normal text-muted-foreground">
+                            Synced {formatDateTime(region.lastSyncedAt)}
+                          </span>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                          <RingGauge
+                            label="CPU"
+                            percent={region.cpuUsedPercent}
+                            detail={`${formatNumber(region.cpuUsed)} / ${formatNumber(region.cpuTotal)} cores`}
+                            oversubscriptionRatio={
+                              region.cpuOversubscriptionRatio
+                            }
+                            onClick={() =>
+                              navigate(
+                                `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
+                              )
+                            }
+                          />
+                          <RingGauge
+                            label="Memory"
+                            percent={region.memoryUsedPercent}
+                            detail={`${formatNumber(region.memoryUsedGb, " GB")} / ${formatNumber(region.memoryTotalGb, " GB")}`}
+                            oversubscriptionRatio={
+                              region.memoryOversubscriptionRatio
+                            }
+                            onClick={() =>
+                              navigate(
+                                `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
+                              )
+                            }
+                          />
+                          <RingGauge
+                            label="Storage"
+                            percent={region.storageUsedPercent}
+                            detail={`${formatNumber(region.storageUsedGb, " GB")} / ${formatNumber(region.storageTotalGb, " GB")}`}
+                            oversubscriptionRatio={
+                              region.storageOversubscriptionRatio
+                            }
+                            onClick={() =>
+                              navigate(
+                                `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
+                              )
+                            }
+                          />
+                        </div>
+                        <StoragePoolBreakdown pools={region.storagePools} />
+                        <EcsFlavorAvailability
+                          status={region.ecsFlavorAvailabilityStatus}
+                          message={region.ecsFlavorAvailabilityMessage}
+                          flavors={region.ecsFlavorAvailability}
                         />
-                        <RingGauge
-                          label="Memory"
-                          percent={region.memoryUsedPercent}
-                          detail={`${formatNumber(region.memoryUsedGb, " GB")} / ${formatNumber(region.memoryTotalGb, " GB")}`}
-                          oversubscriptionRatio={
-                            region.memoryOversubscriptionRatio
-                          }
-                          onClick={() =>
-                            navigate(
-                              `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
-                            )
-                          }
-                        />
-                        <RingGauge
-                          label="Storage"
-                          percent={region.storageUsedPercent}
-                          detail={`${formatNumber(region.storageUsedGb, " GB")} / ${formatNumber(region.storageTotalGb, " GB")}`}
-                          oversubscriptionRatio={
-                            region.storageOversubscriptionRatio
-                          }
-                          onClick={() =>
-                            navigate(
-                              `/cloud-health/regions/${encodeURIComponent(region.regionId)}?returnTab=capacity`,
-                            )
-                          }
-                        />
-                      </div>
-                      <StoragePoolBreakdown pools={region.storagePools} />
-                      <EcsFlavorAvailability
-                        status={region.ecsFlavorAvailabilityStatus}
-                        message={region.ecsFlavorAvailabilityMessage}
-                        flavors={region.ecsFlavorAvailability}
-                      />
-                    </CardContent>
-                  </Card>
-                ))}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
               </div>
             )}
           </section>

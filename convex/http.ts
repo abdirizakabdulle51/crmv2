@@ -24,6 +24,7 @@ type ManageOneTenantInput = {
   evsUsed?: number;
   projectCount?: number;
   resources?: ManageOneResourceInput[];
+  quotas?: ManageOneQuotaInput[];
   ecsFlavors?: ManageOneEcsFlavorInput[];
   evsVolumeTypes?: ManageOneEvsVolumeTypeInput[];
   evsDiskManagedFees?: ManageOneEvsDiskManagedFeeInput;
@@ -39,6 +40,25 @@ type ManageOneResourceInput = {
   resource: string;
   used: number;
   total?: number;
+};
+
+type ManageOneQuotaInput = {
+  projectId?: string;
+  projectName?: string;
+  quotaUnitId?: string;
+  serviceId: string;
+  serviceName?: string;
+  regionId?: string;
+  regionName?: string;
+  cloudInfraId?: string;
+  azId?: string;
+  parentId?: string;
+  resourceId: string;
+  resourceName?: string;
+  unit?: string;
+  limit: number;
+  used: number;
+  remaining: number;
 };
 
 type ManageOneEcsFlavorInput = {
@@ -398,6 +418,87 @@ function optionalResources(
       resource,
       used,
       ...(typeof total === "number" && total !== -1 ? { total } : {}),
+    };
+  });
+}
+
+function optionalQuotas(
+  tenant: Record<string, unknown>,
+): ManageOneQuotaInput[] | undefined {
+  const value = tenant.quotas;
+  if (value == null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("quotas must be an array");
+  }
+
+  return value.map((quotaValue) => {
+    if (!isRecord(quotaValue)) {
+      throw new Error("Each quota must be an object");
+    }
+
+    const serviceId = quotaValue.serviceId;
+    const resourceId = quotaValue.resourceId;
+    const limit = quotaValue.limit;
+    const used = quotaValue.used;
+    const remaining = quotaValue.remaining;
+
+    if (typeof serviceId !== "string") {
+      throw new Error("quotas.serviceId must be a string");
+    }
+    if (typeof resourceId !== "string") {
+      throw new Error("quotas.resourceId must be a string");
+    }
+    if (typeof limit !== "number") {
+      throw new Error("quotas.limit must be a number");
+    }
+    if (typeof used !== "number") {
+      throw new Error("quotas.used must be a number");
+    }
+    if (typeof remaining !== "number") {
+      throw new Error("quotas.remaining must be a number");
+    }
+
+    return {
+      serviceId,
+      resourceId,
+      limit,
+      used,
+      remaining,
+      ...(optionalRecordString(quotaValue, "projectId") !== undefined
+        ? { projectId: optionalRecordString(quotaValue, "projectId") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "projectName") !== undefined
+        ? { projectName: optionalRecordString(quotaValue, "projectName") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "quotaUnitId") !== undefined
+        ? { quotaUnitId: optionalRecordString(quotaValue, "quotaUnitId") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "serviceName") !== undefined
+        ? { serviceName: optionalRecordString(quotaValue, "serviceName") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "regionId") !== undefined
+        ? { regionId: optionalRecordString(quotaValue, "regionId") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "regionName") !== undefined
+        ? { regionName: optionalRecordString(quotaValue, "regionName") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "cloudInfraId") !== undefined
+        ? { cloudInfraId: optionalRecordString(quotaValue, "cloudInfraId") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "azId") !== undefined
+        ? { azId: optionalRecordString(quotaValue, "azId") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "parentId") !== undefined
+        ? { parentId: optionalRecordString(quotaValue, "parentId") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "resourceName") !== undefined
+        ? { resourceName: optionalRecordString(quotaValue, "resourceName") }
+        : {}),
+      ...(optionalRecordString(quotaValue, "unit") !== undefined
+        ? { unit: optionalRecordString(quotaValue, "unit") }
+        : {}),
     };
   });
 }
@@ -891,6 +992,9 @@ export function normalizeTenant(value: unknown): ManageOneTenantInput {
       : {}),
     ...(optionalResources(value) !== undefined
       ? { resources: optionalResources(value) }
+      : {}),
+    ...(optionalQuotas(value) !== undefined
+      ? { quotas: optionalQuotas(value) }
       : {}),
     ...(optionalEcsFlavors(value) !== undefined
       ? { ecsFlavors: optionalEcsFlavors(value) }

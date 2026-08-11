@@ -1041,6 +1041,28 @@ export const bulkUpsert = internalMutation({
             }),
           ),
         ),
+        quotas: v.optional(
+          v.array(
+            v.object({
+              projectId: v.optional(v.string()),
+              projectName: v.optional(v.string()),
+              quotaUnitId: v.optional(v.string()),
+              serviceId: v.string(),
+              serviceName: v.optional(v.string()),
+              regionId: v.optional(v.string()),
+              regionName: v.optional(v.string()),
+              cloudInfraId: v.optional(v.string()),
+              azId: v.optional(v.string()),
+              parentId: v.optional(v.string()),
+              resourceId: v.string(),
+              resourceName: v.optional(v.string()),
+              unit: v.optional(v.string()),
+              limit: v.number(),
+              used: v.number(),
+              remaining: v.number(),
+            }),
+          ),
+        ),
         ecsFlavors: v.optional(
           v.array(
             v.object({
