@@ -345,6 +345,63 @@ export const changeTemporaryPassword = action({
   },
 });
 
+export const emergencyResetPassword = action({
+  args: {
+    email: v.string(),
+    password: v.string(),
+    secret: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const expectedSecret = process.env.DR_ADMIN_RESET_SECRET;
+    if (!expectedSecret || args.secret !== expectedSecret) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Emergency reset is not enabled",
+      });
+    }
+
+    const email = normalizeEmail(args.email);
+    const password = args.password.trim();
+    if (password.length < 8) {
+      throw new ConvexError({
+        code: "INVALID_PASSWORD",
+        message: "Password must be at least 8 characters",
+      });
+    }
+
+    const users = await ctx.runQuery(internal.auth.findUsersByEmail, {
+      email,
+    });
+    if (users.length !== 1) {
+      throw new ConvexError({
+        code: users.length === 0 ? "NOT_FOUND" : "AMBIGUOUS_USER",
+        message:
+          users.length === 0
+            ? "User email not found"
+            : "Multiple users have this email",
+      });
+    }
+
+    await modifyAccountCredentials(ctx, {
+      provider: "password",
+      account: { id: email, secret: password },
+    });
+
+    await ctx.runMutation(internal.auth.finishPasswordChange, {
+      userId: users[0]._id,
+    });
+  },
+});
+
+export const findUsersByEmail = internalQuery({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const email = normalizeEmail(args.email);
+    const users = await ctx.db.query("users").collect();
+    return users.filter((user) => normalizeEmail(user.email ?? "") === email);
+  },
+});
+
 export const disableTeamMember = mutation({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
