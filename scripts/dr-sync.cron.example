@@ -1,0 +1,3 @@
+# Run on HQ3 CRM as root: crontab -e
+# Sync HQ3 CRM data to HOA every 2 minutes.
+*/2 * * * * /opt/htgcrm-app/scripts/dr-sync-hq3-to-hoa.sh >/dev/null 2>&1
