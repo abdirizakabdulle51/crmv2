@@ -17,6 +17,10 @@ SNAPSHOT_DIR="${SNAPSHOT_DIR:-/var/backups/htgcrm-dr-sync}"
 LOG_DIR="${LOG_DIR:-/var/log/htgcrm-dr-sync}"
 LOCK_FILE="${LOCK_FILE:-/var/lock/htgcrm-dr-sync.lock}"
 KEEP_SNAPSHOTS="${KEEP_SNAPSHOTS:-30}"
+HQ3_CRM_HEALTH_URL="${HQ3_CRM_HEALTH_URL:-https://crm.102-203-134-106.sslip.io/}"
+DISABLE_HQ3_HEALTH_CHECK="${DISABLE_HQ3_HEALTH_CHECK:-false}"
+STATE_FILE="${STATE_FILE:-$LOG_DIR/state}"
+FAILBACK_REQUIRED_FILE="${FAILBACK_REQUIRED_FILE:-$LOG_DIR/failback_required}"
 
 mkdir -p "$SNAPSHOT_DIR" "$LOG_DIR" "$(dirname "$LOCK_FILE")"
 
@@ -26,6 +30,18 @@ LAST_FAILURE_FILE="$LOG_DIR/last_failure"
 
 log() {
   printf '[%s] %s\n' "$(date -Is)" "$*" | tee -a "$LOG_FILE"
+}
+
+set_state() {
+  printf '%s\n' "$1" >"$STATE_FILE"
+}
+
+get_state() {
+  if [[ -f "$STATE_FILE" ]]; then
+    cat "$STATE_FILE"
+  else
+    printf 'HQ3_PRIMARY\n'
+  fi
 }
 
 require_env() {
@@ -45,6 +61,22 @@ require_env HOA_CONVEX_DEPLOY_KEY
   if ! flock -n 9; then
     log "Previous DR sync still running; skipping this run"
     exit 0
+  fi
+
+  current_state="$(get_state)"
+  if [[ "$current_state" == "HOA_ACTIVE_FAILOVER" || "$current_state" == "FAILBACK_REQUIRED" ]]; then
+    log "DR state is $current_state; skipping HQ3 -> HOA sync to protect HOA changes"
+    exit 0
+  fi
+
+  if [[ "$DISABLE_HQ3_HEALTH_CHECK" != "true" ]]; then
+    log "Checking HQ3 CRM health: $HQ3_CRM_HEALTH_URL"
+    if ! curl -fsS --max-time 10 "$HQ3_CRM_HEALTH_URL" >/dev/null 2>&1; then
+      set_state "HOA_ACTIVE_FAILOVER"
+      date -Is >"$FAILBACK_REQUIRED_FILE"
+      log "HQ3 CRM health check failed; marking HOA_ACTIVE_FAILOVER and skipping sync"
+      exit 0
+    fi
   fi
 
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -78,6 +110,7 @@ require_env HOA_CONVEX_DEPLOY_KEY
 
   date -Is >"$LAST_SUCCESS_FILE"
   rm -f "$LAST_FAILURE_FILE"
+  set_state "HQ3_PRIMARY"
   log "DR sync completed successfully"
 
   find "$SNAPSHOT_DIR" -maxdepth 1 -type f -name 'hq3-crm-*.zip' \
