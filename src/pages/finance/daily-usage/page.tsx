@@ -60,6 +60,15 @@ function formatQuantity(value: number) {
   }).format(value);
 }
 
+function formatMoney(value?: number) {
+  if (value === undefined) return "-";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 export default function DailyUsagePage() {
   const companies = useQuery(api.companies.list, {});
   const [month, setMonth] = useState(currentMonthInputValue());
@@ -101,6 +110,30 @@ export default function DailyUsagePage() {
     });
   }, [review?.rows, search, serviceType, usageDate]);
 
+  const rollupRows = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+    return (review?.rollup.rows ?? []).filter((row) => {
+      if (serviceType !== "all" && row.serviceType !== serviceType) {
+        return false;
+      }
+      if (!normalizedSearch) {
+        return true;
+      }
+      const haystack = [
+        row.companyName,
+        row.serviceType,
+        row.itemName,
+        row.regionName,
+        row.dataCenterName,
+        row.unit,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [review?.rollup.rows, search, serviceType]);
+
   const totals = useMemo(() => {
     const companyCount = new Set(rows.map((row) => row.companyId)).size;
     const dayCount = new Set(rows.map((row) => row.usageDate)).size;
@@ -113,6 +146,21 @@ export default function DailyUsagePage() {
       locked: rows.filter((row) => row.lockedAt).length,
     };
   }, [rows]);
+
+  const rollupTotals = useMemo(
+    () => ({
+      estimatedAmount: rollupRows.reduce(
+        (total, row) => total + (row.estimatedAmount ?? 0),
+        0,
+      ),
+      pricedRows: rollupRows.filter((row) => row.estimatedAmount !== undefined)
+        .length,
+      unpricedRows: rollupRows.filter(
+        (row) => row.estimatedAmount === undefined,
+      ).length,
+    }),
+    [rollupRows],
+  );
 
   if (!companies || !review) {
     return (
@@ -225,6 +273,117 @@ export default function DailyUsagePage() {
       <Card>
         <CardHeader className="gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
+            <CardTitle>Monthly Rollup Preview</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Read-only month-end preview from captured daily rows. Estimated
+              quantities are prorated across {review.rollup.daysInMonth} days.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{rollupRows.length} rollup rows</Badge>
+            <Badge variant="outline">
+              {rollupTotals.unpricedRows} unpriced
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="mb-4 grid gap-4 sm:grid-cols-3">
+            <SummaryCard
+              label="Estimated monthly total"
+              valueText={formatMoney(rollupTotals.estimatedAmount)}
+            />
+            <SummaryCard label="Priced rows" value={rollupTotals.pricedRows} />
+            <SummaryCard
+              label="Unpriced rows"
+              value={rollupTotals.unpricedRows}
+            />
+          </div>
+
+          {rollupRows.length === 0 ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Database className="h-6 w-6" />
+                </EmptyMedia>
+                <EmptyTitle>No monthly rollup rows yet.</EmptyTitle>
+                <EmptyDescription>
+                  The preview appears once daily usage snapshots exist for the
+                  selected month and filters.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full min-w-[1120px] text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-3 py-2">Customer</th>
+                    <th className="px-3 py-2">Service</th>
+                    <th className="px-3 py-2">Item</th>
+                    <th className="px-3 py-2">Region</th>
+                    <th className="px-3 py-2 text-right">Days</th>
+                    <th className="px-3 py-2 text-right">Daily Total</th>
+                    <th className="px-3 py-2 text-right">
+                      Billable Qty
+                    </th>
+                    <th className="px-3 py-2">Unit</th>
+                    <th className="px-3 py-2 text-right">Monthly Price</th>
+                    <th className="px-3 py-2 text-right">
+                      Estimated Amount
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rollupRows.map((row) => (
+                    <tr
+                      key={[
+                        row.companyId,
+                        row.serviceType,
+                        row.itemName,
+                        row.regionName ?? row.dataCenterName ?? "",
+                      ].join("|")}
+                      className="border-b last:border-0"
+                    >
+                      <td className="px-3 py-3 font-medium">
+                        {row.companyName}
+                      </td>
+                      <td className="px-3 py-3">
+                        <Badge variant="secondary">{row.serviceType}</Badge>
+                      </td>
+                      <td className="px-3 py-3">{row.itemName}</td>
+                      <td className="px-3 py-3 text-muted-foreground">
+                        {row.regionName ?? row.dataCenterName ?? "-"}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        {row.capturedDays}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        {formatQuantity(row.dailyQuantityTotal)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-medium">
+                        {formatQuantity(row.billableQuantity)}
+                      </td>
+                      <td className="px-3 py-3 text-muted-foreground">
+                        {row.unit}
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        {formatMoney(row.monthlyUnitPrice)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-medium">
+                        {formatMoney(row.estimatedAmount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
             <CardTitle>Captured Daily Usage</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
               Read-only data captured from ManageOne snapshots. It does not
@@ -321,8 +480,8 @@ export default function DailyUsagePage() {
           <Filter className="mt-0.5 h-4 w-4" />
           <p>
             This page is for review only. Monthly rollup and invoice generation
-            will be added in later phases after the daily capture data is
-            verified.
+            are not active from this page. Draft invoice generation will be
+            added in a later phase after the daily capture data is verified.
           </p>
         </div>
       </div>
@@ -330,7 +489,15 @@ export default function DailyUsagePage() {
   );
 }
 
-function SummaryCard({ label, value }: { label: string; value: number }) {
+function SummaryCard({
+  label,
+  value,
+  valueText,
+}: {
+  label: string;
+  value?: number;
+  valueText?: string;
+}) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -339,7 +506,7 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
+        <div className="text-2xl font-bold">{valueText ?? value}</div>
       </CardContent>
     </Card>
   );

@@ -130,6 +130,14 @@ function defaultUnitForService(serviceCategory: string) {
   return "unit/day snapshot";
 }
 
+function daysInMonth(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber) {
+    return 30;
+  }
+  return new Date(year, monthNumber, 0).getDate();
+}
+
 function sourceKeyFor(input: {
   companyId: Id<"companies">;
   tenantId: Id<"manageOneTenants">;
@@ -361,12 +369,111 @@ export const review = query({
       return a.serviceType.localeCompare(b.serviceType);
     });
 
+    const catalogById = new Map(
+      (await ctx.db.query("serviceCatalog").collect()).map((item) => [
+        item._id,
+        item,
+      ]),
+    );
+    const monthDayCount = daysInMonth(args.month);
+    const rollupByKey = new Map<
+      string,
+      {
+        companyId: Id<"companies">;
+        companyName: string;
+        serviceType: string;
+        itemName: string;
+        unit: string;
+        catalogItemId?: Id<"serviceCatalog">;
+        regionName?: string;
+        dataCenterName?: string;
+        dailyQuantityTotal: number;
+        capturedDays: Set<string>;
+        monthlyUnitPrice?: number;
+      }
+    >();
+
+    for (const row of visibleRows) {
+      const groupKey = [
+        row.companyId,
+        row.catalogItemId ?? row.itemName,
+        row.serviceType,
+        row.unit,
+        row.regionName ?? row.dataCenterName ?? "",
+      ].join("|");
+      const existing =
+        rollupByKey.get(groupKey) ??
+        {
+          companyId: row.companyId,
+          companyName: companyNameById.get(row.companyId) ?? "Unknown",
+          serviceType: row.serviceType,
+          itemName: row.itemName,
+          unit: row.unit,
+          ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
+          ...(row.regionName ? { regionName: row.regionName } : {}),
+          ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
+          dailyQuantityTotal: 0,
+          capturedDays: new Set<string>(),
+          monthlyUnitPrice: row.catalogItemId
+            ? catalogById.get(row.catalogItemId)?.monthlyPrice
+            : undefined,
+        };
+
+      existing.dailyQuantityTotal += row.quantity;
+      existing.capturedDays.add(row.usageDate);
+      rollupByKey.set(groupKey, existing);
+    }
+
+    const rollupRows = [...rollupByKey.values()]
+      .map((row) => {
+        const billableQuantity = row.dailyQuantityTotal / monthDayCount;
+        const estimatedAmount =
+          row.monthlyUnitPrice === undefined
+            ? undefined
+            : billableQuantity * row.monthlyUnitPrice;
+        return {
+          companyId: row.companyId,
+          companyName: row.companyName,
+          serviceType: row.serviceType,
+          itemName: row.itemName,
+          unit: row.unit,
+          ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
+          ...(row.regionName ? { regionName: row.regionName } : {}),
+          ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
+          capturedDays: row.capturedDays.size,
+          dailyQuantityTotal: row.dailyQuantityTotal,
+          billableQuantity,
+          monthlyUnitPrice: row.monthlyUnitPrice,
+          estimatedAmount,
+        };
+      })
+      .sort((a, b) => {
+        const companyCompare = a.companyName.localeCompare(b.companyName);
+        if (companyCompare !== 0) return companyCompare;
+        const serviceCompare = a.serviceType.localeCompare(b.serviceType);
+        if (serviceCompare !== 0) return serviceCompare;
+        return a.itemName.localeCompare(b.itemName);
+      });
+
     return {
       month: args.month,
       rows: sortedRows.map((row) => ({
         ...row,
         companyName: companyNameById.get(row.companyId) ?? "Unknown",
       })),
+      rollup: {
+        daysInMonth: monthDayCount,
+        rows: rollupRows,
+        totals: {
+          estimatedAmount: rollupRows.reduce(
+            (total, row) => total + (row.estimatedAmount ?? 0),
+            0,
+          ),
+          unpricedCount: rollupRows.filter(
+            (row) => row.estimatedAmount === undefined,
+          ).length,
+        },
+      },
       summary: {
         rowCount: visibleRows.length,
         companyCount: companies.length,
