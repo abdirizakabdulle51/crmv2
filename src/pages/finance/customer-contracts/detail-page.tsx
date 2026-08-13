@@ -167,6 +167,12 @@ function formatDateTime(timestamp?: number) {
   }).format(new Date(timestamp));
 }
 
+function monthInputValue(timestamp?: number) {
+  const date = timestamp ? new Date(timestamp) : new Date();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}`;
+}
+
 function formatMoney(value: number | undefined, currency = "USD") {
   if (value === undefined) return "-";
   return new Intl.NumberFormat("en-US", {
@@ -200,8 +206,20 @@ export default function CustomerContractDetailPage() {
   const [contractDialogOpen, setContractDialogOpen] = useState(false);
   const [contractForm, setContractForm] =
     useState<ContractFormState>(emptyContractForm);
+  const [comparisonMonth, setComparisonMonth] = useState("");
   const [pending, setPending] = useState(false);
   const [contractPending, setContractPending] = useState(false);
+  const activeComparisonMonth =
+    comparisonMonth || (contract ? monthInputValue(contract.startDate) : "");
+  const usageComparison = useQuery(
+    api.customerContracts.usageComparison,
+    parsedContractId && activeComparisonMonth
+      ? {
+          contractId: parsedContractId,
+          month: activeComparisonMonth,
+        }
+      : "skip",
+  );
 
   const lineTotal = useMemo(
     () =>
@@ -758,6 +776,132 @@ export default function CustomerContractDetailPage() {
       </div>
 
       <Card>
+        <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle>Usage Comparison</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Read-only contract math for this billing month. No invoice is
+              created from this section.
+            </p>
+          </div>
+          <div className="w-full md:w-48">
+            <Label htmlFor="contract-usage-month" className="sr-only">
+              Usage month
+            </Label>
+            <Input
+              id="contract-usage-month"
+              type="month"
+              value={activeComparisonMonth}
+              onChange={(event) => setComparisonMonth(event.target.value)}
+            />
+          </div>
+        </CardHeader>
+        <CardContent>
+          {usageComparison === undefined ? (
+            <Skeleton className="h-36 w-full" />
+          ) : usageComparison.rows.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+              Add contract services first, then this table will compare them to
+              monthly usage.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-4">
+                <UsageSummaryCard
+                  label="Contract minimum"
+                  value={formatMoney(
+                    usageComparison.totals.contractMinimum,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Overage"
+                  value={formatMoney(
+                    usageComparison.totals.overage,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Projected bill"
+                  value={formatMoney(
+                    usageComparison.totals.projected,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Usage entries matched"
+                  value={`${usageComparison.totals.matchedEntries}/${usageComparison.totals.totalUsageEntries}`}
+                />
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-3">Service</th>
+                      <th className="px-3 py-3">Included</th>
+                      <th className="px-3 py-3">Actual</th>
+                      <th className="px-3 py-3">Overage</th>
+                      <th className="px-3 py-3">Contract Price</th>
+                      <th className="px-3 py-3">Overage Price</th>
+                      <th className="px-3 py-3">Base</th>
+                      <th className="px-3 py-3">Extra</th>
+                      <th className="px-3 py-3">Projected</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usageComparison.rows.map((row) => (
+                      <tr key={row.lineItemId} className="border-b last:border-0">
+                        <td className="px-3 py-3">
+                          <div className="font-medium">{row.itemName}</div>
+                          <div className="text-muted-foreground">
+                            {row.serviceCategory}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          {formatQuantity(row.includedQuantity)} {row.unit}
+                        </td>
+                        <td className="px-3 py-3">
+                          {formatQuantity(row.actualQuantity)} {row.unit}
+                        </td>
+                        <td className="px-3 py-3">
+                          {row.overageQuantity > 0 ? (
+                            <Badge variant="destructive">
+                              {formatQuantity(row.overageQuantity)}
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary">Within limit</Badge>
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          {formatMoney(row.contractUnitPrice, contract.currency)}
+                        </td>
+                        <td className="px-3 py-3">
+                          {formatMoney(row.overageUnitPrice, contract.currency)}
+                        </td>
+                        <td className="px-3 py-3">
+                          {formatMoney(row.baseAmount, contract.currency)}
+                        </td>
+                        <td className="px-3 py-3">
+                          {formatMoney(row.overageAmount, contract.currency)}
+                        </td>
+                        <td className="px-3 py-3 font-medium">
+                          {formatMoney(row.projectedAmount, contract.currency)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Usage is matched by catalog item when available, otherwise by
+                service name/category. The projected bill is for review only.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader>
           <CardTitle>Audit History</CardTitle>
         </CardHeader>
@@ -818,6 +962,15 @@ function InfoCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function UsageSummaryCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border p-4">
+      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className="mt-2 text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
 function StatusBadge({
   status,
 }: {
@@ -858,4 +1011,10 @@ function formatDiscount(line: ContractLineItem) {
   if (!line.discountType || line.discountValue === undefined) return "-";
   if (line.discountType === "percentage") return `${line.discountValue}%`;
   return formatMoney(line.discountValue);
+}
+
+function formatQuantity(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(value);
 }

@@ -52,6 +52,22 @@ type LineItemInput = {
   billingUnit: string;
   notes?: string;
 };
+type UsageComparisonRow = {
+  lineItemId: Id<"customerContractLineItems">;
+  itemName: string;
+  serviceCategory: string;
+  includedQuantity: number;
+  unit: string;
+  contractUnitPrice: number;
+  overageUnitPrice?: number;
+  actualQuantity: number;
+  overageQuantity: number;
+  baseAmount: number;
+  overageAmount: number;
+  projectedAmount: number;
+  usageAmount: number;
+  matchedEntries: number;
+};
 
 const contractFieldsValidator = {
   companyId: v.id("companies"),
@@ -255,6 +271,69 @@ function statusEventType(status: ContractStatus): EventType {
   return "updated";
 }
 
+function normalizeKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function usageMatchesLine(
+  usage: Doc<"consumption">,
+  line: Doc<"customerContractLineItems">,
+) {
+  if (line.catalogItemId && usage.catalogItemId === line.catalogItemId) {
+    return true;
+  }
+
+  const usageKey = normalizeKey(usage.serviceType);
+  const itemKey = normalizeKey(line.itemName);
+  const categoryKey = normalizeKey(line.serviceCategory);
+  return (
+    usageKey === itemKey ||
+    usageKey.includes(itemKey) ||
+    itemKey.includes(usageKey) ||
+    (categoryKey.length > 0 && usageKey.includes(categoryKey))
+  );
+}
+
+function comparisonRow(
+  line: Doc<"customerContractLineItems">,
+  usageEntries: Doc<"consumption">[],
+): UsageComparisonRow {
+  const matchedUsage = usageEntries.filter((usage) =>
+    usageMatchesLine(usage, line),
+  );
+  const actualQuantity = matchedUsage.reduce((total, usage) => {
+    if (usage.quantity !== undefined) return total + usage.quantity;
+    const price = line.catalogUnitPrice ?? line.contractUnitPrice;
+    if (price > 0) return total + usage.amount / price;
+    return total;
+  }, 0);
+  const usageAmount = matchedUsage.reduce(
+    (total, usage) => total + usage.amount,
+    0,
+  );
+  const overageQuantity = Math.max(0, actualQuantity - line.includedQuantity);
+  const baseAmount = line.includedQuantity * line.contractUnitPrice;
+  const overageAmount =
+    overageQuantity * (line.overageUnitPrice ?? line.contractUnitPrice);
+
+  return {
+    lineItemId: line._id,
+    itemName: line.itemName,
+    serviceCategory: line.serviceCategory,
+    includedQuantity: line.includedQuantity,
+    unit: line.unit,
+    contractUnitPrice: line.contractUnitPrice,
+    overageUnitPrice: line.overageUnitPrice,
+    actualQuantity,
+    overageQuantity,
+    baseAmount,
+    overageAmount,
+    projectedAmount: baseAmount + overageAmount,
+    usageAmount,
+    matchedEntries: matchedUsage.length,
+  };
+}
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -315,6 +394,62 @@ export const listLineItems = query({
       .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
       .collect();
     return lines.sort((a, b) => a.createdAt - b.createdAt);
+  },
+});
+
+export const usageComparison = query({
+  args: {
+    contractId: v.id("customerContracts"),
+    month: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+
+    const [lines, usageEntries] = await Promise.all([
+      ctx.db
+        .query("customerContractLineItems")
+        .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+        .collect(),
+      ctx.db
+        .query("consumption")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", contract.companyId).eq("month", args.month),
+        )
+        .collect(),
+    ]);
+    const rows = lines
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((line) => comparisonRow(line, usageEntries));
+
+    return {
+      month: args.month,
+      rows,
+      totals: {
+        contractMinimum: rows.reduce((total, row) => total + row.baseAmount, 0),
+        overage: rows.reduce((total, row) => total + row.overageAmount, 0),
+        projected: rows.reduce(
+          (total, row) => total + row.projectedAmount,
+          0,
+        ),
+        usageAmount: usageEntries.reduce(
+          (total, usage) => total + usage.amount,
+          0,
+        ),
+        matchedEntries: rows.reduce(
+          (total, row) => total + row.matchedEntries,
+          0,
+        ),
+        totalUsageEntries: usageEntries.length,
+      },
+    };
   },
 });
 
