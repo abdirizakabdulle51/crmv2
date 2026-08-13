@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { FileSignature, Pencil, Plus, Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { FileSignature, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
@@ -40,8 +41,6 @@ import { Textarea } from "@/components/ui/textarea.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 
 type CustomerContract = Doc<"customerContracts"> & { companyName: string };
-type ContractLineItem = Doc<"customerContractLineItems">;
-type ServiceCatalogItem = Doc<"serviceCatalog">;
 type BillingFrequency =
   | "monthly"
   | "quarterly"
@@ -66,21 +65,6 @@ type FormState = {
   billingFrequency: BillingFrequency;
   paymentTermDays: string;
   signedDocumentUrl: string;
-  notes: string;
-};
-type LineItemFormState = {
-  catalogItemId?: Id<"serviceCatalog">;
-  itemName: string;
-  serviceCategory: string;
-  description: string;
-  includedQuantity: string;
-  unit: string;
-  catalogUnitPrice: string;
-  contractUnitPrice: string;
-  discountType: "none" | "percentage" | "amount";
-  discountValue: string;
-  overageUnitPrice: string;
-  billingUnit: string;
   notes: string;
 };
 
@@ -138,24 +122,6 @@ function emptyForm(): FormState {
   };
 }
 
-function emptyLineItemForm(): LineItemFormState {
-  return {
-    catalogItemId: undefined,
-    itemName: "",
-    serviceCategory: "",
-    description: "",
-    includedQuantity: "1",
-    unit: "",
-    catalogUnitPrice: "",
-    contractUnitPrice: "",
-    discountType: "none",
-    discountValue: "",
-    overageUnitPrice: "",
-    billingUnit: "",
-    notes: "",
-  };
-}
-
 function formFromContract(contract: CustomerContract): FormState {
   return {
     companyId: contract.companyId,
@@ -176,11 +142,6 @@ function formFromContract(contract: CustomerContract): FormState {
 function optionalText(value: string) {
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
-}
-
-function optionalNumber(value: string) {
-  const trimmed = value.trim();
-  return trimmed ? Number(trimmed) : undefined;
 }
 
 function buildPayload(form: FormState) {
@@ -227,73 +188,17 @@ function buildPayload(form: FormState) {
   };
 }
 
-function buildLinePayload(
-  form: LineItemFormState,
-  contractId: Id<"customerContracts">,
-) {
-  const includedQuantity = Number(form.includedQuantity);
-  const contractUnitPrice = Number(form.contractUnitPrice);
-  const catalogUnitPrice = optionalNumber(form.catalogUnitPrice);
-  const discountValue = optionalNumber(form.discountValue);
-  const overageUnitPrice = optionalNumber(form.overageUnitPrice);
-
-  if (
-    !form.itemName.trim() ||
-    !form.serviceCategory.trim() ||
-    !form.unit.trim() ||
-    !form.billingUnit.trim()
-  ) {
-    toast.error("Please fill all required service line fields");
-    return null;
-  }
-  if (
-    !Number.isFinite(includedQuantity) ||
-    includedQuantity < 0 ||
-    !Number.isFinite(contractUnitPrice) ||
-    contractUnitPrice < 0
-  ) {
-    toast.error("Included quantity and contract price must be valid numbers");
-    return null;
-  }
-  for (const value of [catalogUnitPrice, discountValue, overageUnitPrice]) {
-    if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
-      toast.error("Optional price and discount values must be valid numbers");
-      return null;
-    }
-  }
-
-  return {
-    contractId,
-    catalogItemId: form.catalogItemId,
-    itemName: form.itemName.trim(),
-    serviceCategory: form.serviceCategory.trim(),
-    description: optionalText(form.description),
-    includedQuantity,
-    unit: form.unit.trim(),
-    catalogUnitPrice,
-    contractUnitPrice,
-    discountType:
-      form.discountType === "none" ? undefined : form.discountType,
-    discountValue,
-    overageUnitPrice,
-    billingUnit: form.billingUnit.trim(),
-    notes: optionalText(form.notes),
-  };
-}
-
 export default function CustomerContractsPage() {
+  const navigate = useNavigate();
   const { currentUser } = useCrm();
   const canManage = isAdminRole(currentUser?.role);
   const contracts = useQuery(api.customerContracts.list, {});
   const companies = useQuery(api.companies.list, {});
-  const serviceCatalog = useQuery(api.serviceCatalog.list, {});
   const createContract = useMutation(api.customerContracts.create);
   const updateContract = useMutation(api.customerContracts.update);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingContract, setEditingContract] =
-    useState<CustomerContract | null>(null);
-  const [lineItemsContract, setLineItemsContract] =
     useState<CustomerContract | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [pending, setPending] = useState(false);
@@ -358,7 +263,6 @@ export default function CustomerContractsPage() {
   if (
     contracts === undefined ||
     companies === undefined ||
-    serviceCatalog === undefined ||
     currentUser === undefined
   ) {
     return (
@@ -477,7 +381,9 @@ export default function CustomerContractsPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => setLineItemsContract(contract)}
+                          onClick={() =>
+                            navigate(`/finance/customer-contracts/${contract._id}`)
+                          }
                         >
                           Services
                         </Button>
@@ -513,12 +419,6 @@ export default function CustomerContractsPage() {
         setForm={setForm}
         setOpen={setDialogOpen}
         onSubmit={handleSubmit}
-      />
-      <LineItemsDialog
-        canManage={canManage}
-        contract={lineItemsContract}
-        serviceCatalog={serviceCatalog}
-        setContract={setLineItemsContract}
       />
     </div>
   );
@@ -746,442 +646,6 @@ function ContractDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function LineItemsDialog({
-  canManage,
-  contract,
-  serviceCatalog,
-  setContract,
-}: {
-  canManage: boolean;
-  contract: CustomerContract | null;
-  serviceCatalog: ServiceCatalogItem[];
-  setContract: (contract: CustomerContract | null) => void;
-}) {
-  const lineItems = useQuery(
-    api.customerContracts.listLineItems,
-    contract ? { contractId: contract._id } : "skip",
-  );
-  const createLineItem = useMutation(api.customerContracts.createLineItem);
-  const updateLineItem = useMutation(api.customerContracts.updateLineItem);
-  const removeLineItem = useMutation(api.customerContracts.removeLineItem);
-  const [editingLine, setEditingLine] = useState<ContractLineItem | null>(null);
-  const [form, setForm] = useState<LineItemFormState>(emptyLineItemForm);
-  const [pending, setPending] = useState(false);
-
-  const lineTotal = useMemo(
-    () =>
-      (lineItems ?? []).reduce(
-        (total, line) =>
-          total + line.includedQuantity * line.contractUnitPrice,
-        0,
-      ),
-    [lineItems],
-  );
-
-  const resetLineForm = () => {
-    setEditingLine(null);
-    setForm(emptyLineItemForm());
-  };
-
-  const selectCatalogItem = (value: string) => {
-    if (value === "custom") {
-      setForm({
-        ...form,
-        catalogItemId: undefined,
-        catalogUnitPrice: "",
-      });
-      return;
-    }
-    const item = serviceCatalog.find((catalog) => catalog._id === value);
-    if (!item) return;
-    setForm({
-      ...form,
-      catalogItemId: item._id,
-      itemName: item.itemName,
-      serviceCategory: item.serviceCategory,
-      description: item.specs ?? "",
-      unit: item.billingUnit,
-      billingUnit: item.billingUnit,
-      catalogUnitPrice: item.monthlyPrice.toString(),
-      contractUnitPrice: item.monthlyPrice.toString(),
-    });
-  };
-
-  const editLine = (line: ContractLineItem) => {
-    setEditingLine(line);
-    setForm({
-      catalogItemId: line.catalogItemId,
-      itemName: line.itemName,
-      serviceCategory: line.serviceCategory,
-      description: line.description ?? "",
-      includedQuantity: line.includedQuantity.toString(),
-      unit: line.unit,
-      catalogUnitPrice: line.catalogUnitPrice?.toString() ?? "",
-      contractUnitPrice: line.contractUnitPrice.toString(),
-      discountType: line.discountType ?? "none",
-      discountValue: line.discountValue?.toString() ?? "",
-      overageUnitPrice: line.overageUnitPrice?.toString() ?? "",
-      billingUnit: line.billingUnit,
-      notes: line.notes ?? "",
-    });
-  };
-
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!contract) return;
-    const payload = buildLinePayload(form, contract._id);
-    if (!payload) return;
-    setPending(true);
-    try {
-      if (editingLine) {
-        await updateLineItem({ lineItemId: editingLine._id, ...payload });
-        toast.success("Contract service updated");
-      } else {
-        await createLineItem(payload);
-        toast.success("Contract service added");
-      }
-      resetLineForm();
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Could not save contract service",
-      );
-    } finally {
-      setPending(false);
-    }
-  };
-
-  const handleRemove = async (line: ContractLineItem) => {
-    setPending(true);
-    try {
-      await removeLineItem({ lineItemId: line._id });
-      toast.success("Contract service removed");
-      if (editingLine?._id === line._id) resetLineForm();
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Could not remove contract service",
-      );
-    } finally {
-      setPending(false);
-    }
-  };
-
-  return (
-    <Dialog
-      open={!!contract}
-      onOpenChange={(open) => {
-        if (!open) {
-          resetLineForm();
-          setContract(null);
-        }
-      }}
-    >
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-6xl">
-        <DialogHeader>
-          <DialogTitle>
-            {contract ? `${contract.contractNumber} Services` : "Services"}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Contract Lines</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {lineItems === undefined ? (
-                <Skeleton className="h-48" />
-              ) : lineItems.length === 0 ? (
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <FileSignature className="h-6 w-6" />
-                    </EmptyMedia>
-                    <EmptyTitle>No services added yet.</EmptyTitle>
-                    <EmptyDescription>
-                      Add agreed services, limits, contract prices, discounts,
-                      and overage prices.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                        <th className="px-3 py-3">Service</th>
-                        <th className="px-3 py-3">Included</th>
-                        <th className="px-3 py-3">Catalog</th>
-                        <th className="px-3 py-3">Contract</th>
-                        <th className="px-3 py-3">Overage</th>
-                        <th className="px-3 py-3">Amount</th>
-                        {canManage ? <th className="px-3 py-3">Actions</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lineItems.map((line) => (
-                        <tr key={line._id} className="border-b last:border-0">
-                          <td className="px-3 py-3">
-                            <div className="font-medium">{line.itemName}</div>
-                            <div className="text-muted-foreground">
-                              {line.serviceCategory}
-                            </div>
-                          </td>
-                          <td className="px-3 py-3 text-muted-foreground">
-                            {line.includedQuantity} {line.unit}
-                          </td>
-                          <td className="px-3 py-3 text-muted-foreground">
-                            {formatMoney(line.catalogUnitPrice)}
-                          </td>
-                          <td className="px-3 py-3">
-                            {formatMoney(line.contractUnitPrice)}
-                          </td>
-                          <td className="px-3 py-3 text-muted-foreground">
-                            {formatMoney(line.overageUnitPrice)}
-                          </td>
-                          <td className="px-3 py-3 font-medium">
-                            {formatMoney(
-                              line.includedQuantity * line.contractUnitPrice,
-                            )}
-                          </td>
-                          {canManage ? (
-                            <td className="px-3 py-3">
-                              <div className="flex gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => editLine(line)}
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => void handleRemove(line)}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </td>
-                          ) : null}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <div className="mt-4 flex justify-end border-t pt-4 text-sm">
-                <span className="mr-3 text-muted-foreground">
-                  Contract line total
-                </span>
-                <span className="font-semibold">{formatMoney(lineTotal)}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">
-                {editingLine ? "Edit Service" : "Add Service"}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form className="space-y-4" onSubmit={handleSubmit}>
-                <Field label="Catalog item">
-                  <Select
-                    value={form.catalogItemId ?? "custom"}
-                    onValueChange={selectCatalogItem}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="custom">Custom service</SelectItem>
-                      {serviceCatalog.map((item) => (
-                        <SelectItem key={item._id} value={item._id}>
-                          {item.itemName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Field label="Service name">
-                    <Input
-                      value={form.itemName}
-                      onChange={(event) =>
-                        setForm({ ...form, itemName: event.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field label="Category">
-                    <Input
-                      value={form.serviceCategory}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          serviceCategory: event.target.value,
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="Included quantity">
-                    <Input
-                      min={0}
-                      step="any"
-                      type="number"
-                      value={form.includedQuantity}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          includedQuantity: event.target.value,
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="Unit">
-                    <Input
-                      value={form.unit}
-                      onChange={(event) =>
-                        setForm({ ...form, unit: event.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field label="Catalog price">
-                    <Input
-                      min={0}
-                      step="any"
-                      type="number"
-                      value={form.catalogUnitPrice}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          catalogUnitPrice: event.target.value,
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="Contract price">
-                    <Input
-                      min={0}
-                      step="any"
-                      type="number"
-                      value={form.contractUnitPrice}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          contractUnitPrice: event.target.value,
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="Discount type">
-                    <Select
-                      value={form.discountType}
-                      onValueChange={(value) =>
-                        setForm({
-                          ...form,
-                          discountType: value as LineItemFormState["discountType"],
-                        })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No discount</SelectItem>
-                        <SelectItem value="percentage">Percentage</SelectItem>
-                        <SelectItem value="amount">Amount</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field label="Discount value">
-                    <Input
-                      min={0}
-                      step="any"
-                      type="number"
-                      value={form.discountValue}
-                      onChange={(event) =>
-                        setForm({ ...form, discountValue: event.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field label="Overage price">
-                    <Input
-                      min={0}
-                      step="any"
-                      type="number"
-                      value={form.overageUnitPrice}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          overageUnitPrice: event.target.value,
-                        })
-                      }
-                    />
-                  </Field>
-                  <Field label="Billing unit">
-                    <Input
-                      value={form.billingUnit}
-                      onChange={(event) =>
-                        setForm({ ...form, billingUnit: event.target.value })
-                      }
-                    />
-                  </Field>
-                </div>
-                <Field label="Description">
-                  <Textarea
-                    value={form.description}
-                    onChange={(event) =>
-                      setForm({ ...form, description: event.target.value })
-                    }
-                  />
-                </Field>
-                <Field label="Notes">
-                  <Textarea
-                    value={form.notes}
-                    onChange={(event) =>
-                      setForm({ ...form, notes: event.target.value })
-                    }
-                  />
-                </Field>
-                <DialogFooter>
-                  {editingLine ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={resetLineForm}
-                    >
-                      Clear
-                    </Button>
-                  ) : null}
-                  <Button disabled={!canManage || pending} type="submit">
-                    {pending
-                      ? "Saving..."
-                      : editingLine
-                        ? "Save Service"
-                        : "Add Service"}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </CardContent>
-          </Card>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function formatMoney(value: number | undefined) {
-  if (value === undefined) return "-";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(value);
 }
 
 function Field({
