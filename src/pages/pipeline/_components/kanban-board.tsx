@@ -146,7 +146,7 @@ export default function KanbanBoard({
 
   return (
     <div className="space-y-5">
-      <div className="-mx-6 overflow-x-auto px-6 pb-3 md:-mx-8 md:px-8">
+      <div className="overflow-x-auto pb-3">
         <div className="flex min-w-max gap-4">
           {boardStages.map(renderStageColumn)}
         </div>
@@ -156,7 +156,7 @@ export default function KanbanBoard({
         <div className="mb-3 border-t pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Closed pipeline
         </div>
-        <div className="-mx-6 overflow-x-auto px-6 pb-3 md:-mx-8 md:px-8">
+        <div className="overflow-x-auto pb-3">
           <div className="flex min-w-max gap-4">
             {(["won", "lost"] as LeadStage[]).map(renderStageColumn)}
           </div>
