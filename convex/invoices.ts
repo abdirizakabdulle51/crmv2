@@ -562,6 +562,166 @@ function contractInvoiceLine(
   };
 }
 
+function monthStartTimestamp(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber || monthNumber < 1 || monthNumber > 12) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Source month must use YYYY-MM format",
+    });
+  }
+  return Date.UTC(year, monthNumber - 1, 1);
+}
+
+function monthEndTimestamp(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber || monthNumber < 1 || monthNumber > 12) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Source month must use YYYY-MM format",
+    });
+  }
+  return Date.UTC(year, monthNumber, 0, 23, 59, 59, 999);
+}
+
+function contractCoversMonth(contract: Doc<"customerContracts">, month: string) {
+  const start = monthStartTimestamp(month);
+  const end = monthEndTimestamp(month);
+  return contract.startDate <= end && contract.endDate >= start;
+}
+
+async function findContractInvoiceForMonth(
+  ctx: Ctx,
+  contract: Doc<"customerContracts">,
+  sourceMonth: string,
+) {
+  const invoices = await ctx.db
+    .query("invoices")
+    .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
+    .collect();
+  return (
+    invoices.find(
+      (invoice) =>
+        invoice.sourceReference === contract.contractNumber &&
+        invoice.sourceMonth === sourceMonth &&
+        invoice.status !== "cancelled" &&
+        invoice.status !== "void",
+    ) ?? null
+  );
+}
+
+async function createContractDraftInvoice(
+  ctx: MutationCtx,
+  args: {
+    user: Doc<"users">;
+    contract: Doc<"customerContracts">;
+    sourceMonth: string;
+    notes?: string;
+  },
+) {
+  const { user, contract, sourceMonth } = args;
+  if (contract.status === "terminated" || contract.status === "expired") {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Terminated or expired contracts cannot create new invoices",
+    });
+  }
+  if (!contractCoversMonth(contract, sourceMonth)) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Contract does not cover the selected invoice month",
+    });
+  }
+
+  const duplicate = await findContractInvoiceForMonth(ctx, contract, sourceMonth);
+  if (duplicate) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `An invoice already exists for contract ${contract.contractNumber} and month ${sourceMonth}`,
+    });
+  }
+
+  const company = await getCompanyOrThrow(ctx, contract.companyId);
+  assertCanManageCompany(user, company);
+
+  const lines = await ctx.db
+    .query("customerContractLineItems")
+    .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+    .collect();
+  if (lines.length === 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Add at least one contract service before creating an invoice",
+    });
+  }
+
+  const usageEntries = await ctx.db
+    .query("consumption")
+    .withIndex("by_company_month", (q) =>
+      q.eq("companyId", contract.companyId).eq("month", sourceMonth),
+    )
+    .collect();
+  const lineItems = lines
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((line) => contractInvoiceLine(line, usageEntries));
+  const grandTotal = roundMoney(
+    lineItems.reduce((total, line) => total + line.monthlyTotal, 0),
+  );
+  const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
+  const sellerSnapshot = invoiceProfile
+    ? sellerSnapshotFromProfile(invoiceProfile)
+    : {};
+  const now = Date.now();
+  const dueDate =
+    contract.paymentTermDays === undefined
+      ? undefined
+      : monthEndTimestamp(sourceMonth) + contract.paymentTermDays * MS_PER_DAY;
+
+  const invoiceId = await ctx.db.insert("invoices", {
+    companyId: contract.companyId,
+    sourceMonth,
+    sourceReference: contract.contractNumber,
+    invoiceProfileId: invoiceProfile?._id,
+    ...sellerSnapshot,
+    createdBy: user._id,
+    status: "draft",
+    dueDate,
+    companyName: company.name,
+    contactName: company.contactName,
+    contactEmail: company.contactEmail,
+    billingEmail: company.contactEmail,
+    lineItems,
+    subtotal: grandTotal,
+    monthlyTotal: grandTotal,
+    yearlyTotal: roundMoney(grandTotal * 12),
+    grandTotal,
+    amountPaid: 0,
+    balanceDue: grandTotal,
+    notes:
+      trimOptional(args.notes) ??
+      `Draft invoice from customer contract ${contract.contractNumber}. Review before issuing.`,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await insertEvent(ctx, {
+    invoiceId,
+    type: "draft_created",
+    actorId: user._id,
+    message: `Draft invoice created from contract ${contract.contractNumber}.`,
+    now,
+  });
+  await ctx.db.insert("customerContractEvents", {
+    contractId: contract._id,
+    actorId: user._id,
+    type: "updated",
+    message: `Draft invoice created for ${sourceMonth}.`,
+    createdAt: now,
+  });
+
+  return { invoiceId, companyName: company.name, grandTotal };
+}
+
 function relayUrl() {
   const value =
     process.env.HTGWEB_MAIL_RELAY_URL?.trim() ??
@@ -772,110 +932,134 @@ export const createDraftFromContract = mutation({
         message: "Customer contract not found",
       });
     }
-    if (contract.status === "terminated" || contract.status === "expired") {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Terminated or expired contracts cannot create new invoices",
-      });
-    }
 
-    const company = await getCompanyOrThrow(ctx, contract.companyId);
-    assertCanManageCompany(user, company);
-
-    const existingInvoices = await ctx.db
-      .query("invoices")
-      .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
-      .collect();
-    const duplicate = existingInvoices.find(
-      (invoice) =>
-        invoice.sourceReference === contract.contractNumber &&
-        invoice.sourceMonth === args.sourceMonth &&
-        invoice.status !== "cancelled" &&
-        invoice.status !== "void",
-    );
-    if (duplicate) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: `An invoice already exists for contract ${contract.contractNumber} and month ${args.sourceMonth}`,
-      });
-    }
-
-    const lines = await ctx.db
-      .query("customerContractLineItems")
-      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
-      .collect();
-    if (lines.length === 0) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Add at least one contract service before creating an invoice",
-      });
-    }
-
-    const usageEntries = await ctx.db
-      .query("consumption")
-      .withIndex("by_company_month", (q) =>
-        q.eq("companyId", contract.companyId).eq("month", args.sourceMonth),
-      )
-      .collect();
-    const lineItems = lines
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .map((line) => contractInvoiceLine(line, usageEntries));
-    const grandTotal = roundMoney(
-      lineItems.reduce((total, line) => total + line.monthlyTotal, 0),
-    );
-    const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
-    const sellerSnapshot = invoiceProfile
-      ? sellerSnapshotFromProfile(invoiceProfile)
-      : {};
-    const now = Date.now();
-    const dueDate =
-      contract.paymentTermDays === undefined
-        ? undefined
-        : contract.endDate + contract.paymentTermDays * MS_PER_DAY;
-
-    const invoiceId = await ctx.db.insert("invoices", {
-      companyId: contract.companyId,
+    const result = await createContractDraftInvoice(ctx, {
+      user,
+      contract,
       sourceMonth: args.sourceMonth,
-      sourceReference: contract.contractNumber,
-      invoiceProfileId: invoiceProfile?._id,
-      ...sellerSnapshot,
-      createdBy: user._id,
-      status: "draft",
-      dueDate,
-      companyName: company.name,
-      contactName: company.contactName,
-      contactEmail: company.contactEmail,
-      billingEmail: company.contactEmail,
-      lineItems,
-      subtotal: grandTotal,
-      monthlyTotal: grandTotal,
-      yearlyTotal: roundMoney(grandTotal * 12),
-      grandTotal,
-      amountPaid: 0,
-      balanceDue: grandTotal,
-      notes:
-        trimOptional(args.notes) ??
-        `Draft invoice from customer contract ${contract.contractNumber}. Review before issuing.`,
-      createdAt: now,
-      updatedAt: now,
+      notes: args.notes,
     });
 
-    await insertEvent(ctx, {
-      invoiceId,
-      type: "draft_created",
-      actorId: user._id,
-      message: `Draft invoice created from contract ${contract.contractNumber}.`,
-      now,
-    });
-    await ctx.db.insert("customerContractEvents", {
-      contractId: contract._id,
-      actorId: user._id,
-      type: "updated",
-      message: `Draft invoice created for ${args.sourceMonth}.`,
-      createdAt: now,
-    });
+    return result.invoiceId;
+  },
+});
 
-    return invoiceId;
+export const previewContractInvoiceBatch = query({
+  args: { sourceMonth: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    monthStartTimestamp(args.sourceMonth);
+    const contracts = await ctx.db.query("customerContracts").collect();
+    const rows = await Promise.all(
+      contracts.map(async (contract) => {
+        const company = await ctx.db.get(contract.companyId);
+        if (!company || !canViewCompany(user, company)) return null;
+        const lineItems = await ctx.db
+          .query("customerContractLineItems")
+          .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+          .collect();
+        const existingInvoice = await findContractInvoiceForMonth(
+          ctx,
+          contract,
+          args.sourceMonth,
+        );
+        let status: "ready" | "already_invoiced" | "no_services" | "not_in_period" | "inactive" =
+          "ready";
+        let reason = "Ready to create draft";
+
+        if (contract.status === "terminated" || contract.status === "expired") {
+          status = "inactive";
+          reason = "Contract is not billable";
+        } else if (!contractCoversMonth(contract, args.sourceMonth)) {
+          status = "not_in_period";
+          reason = "Contract does not cover this month";
+        } else if (lineItems.length === 0) {
+          status = "no_services";
+          reason = "No contract services";
+        } else if (existingInvoice) {
+          status = "already_invoiced";
+          reason = existingInvoice.invoiceNumber
+            ? `Already has ${existingInvoice.invoiceNumber}`
+            : "Already has a draft invoice";
+        }
+
+        return {
+          contractId: contract._id,
+          contractNumber: contract.contractNumber,
+          title: contract.title,
+          companyName: company.name,
+          contractStatus: contract.status,
+          startDate: contract.startDate,
+          endDate: contract.endDate,
+          lineItemCount: lineItems.length,
+          existingInvoiceId: existingInvoice?._id,
+          existingInvoiceNumber: existingInvoice?.invoiceNumber,
+          status,
+          reason,
+        };
+      }),
+    );
+    return rows
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => a.companyName.localeCompare(b.companyName));
+  },
+});
+
+export const createDraftsFromContracts = mutation({
+  args: { sourceMonth: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (!isCeoOrHob(user)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can run batch contract invoicing",
+      });
+    }
+    monthStartTimestamp(args.sourceMonth);
+
+    const contracts = await ctx.db.query("customerContracts").collect();
+    const created: Array<{
+      contractId: Id<"customerContracts">;
+      contractNumber: string;
+      companyName: string;
+      invoiceId: Id<"invoices">;
+      grandTotal: number;
+    }> = [];
+    const skipped: Array<{
+      contractId: Id<"customerContracts">;
+      contractNumber: string;
+      reason: string;
+    }> = [];
+
+    for (const contract of contracts) {
+      try {
+        const result = await createContractDraftInvoice(ctx, {
+          user,
+          contract,
+          sourceMonth: args.sourceMonth,
+        });
+        created.push({
+          contractId: contract._id,
+          contractNumber: contract.contractNumber,
+          companyName: result.companyName,
+          invoiceId: result.invoiceId,
+          grandTotal: result.grandTotal,
+        });
+      } catch (error) {
+        skipped.push({
+          contractId: contract._id,
+          contractNumber: contract.contractNumber,
+          reason:
+            error instanceof ConvexError
+              ? String(error.data?.message ?? error.message)
+              : error instanceof Error
+                ? error.message
+                : "Could not create draft invoice",
+        });
+      }
+    }
+
+    return { created, skipped };
   },
 });
 

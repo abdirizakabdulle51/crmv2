@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
-import { FileSignature, Pencil, Plus } from "lucide-react";
+import { FileSignature, FileText, Loader2, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
@@ -21,6 +21,8 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import { Input } from "@/components/ui/input.tsx";
+import { Label } from "@/components/ui/label.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 import {
   ContractDialog,
@@ -53,6 +55,10 @@ function formatDate(timestamp?: number) {
 function optionalText(value: string) {
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function currentMonthInputValue() {
+  return new Date().toISOString().slice(0, 7);
 }
 
 function buildPayload(form: ContractFormState) {
@@ -107,12 +113,19 @@ export default function CustomerContractsPage() {
   const companies = useQuery(api.companies.list, {});
   const createContract = useMutation(api.customerContracts.create);
   const updateContract = useMutation(api.customerContracts.update);
+  const createBatchDrafts = useMutation(api.invoices.createDraftsFromContracts);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingContract, setEditingContract] =
     useState<CustomerContract | null>(null);
   const [form, setForm] = useState<ContractFormState>(emptyContractForm);
   const [pending, setPending] = useState(false);
+  const [batchMonth, setBatchMonth] = useState(currentMonthInputValue);
+  const [batchPending, setBatchPending] = useState(false);
+  const batchPreview = useQuery(
+    api.invoices.previewContractInvoiceBatch,
+    batchMonth ? { sourceMonth: batchMonth } : "skip",
+  );
 
   const sortedCompanies = useMemo(
     () => [...(companies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
@@ -132,6 +145,17 @@ export default function CustomerContractsPage() {
       }).length,
     };
   }, [contracts]);
+  const batchSummary = useMemo(() => {
+    const rows = batchPreview ?? [];
+    return {
+      ready: rows.filter((row) => row.status === "ready").length,
+      alreadyInvoiced: rows.filter((row) => row.status === "already_invoiced")
+        .length,
+      otherSkipped: rows.filter(
+        (row) => row.status !== "ready" && row.status !== "already_invoiced",
+      ).length,
+    };
+  }, [batchPreview]);
 
   const openCreate = () => {
     setEditingContract(null);
@@ -168,6 +192,34 @@ export default function CustomerContractsPage() {
       );
     } finally {
       setPending(false);
+    }
+  };
+
+  const handleBatchCreate = async () => {
+    if (!batchMonth) {
+      toast.error("Please select an invoice month");
+      return;
+    }
+    setBatchPending(true);
+    try {
+      const result = await createBatchDrafts({ sourceMonth: batchMonth });
+      if (result.created.length === 0) {
+        toast.info("No new draft invoices were created");
+        return;
+      }
+      toast.success(
+        `Created ${result.created.length} draft invoice${
+          result.created.length === 1 ? "" : "s"
+        }`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not create batch draft invoices",
+      );
+    } finally {
+      setBatchPending(false);
     }
   };
 
@@ -225,6 +277,94 @@ export default function CustomerContractsPage() {
         <SummaryCard label="Draft" value={summary.draft} />
         <SummaryCard label="Ending in 60 days" value={summary.endingSoon} />
       </div>
+
+      {canManage ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Batch Monthly Invoicing</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 lg:grid-cols-[220px_1fr_auto] lg:items-end">
+              <div className="space-y-2">
+                <Label htmlFor="batch-invoice-month">Invoice month</Label>
+                <Input
+                  id="batch-invoice-month"
+                  type="month"
+                  value={batchMonth}
+                  onChange={(event) => setBatchMonth(event.target.value)}
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <MiniStat label="Ready" value={batchSummary.ready} />
+                <MiniStat
+                  label="Already invoiced"
+                  value={batchSummary.alreadyInvoiced}
+                />
+                <MiniStat
+                  label="Other skipped"
+                  value={batchSummary.otherSkipped}
+                />
+              </div>
+              <Button
+                className="bg-cyan-600 text-white hover:bg-cyan-700"
+                disabled={
+                  batchPending ||
+                  batchPreview === undefined ||
+                  batchSummary.ready === 0
+                }
+                onClick={() => void handleBatchCreate()}
+              >
+                {batchPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <FileText className="mr-2 h-4 w-4" />
+                )}
+                Create Drafts
+              </Button>
+            </div>
+
+            {batchPreview && batchPreview.length > 0 ? (
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full min-w-[820px] text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2">Contract</th>
+                      <th className="px-3 py-2">Customer</th>
+                      <th className="px-3 py-2">Services</th>
+                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchPreview.map((row) => (
+                      <tr key={row.contractId} className="border-b last:border-0">
+                        <td className="px-3 py-2">
+                          <div className="font-medium">
+                            {row.contractNumber}
+                          </div>
+                          <div className="text-muted-foreground">
+                            {row.title}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {row.companyName}
+                        </td>
+                        <td className="px-3 py-2">{row.lineItemCount}</td>
+                        <td className="px-3 py-2">
+                          <BatchStatusBadge status={row.status} />
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {row.reason}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -350,6 +490,17 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
   );
 }
 
+function MiniStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border bg-background px-3 py-2">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className="text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: ContractStatus }) {
   if (status === "active") {
     return (
@@ -365,4 +516,27 @@ function StatusBadge({ status }: { status: ContractStatus }) {
     return <Badge variant="destructive">Terminated</Badge>;
   }
   return <Badge variant="outline">{STATUS_LABELS[status]}</Badge>;
+}
+
+function BatchStatusBadge({
+  status,
+}: {
+  status:
+    | "ready"
+    | "already_invoiced"
+    | "no_services"
+    | "not_in_period"
+    | "inactive";
+}) {
+  if (status === "ready") {
+    return (
+      <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+        Ready
+      </Badge>
+    );
+  }
+  if (status === "already_invoiced") {
+    return <Badge variant="secondary">Already invoiced</Badge>;
+  }
+  return <Badge variant="outline">Skipped</Badge>;
 }
