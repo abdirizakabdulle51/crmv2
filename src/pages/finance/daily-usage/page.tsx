@@ -388,7 +388,7 @@ export default function DailyUsagePage() {
                     <th className="px-3 py-2 text-right">Daily Total</th>
                     <th className="px-3 py-2 text-right">Billable Qty</th>
                     <th className="px-3 py-2">Unit</th>
-                    <th className="px-3 py-2 text-right">Monthly Price</th>
+                    <th className="px-3 py-2 text-right">Pricing</th>
                     <th className="px-3 py-2 text-right">Estimated Amount</th>
                   </tr>
                 </thead>
@@ -426,7 +426,14 @@ export default function DailyUsagePage() {
                         {row.unit}
                       </td>
                       <td className="px-3 py-3 text-right">
-                        {formatMoney(row.monthlyUnitPrice)}
+                        <div className="font-medium">
+                          {formatMoney(row.monthlyUnitPrice)}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {row.pricingSource === "contract"
+                            ? `Contract ${row.contractNumber ?? ""}`.trim()
+                            : "Catalog"}
+                        </div>
                       </td>
                       <td className="px-3 py-3 text-right font-medium">
                         {formatMoney(row.estimatedAmount)}
