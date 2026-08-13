@@ -136,10 +136,16 @@ export const bulkInsert = internalMutation({
     let skippedNoLinkedCompany = 0;
 
     for (const row of args.rows) {
-      const tenant = await ctx.db
+      const tenantByDomain = await ctx.db
         .query("manageOneTenants")
-        .filter((q) => q.eq(q.field("domainId"), row.domainId))
+        .withIndex("by_domain_id", (q) => q.eq("domainId", row.domainId))
         .first();
+      const tenant =
+        tenantByDomain ??
+        (await ctx.db
+          .query("manageOneTenants")
+          .withIndex("by_vdc_id", (q) => q.eq("vdcId", row.vdcId))
+          .first());
 
       if (!tenant?.linkedCompanyId) {
         skippedNoLinkedCompany++;

@@ -264,6 +264,7 @@ export default defineSchema({
     linkedCompanyId: v.optional(v.id("companies")),
   })
     .index("by_vdc_id", ["vdcId"])
+    .index("by_domain_id", ["domainId"])
     .index("by_region_id", ["regionId"])
     .index("by_linked_company", ["linkedCompanyId"]),
 
