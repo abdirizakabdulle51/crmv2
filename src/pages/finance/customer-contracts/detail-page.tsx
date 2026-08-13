@@ -1,14 +1,22 @@
-import { useMemo, useState, type FormEvent } from "react";
-import { useMutation, useQuery } from "convex/react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  Download,
   FileSignature,
   FileText,
   Loader2,
   Pencil,
   ShieldCheck,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
@@ -40,10 +48,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
-import {
-  ContractDialog,
-  type ContractFormState,
-} from "./contract-form.tsx";
+import { ContractDialog, type ContractFormState } from "./contract-form.tsx";
 import {
   FREQUENCY_LABELS,
   emptyContractForm,
@@ -75,6 +80,14 @@ type LineItemFormState = {
   billingUnit: string;
   notes: string;
 };
+
+const SIGNED_DOCUMENT_ACCEPT = "application/pdf,image/jpeg,image/png";
+const MAX_SIGNED_DOCUMENT_SIZE_BYTES = 20 * 1024 * 1024;
+const ALLOWED_SIGNED_DOCUMENT_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+]);
 
 function isAdminRole(role: Doc<"users">["role"] | undefined) {
   return role === "ceo" || role === "head_of_business";
@@ -162,8 +175,7 @@ function buildLinePayload(
     unit: form.unit.trim(),
     catalogUnitPrice,
     contractUnitPrice,
-    discountType:
-      form.discountType === "none" ? undefined : form.discountType,
+    discountType: form.discountType === "none" ? undefined : form.discountType,
     discountValue,
     overageUnitPrice,
     billingUnit: form.billingUnit.trim(),
@@ -213,6 +225,22 @@ function formatDateTime(timestamp?: number) {
   }).format(new Date(timestamp));
 }
 
+function formatMonthLabel(month?: string) {
+  if (!month) return "-";
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber) return month;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+  }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
+}
+
+function formatFileSize(size?: number) {
+  if (!size) return "-";
+  if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function monthInputValue(timestamp?: number) {
   const date = timestamp ? new Date(timestamp) : new Date();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
@@ -240,8 +268,21 @@ function getContractLineAmount(line: ContractLineItem) {
   return Math.max(0, gross - getLineDiscountAmount(line, gross));
 }
 
+function validateSignedDocumentFile(file: File) {
+  if (!ALLOWED_SIGNED_DOCUMENT_TYPES.has(file.type)) {
+    toast.error("Upload a PDF, JPG, or PNG signed document");
+    return false;
+  }
+  if (file.size > MAX_SIGNED_DOCUMENT_SIZE_BYTES) {
+    toast.error("Signed document must be 20 MB or smaller");
+    return false;
+  }
+  return true;
+}
+
 export default function CustomerContractDetailPage() {
   const navigate = useNavigate();
+  const convex = useConvex();
   const { contractId } = useParams();
   const { currentUser } = useCrm();
   const canManage = isAdminRole(currentUser?.role);
@@ -259,6 +300,10 @@ export default function CustomerContractDetailPage() {
     api.customerContracts.listAmendments,
     parsedContractId ? { contractId: parsedContractId } : "skip",
   );
+  const invoiceSchedule = useQuery(
+    api.customerContracts.invoiceSchedule,
+    parsedContractId ? { contractId: parsedContractId } : "skip",
+  );
   const serviceCatalog = useQuery(api.serviceCatalog.list, {});
   const createLineItem = useMutation(api.customerContracts.createLineItem);
   const updateLineItem = useMutation(api.customerContracts.updateLineItem);
@@ -266,7 +311,14 @@ export default function CustomerContractDetailPage() {
   const updateContract = useMutation(api.customerContracts.update);
   const activateContract = useMutation(api.customerContracts.activate);
   const createAmendment = useMutation(api.customerContracts.createAmendment);
+  const generateSignedDocumentUploadUrl = useMutation(
+    api.customerContracts.generateSignedDocumentUploadUrl,
+  );
+  const saveSignedDocument = useMutation(
+    api.customerContracts.saveSignedDocument,
+  );
   const createDraftInvoice = useMutation(api.invoices.createDraftFromContract);
+  const signedDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const [editingLine, setEditingLine] = useState<ContractLineItem | null>(null);
   const [form, setForm] = useState<LineItemFormState>(emptyLineItemForm);
   const [amendmentForm, setAmendmentForm] =
@@ -280,6 +332,9 @@ export default function CustomerContractDetailPage() {
   const [invoicePending, setInvoicePending] = useState(false);
   const [activationPending, setActivationPending] = useState(false);
   const [amendmentPending, setAmendmentPending] = useState(false);
+  const [signedDocumentPending, setSignedDocumentPending] = useState<
+    "upload" | "download" | null
+  >(null);
   const activeComparisonMonth =
     comparisonMonth || (contract ? monthInputValue(contract.startDate) : "");
   const usageComparison = useQuery(
@@ -316,9 +371,7 @@ export default function CustomerContractDetailPage() {
     setForm(emptyLineItemForm());
   };
 
-  const openContractEdit = (
-    loadedContract: NonNullable<typeof contract>,
-  ) => {
+  const openContractEdit = (loadedContract: NonNullable<typeof contract>) => {
     setContractForm(formFromContract(loadedContract));
     setContractDialogOpen(true);
   };
@@ -501,6 +554,71 @@ export default function CustomerContractDetailPage() {
     }
   };
 
+  const handleSignedDocumentUpload = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !parsedContractId) return;
+    if (!validateSignedDocumentFile(file)) return;
+
+    setSignedDocumentPending("upload");
+    try {
+      const uploadUrl = await generateSignedDocumentUploadUrl({});
+      const response = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      if (!response.ok) {
+        throw new Error("Signed document upload failed");
+      }
+      const { storageId } = (await response.json()) as {
+        storageId: Id<"_storage">;
+      };
+      await saveSignedDocument({
+        contractId: parsedContractId,
+        storageId,
+        fileName: file.name,
+        mimeType: file.type,
+        size: file.size,
+      });
+      toast.success("Signed document attached");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not attach signed document",
+      );
+    } finally {
+      setSignedDocumentPending(null);
+    }
+  };
+
+  const handleSignedDocumentDownload = async () => {
+    if (!parsedContractId) return;
+    setSignedDocumentPending("download");
+    try {
+      const url = await convex.query(
+        api.customerContracts.getSignedDocumentDownloadUrl,
+        { contractId: parsedContractId },
+      );
+      if (!url) {
+        toast.error("No uploaded signed document found");
+        return;
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not open signed document",
+      );
+    } finally {
+      setSignedDocumentPending(null);
+    }
+  };
+
   const handleCreateDraftInvoice = async () => {
     if (!parsedContractId || !activeComparisonMonth) return;
     if (!contractIsActive) {
@@ -536,6 +654,7 @@ export default function CustomerContractDetailPage() {
     companies === undefined ||
     lineItems === undefined ||
     amendments === undefined ||
+    invoiceSchedule === undefined ||
     serviceCatalog === undefined ||
     currentUser === undefined
   ) {
@@ -551,7 +670,10 @@ export default function CustomerContractDetailPage() {
   if (!contract) {
     return (
       <div className="p-6 md:p-8">
-        <Button variant="ghost" onClick={() => navigate("/finance/customer-contracts")}>
+        <Button
+          variant="ghost"
+          onClick={() => navigate("/finance/customer-contracts")}
+        >
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back to Customer Contracts
         </Button>
@@ -620,7 +742,10 @@ export default function CustomerContractDetailPage() {
                 Create Draft Invoice
               </Button>
               {canEditOriginal ? (
-                <Button variant="outline" onClick={() => openContractEdit(contract)}>
+                <Button
+                  variant="outline"
+                  onClick={() => openContractEdit(contract)}
+                >
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit Contract
                 </Button>
@@ -671,9 +796,169 @@ export default function CustomerContractDetailPage() {
         />
         <InfoCard
           label="Signed document"
-          value={contract.signedDocumentUrl ? "Linked" : "Not attached"}
+          value={
+            contract.signedDocumentFileName ??
+            (contract.signedDocumentUrl ? "Linked" : "Not attached")
+          }
         />
         <InfoCard label="Currency" value={contract.currency} />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Card>
+          <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <CardTitle>Signed Document</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Attach the approved customer PDF or signed image to this
+                contract record.
+              </p>
+            </div>
+            {canManage ? (
+              <>
+                <input
+                  ref={signedDocumentInputRef}
+                  type="file"
+                  accept={SIGNED_DOCUMENT_ACCEPT}
+                  className="hidden"
+                  onChange={(event) => void handleSignedDocumentUpload(event)}
+                />
+                <Button
+                  variant="outline"
+                  disabled={signedDocumentPending === "upload"}
+                  onClick={() => signedDocumentInputRef.current?.click()}
+                >
+                  {signedDocumentPending === "upload" ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="mr-2 h-4 w-4" />
+                  )}
+                  {contract.signedDocumentStorageId ? "Replace" : "Upload"}
+                </Button>
+              </>
+            ) : null}
+          </CardHeader>
+          <CardContent>
+            {contract.signedDocumentStorageId ? (
+              <div className="flex flex-col gap-4 rounded-lg border p-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="font-medium">
+                    {contract.signedDocumentFileName ?? "Signed document"}
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    {formatFileSize(contract.signedDocumentSize)}
+                    {contract.signedDocumentUploadedAt
+                      ? ` uploaded ${formatDateTime(contract.signedDocumentUploadedAt)}`
+                      : ""}
+                  </div>
+                </div>
+                <Button
+                  variant="secondary"
+                  disabled={signedDocumentPending === "download"}
+                  onClick={() => void handleSignedDocumentDownload()}
+                >
+                  {signedDocumentPending === "download" ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="mr-2 h-4 w-4" />
+                  )}
+                  Download
+                </Button>
+              </div>
+            ) : contract.signedDocumentUrl ? (
+              <div className="flex flex-col gap-4 rounded-lg border p-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="font-medium">External document link</div>
+                  <div className="mt-1 break-all text-sm text-muted-foreground">
+                    {contract.signedDocumentUrl}
+                  </div>
+                </div>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    window.open(
+                      contract.signedDocumentUrl,
+                      "_blank",
+                      "noopener,noreferrer",
+                    )
+                  }
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Open
+                </Button>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                No signed document uploaded yet.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Invoice Schedule</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Shows the current billing month, last invoice, and next expected
+              invoice timing.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <ScheduleItem
+                label="Billing frequency"
+                value={FREQUENCY_LABELS[invoiceSchedule.billingFrequency]}
+              />
+              <ScheduleItem
+                label="Current month"
+                value={formatMonthLabel(invoiceSchedule.currentMonth)}
+                badge={
+                  invoiceSchedule.currentMonthInvoiced
+                    ? "Already invoiced"
+                    : "Not invoiced"
+                }
+              />
+              <ScheduleItem
+                label="Next invoice month"
+                value={formatMonthLabel(invoiceSchedule.nextSourceMonth)}
+              />
+              <ScheduleItem
+                label="Next invoice date"
+                value={formatDate(invoiceSchedule.nextInvoiceDate)}
+              />
+              <ScheduleItem
+                label="Next due date"
+                value={formatDate(invoiceSchedule.nextDueDate)}
+              />
+              <ScheduleItem
+                label="Last invoice"
+                value={
+                  invoiceSchedule.lastInvoice
+                    ? (invoiceSchedule.lastInvoice.invoiceNumber ??
+                      `Draft for ${formatMonthLabel(invoiceSchedule.lastInvoice.sourceMonth)}`)
+                    : "-"
+                }
+              />
+            </div>
+            {invoiceSchedule.lastInvoice ? (
+              <Button
+                variant="outline"
+                onClick={() =>
+                  navigate(`/invoices/${invoiceSchedule.lastInvoice?._id}`)
+                }
+              >
+                <FileText className="mr-2 h-4 w-4" />
+                Open Last Invoice
+              </Button>
+            ) : null}
+            {!invoiceSchedule.nextInvoiceCovered ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                The next invoice month is outside this contract period. Renew or
+                amend the contract before invoicing that month.
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
       </div>
 
       <div
@@ -696,8 +981,8 @@ export default function CustomerContractDetailPage() {
                   </EmptyMedia>
                   <EmptyTitle>No services added yet.</EmptyTitle>
                   <EmptyDescription>
-                    Add agreed services, limits, contract prices, discounts,
-                    and overage prices.
+                    Add agreed services, limits, contract prices, discounts, and
+                    overage prices.
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -731,16 +1016,25 @@ export default function CustomerContractDetailPage() {
                           {line.includedQuantity} {line.unit}
                         </td>
                         <td className="px-3 py-3 text-muted-foreground">
-                          {formatMoney(line.catalogUnitPrice, contract.currency)}
+                          {formatMoney(
+                            line.catalogUnitPrice,
+                            contract.currency,
+                          )}
                         </td>
                         <td className="px-3 py-3">
-                          {formatMoney(line.contractUnitPrice, contract.currency)}
+                          {formatMoney(
+                            line.contractUnitPrice,
+                            contract.currency,
+                          )}
                         </td>
                         <td className="px-3 py-3 text-muted-foreground">
                           {formatDiscount(line)}
                         </td>
                         <td className="px-3 py-3 text-muted-foreground">
-                          {formatMoney(line.overageUnitPrice, contract.currency)}
+                          {formatMoney(
+                            line.overageUnitPrice,
+                            contract.currency,
+                          )}
                         </td>
                         <td className="px-3 py-3 font-medium">
                           {formatMoney(
@@ -993,7 +1287,10 @@ export default function CustomerContractDetailPage() {
                   </thead>
                   <tbody>
                     {amendments.map((amendment) => (
-                      <tr key={amendment._id} className="border-b last:border-0">
+                      <tr
+                        key={amendment._id}
+                        className="border-b last:border-0"
+                      >
                         <td className="px-3 py-3">
                           <div className="font-medium">
                             {amendment.amendmentNumber}
@@ -1094,7 +1391,9 @@ export default function CustomerContractDetailPage() {
               />
             </Field>
             <Button
-              disabled={!canManage || contract.status === "draft" || amendmentPending}
+              disabled={
+                !canManage || contract.status === "draft" || amendmentPending
+              }
               type="submit"
             >
               {amendmentPending ? "Saving..." : "Record Amendment"}
@@ -1178,7 +1477,10 @@ export default function CustomerContractDetailPage() {
                   </thead>
                   <tbody>
                     {usageComparison.rows.map((row) => (
-                      <tr key={row.lineItemId} className="border-b last:border-0">
+                      <tr
+                        key={row.lineItemId}
+                        className="border-b last:border-0"
+                      >
                         <td className="px-3 py-3">
                           <div className="font-medium">{row.itemName}</div>
                           <div className="text-muted-foreground">
@@ -1201,7 +1503,10 @@ export default function CustomerContractDetailPage() {
                           )}
                         </td>
                         <td className="px-3 py-3">
-                          {formatMoney(row.contractUnitPrice, contract.currency)}
+                          {formatMoney(
+                            row.contractUnitPrice,
+                            contract.currency,
+                          )}
                         </td>
                         <td className="px-3 py-3">
                           {formatMoney(row.overageUnitPrice, contract.currency)}
@@ -1299,6 +1604,26 @@ function UsageSummaryCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ScheduleItem({
+  label,
+  value,
+  badge,
+}: {
+  label: string;
+  value: string;
+  badge?: string;
+}) {
+  return (
+    <div className="rounded-lg border p-4">
+      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className="font-semibold">{value}</span>
+        {badge ? <Badge variant="secondary">{badge}</Badge> : null}
+      </div>
+    </div>
+  );
+}
+
 function StatusBadge({
   status,
 }: {
@@ -1341,10 +1666,7 @@ function formatDiscount(line: ContractLineItem) {
   return formatMoney(line.discountValue);
 }
 
-function formatActorName(event: {
-  actorEmail?: string;
-  actorName?: string;
-}) {
+function formatActorName(event: { actorEmail?: string; actorName?: string }) {
   return event.actorName?.trim() || event.actorEmail?.trim() || "Unknown user";
 }
 

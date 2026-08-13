@@ -9,12 +9,7 @@ import {
 } from "./authorization";
 
 type Ctx = QueryCtx | MutationCtx;
-type ContractStatus =
-  | "draft"
-  | "active"
-  | "expired"
-  | "terminated"
-  | "renewed";
+type ContractStatus = "draft" | "active" | "expired" | "terminated" | "renewed";
 type EventType =
   | "created"
   | "updated"
@@ -76,6 +71,14 @@ type AmendmentType =
   | "commercial_change"
   | "correction"
   | "other";
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MAX_SIGNED_DOCUMENT_SIZE_BYTES = 20 * 1024 * 1024;
+const ALLOWED_SIGNED_DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+]);
 
 const contractFieldsValidator = {
   companyId: v.id("companies"),
@@ -188,6 +191,33 @@ function optionalText(value: string | undefined) {
   return trimmed ? trimmed : undefined;
 }
 
+function cleanFileName(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "signed-contract";
+  return trimmed.replace(/[^\w.\- ()]/g, "_").slice(0, 180);
+}
+
+function assertAllowedSignedDocument(mimeType: string, size: number) {
+  if (!ALLOWED_SIGNED_DOCUMENT_MIME_TYPES.has(mimeType)) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Signed document must be a PDF, JPG, or PNG file",
+    });
+  }
+  if (!Number.isFinite(size) || size <= 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Signed document file size is invalid",
+    });
+  }
+  if (size > MAX_SIGNED_DOCUMENT_SIZE_BYTES) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Signed document must be 20 MB or less",
+    });
+  }
+}
+
 async function getVisibleCompany(
   ctx: Ctx,
   user: Doc<"users">,
@@ -264,20 +294,14 @@ function normalizeLineItemFields(args: LineItemInput) {
       "Included quantity",
     )!,
     unit: requiredText(args.unit, "Unit"),
-    catalogUnitPrice: assertNonNegative(
-      args.catalogUnitPrice,
-      "Catalog price",
-    ),
+    catalogUnitPrice: assertNonNegative(args.catalogUnitPrice, "Catalog price"),
     contractUnitPrice: assertNonNegative(
       args.contractUnitPrice,
       "Contract price",
     )!,
     discountType: args.discountType,
     discountValue: assertNonNegative(args.discountValue, "Discount"),
-    overageUnitPrice: assertNonNegative(
-      args.overageUnitPrice,
-      "Overage price",
-    ),
+    overageUnitPrice: assertNonNegative(args.overageUnitPrice, "Overage price"),
     billingUnit: requiredText(args.billingUnit, "Billing unit"),
     notes: optionalText(args.notes),
   };
@@ -340,6 +364,59 @@ function usageMatchesLine(
     itemKey.includes(usageKey) ||
     (categoryKey.length > 0 && usageKey.includes(categoryKey))
   );
+}
+
+function monthInputValue(timestamp = Date.now()) {
+  const date = new Date(timestamp);
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
+  return `${date.getUTCFullYear()}-${month}`;
+}
+
+function monthStartTimestamp(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber || monthNumber < 1 || monthNumber > 12) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Month must use YYYY-MM format",
+    });
+  }
+  return Date.UTC(year, monthNumber - 1, 1);
+}
+
+function monthEndTimestamp(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber || monthNumber < 1 || monthNumber > 12) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Month must use YYYY-MM format",
+    });
+  }
+  return Date.UTC(year, monthNumber, 0, 23, 59, 59, 999);
+}
+
+function addMonths(month: string, count: number) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const date = new Date(Date.UTC(year, monthNumber - 1 + count, 1));
+  return monthInputValue(date.getTime());
+}
+
+function frequencyMonths(frequency: ContractInput["billingFrequency"]) {
+  if (frequency === "quarterly" || frequency === "every_3_months") return 3;
+  if (frequency === "yearly") return 12;
+  return 1;
+}
+
+function invoiceIsOpen(status: Doc<"invoices">["status"]) {
+  return status !== "cancelled" && status !== "void";
+}
+
+function contractCoversMonth(
+  contract: Doc<"customerContracts">,
+  month: string,
+) {
+  const start = monthStartTimestamp(month);
+  const end = monthEndTimestamp(month);
+  return contract.startDate <= end && contract.endDate >= start;
 }
 
 function discountAmount(line: Doc<"customerContractLineItems">, gross: number) {
@@ -555,10 +632,7 @@ export const usageComparison = query({
       totals: {
         contractMinimum: rows.reduce((total, row) => total + row.baseAmount, 0),
         overage: rows.reduce((total, row) => total + row.overageAmount, 0),
-        projected: rows.reduce(
-          (total, row) => total + row.projectedAmount,
-          0,
-        ),
+        projected: rows.reduce((total, row) => total + row.projectedAmount, 0),
         usageAmount: usageEntries.reduce(
           (total, usage) => total + usage.amount,
           0,
@@ -570,6 +644,147 @@ export const usageComparison = query({
         totalUsageEntries: usageEntries.length,
       },
     };
+  },
+});
+
+export const invoiceSchedule = query({
+  args: { contractId: v.id("customerContracts") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+    const invoices = (
+      await ctx.db
+        .query("invoices")
+        .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
+        .collect()
+    )
+      .filter(
+        (invoice) =>
+          invoice.sourceReference === contract.contractNumber &&
+          invoiceIsOpen(invoice.status),
+      )
+      .sort((a, b) => (b.sourceMonth ?? "").localeCompare(a.sourceMonth ?? ""));
+    const currentMonth = monthInputValue();
+    const currentInvoice =
+      invoices.find((invoice) => invoice.sourceMonth === currentMonth) ?? null;
+    const lastInvoice = invoices[0] ?? null;
+    const startMonth = monthInputValue(contract.startDate);
+    const nextSourceMonth =
+      lastInvoice?.sourceMonth !== undefined
+        ? addMonths(
+            lastInvoice.sourceMonth,
+            frequencyMonths(contract.billingFrequency),
+          )
+        : startMonth;
+    const nextInvoiceDate = monthEndTimestamp(nextSourceMonth);
+    const nextDueDate =
+      contract.paymentTermDays === undefined
+        ? undefined
+        : nextInvoiceDate + contract.paymentTermDays * MS_PER_DAY;
+
+    return {
+      billingFrequency: contract.billingFrequency,
+      currentMonth,
+      currentMonthInvoiced: currentInvoice !== null,
+      currentInvoice: currentInvoice
+        ? {
+            _id: currentInvoice._id,
+            invoiceNumber: currentInvoice.invoiceNumber,
+            status: currentInvoice.status,
+            sourceMonth: currentInvoice.sourceMonth,
+            createdAt: currentInvoice.createdAt,
+            issueDate: currentInvoice.issueDate,
+          }
+        : null,
+      lastInvoice: lastInvoice
+        ? {
+            _id: lastInvoice._id,
+            invoiceNumber: lastInvoice.invoiceNumber,
+            status: lastInvoice.status,
+            sourceMonth: lastInvoice.sourceMonth,
+            createdAt: lastInvoice.createdAt,
+            issueDate: lastInvoice.issueDate,
+          }
+        : null,
+      nextSourceMonth,
+      nextInvoiceDate,
+      nextDueDate,
+      nextInvoiceCovered: contractCoversMonth(contract, nextSourceMonth),
+    };
+  },
+});
+
+export const generateSignedDocumentUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+export const saveSignedDocument = mutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+    assertAllowedSignedDocument(args.mimeType, args.size);
+    const now = Date.now();
+    await ctx.db.patch(args.contractId, {
+      signedDocumentStorageId: args.storageId,
+      signedDocumentFileName: cleanFileName(args.fileName),
+      signedDocumentMimeType: args.mimeType,
+      signedDocumentSize: args.size,
+      signedDocumentUploadedBy: user._id,
+      signedDocumentUploadedAt: now,
+      signedDocumentUrl: undefined,
+      updatedAt: now,
+    });
+    await insertEvent(
+      ctx,
+      args.contractId,
+      user._id,
+      "updated",
+      `Signed document ${cleanFileName(args.fileName)} uploaded`,
+    );
+  },
+});
+
+export const getSignedDocumentDownloadUrl = query({
+  args: { contractId: v.id("customerContracts") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+    if (!contract.signedDocumentStorageId) return null;
+    return await ctx.storage.getUrl(contract.signedDocumentStorageId);
   },
 });
 
@@ -631,7 +846,9 @@ export const update = mutation({
       ctx,
       args.contractId,
       user._id,
-      existing.status !== fields.status ? statusEventType(fields.status) : "updated",
+      existing.status !== fields.status
+        ? statusEventType(fields.status)
+        : "updated",
       `Customer contract ${fields.contractNumber} updated`,
     );
   },
@@ -711,7 +928,10 @@ export const createAmendment = mutation({
       });
     }
     const summary = requiredText(args.summary, "Amendment summary");
-    const monthlyDelta = optionalFiniteNumber(args.monthlyDelta, "Monthly delta");
+    const monthlyDelta = optionalFiniteNumber(
+      args.monthlyDelta,
+      "Monthly delta",
+    );
     const existing = await ctx.db
       .query("customerContractAmendments")
       .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
