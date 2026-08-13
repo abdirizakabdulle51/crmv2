@@ -31,7 +31,7 @@ type KanbanBoardProps = {
 export default function KanbanBoard({
   leads,
   companies,
-  users,
+  users: _users,
   onEditLead,
 }: KanbanBoardProps) {
   const updateStage = useMutation(api.leads.updateStage);
@@ -48,150 +48,119 @@ export default function KanbanBoard({
   // Only show active pipeline stages in board (not won/lost by default)
   const boardStages = STAGES.filter((s) => s !== "won" && s !== "lost");
 
-  return (
-    <div className="space-y-4">
-      {/* Board columns */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        {boardStages.map((stage) => {
-          const stageLeads = leads.filter((l) => l.stage === stage);
-          const stageValue = stageLeads.reduce(
-            (sum, l) => sum + l.potentialValue,
-            0,
-          );
+  const renderStageColumn = (stage: LeadStage) => {
+    const stageLeads = leads.filter((l) => l.stage === stage);
+    const stageValue = stageLeads.reduce(
+      (sum, l) => sum + l.potentialValue,
+      0,
+    );
 
-          return (
-            <div key={stage} className="space-y-3">
-              <div
-                className={`rounded-lg border border-t-4 ${STAGE_BORDER_COLORS[stage]} bg-card p-3`}
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-sm">
-                    {STAGE_LABELS[stage]}
-                  </h3>
-                  <Badge variant="secondary" className="text-xs">
-                    {stageLeads.length}
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {formatCurrency(stageValue)}
-                </p>
-              </div>
+    return (
+      <section
+        key={stage}
+        className="flex max-h-[calc(100vh-17rem)] min-h-[22rem] w-[18rem] shrink-0 flex-col overflow-hidden rounded-lg border bg-muted/20 sm:w-[20rem]"
+      >
+        <div
+          className={`border-t-4 ${STAGE_BORDER_COLORS[stage]} bg-card p-3`}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="min-w-0 truncate text-sm font-semibold">
+              {STAGE_LABELS[stage]}
+            </h3>
+            <Badge variant="secondary" className="shrink-0 text-xs">
+              {stageLeads.length}
+            </Badge>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {formatCurrency(stageValue)}
+          </p>
+        </div>
 
-              <div className="space-y-2 min-h-[100px]">
-                {stageLeads.map((lead) => {
-                  const company = companyMap.get(lead.companyId);
-                  return (
-                    <Card
-                      key={lead._id}
-                      className="cursor-pointer hover:border-primary/30 transition-colors"
-                      onClick={() => onEditLead(lead)}
-                    >
-                      <CardContent className="p-3 space-y-2">
-                        <div className="font-medium text-sm truncate">
-                          {lead.title}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {company?.name || "Unknown"}
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <DollarSign className="h-3 w-3" />
-                            {formatCurrency(lead.potentialValue)}
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <CalendarDays className="h-3 w-3" />
-                            {format(new Date(lead.expectedCloseDate), "MMM d")}
-                          </div>
-                        </div>
-                        {lead.nextAction && (
-                          <div className="text-xs text-primary/80 bg-primary/5 rounded px-2 py-1 truncate">
-                            {lead.nextAction}
-                          </div>
-                        )}
-                        {/* Quick stage move */}
-                        <Select
-                          value={lead.stage}
-                          onValueChange={(v) =>
-                            handleStageChange(lead._id, v as LeadStage)
-                          }
-                        >
-                          <SelectTrigger
-                            className="h-7 text-xs"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {STAGES.map((s) => (
-                              <SelectItem key={s} value={s}>
-                                {STAGE_LABELS[s]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+          {stageLeads.length === 0 ? (
+            <div className="flex h-24 items-center justify-center rounded-md border border-dashed bg-background/50 px-3 text-center text-xs text-muted-foreground">
+              No leads in this stage
             </div>
-          );
-        })}
-      </div>
-
-      {/* Won/Lost section */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t">
-        {(["won", "lost"] as LeadStage[]).map((stage) => {
-          const stageLeads = leads.filter((l) => l.stage === stage);
-          return (
-            <div key={stage}>
-              <div className={`rounded-lg border border-t-4 ${STAGE_BORDER_COLORS[stage]} bg-card p-3 mb-3`}>
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-sm">{STAGE_LABELS[stage]}</h3>
-                  <Badge variant="secondary" className="text-xs">
-                    {stageLeads.length}
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {formatCurrency(
-                    stageLeads.reduce((sum, l) => sum + l.potentialValue, 0),
-                  )}
-                </p>
-              </div>
-              <div className="space-y-2">
-                {stageLeads.slice(0, 3).map((lead) => {
-                  const company = companyMap.get(lead.companyId);
-                  return (
-                    <Card
-                      key={lead._id}
-                      className="cursor-pointer hover:border-primary/30 transition-colors"
-                      onClick={() => onEditLead(lead)}
-                    >
-                      <CardContent className="p-3 flex items-center justify-between">
-                        <div className="min-w-0">
-                          <div className="font-medium text-sm truncate">
-                            {lead.title}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {company?.name}
-                          </div>
-                        </div>
-                        <span className="text-sm font-medium">
+          ) : (
+            stageLeads.map((lead) => {
+              const company = companyMap.get(lead.companyId);
+              return (
+                <Card
+                  key={lead._id}
+                  className="cursor-pointer transition-colors hover:border-primary/30"
+                  onClick={() => onEditLead(lead)}
+                >
+                  <CardContent className="space-y-2 p-3">
+                    <div className="truncate text-sm font-medium">
+                      {lead.title}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {company?.name || "Unknown"}
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                        <DollarSign className="h-3 w-3 shrink-0" />
+                        <span className="truncate">
                           {formatCurrency(lead.potentialValue)}
                         </span>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-                {stageLeads.length > 3 && (
-                  <p className="text-xs text-muted-foreground text-center py-1">
-                    +{stageLeads.length - 3} more
-                  </p>
-                )}
-              </div>
-            </div>
-          );
-        })}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                        <CalendarDays className="h-3 w-3" />
+                        {format(new Date(lead.expectedCloseDate), "MMM d")}
+                      </div>
+                    </div>
+                    {lead.nextAction && (
+                      <div className="truncate rounded bg-primary/5 px-2 py-1 text-xs text-primary/80">
+                        {lead.nextAction}
+                      </div>
+                    )}
+                    <Select
+                      value={lead.stage}
+                      onValueChange={(v) =>
+                        handleStageChange(lead._id, v as LeadStage)
+                      }
+                    >
+                      <SelectTrigger
+                        className="h-8 w-full text-xs"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STAGES.map((s) => (
+                          <SelectItem key={s} value={s}>
+                            {STAGE_LABELS[s]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+        </div>
+      </section>
+    );
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="-mx-6 overflow-x-auto px-6 pb-3 md:-mx-8 md:px-8">
+        <div className="flex min-w-max gap-4">
+          {boardStages.map(renderStageColumn)}
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-3 border-t pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Closed pipeline
+        </div>
+        <div className="-mx-6 overflow-x-auto px-6 pb-3 md:-mx-8 md:px-8">
+          <div className="flex min-w-max gap-4">
+            {(["won", "lost"] as LeadStage[]).map(renderStageColumn)}
+          </div>
+        </div>
       </div>
     </div>
   );
