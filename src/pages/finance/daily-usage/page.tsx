@@ -219,6 +219,7 @@ export default function DailyUsagePage() {
                 companies={companies}
                 value={companyId}
                 onValueChange={setCompanyId}
+                className="sm:w-full"
               />
             </div>
             <div className="space-y-2">
