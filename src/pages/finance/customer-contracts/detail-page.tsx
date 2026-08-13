@@ -7,6 +7,7 @@ import {
   FileText,
   Loader2,
   Pencil,
+  ShieldCheck,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -51,7 +52,14 @@ import {
 } from "./contract-utils.ts";
 
 type ContractLineItem = Doc<"customerContractLineItems">;
+type ContractAmendment = Doc<"customerContractAmendments">;
 type ServiceCatalogItem = Doc<"serviceCatalog">;
+type AmendmentFormState = {
+  type: ContractAmendment["type"];
+  effectiveDate: string;
+  summary: string;
+  monthlyDelta: string;
+};
 type LineItemFormState = {
   catalogItemId?: Id<"serviceCatalog">;
   itemName: string;
@@ -87,6 +95,15 @@ function emptyLineItemForm(): LineItemFormState {
     overageUnitPrice: "",
     billingUnit: "",
     notes: "",
+  };
+}
+
+function emptyAmendmentForm(): AmendmentFormState {
+  return {
+    type: "upgrade",
+    effectiveDate: monthInputValue(),
+    summary: "",
+    monthlyDelta: "",
   };
 }
 
@@ -154,6 +171,28 @@ function buildLinePayload(
   };
 }
 
+function buildAmendmentPayload(
+  form: AmendmentFormState,
+  contractId: Id<"customerContracts">,
+) {
+  if (!form.effectiveDate || !form.summary.trim()) {
+    toast.error("Please fill the amendment effective date and summary");
+    return null;
+  }
+  const monthlyDelta = optionalNumber(form.monthlyDelta);
+  if (monthlyDelta !== undefined && !Number.isFinite(monthlyDelta)) {
+    toast.error("Monthly delta must be a valid number");
+    return null;
+  }
+  return {
+    contractId,
+    type: form.type,
+    effectiveDate: timestampFromDateInput(form.effectiveDate),
+    summary: form.summary.trim(),
+    monthlyDelta,
+  };
+}
+
 function formatDate(timestamp?: number) {
   if (!timestamp) return "-";
   return new Intl.DateTimeFormat("en-US", {
@@ -216,14 +255,22 @@ export default function CustomerContractDetailPage() {
     api.customerContracts.listLineItems,
     parsedContractId ? { contractId: parsedContractId } : "skip",
   );
+  const amendments = useQuery(
+    api.customerContracts.listAmendments,
+    parsedContractId ? { contractId: parsedContractId } : "skip",
+  );
   const serviceCatalog = useQuery(api.serviceCatalog.list, {});
   const createLineItem = useMutation(api.customerContracts.createLineItem);
   const updateLineItem = useMutation(api.customerContracts.updateLineItem);
   const removeLineItem = useMutation(api.customerContracts.removeLineItem);
   const updateContract = useMutation(api.customerContracts.update);
+  const activateContract = useMutation(api.customerContracts.activate);
+  const createAmendment = useMutation(api.customerContracts.createAmendment);
   const createDraftInvoice = useMutation(api.invoices.createDraftFromContract);
   const [editingLine, setEditingLine] = useState<ContractLineItem | null>(null);
   const [form, setForm] = useState<LineItemFormState>(emptyLineItemForm);
+  const [amendmentForm, setAmendmentForm] =
+    useState<AmendmentFormState>(emptyAmendmentForm);
   const [contractDialogOpen, setContractDialogOpen] = useState(false);
   const [contractForm, setContractForm] =
     useState<ContractFormState>(emptyContractForm);
@@ -231,6 +278,8 @@ export default function CustomerContractDetailPage() {
   const [pending, setPending] = useState(false);
   const [contractPending, setContractPending] = useState(false);
   const [invoicePending, setInvoicePending] = useState(false);
+  const [activationPending, setActivationPending] = useState(false);
+  const [amendmentPending, setAmendmentPending] = useState(false);
   const activeComparisonMonth =
     comparisonMonth || (contract ? monthInputValue(contract.startDate) : "");
   const usageComparison = useQuery(
@@ -255,6 +304,12 @@ export default function CustomerContractDetailPage() {
     () => [...(companies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [companies],
   );
+  const contractIsDraft = contract?.status === "draft";
+  const contractIsActive = contract?.status === "active";
+  const contractIsLocked = !!contract && contract.status !== "draft";
+  const canEditOriginal = canManage && contractIsDraft;
+  const canCreateInvoice =
+    canManage && contractIsActive && (lineItems?.length ?? 0) > 0;
 
   const resetLineForm = () => {
     setEditingLine(null);
@@ -412,8 +467,46 @@ export default function CustomerContractDetailPage() {
     }
   };
 
+  const handleActivateContract = async () => {
+    if (!parsedContractId) return;
+    setActivationPending(true);
+    try {
+      await activateContract({ contractId: parsedContractId });
+      toast.success("Contract activated and locked");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not activate contract",
+      );
+    } finally {
+      setActivationPending(false);
+    }
+  };
+
+  const handleAmendmentSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!parsedContractId) return;
+    const payload = buildAmendmentPayload(amendmentForm, parsedContractId);
+    if (!payload) return;
+    setAmendmentPending(true);
+    try {
+      await createAmendment(payload);
+      toast.success("Contract amendment recorded");
+      setAmendmentForm(emptyAmendmentForm());
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not record amendment",
+      );
+    } finally {
+      setAmendmentPending(false);
+    }
+  };
+
   const handleCreateDraftInvoice = async () => {
     if (!parsedContractId || !activeComparisonMonth) return;
+    if (!contractIsActive) {
+      toast.error("Activate the contract before creating invoices");
+      return;
+    }
     if (!lineItems || lineItems.length === 0) {
       toast.error("Add contract services before creating a draft invoice");
       return;
@@ -442,6 +535,7 @@ export default function CustomerContractDetailPage() {
     contract === undefined ||
     companies === undefined ||
     lineItems === undefined ||
+    amendments === undefined ||
     serviceCatalog === undefined ||
     currentUser === undefined
   ) {
@@ -500,8 +594,22 @@ export default function CustomerContractDetailPage() {
           </div>
           {canManage ? (
             <div className="flex flex-wrap justify-end gap-2">
+              {contractIsDraft ? (
+                <Button
+                  variant="outline"
+                  disabled={activationPending || lineItems.length === 0}
+                  onClick={() => void handleActivateContract()}
+                >
+                  {activationPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="mr-2 h-4 w-4" />
+                  )}
+                  Activate & Lock
+                </Button>
+              ) : null}
               <Button
-                disabled={invoicePending || lineItems.length === 0}
+                disabled={invoicePending || !canCreateInvoice}
                 onClick={() => void handleCreateDraftInvoice()}
               >
                 {invoicePending ? (
@@ -511,19 +619,29 @@ export default function CustomerContractDetailPage() {
                 )}
                 Create Draft Invoice
               </Button>
-              <Button variant="outline" onClick={() => openContractEdit(contract)}>
-                <Pencil className="mr-2 h-4 w-4" />
-                Edit Contract
-              </Button>
+              {canEditOriginal ? (
+                <Button variant="outline" onClick={() => openContractEdit(contract)}>
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Edit Contract
+                </Button>
+              ) : null}
             </div>
           ) : null}
         </div>
       </div>
 
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-        Contract setup only. This page does not generate invoices or change
-        existing invoice billing.
-      </div>
+      {contractIsLocked ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200">
+          This contract is locked. Record upgrades, downgrades, renewals, or
+          price changes as amendments instead of editing the original terms.
+        </div>
+      ) : (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+          Draft contract setup only. Activate the contract when the signed terms
+          are correct; activation locks the original contract and services, then
+          enables contract invoicing.
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <InfoCard label="Customer" value={contract.companyName} />
@@ -589,7 +707,9 @@ export default function CustomerContractDetailPage() {
                       <th className="px-3 py-3">Discount</th>
                       <th className="px-3 py-3">Overage</th>
                       <th className="px-3 py-3">Amount</th>
-                      {canManage ? <th className="px-3 py-3">Actions</th> : null}
+                      {canEditOriginal ? (
+                        <th className="px-3 py-3">Actions</th>
+                      ) : null}
                     </tr>
                   </thead>
                   <tbody>
@@ -622,7 +742,7 @@ export default function CustomerContractDetailPage() {
                             contract.currency,
                           )}
                         </td>
-                        {canManage ? (
+                        {canEditOriginal ? (
                           <td className="px-3 py-3">
                             <div className="flex gap-2">
                               <Button
@@ -816,13 +936,19 @@ export default function CustomerContractDetailPage() {
                   }
                 />
               </Field>
+              {contractIsLocked ? (
+                <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                  Original services are locked. Use amendments for later
+                  upgrades, downgrades, or commercial changes.
+                </div>
+              ) : null}
               <div className="flex justify-end gap-2">
                 {editingLine ? (
                   <Button type="button" variant="outline" onClick={resetLineForm}>
                     Clear
                   </Button>
                 ) : null}
-                <Button disabled={!canManage || pending} type="submit">
+                <Button disabled={!canEditOriginal || pending} type="submit">
                   {pending
                     ? "Saving..."
                     : editingLine
@@ -836,12 +962,146 @@ export default function CustomerContractDetailPage() {
       </div>
 
       <Card>
+        <CardHeader>
+          <CardTitle>Contract Amendments</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+          <div>
+            {amendments.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                No amendments recorded yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-3">Amendment</th>
+                      <th className="px-3 py-3">Type</th>
+                      <th className="px-3 py-3">Effective</th>
+                      <th className="px-3 py-3">Monthly Delta</th>
+                      <th className="px-3 py-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {amendments.map((amendment) => (
+                      <tr key={amendment._id} className="border-b last:border-0">
+                        <td className="px-3 py-3">
+                          <div className="font-medium">
+                            {amendment.amendmentNumber}
+                          </div>
+                          <div className="text-muted-foreground">
+                            {amendment.summary}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          {formatAmendmentType(amendment.type)}
+                        </td>
+                        <td className="px-3 py-3 text-muted-foreground">
+                          {formatDate(amendment.effectiveDate)}
+                        </td>
+                        <td className="px-3 py-3">
+                          {formatSignedMoney(
+                            amendment.monthlyDelta,
+                            contract.currency,
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          <Badge variant="secondary">
+                            {formatAmendmentStatus(amendment.status)}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <form className="space-y-4" onSubmit={handleAmendmentSubmit}>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Type">
+                <Select
+                  value={amendmentForm.type}
+                  onValueChange={(value) =>
+                    setAmendmentForm({
+                      ...amendmentForm,
+                      type: value as AmendmentFormState["type"],
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="upgrade">Upgrade</SelectItem>
+                    <SelectItem value="downgrade">Downgrade</SelectItem>
+                    <SelectItem value="renewal">Renewal</SelectItem>
+                    <SelectItem value="commercial_change">
+                      Commercial change
+                    </SelectItem>
+                    <SelectItem value="correction">Correction</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Effective date">
+                <Input
+                  type="date"
+                  value={amendmentForm.effectiveDate}
+                  onChange={(event) =>
+                    setAmendmentForm({
+                      ...amendmentForm,
+                      effectiveDate: event.target.value,
+                    })
+                  }
+                />
+              </Field>
+            </div>
+            <Field label="Summary">
+              <Textarea
+                value={amendmentForm.summary}
+                onChange={(event) =>
+                  setAmendmentForm({
+                    ...amendmentForm,
+                    summary: event.target.value,
+                  })
+                }
+                placeholder="Describe the approved upgrade, downgrade, renewal, or price change"
+              />
+            </Field>
+            <Field label="Monthly delta">
+              <Input
+                step="any"
+                type="number"
+                value={amendmentForm.monthlyDelta}
+                onChange={(event) =>
+                  setAmendmentForm({
+                    ...amendmentForm,
+                    monthlyDelta: event.target.value,
+                  })
+                }
+                placeholder="Use negative value for downgrade"
+              />
+            </Field>
+            <Button
+              disabled={!canManage || contract.status === "draft" || amendmentPending}
+              type="submit"
+            >
+              {amendmentPending ? "Saving..." : "Record Amendment"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <CardTitle>Usage Comparison</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              Read-only contract math for this billing month. No invoice is
-              created from this section.
+              Read-only contract math for this billing month. Overage shown here
+              is included when a draft invoice is created.
             </p>
           </div>
           <div className="w-full md:w-48">
@@ -1084,4 +1344,33 @@ function formatQuantity(value: number) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatAmendmentType(type: ContractAmendment["type"]) {
+  const labels: Record<ContractAmendment["type"], string> = {
+    upgrade: "Upgrade",
+    downgrade: "Downgrade",
+    renewal: "Renewal",
+    commercial_change: "Commercial change",
+    correction: "Correction",
+    other: "Other",
+  };
+  return labels[type];
+}
+
+function formatAmendmentStatus(status: ContractAmendment["status"]) {
+  const labels: Record<ContractAmendment["status"], string> = {
+    draft: "Draft",
+    approved: "Approved",
+    cancelled: "Cancelled",
+  };
+  return labels[status];
+}
+
+function formatSignedMoney(value: number | undefined, currency = "USD") {
+  if (value === undefined) return "-";
+  const formatted = formatMoney(Math.abs(value), currency);
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
 }

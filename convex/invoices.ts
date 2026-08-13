@@ -620,10 +620,10 @@ async function createContractDraftInvoice(
   },
 ) {
   const { user, contract, sourceMonth } = args;
-  if (contract.status === "terminated" || contract.status === "expired") {
+  if (contract.status !== "active") {
     throw new ConvexError({
       code: "BAD_REQUEST",
-      message: "Terminated or expired contracts cannot create new invoices",
+      message: "Only active contracts can create invoices",
     });
   }
   if (!contractCoversMonth(contract, sourceMonth)) {
@@ -967,9 +967,9 @@ export const previewContractInvoiceBatch = query({
           "ready";
         let reason = "Ready to create draft";
 
-        if (contract.status === "terminated" || contract.status === "expired") {
+        if (contract.status !== "active") {
           status = "inactive";
-          reason = "Contract is not billable";
+          reason = "Contract must be active before billing";
         } else if (!contractCoversMonth(contract, args.sourceMonth)) {
           status = "not_in_period";
           reason = "Contract does not cover this month";

@@ -19,6 +19,7 @@ type EventType =
   | "created"
   | "updated"
   | "activated"
+  | "amended"
   | "terminated"
   | "expired"
   | "renewed";
@@ -68,6 +69,13 @@ type UsageComparisonRow = {
   usageAmount: number;
   matchedEntries: number;
 };
+type AmendmentType =
+  | "upgrade"
+  | "downgrade"
+  | "renewal"
+  | "commercial_change"
+  | "correction"
+  | "other";
 
 const contractFieldsValidator = {
   companyId: v.id("companies"),
@@ -147,6 +155,23 @@ function assertCanManageContracts(user: Doc<"users">) {
   });
 }
 
+function assertDraftContract(contract: Doc<"customerContracts">) {
+  if (contract.status === "draft") return;
+  throw new ConvexError({
+    code: "BAD_REQUEST",
+    message:
+      "Active contracts are locked. Create a contract amendment instead of editing the original contract.",
+  });
+}
+
+function assertCanActivateContract(contract: Doc<"customerContracts">) {
+  if (contract.status === "draft") return;
+  throw new ConvexError({
+    code: "BAD_REQUEST",
+    message: "Only draft contracts can be activated",
+  });
+}
+
 function requiredText(value: string, fieldName: string) {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -216,6 +241,17 @@ function assertNonNegative(value: number | undefined, fieldName: string) {
   return value;
 }
 
+function optionalFiniteNumber(value: number | undefined, fieldName: string) {
+  if (value === undefined) return undefined;
+  if (!Number.isFinite(value)) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `${fieldName} must be a valid number`,
+    });
+  }
+  return value;
+}
+
 function normalizeLineItemFields(args: LineItemInput) {
   return {
     contractId: args.contractId,
@@ -269,6 +305,18 @@ function statusEventType(status: ContractStatus): EventType {
   if (status === "expired") return "expired";
   if (status === "renewed") return "renewed";
   return "updated";
+}
+
+function amendmentTypeLabel(type: AmendmentType) {
+  const labels: Record<AmendmentType, string> = {
+    upgrade: "Upgrade",
+    downgrade: "Downgrade",
+    renewal: "Renewal",
+    commercial_change: "Commercial change",
+    correction: "Correction",
+    other: "Other",
+  };
+  return labels[type];
 }
 
 function normalizeKey(value: string) {
@@ -449,6 +497,26 @@ export const listLineItems = query({
   },
 });
 
+export const listAmendments = query({
+  args: { contractId: v.id("customerContracts") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+    const amendments = await ctx.db
+      .query("customerContractAmendments")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    return amendments.sort((a, b) => b.effectiveDate - a.effectiveDate);
+  },
+});
+
 export const usageComparison = query({
   args: {
     contractId: v.id("customerContracts"),
@@ -546,6 +614,7 @@ export const update = mutation({
         message: "Customer contract not found",
       });
     }
+    assertDraftContract(existing);
     await getVisibleCompany(ctx, user, args.companyId);
     const fields = normalizeFields(args);
     const activatedAt =
@@ -568,6 +637,111 @@ export const update = mutation({
   },
 });
 
+export const activate = mutation({
+  args: { contractId: v.id("customerContracts") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    assertCanActivateContract(contract);
+    await getVisibleCompany(ctx, user, contract.companyId);
+    const lineItems = await ctx.db
+      .query("customerContractLineItems")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    if (lineItems.length === 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Add at least one contract service before activating",
+      });
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(args.contractId, {
+      status: "active",
+      activatedAt: now,
+      updatedAt: now,
+    });
+    await insertEvent(
+      ctx,
+      args.contractId,
+      user._id,
+      "activated",
+      `Customer contract ${contract.contractNumber} activated and locked`,
+    );
+  },
+});
+
+export const createAmendment = mutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    type: v.union(
+      v.literal("upgrade"),
+      v.literal("downgrade"),
+      v.literal("renewal"),
+      v.literal("commercial_change"),
+      v.literal("correction"),
+      v.literal("other"),
+    ),
+    effectiveDate: v.number(),
+    summary: v.string(),
+    monthlyDelta: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+    if (contract.status === "draft") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Draft contracts can be edited directly before activation",
+      });
+    }
+    const summary = requiredText(args.summary, "Amendment summary");
+    const monthlyDelta = optionalFiniteNumber(args.monthlyDelta, "Monthly delta");
+    const existing = await ctx.db
+      .query("customerContractAmendments")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    const amendmentNumber = `${contract.contractNumber}-AMD-${`${existing.length + 1}`.padStart(3, "0")}`;
+    const now = Date.now();
+    const amendmentId = await ctx.db.insert("customerContractAmendments", {
+      contractId: args.contractId,
+      amendmentNumber,
+      type: args.type,
+      effectiveDate: args.effectiveDate,
+      summary,
+      monthlyDelta,
+      status: "approved",
+      createdBy: user._id,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.patch(args.contractId, { updatedAt: now });
+    await insertEvent(
+      ctx,
+      args.contractId,
+      user._id,
+      "amended",
+      `${amendmentTypeLabel(args.type)} amendment ${amendmentNumber} recorded`,
+    );
+    return amendmentId;
+  },
+});
+
 export const createLineItem = mutation({
   args: lineItemFieldsValidator,
   handler: async (ctx, args) => {
@@ -580,6 +754,7 @@ export const createLineItem = mutation({
         message: "Customer contract not found",
       });
     }
+    assertDraftContract(contract);
     await getVisibleCompany(ctx, user, contract.companyId);
     const fields = normalizeLineItemFields(args);
     const now = Date.now();
@@ -623,6 +798,7 @@ export const updateLineItem = mutation({
         message: "Customer contract not found",
       });
     }
+    assertDraftContract(contract);
     await getVisibleCompany(ctx, user, contract.companyId);
     const fields = normalizeLineItemFields(args);
     const now = Date.now();
@@ -655,6 +831,7 @@ export const removeLineItem = mutation({
         message: "Customer contract not found",
       });
     }
+    assertDraftContract(contract);
     await getVisibleCompany(ctx, user, contract.companyId);
     await ctx.db.delete(args.lineItemId);
     const now = Date.now();

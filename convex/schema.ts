@@ -1022,6 +1022,7 @@ export default defineSchema({
       v.literal("created"),
       v.literal("updated"),
       v.literal("activated"),
+      v.literal("amended"),
       v.literal("terminated"),
       v.literal("expired"),
       v.literal("renewed"),
@@ -1032,6 +1033,33 @@ export default defineSchema({
     .index("by_contract", ["contractId"])
     .index("by_actor", ["actorId"])
     .index("by_type", ["type"]),
+
+  customerContractAmendments: defineTable({
+    contractId: v.id("customerContracts"),
+    amendmentNumber: v.string(),
+    type: v.union(
+      v.literal("upgrade"),
+      v.literal("downgrade"),
+      v.literal("renewal"),
+      v.literal("commercial_change"),
+      v.literal("correction"),
+      v.literal("other"),
+    ),
+    effectiveDate: v.number(),
+    summary: v.string(),
+    monthlyDelta: v.optional(v.number()),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("approved"),
+      v.literal("cancelled"),
+    ),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_contract", ["contractId"])
+    .index("by_status", ["status"])
+    .index("by_effective_date", ["effectiveDate"]),
 
   customerContractLineItems: defineTable({
     contractId: v.id("customerContracts"),
