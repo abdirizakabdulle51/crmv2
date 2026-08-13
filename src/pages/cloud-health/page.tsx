@@ -612,20 +612,24 @@ function EcsFlavorAvailability({
     <div className="space-y-2 border-t pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs font-semibold uppercase text-muted-foreground">
-          ECS Flavor Availability
+          ECS Flavor Feasibility Estimate
         </div>
         {status === "verified" ? (
           <Badge variant="outline">
-            {available.length}/{flavors?.length ?? 0} available
+            {available.length}/{flavors?.length ?? 0} likely available
           </Badge>
         ) : (
           <Badge variant="secondary">Unable to verify</Badge>
         )}
       </div>
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        Estimated from catalog and capacity data. Final confirmation requires
+        ECS provisioning.
+      </div>
 
       {status === "unavailable" ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          ManageOne did not return flavor availability for this region.
+          ManageOne did not return flavor estimate data for this region.
           {message ? ` ${message}` : ""}
         </div>
       ) : watchedFlavors.length > 0 ? (
@@ -634,7 +638,7 @@ function EcsFlavorAvailability({
             <div>Flavor</div>
             <div>Size</div>
             <div>Status</div>
-            <div className="text-right">Fit Estimate</div>
+            <div className="text-right">Estimated Fit</div>
           </div>
           <div className="divide-y">
             {watchedFlavors.map((flavor) => (
@@ -652,27 +656,27 @@ function EcsFlavorAvailability({
                   {flavor.vcpus} vCPU / {flavor.ramGb} GB
                 </div>
                 <div>
-                    <Badge
-                      variant={
-                        flavor.status === "not_offered"
-                          ? "secondary"
-                          : flavor.status === "low_capacity"
-                            ? "outline"
-                            : "default"
-                      }
-                    >
-                      {flavor.status === "not_offered"
-                        ? "Not offered"
+                  <Badge
+                    variant={
+                      flavor.status === "not_offered"
+                        ? "secondary"
                         : flavor.status === "low_capacity"
-                          ? "Low capacity"
-                          : "Available"}
-                    </Badge>
+                          ? "outline"
+                          : "default"
+                    }
+                  >
+                    {flavor.status === "not_offered"
+                      ? "Not in catalog"
+                      : flavor.status === "low_capacity"
+                        ? "Low estimated capacity"
+                        : "Likely available"}
+                  </Badge>
                 </div>
                 <div className="text-xs text-muted-foreground xl:text-right xl:text-sm xl:text-foreground">
-                  <span className="xl:hidden">Fit: </span>
-                    {flavor.available
-                      ? `${formatNumber(flavor.estimatedFitCount)} possible`
-                      : "-"}
+                  <span className="xl:hidden">Estimated fit: </span>
+                  {flavor.available
+                    ? `${formatNumber(flavor.estimatedFitCount)} possible`
+                    : "-"}
                 </div>
               </div>
             ))}
@@ -715,10 +719,15 @@ function parsePositiveNumber(value: string, fallback: number) {
 }
 
 function quotaResourceKey(value: string | undefined) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
-function quotaMatchesRegion(quota: TenantQuotaRow, region: CapacityRegionForCheck) {
+function quotaMatchesRegion(
+  quota: TenantQuotaRow,
+  region: CapacityRegionForCheck,
+) {
   return (
     quota.regionId === region.regionId ||
     quota.regionName?.trim().toLowerCase() ===
@@ -775,8 +784,9 @@ function ResourceFeasibilityCheck({
   const [flavorName, setFlavorName] = useState(defaultFlavor?.name ?? "");
   const storagePools = selectedRegion?.storagePools ?? [];
   const defaultPool =
-    storagePools.find((pool) => pool.volumeType.toUpperCase().includes("SSD")) ??
-    storagePools[0];
+    storagePools.find((pool) =>
+      pool.volumeType.toUpperCase().includes("SSD"),
+    ) ?? storagePools[0];
   const [volumeType, setVolumeType] = useState(defaultPool?.volumeType ?? "");
   const [instances, setInstances] = useState("3");
   const [storageTbPerInstance, setStorageTbPerInstance] = useState("184");
@@ -841,20 +851,24 @@ function ResourceFeasibilityCheck({
       : null;
     const quotaChecks = [
       ecsInstanceQuota
-        ? ecsInstanceQuota.unlimited || ecsInstanceQuota.remaining >= instanceCount
+        ? ecsInstanceQuota.unlimited ||
+          ecsInstanceQuota.remaining >= instanceCount
         : false,
-      ecsCpuQuota ? ecsCpuQuota.unlimited || ecsCpuQuota.remaining >= cpuNeeded : false,
-      ecsRamQuota ? ecsRamQuota.unlimited || ecsRamQuota.remaining >= ramNeededGb : false,
+      ecsCpuQuota
+        ? ecsCpuQuota.unlimited || ecsCpuQuota.remaining >= cpuNeeded
+        : false,
+      ecsRamQuota
+        ? ecsRamQuota.unlimited || ecsRamQuota.remaining >= ramNeededGb
+        : false,
       evsStorageQuota
-        ? evsStorageQuota.unlimited || evsStorageQuota.remaining >= totalStorageGb
+        ? evsStorageQuota.unlimited ||
+          evsStorageQuota.remaining >= totalStorageGb
         : false,
       evsVolumeQuota
         ? evsVolumeQuota.unlimited || evsVolumeQuota.remaining >= totalDisks
         : false,
     ];
-    const quotaCanFit =
-      tenantQuotas.length > 0 &&
-      quotaChecks.every(Boolean);
+    const quotaCanFit = tenantQuotas.length > 0 && quotaChecks.every(Boolean);
 
     return {
       instanceCount,
@@ -1032,30 +1046,30 @@ function ResourceFeasibilityCheck({
             ok={check.quotaCanFit}
             title="Tenant quota"
             detail={quotaDetail}
-            variant={selectedTenant && tenantQuotas.length > 0 ? "normal" : "warning"}
+            variant={
+              selectedTenant && tenantQuotas.length > 0 ? "normal" : "warning"
+            }
           />
         </div>
 
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
           <span className="font-medium">
             {providerCapacityOk
-              ? "Provider capacity looks sufficient."
-              : "Provider capacity is not sufficient."}
+              ? "Provider capacity estimate looks sufficient."
+              : "Provider capacity estimate is not sufficient."}
           </span>{" "}
           CPU needed {formatNumber(check.cpuNeeded)} vCPU, RAM needed{" "}
           {formatNumber(check.ramNeededGb, " GB")}. Free now:{" "}
           {formatNumber(check.cpuFree)} vCPU and{" "}
-          {formatNumber(check.ramFreeGb, " GB")} RAM. Final confirmation still
-          requires the normal ManageOne provision/create action.
+          {formatNumber(check.ramFreeGb, " GB")} RAM. Final confirmation
+          requires ECS provisioning.
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function quotaDetailText(
-  quota: ReturnType<typeof summarizeQuota> | null,
-) {
+function quotaDetailText(quota: ReturnType<typeof summarizeQuota> | null) {
   if (!quota?.found) return "not found";
   if (quota.unlimited) return `unlimited, used ${formatNumber(quota.used)}`;
   return `remaining ${formatNumber(quota.remaining)}, used ${formatNumber(quota.used)}`;
@@ -1077,9 +1091,15 @@ function FeasibilityResult({
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="text-sm font-medium">{title}</div>
         <Badge
-          variant={ok ? "default" : variant === "warning" ? "outline" : "destructive"}
+          variant={
+            ok ? "default" : variant === "warning" ? "outline" : "destructive"
+          }
         >
-          {ok ? "Pass" : variant === "warning" ? "Needs quota" : "Fail"}
+          {ok
+            ? "Looks sufficient"
+            : variant === "warning"
+              ? "Needs quota"
+              : "Not sufficient"}
         </Badge>
       </div>
       <div className="text-xs text-muted-foreground">{detail}</div>
@@ -2173,9 +2193,7 @@ export default function CloudHealthPage() {
   const needsCapacityData =
     needsOverviewData || activeTab === "capacity" || prefetchCloudHealthTabs;
   const needsHostGroupSummaryData =
-    needsOverviewData ||
-    activeTab === "host-groups" ||
-    prefetchCloudHealthTabs;
+    needsOverviewData || activeTab === "host-groups" || prefetchCloudHealthTabs;
   const needsHostGroupListData =
     activeTab === "host-groups" || prefetchCloudHealthTabs;
   const needsNetworkStatusData =
@@ -2223,7 +2241,10 @@ export default function CloudHealthPage() {
   );
   const serviceStatuses = useQuery(
     api.serviceHealthResults.latestStatusByTarget,
-    canView && SHOW_SERVICE_DNS_HEALTH && !needsOverviewData && needsNetworkStatusData
+    canView &&
+      SHOW_SERVICE_DNS_HEALTH &&
+      !needsOverviewData &&
+      needsNetworkStatusData
       ? {}
       : "skip",
   );
@@ -2631,10 +2652,9 @@ export default function CloudHealthPage() {
     [serviceHistory],
   );
   const alarmRegions = useMemo(() => {
-    return MONITORED_ALARM_REGIONS.map((regionName) => [
-      regionName,
-      regionName,
-    ] as const);
+    return MONITORED_ALARM_REGIONS.map(
+      (regionName) => [regionName, regionName] as const,
+    );
   }, []);
   const alarmCategories = useMemo(() => {
     return [
@@ -2849,8 +2869,7 @@ export default function CloudHealthPage() {
 
   const activeTabLoading =
     (activeTab === "overview" &&
-      (!overview ||
-        (SHOW_SERVICE_DNS_HEALTH && !serviceStatuses))) ||
+      (!overview || (SHOW_SERVICE_DNS_HEALTH && !serviceStatuses))) ||
     (activeTab === "alarms" && (!alarmsSummary || !allActiveAlarms)) ||
     (activeTab === "capacity" && !capacity) ||
     (activeTab === "network" &&
@@ -3081,9 +3100,7 @@ export default function CloudHealthPage() {
               type="button"
               role="tab"
               aria-selected={activeTab === "host-groups"}
-              onClick={() =>
-                updateActiveTab("host-groups", { manual: true })
-              }
+              onClick={() => updateActiveTab("host-groups", { manual: true })}
               className={`flex h-10 w-full items-center justify-center gap-2 rounded-md bg-transparent px-3 text-sm text-muted-foreground ${
                 activeTab === "host-groups"
                   ? "bg-primary/10 font-medium text-primary"
@@ -3115,8 +3132,9 @@ export default function CloudHealthPage() {
             </Button>
             {autoRotateEnabled ? (
               <span className="inline-flex h-10 items-center rounded-full border bg-muted/40 px-3 text-xs font-medium text-muted-foreground">
-                Next: {CLOUD_HEALTH_TAB_LABELS[getNextCloudHealthTab(activeTab)]}{" "}
-                in {autoRotateRemainingSeconds}s
+                Next:{" "}
+                {CLOUD_HEALTH_TAB_LABELS[getNextCloudHealthTab(activeTab)]} in{" "}
+                {autoRotateRemainingSeconds}s
               </span>
             ) : null}
             <Button
@@ -3593,7 +3611,9 @@ export default function CloudHealthPage() {
                                   <SelectItem value="2">2+ repeats</SelectItem>
                                   <SelectItem value="3">3+ repeats</SelectItem>
                                   <SelectItem value="5">5+ repeats</SelectItem>
-                                  <SelectItem value="10">10+ repeats</SelectItem>
+                                  <SelectItem value="10">
+                                    10+ repeats
+                                  </SelectItem>
                                 </SelectContent>
                               </Select>
                             ) : null}
