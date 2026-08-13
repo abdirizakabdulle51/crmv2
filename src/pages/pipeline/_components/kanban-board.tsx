@@ -58,7 +58,7 @@ export default function KanbanBoard({
     return (
       <section
         key={stage}
-        className="flex max-h-[calc(100vh-17rem)] min-h-[22rem] w-[18rem] shrink-0 flex-col overflow-hidden rounded-lg border bg-muted/20 sm:w-[20rem]"
+        className="flex max-h-[calc(100vh-17rem)] min-h-[22rem] min-w-0 flex-col overflow-hidden rounded-lg border bg-muted/20"
       >
         <div
           className={`border-t-4 ${STAGE_BORDER_COLORS[stage]} bg-card p-3`}
@@ -146,20 +146,16 @@ export default function KanbanBoard({
 
   return (
     <div className="space-y-5">
-      <div className="overflow-x-auto pb-3">
-        <div className="flex min-w-max gap-4">
-          {boardStages.map(renderStageColumn)}
-        </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {boardStages.map(renderStageColumn)}
       </div>
 
       <div>
         <div className="mb-3 border-t pt-4 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Closed pipeline
         </div>
-        <div className="overflow-x-auto pb-3">
-          <div className="flex min-w-max gap-4">
-            {(["won", "lost"] as LeadStage[]).map(renderStageColumn)}
-          </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {(["won", "lost"] as LeadStage[]).map(renderStageColumn)}
         </div>
       </div>
     </div>
