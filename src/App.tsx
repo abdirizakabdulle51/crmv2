@@ -16,7 +16,9 @@ const TargetsPage = lazy(() => import("./pages/targets/page.tsx"));
 const ActivitiesPage = lazy(() => import("./pages/activities/page.tsx"));
 const PerformancePage = lazy(() => import("./pages/performance/page.tsx"));
 const UsagePage = lazy(() => import("./pages/usage/page.tsx"));
-const UsageAutoFillPage = lazy(() => import("./pages/usage/auto-fill-page.tsx"));
+const UsageAutoFillPage = lazy(
+  () => import("./pages/usage/auto-fill-page.tsx"),
+);
 const AtRiskPage = lazy(() => import("./pages/at-risk/page.tsx"));
 const QuotesPage = lazy(() => import("./pages/quotes/page.tsx"));
 const QuoteGenerateFromUsagePage = lazy(
@@ -46,6 +48,9 @@ const FinanceReportsPage = lazy(
 );
 const InvoiceProfilesPage = lazy(
   () => import("./pages/finance/invoice-profiles/page.tsx"),
+);
+const DailyUsagePage = lazy(
+  () => import("./pages/finance/daily-usage/page.tsx"),
 );
 const CustomerContractsPage = lazy(
   () => import("./pages/finance/customer-contracts/page.tsx"),
@@ -145,6 +150,10 @@ export default function App() {
               element={lazyPage(<InvoiceProfilesPage />)}
             />
             <Route
+              path="/finance/daily-usage"
+              element={lazyPage(<DailyUsagePage />)}
+            />
+            <Route
               path="/finance/customer-contracts"
               element={lazyPage(<CustomerContractsPage />)}
             />
@@ -204,7 +213,10 @@ export default function App() {
               element={lazyPage(<DocumentationPage />)}
             />
             <Route path="/tasks" element={lazyPage(<TasksPage />)} />
-            <Route path="/tasks/:taskId" element={lazyPage(<TaskDetailPage />)} />
+            <Route
+              path="/tasks/:taskId"
+              element={lazyPage(<TaskDetailPage />)}
+            />
             <Route path="/team" element={lazyPage(<TeamPage />)} />
             <Route path="/settings" element={lazyPage(<SettingsPage />)} />
           </Route>

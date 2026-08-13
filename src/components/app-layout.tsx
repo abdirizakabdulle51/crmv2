@@ -28,6 +28,7 @@ import {
   SlidersHorizontal,
   Landmark,
   FileSignature,
+  CalendarDays,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -69,6 +70,11 @@ const NAV_ITEMS = [
     to: "/finance/invoice-profiles",
     label: "Invoice Profiles",
     icon: Landmark,
+  },
+  {
+    to: "/finance/daily-usage",
+    label: "Daily Usage",
+    icon: CalendarDays,
   },
   {
     to: "/finance/customer-contracts",
@@ -122,6 +128,7 @@ const NAV_GROUPS = [
       "/finance/reports",
       "/finance/expense-categories",
       "/finance/invoice-profiles",
+      "/finance/daily-usage",
       "/finance/customer-contracts",
       "/finance/settings",
     ],
@@ -162,8 +169,8 @@ export default function AppLayout() {
   const { currentUser } = useCrm();
   const { signout } = useAuth();
   const location = useLocation();
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    () => loadCollapsedGroups(),
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
+    loadCollapsedGroups(),
   );
 
   const visibleNavItems = NAV_ITEMS.filter((item) => {
@@ -213,9 +220,7 @@ export default function AppLayout() {
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex md:w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
         <div className="p-5 border-b border-sidebar-border">
-          <BrandLogo
-            iconClassName="h-8 w-auto max-w-[170px]"
-          />
+          <BrandLogo iconClassName="h-8 w-auto max-w-[170px]" />
           <p className="mt-0.5 whitespace-nowrap text-[11px] text-sidebar-foreground/60">
             One System. Every Team. Total Control.
           </p>

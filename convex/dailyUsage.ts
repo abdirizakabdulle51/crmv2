@@ -2,7 +2,11 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { assertCanManageUsage, assertNotMonitoring } from "./authorization";
+import {
+  assertCanManageUsage,
+  assertNotMonitoring,
+  canViewCompany,
+} from "./authorization";
 import { buildUsageHintsForCompany } from "./manageOneTenants";
 
 type CatalogItem = Doc<"serviceCatalog">;
@@ -300,5 +304,82 @@ export const listByCompanyMonth = query({
         q.eq("companyId", args.companyId).eq("month", args.month),
       )
       .collect();
+  },
+});
+
+export const review = query({
+  args: {
+    month: v.string(),
+    companyId: v.optional(v.id("companies")),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+
+    const rows = args.companyId
+      ? await ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_company_month", (q) =>
+            q.eq("companyId", args.companyId!).eq("month", args.month),
+          )
+          .collect()
+      : await ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_month", (q) => q.eq("month", args.month))
+          .collect();
+
+    const visibleRows = [];
+    const companyNameById = new Map<Id<"companies">, string>();
+
+    for (const row of rows) {
+      const company = args.companyId
+        ? await assertCanManageUsage(ctx, user, row.companyId)
+        : await ctx.db.get(row.companyId);
+      if (!company || !canViewCompany(user, company)) {
+        continue;
+      }
+      visibleRows.push(row);
+      companyNameById.set(row.companyId, company.name);
+    }
+
+    const serviceTypes = [...new Set(visibleRows.map((row) => row.serviceType))]
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+    const usageDates = [...new Set(visibleRows.map((row) => row.usageDate))]
+      .filter(Boolean)
+      .sort();
+    const companies = [...companyNameById.entries()]
+      .map(([companyId, companyName]) => ({ companyId, companyName }))
+      .sort((a, b) => a.companyName.localeCompare(b.companyName));
+
+    const sortedRows = [...visibleRows].sort((a, b) => {
+      const dateCompare = b.usageDate.localeCompare(a.usageDate);
+      if (dateCompare !== 0) return dateCompare;
+      const companyCompare = (
+        companyNameById.get(a.companyId) ?? ""
+      ).localeCompare(companyNameById.get(b.companyId) ?? "");
+      if (companyCompare !== 0) return companyCompare;
+      return a.serviceType.localeCompare(b.serviceType);
+    });
+
+    return {
+      month: args.month,
+      rows: sortedRows.map((row) => ({
+        ...row,
+        companyName: companyNameById.get(row.companyId) ?? "Unknown",
+      })),
+      summary: {
+        rowCount: visibleRows.length,
+        companyCount: companies.length,
+        serviceCount: serviceTypes.length,
+        dayCount: usageDates.length,
+        capturedCount: visibleRows.filter((row) => !row.lockedAt).length,
+        lockedCount: visibleRows.filter((row) => row.lockedAt).length,
+      },
+      filters: {
+        companies,
+        serviceTypes,
+        usageDates,
+      },
+    };
   },
 });
