@@ -209,7 +209,7 @@ export default function AppLayout() {
   };
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-dvh overflow-hidden">
       {/* Desktop Sidebar */}
       <aside className="hidden md:flex md:w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border">
         <div className="p-5 border-b border-sidebar-border">
@@ -302,7 +302,7 @@ export default function AppLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto pb-16 md:pb-0">
+      <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-16 md:pb-0">
         {currentUser && !isMonitoringRole(currentUser.role) ? (
           <div
             className="sticky top-0 z-40 flex justify-end px-4 pt-4 sm:px-6 md:px-8"
