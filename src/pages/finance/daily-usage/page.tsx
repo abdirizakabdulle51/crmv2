@@ -1,10 +1,13 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "convex/react";
-import { CalendarDays, Database, Filter, Search } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { CalendarDays, Database, FileText, Filter, Search } from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 import { CompanyCombobox } from "@/components/company-combobox.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
+import { Button } from "@/components/ui/button.tsx";
 import {
   Card,
   CardContent,
@@ -70,12 +73,17 @@ function formatMoney(value?: number) {
 }
 
 export default function DailyUsagePage() {
+  const navigate = useNavigate();
   const companies = useQuery(api.companies.list, {});
+  const createDraftInvoice = useMutation(
+    api.dailyUsage.createDraftInvoiceFromRollup,
+  );
   const [month, setMonth] = useState(currentMonthInputValue());
   const [companyId, setCompanyId] = useState("all");
   const [serviceType, setServiceType] = useState("all");
   const [usageDate, setUsageDate] = useState("all");
   const [search, setSearch] = useState("");
+  const [creatingDraft, setCreatingDraft] = useState(false);
 
   const review = useQuery(api.dailyUsage.review, {
     month,
@@ -144,6 +152,7 @@ export default function DailyUsagePage() {
       dayCount,
       serviceCount,
       locked: rows.filter((row) => row.lockedAt).length,
+      attached: rows.filter((row) => row.invoiceId || row.lockedAt).length,
     };
   }, [rows]);
 
@@ -161,6 +170,44 @@ export default function DailyUsagePage() {
     }),
     [rollupRows],
   );
+  const canCreateDraft =
+    companyId !== "all" &&
+    rollupRows.length > 0 &&
+    rollupTotals.unpricedRows === 0 &&
+    totals.attached === 0;
+
+  async function handleCreateDraftInvoice() {
+    if (companyId === "all") {
+      toast.error("Select one customer before creating a draft invoice");
+      return;
+    }
+    if (!canCreateDraft) {
+      toast.error("Daily usage rollup is not ready for draft invoicing");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Create a draft invoice from daily usage for ${month}?`,
+    );
+    if (!confirmed) return;
+
+    setCreatingDraft(true);
+    try {
+      const result = await createDraftInvoice({
+        companyId: companyId as Id<"companies">,
+        month,
+      });
+      toast.success("Daily usage draft invoice created");
+      navigate(`/invoices/${result.invoiceId}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to create daily usage invoice",
+      );
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
 
   if (!companies || !review) {
     return (
@@ -280,14 +327,29 @@ export default function DailyUsagePage() {
               quantities are prorated across {review.rollup.daysInMonth} days.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline">{rollupRows.length} rollup rows</Badge>
             <Badge variant="outline">
               {rollupTotals.unpricedRows} unpriced
             </Badge>
+            <Badge variant="outline">{totals.attached} attached</Badge>
+            <Button
+              disabled={!canCreateDraft || creatingDraft}
+              size="sm"
+              onClick={handleCreateDraftInvoice}
+            >
+              <FileText className="mr-2 h-4 w-4" />
+              {creatingDraft ? "Creating..." : "Create Draft Invoice"}
+            </Button>
           </div>
         </CardHeader>
         <CardContent>
+          {companyId === "all" ? (
+            <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+              Select one customer to create a draft invoice from the daily usage
+              rollup.
+            </div>
+          ) : null}
           <div className="mb-4 grid gap-4 sm:grid-cols-3">
             <SummaryCard
               label="Estimated monthly total"
@@ -324,14 +386,10 @@ export default function DailyUsagePage() {
                     <th className="px-3 py-2">Region</th>
                     <th className="px-3 py-2 text-right">Days</th>
                     <th className="px-3 py-2 text-right">Daily Total</th>
-                    <th className="px-3 py-2 text-right">
-                      Billable Qty
-                    </th>
+                    <th className="px-3 py-2 text-right">Billable Qty</th>
                     <th className="px-3 py-2">Unit</th>
                     <th className="px-3 py-2 text-right">Monthly Price</th>
-                    <th className="px-3 py-2 text-right">
-                      Estimated Amount
-                    </th>
+                    <th className="px-3 py-2 text-right">Estimated Amount</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -391,7 +449,10 @@ export default function DailyUsagePage() {
               create or change invoices.
             </p>
           </div>
-          <Badge variant="outline">{totals.locked} locked</Badge>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{totals.attached} attached</Badge>
+            <Badge variant="outline">{totals.locked} locked</Badge>
+          </div>
         </CardHeader>
         <CardContent>
           {rows.length === 0 ? (
@@ -461,6 +522,8 @@ export default function DailyUsagePage() {
                       <td className="px-3 py-3">
                         {row.lockedAt ? (
                           <Badge variant="outline">Locked</Badge>
+                        ) : row.invoiceId ? (
+                          <Badge variant="secondary">Drafted</Badge>
                         ) : (
                           <Badge className="bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300">
                             Captured
@@ -480,9 +543,9 @@ export default function DailyUsagePage() {
         <div className="flex items-start gap-2">
           <Filter className="mt-0.5 h-4 w-4" />
           <p>
-            This page is for review only. Monthly rollup and invoice generation
-            are not active from this page. Draft invoice generation will be
-            added in a later phase after the daily capture data is verified.
+            This page creates draft invoices only after you select one customer
+            and review priced monthly rollup rows. Issued invoices lock the
+            daily usage rows used.
           </p>
         </div>
       </div>

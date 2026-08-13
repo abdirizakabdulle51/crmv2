@@ -286,8 +286,7 @@ function startOfBusinessDay(now: number) {
 
   // Africa/Mogadishu is UTC+3 with no daylight-saving shift.
   return (
-    Date.UTC(year, month - 1, day) -
-    MOGADISHU_UTC_OFFSET_HOURS * MS_PER_HOUR
+    Date.UTC(year, month - 1, day) - MOGADISHU_UTC_OFFSET_HOURS * MS_PER_HOUR
   );
 }
 
@@ -413,9 +412,7 @@ function buildInternalReminderEmail(args: {
   const invoiceNumber = invoice.invoiceNumber ?? String(invoice._id);
   const invoicePath = `/invoices/${invoice._id}`;
   const subject = `Overdue invoice follow-up: ${invoiceNumber}`;
-  const greeting = accountManager.name
-    ? `Hi ${accountManager.name},`
-    : "Hi,";
+  const greeting = accountManager.name ? `Hi ${accountManager.name},` : "Hi,";
   const html = `
     <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5;">
       <p>${escapeHtml(greeting)}</p>
@@ -487,10 +484,7 @@ function invoiceRelaySnapshot(invoice: Doc<"invoices">) {
   return snapshot;
 }
 
-function discountAmount(
-  line: Doc<"customerContractLineItems">,
-  gross: number,
-) {
+function discountAmount(line: Doc<"customerContractLineItems">, gross: number) {
   if (!line.discountType || line.discountValue === undefined) return 0;
   if (line.discountType === "percentage") {
     return Math.min(gross, gross * (line.discountValue / 100));
@@ -584,7 +578,10 @@ function monthEndTimestamp(month: string) {
   return Date.UTC(year, monthNumber, 0, 23, 59, 59, 999);
 }
 
-function contractCoversMonth(contract: Doc<"customerContracts">, month: string) {
+function contractCoversMonth(
+  contract: Doc<"customerContracts">,
+  month: string,
+) {
   const start = monthStartTimestamp(month);
   const end = monthEndTimestamp(month);
   return contract.startDate <= end && contract.endDate >= start;
@@ -633,7 +630,11 @@ async function createContractDraftInvoice(
     });
   }
 
-  const duplicate = await findContractInvoiceForMonth(ctx, contract, sourceMonth);
+  const duplicate = await findContractInvoiceForMonth(
+    ctx,
+    contract,
+    sourceMonth,
+  );
   if (duplicate) {
     throw new ConvexError({
       code: "BAD_REQUEST",
@@ -963,8 +964,12 @@ export const previewContractInvoiceBatch = query({
           contract,
           args.sourceMonth,
         );
-        let status: "ready" | "already_invoiced" | "no_services" | "not_in_period" | "inactive" =
-          "ready";
+        let status:
+          | "ready"
+          | "already_invoiced"
+          | "no_services"
+          | "not_in_period"
+          | "inactive" = "ready";
         let reason = "Ready to create draft";
 
         if (contract.status !== "active") {
@@ -1012,7 +1017,8 @@ export const createDraftsFromContracts = mutation({
     if (!isCeoOrHob(user)) {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can run batch contract invoicing",
+        message:
+          "Only CEO or Head of Business can run batch contract invoicing",
       });
     }
     monthStartTimestamp(args.sourceMonth);
@@ -1171,8 +1177,7 @@ export const issueInvoice = mutation({
       ...profilePatch,
       issueDate: now,
       dueDate:
-        invoice.dueDate ??
-        defaultDueDateForIssue(now, company.paymentTermDays),
+        invoice.dueDate ?? defaultDueDateForIssue(now, company.paymentTermDays),
       lockedAt: now,
       updatedAt: now,
     });
@@ -1183,6 +1188,13 @@ export const issueInvoice = mutation({
       message: `Invoice ${invoiceNumber} issued and locked.`,
       now,
     });
+    const dailyUsageRows = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_invoice", (q) => q.eq("invoiceId", args.invoiceId))
+      .collect();
+    for (const row of dailyUsageRows) {
+      await ctx.db.patch(row._id, { lockedAt: now });
+    }
   },
 });
 
@@ -1269,7 +1281,8 @@ export const listInternalReminderCandidates = internalQuery({
       }
       if (
         invoice.lastInternalReminderAt !== undefined &&
-        args.now - invoice.lastInternalReminderAt < INTERNAL_REMINDER_INTERVAL_MS
+        args.now - invoice.lastInternalReminderAt <
+          INTERNAL_REMINDER_INTERVAL_MS
       ) {
         skipped += 1;
         continue;
@@ -1672,6 +1685,16 @@ export const cancelDraftInvoice = mutation({
       message: `Draft invoice cancelled. Reason: ${reason}`,
       now,
     });
+    const dailyUsageRows = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_invoice", (q) => q.eq("invoiceId", args.invoiceId))
+      .collect();
+    for (const row of dailyUsageRows) {
+      await ctx.db.patch(row._id, {
+        invoiceId: undefined,
+        lockedAt: undefined,
+      });
+    }
   },
 });
 

@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
@@ -11,6 +11,22 @@ import { buildUsageHintsForCompany } from "./manageOneTenants";
 
 type CatalogItem = Doc<"serviceCatalog">;
 type ManageOneTenant = Doc<"manageOneTenants">;
+type RollupRow = {
+  companyId: Id<"companies">;
+  companyName: string;
+  serviceType: string;
+  itemName: string;
+  unit: string;
+  catalogItemId?: Id<"serviceCatalog">;
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
+  dailyQuantityTotal: number;
+  capturedDays: number;
+  billableQuantity: number;
+  monthlyUnitPrice?: number;
+  estimatedAmount?: number;
+};
 
 export type DailyUsageSnapshotInput = {
   companyId: Id<"companies">;
@@ -37,6 +53,11 @@ export type DailyUsageSnapshotInput = {
 
 const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
 
 function getCurrentUserOrThrow(ctx: QueryCtx | MutationCtx) {
   return ctx.auth.getUserIdentity().then(async (identity) => {
@@ -136,6 +157,138 @@ function daysInMonth(month: string) {
     return 30;
   }
   return new Date(year, monthNumber, 0).getDate();
+}
+
+function monthEndTimestamp(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber || monthNumber < 1 || monthNumber > 12) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Source month must use YYYY-MM format",
+    });
+  }
+  return Date.UTC(year, monthNumber, 0, 23, 59, 59, 999);
+}
+
+function dailyUsageSourceReference(month: string) {
+  return `Daily usage ${month}`;
+}
+
+async function resolveInvoiceProfileForCompany(
+  ctx: QueryCtx | MutationCtx,
+  company: Doc<"companies">,
+) {
+  const countryProfiles = await ctx.db
+    .query("invoiceProfiles")
+    .withIndex("by_country", (q) => q.eq("countryId", company.countryId))
+    .collect();
+  const countryMatch = countryProfiles.find((profile) => profile.isActive);
+  if (countryMatch) return countryMatch;
+
+  const defaults = await ctx.db
+    .query("invoiceProfiles")
+    .withIndex("by_default_active", (q) =>
+      q.eq("isDefault", true).eq("isActive", true),
+    )
+    .collect();
+  return defaults[0] ?? null;
+}
+
+function sellerSnapshotFromProfile(profile: Doc<"invoiceProfiles">) {
+  return {
+    sellerLegalName: profile.legalName,
+    sellerAddressLines: [...profile.addressLines],
+    sellerPhone: profile.phone,
+    sellerEmail: profile.email,
+    sellerWebsite: profile.website,
+    sellerSlogan: profile.slogan,
+    sellerTaxId: profile.taxId,
+    sellerBankName: profile.bankName,
+    sellerBankAccountNumber: profile.bankAccountNumber,
+    sellerBankAccountName: profile.bankAccountName,
+    sellerBankLocation: profile.bankLocation,
+    sellerCurrency: profile.currency,
+    sellerCurrencyNote: profile.currencyNote,
+    sellerPaymentInstructions: profile.paymentInstructions,
+    sellerFooterText: profile.footerText,
+  } satisfies Partial<Doc<"invoices">>;
+}
+
+function buildMonthlyRollupRows(args: {
+  rows: Doc<"dailyUsageSnapshots">[];
+  catalogById: Map<Id<"serviceCatalog">, CatalogItem>;
+  companyNameById: Map<Id<"companies">, string>;
+  month: string;
+}) {
+  const monthDayCount = daysInMonth(args.month);
+  const rollupByKey = new Map<
+    string,
+    Omit<RollupRow, "capturedDays" | "billableQuantity" | "estimatedAmount"> & {
+      capturedDays: Set<string>;
+    }
+  >();
+
+  for (const row of args.rows) {
+    const groupKey = [
+      row.companyId,
+      row.catalogItemId ?? row.itemName,
+      row.serviceType,
+      row.unit,
+      row.regionName ?? row.dataCenterName ?? "",
+    ].join("|");
+    const existing = rollupByKey.get(groupKey) ?? {
+      companyId: row.companyId,
+      companyName: args.companyNameById.get(row.companyId) ?? "Unknown",
+      serviceType: row.serviceType,
+      itemName: row.itemName,
+      unit: row.unit,
+      ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
+      ...(row.regionId ? { regionId: row.regionId } : {}),
+      ...(row.regionName ? { regionName: row.regionName } : {}),
+      ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
+      dailyQuantityTotal: 0,
+      capturedDays: new Set<string>(),
+      monthlyUnitPrice: row.catalogItemId
+        ? args.catalogById.get(row.catalogItemId)?.monthlyPrice
+        : undefined,
+    };
+
+    existing.dailyQuantityTotal += row.quantity;
+    existing.capturedDays.add(row.usageDate);
+    rollupByKey.set(groupKey, existing);
+  }
+
+  return [...rollupByKey.values()]
+    .map((row) => {
+      const billableQuantity = row.dailyQuantityTotal / monthDayCount;
+      const estimatedAmount =
+        row.monthlyUnitPrice === undefined
+          ? undefined
+          : roundMoney(billableQuantity * row.monthlyUnitPrice);
+      return {
+        companyId: row.companyId,
+        companyName: row.companyName,
+        serviceType: row.serviceType,
+        itemName: row.itemName,
+        unit: row.unit,
+        ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
+        ...(row.regionId ? { regionId: row.regionId } : {}),
+        ...(row.regionName ? { regionName: row.regionName } : {}),
+        ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
+        capturedDays: row.capturedDays.size,
+        dailyQuantityTotal: row.dailyQuantityTotal,
+        billableQuantity,
+        monthlyUnitPrice: row.monthlyUnitPrice,
+        estimatedAmount,
+      } satisfies RollupRow;
+    })
+    .sort((a, b) => {
+      const companyCompare = a.companyName.localeCompare(b.companyName);
+      if (companyCompare !== 0) return companyCompare;
+      const serviceCompare = a.serviceType.localeCompare(b.serviceType);
+      if (serviceCompare !== 0) return serviceCompare;
+      return a.itemName.localeCompare(b.itemName);
+    });
 }
 
 function sourceKeyFor(input: {
@@ -315,6 +468,153 @@ export const listByCompanyMonth = query({
   },
 });
 
+export const createDraftInvoiceFromRollup = mutation({
+  args: {
+    companyId: v.id("companies"),
+    month: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const company = await assertCanManageUsage(ctx, user, args.companyId);
+    const sourceReference = dailyUsageSourceReference(args.month);
+
+    const existingInvoice = (
+      await ctx.db
+        .query("invoices")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect()
+    ).find(
+      (invoice) =>
+        invoice.sourceMonth === args.month &&
+        invoice.sourceReference === sourceReference &&
+        invoice.status !== "cancelled" &&
+        invoice.status !== "void",
+    );
+    if (existingInvoice) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `A daily usage invoice already exists for ${company.name} and ${args.month}`,
+      });
+    }
+
+    const rows = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_company_month", (q) =>
+        q.eq("companyId", args.companyId).eq("month", args.month),
+      )
+      .collect();
+    if (rows.length === 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "No daily usage rows found for this customer and month",
+      });
+    }
+    const attachedRows = rows.filter((row) => row.invoiceId || row.lockedAt);
+    if (attachedRows.length > 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Some daily usage rows are already attached to an invoice for this month",
+      });
+    }
+
+    const catalogById = new Map(
+      (await ctx.db.query("serviceCatalog").collect()).map((item) => [
+        item._id,
+        item,
+      ]),
+    );
+    const companyNameById = new Map<Id<"companies">, string>([
+      [company._id, company.name],
+    ]);
+    const rollupRows = buildMonthlyRollupRows({
+      rows,
+      catalogById,
+      companyNameById,
+      month: args.month,
+    });
+    const unpriced = rollupRows.filter(
+      (row) =>
+        row.monthlyUnitPrice === undefined || row.estimatedAmount === undefined,
+    );
+    if (unpriced.length > 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "All daily usage rollup rows must have catalog pricing before creating an invoice",
+      });
+    }
+
+    const lineItems = rollupRows.map((row) => {
+      const monthlyTotal = roundMoney(row.estimatedAmount ?? 0);
+      return {
+        ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
+        itemName: row.itemName,
+        serviceCategory: row.serviceType,
+        billingUnit: row.unit,
+        quantity: roundMoney(row.billableQuantity),
+        monthlyUnitPrice: row.monthlyUnitPrice ?? 0,
+        monthlyTotal,
+        yearlyTotal: roundMoney(monthlyTotal * 12),
+        ...(row.regionId ? { regionId: row.regionId } : {}),
+        ...(row.regionName ? { regionName: row.regionName } : {}),
+        ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
+      };
+    });
+    const grandTotal = roundMoney(
+      lineItems.reduce((total, line) => total + line.monthlyTotal, 0),
+    );
+    const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
+    const sellerSnapshot = invoiceProfile
+      ? sellerSnapshotFromProfile(invoiceProfile)
+      : {};
+    const now = Date.now();
+    const dueDate =
+      company.paymentTermDays === undefined
+        ? undefined
+        : monthEndTimestamp(args.month) + company.paymentTermDays * MS_PER_DAY;
+
+    const invoiceId = await ctx.db.insert("invoices", {
+      companyId: company._id,
+      sourceMonth: args.month,
+      sourceReference,
+      invoiceProfileId: invoiceProfile?._id,
+      ...sellerSnapshot,
+      createdBy: user._id,
+      status: "draft",
+      dueDate,
+      companyName: company.name,
+      contactName: company.contactName,
+      contactEmail: company.contactEmail,
+      billingEmail: company.contactEmail,
+      lineItems,
+      subtotal: grandTotal,
+      monthlyTotal: grandTotal,
+      yearlyTotal: roundMoney(grandTotal * 12),
+      grandTotal,
+      amountPaid: 0,
+      balanceDue: grandTotal,
+      notes: `Draft invoice from daily usage snapshots for ${args.month}. Review before issuing.`,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    for (const row of rows) {
+      await ctx.db.patch(row._id, { invoiceId });
+    }
+
+    await ctx.db.insert("invoiceEvents", {
+      invoiceId,
+      type: "draft_created",
+      actorId: user._id,
+      message: `Draft invoice created from daily usage ${args.month}.`,
+      createdAt: now,
+    });
+
+    return { invoiceId, companyName: company.name, grandTotal };
+  },
+});
+
 export const review = query({
   args: {
     month: v.string(),
@@ -376,84 +676,12 @@ export const review = query({
       ]),
     );
     const monthDayCount = daysInMonth(args.month);
-    const rollupByKey = new Map<
-      string,
-      {
-        companyId: Id<"companies">;
-        companyName: string;
-        serviceType: string;
-        itemName: string;
-        unit: string;
-        catalogItemId?: Id<"serviceCatalog">;
-        regionName?: string;
-        dataCenterName?: string;
-        dailyQuantityTotal: number;
-        capturedDays: Set<string>;
-        monthlyUnitPrice?: number;
-      }
-    >();
-
-    for (const row of visibleRows) {
-      const groupKey = [
-        row.companyId,
-        row.catalogItemId ?? row.itemName,
-        row.serviceType,
-        row.unit,
-        row.regionName ?? row.dataCenterName ?? "",
-      ].join("|");
-      const existing =
-        rollupByKey.get(groupKey) ??
-        {
-          companyId: row.companyId,
-          companyName: companyNameById.get(row.companyId) ?? "Unknown",
-          serviceType: row.serviceType,
-          itemName: row.itemName,
-          unit: row.unit,
-          ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
-          ...(row.regionName ? { regionName: row.regionName } : {}),
-          ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
-          dailyQuantityTotal: 0,
-          capturedDays: new Set<string>(),
-          monthlyUnitPrice: row.catalogItemId
-            ? catalogById.get(row.catalogItemId)?.monthlyPrice
-            : undefined,
-        };
-
-      existing.dailyQuantityTotal += row.quantity;
-      existing.capturedDays.add(row.usageDate);
-      rollupByKey.set(groupKey, existing);
-    }
-
-    const rollupRows = [...rollupByKey.values()]
-      .map((row) => {
-        const billableQuantity = row.dailyQuantityTotal / monthDayCount;
-        const estimatedAmount =
-          row.monthlyUnitPrice === undefined
-            ? undefined
-            : billableQuantity * row.monthlyUnitPrice;
-        return {
-          companyId: row.companyId,
-          companyName: row.companyName,
-          serviceType: row.serviceType,
-          itemName: row.itemName,
-          unit: row.unit,
-          ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
-          ...(row.regionName ? { regionName: row.regionName } : {}),
-          ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
-          capturedDays: row.capturedDays.size,
-          dailyQuantityTotal: row.dailyQuantityTotal,
-          billableQuantity,
-          monthlyUnitPrice: row.monthlyUnitPrice,
-          estimatedAmount,
-        };
-      })
-      .sort((a, b) => {
-        const companyCompare = a.companyName.localeCompare(b.companyName);
-        if (companyCompare !== 0) return companyCompare;
-        const serviceCompare = a.serviceType.localeCompare(b.serviceType);
-        if (serviceCompare !== 0) return serviceCompare;
-        return a.itemName.localeCompare(b.itemName);
-      });
+    const rollupRows = buildMonthlyRollupRows({
+      rows: visibleRows,
+      catalogById,
+      companyNameById,
+      month: args.month,
+    });
 
     return {
       month: args.month,
@@ -471,6 +699,9 @@ export const review = query({
           ),
           unpricedCount: rollupRows.filter(
             (row) => row.estimatedAmount === undefined,
+          ).length,
+          attachedCount: visibleRows.filter(
+            (row) => row.invoiceId || row.lockedAt,
           ).length,
         },
       },
