@@ -1,7 +1,15 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
-import { FileSignature, FileText, Loader2, Pencil, Plus } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarClock,
+  FileSignature,
+  FileText,
+  Loader2,
+  Pencil,
+  Plus,
+} from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
@@ -38,6 +46,9 @@ import {
 } from "./contract-utils.ts";
 
 type CustomerContract = Doc<"customerContracts"> & { companyName: string };
+type RenewalState = "expired" | "urgent" | "soon" | "healthy" | "closed";
+
+const DAY_MS = 1000 * 60 * 60 * 24;
 
 function isAdminRole(role: Doc<"users">["role"] | undefined) {
   return role === "ceo" || role === "head_of_business";
@@ -59,6 +70,42 @@ function optionalText(value: string) {
 
 function currentMonthInputValue() {
   return new Date().toISOString().slice(0, 7);
+}
+
+function startOfDay(timestamp: number) {
+  const date = new Date(timestamp);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function daysUntil(timestamp: number) {
+  return Math.ceil((startOfDay(timestamp) - startOfDay(Date.now())) / DAY_MS);
+}
+
+function getRenewalState(contract: CustomerContract): RenewalState {
+  if (contract.status === "terminated" || contract.status === "renewed") {
+    return "closed";
+  }
+  const daysLeft = daysUntil(contract.endDate);
+  if (daysLeft < 0 || contract.status === "expired") return "expired";
+  if (daysLeft <= 30) return "urgent";
+  if (daysLeft <= 60) return "soon";
+  return "healthy";
+}
+
+function renewalAction(state: RenewalState) {
+  if (state === "expired") return "Review expired contract";
+  if (state === "urgent") return "Start renewal now";
+  if (state === "soon") return "Schedule renewal follow-up";
+  if (state === "closed") return "No renewal action";
+  return "On track";
+}
+
+function formatDaysRemaining(daysLeft: number) {
+  if (daysLeft < 0) {
+    return `${Math.abs(daysLeft)} day${Math.abs(daysLeft) === 1 ? "" : "s"} expired`;
+  }
+  if (daysLeft === 0) return "Ends today";
+  return `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`;
 }
 
 function buildPayload(form: ContractFormState) {
@@ -138,6 +185,8 @@ export default function CustomerContractsPage() {
       total: rows.length,
       active: rows.filter((contract) => contract.status === "active").length,
       draft: rows.filter((contract) => contract.status === "draft").length,
+      expired: rows.filter((contract) => getRenewalState(contract) === "expired")
+        .length,
       endingSoon: rows.filter((contract) => {
         const daysUntilEnd =
           (contract.endDate - Date.now()) / (1000 * 60 * 60 * 24);
@@ -156,6 +205,26 @@ export default function CustomerContractsPage() {
       ).length,
     };
   }, [batchPreview]);
+  const renewalRows = useMemo(
+    () =>
+      [...(contracts ?? [])]
+        .map((contract) => {
+          const daysLeft = daysUntil(contract.endDate);
+          const state = getRenewalState(contract);
+          return { contract, daysLeft, state };
+        })
+        .filter((row) => row.state !== "healthy" && row.state !== "closed")
+        .sort((a, b) => a.daysLeft - b.daysLeft),
+    [contracts],
+  );
+  const renewalSummary = useMemo(
+    () => ({
+      expired: renewalRows.filter((row) => row.state === "expired").length,
+      urgent: renewalRows.filter((row) => row.state === "urgent").length,
+      soon: renewalRows.filter((row) => row.state === "soon").length,
+    }),
+    [renewalRows],
+  );
 
   const openCreate = () => {
     setEditingContract(null);
@@ -274,9 +343,83 @@ export default function CustomerContractsPage() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard label="Contracts" value={summary.total} />
         <SummaryCard label="Active" value={summary.active} />
-        <SummaryCard label="Draft" value={summary.draft} />
+        <SummaryCard label="Expired" value={summary.expired} />
         <SummaryCard label="Ending in 60 days" value={summary.endingSoon} />
       </div>
+
+      <Card>
+        <CardHeader className="gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <CardTitle>Renewal Tracking</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Contracts needing renewal follow-up based on their end date.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <MiniStat label="Expired" value={renewalSummary.expired} />
+            <MiniStat label="Due in 30 days" value={renewalSummary.urgent} />
+            <MiniStat label="Due in 60 days" value={renewalSummary.soon} />
+          </div>
+        </CardHeader>
+        <CardContent>
+          {renewalRows.length === 0 ? (
+            <div className="flex items-center gap-3 rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+              <CalendarClock className="h-5 w-5" />
+              No renewal follow-ups are due in the next 60 days.
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full min-w-[860px] text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-3 py-2">Contract</th>
+                    <th className="px-3 py-2">Customer</th>
+                    <th className="px-3 py-2">End Date</th>
+                    <th className="px-3 py-2">Time Left</th>
+                    <th className="px-3 py-2">Renewal Status</th>
+                    <th className="px-3 py-2">Next Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {renewalRows.map(({ contract, daysLeft, state }) => (
+                    <tr key={contract._id} className="border-b last:border-0">
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          className="text-left font-medium hover:text-primary"
+                          onClick={() =>
+                            navigate(`/finance/customer-contracts/${contract._id}`)
+                          }
+                        >
+                          {contract.contractNumber}
+                        </button>
+                        <div className="text-muted-foreground">
+                          {contract.title}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {contract.companyName}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {formatDate(contract.endDate)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {formatDaysRemaining(daysLeft)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <RenewalBadge state={state} />
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {renewalAction(state)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {canManage ? (
         <Card>
@@ -516,6 +659,28 @@ function StatusBadge({ status }: { status: ContractStatus }) {
     return <Badge variant="destructive">Terminated</Badge>;
   }
   return <Badge variant="outline">{STATUS_LABELS[status]}</Badge>;
+}
+
+function RenewalBadge({ state }: { state: RenewalState }) {
+  if (state === "expired") {
+    return (
+      <Badge variant="destructive">
+        <AlertTriangle className="mr-1 h-3 w-3" />
+        Expired
+      </Badge>
+    );
+  }
+  if (state === "urgent") {
+    return (
+      <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+        Due in 30 days
+      </Badge>
+    );
+  }
+  if (state === "soon") {
+    return <Badge variant="outline">Due in 60 days</Badge>;
+  }
+  return <Badge variant="secondary">On track</Badge>;
 }
 
 function BatchStatusBadge({
