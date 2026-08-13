@@ -26,4 +26,13 @@ crons.daily(
   {},
 );
 
+// Runs at 23:55 Africa/Mogadishu. This records daily ManageOne usage
+// snapshots only; invoice creation remains a separate manual flow.
+crons.daily(
+  "capture daily ManageOne usage",
+  { hourUTC: 20, minuteUTC: 55 },
+  internal.dailyUsage.captureFromManageOneSnapshots,
+  {},
+);
+
 export default crons;

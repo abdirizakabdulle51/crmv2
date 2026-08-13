@@ -492,6 +492,36 @@ export default defineSchema({
     syncedAt: v.number(),
   }).index("by_company_synced_at", ["linkedCompanyId", "syncedAt"]),
 
+  dailyUsageSnapshots: defineTable({
+    companyId: v.id("companies"),
+    tenantId: v.id("manageOneTenants"),
+    tenantName: v.string(),
+    tenantVdcId: v.string(),
+    tenantDomainId: v.optional(v.string()),
+    usageDate: v.string(), // YYYY-MM-DD, Africa/Mogadishu business day.
+    month: v.string(), // YYYY-MM
+    serviceType: v.string(),
+    itemName: v.string(),
+    serviceCategory: v.string(),
+    quantity: v.number(),
+    unit: v.string(),
+    catalogItemId: v.optional(v.id("serviceCatalog")),
+    source: v.literal("manageone"),
+    sourceKey: v.string(),
+    sourceSyncedAt: v.optional(v.number()),
+    capturedAt: v.number(),
+    regionId: v.optional(v.string()),
+    regionName: v.optional(v.string()),
+    dataCenterName: v.optional(v.string()),
+    invoiceId: v.optional(v.id("invoices")),
+    lockedAt: v.optional(v.number()),
+  })
+    .index("by_source_key", ["sourceKey"])
+    .index("by_company_date", ["companyId", "usageDate"])
+    .index("by_company_month", ["companyId", "month"])
+    .index("by_month", ["month"])
+    .index("by_invoice", ["invoiceId"]),
+
   pingTargets: defineTable({
     name: v.string(),
     ip: v.string(),
