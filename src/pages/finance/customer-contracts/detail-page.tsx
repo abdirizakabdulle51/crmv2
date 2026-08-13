@@ -980,7 +980,7 @@ export default function CustomerContractDetailPage() {
                   <div>
                     <div className="font-medium">{event.message}</div>
                     <div className="text-sm text-muted-foreground">
-                      {event.type}
+                      {event.type} by {formatActorName(event)}
                     </div>
                   </div>
                   <div className="text-sm text-muted-foreground">
@@ -1071,6 +1071,13 @@ function formatDiscount(line: ContractLineItem) {
   if (!line.discountType || line.discountValue === undefined) return "-";
   if (line.discountType === "percentage") return `${line.discountValue}%`;
   return formatMoney(line.discountValue);
+}
+
+function formatActorName(event: {
+  actorEmail?: string;
+  actorName?: string;
+}) {
+  return event.actorName?.trim() || event.actorEmail?.trim() || "Unknown user";
 }
 
 function formatQuantity(value: number) {

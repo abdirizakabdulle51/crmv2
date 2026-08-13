@@ -381,12 +381,51 @@ export const get = query({
       .query("customerContractEvents")
       .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
       .collect();
+    const actorIds = Array.from(
+      new Set(events.map((event) => event.actorId).filter(Boolean)),
+    ) as Id<"users">[];
+    const actors = await Promise.all(
+      actorIds.map(async (actorId) => await ctx.db.get(actorId)),
+    );
+    const actorMap = new Map(
+      actors
+        .filter((actor): actor is Doc<"users"> => actor !== null)
+        .map((actor) => [actor._id, actor]),
+    );
 
     return {
       ...contract,
       companyName: company.name,
-      events: events.sort((a, b) => b.createdAt - a.createdAt),
+      events: events
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .map((event) => {
+          const actor = actorMap.get(event.actorId);
+          return {
+            ...event,
+            actorEmail: actor?.email,
+            actorName: actor?.name,
+          };
+        }),
     };
+  },
+});
+
+export const getByContractNumber = query({
+  args: { contractNumber: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contractNumber = args.contractNumber.trim();
+    if (!contractNumber) return null;
+    const contract = await ctx.db
+      .query("customerContracts")
+      .withIndex("by_contract_number", (q) =>
+        q.eq("contractNumber", contractNumber),
+      )
+      .first();
+    if (!contract) return null;
+    const company = await ctx.db.get(contract.companyId);
+    if (!company || !canViewCompany(user, company)) return null;
+    return { ...contract, companyName: company.name };
   },
 });
 

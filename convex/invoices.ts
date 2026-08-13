@@ -782,6 +782,24 @@ export const createDraftFromContract = mutation({
     const company = await getCompanyOrThrow(ctx, contract.companyId);
     assertCanManageCompany(user, company);
 
+    const existingInvoices = await ctx.db
+      .query("invoices")
+      .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
+      .collect();
+    const duplicate = existingInvoices.find(
+      (invoice) =>
+        invoice.sourceReference === contract.contractNumber &&
+        invoice.sourceMonth === args.sourceMonth &&
+        invoice.status !== "cancelled" &&
+        invoice.status !== "void",
+    );
+    if (duplicate) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `An invoice already exists for contract ${contract.contractNumber} and month ${args.sourceMonth}`,
+      });
+    }
+
     const lines = await ctx.db
       .query("customerContractLineItems")
       .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
@@ -848,6 +866,13 @@ export const createDraftFromContract = mutation({
       actorId: user._id,
       message: `Draft invoice created from contract ${contract.contractNumber}.`,
       now,
+    });
+    await ctx.db.insert("customerContractEvents", {
+      contractId: contract._id,
+      actorId: user._id,
+      type: "updated",
+      message: `Draft invoice created for ${args.sourceMonth}.`,
+      createdAt: now,
     });
 
     return invoiceId;

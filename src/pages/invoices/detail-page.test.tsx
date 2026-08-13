@@ -27,6 +27,9 @@ vi.mock("@/convex/_generated/api.js", () => ({
       listAll: "users.listAll",
       getCurrentUser: "users.getCurrentUser",
     },
+    customerContracts: {
+      getByContractNumber: "customerContracts.getByContractNumber",
+    },
   },
 }));
 
@@ -35,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   events: undefined as InvoiceEvent[] | undefined,
   payments: undefined as Doc<"invoicePayments">[] | undefined,
   users: undefined as Doc<"users">[] | undefined,
+  sourceContract: null as Doc<"customerContracts"> | null,
   currentUser: undefined as Doc<"users"> | null | undefined,
   issueInvoice: vi.fn(),
   cancelDraftInvoice: vi.fn(),
@@ -67,6 +71,8 @@ vi.mock("convex/react", () => ({
     if (query === "invoices.listPayments") return mocks.payments;
     if (query === "users.listAll") return mocks.users;
     if (query === "users.getCurrentUser") return mocks.currentUser;
+    if (query === "customerContracts.getByContractNumber")
+      return mocks.sourceContract;
     return undefined;
   },
 }));

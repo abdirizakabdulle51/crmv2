@@ -367,6 +367,12 @@ function InvoiceDetailContent() {
     api.invoices.getById,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
   );
+  const sourceContract = useQuery(
+    api.customerContracts.getByContractNumber,
+    invoice?.sourceReference
+      ? { contractNumber: invoice.sourceReference }
+      : "skip",
+  );
   const events = useQuery(
     api.invoices.listEvents,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
@@ -759,7 +765,21 @@ function InvoiceDetailContent() {
               value={formatDateTime(invoice.lockedAt)}
             />
             <Detail label="Sent At" value={formatDateTime(invoice.sentAt)} />
-            <Detail label="Source Reference" value={invoice.sourceReference ?? "-"} />
+            <Detail
+              label="Source Reference"
+              value={invoice.sourceReference ?? "-"}
+            />
+            {sourceContract ? (
+              <Button
+                className="mt-1 px-0"
+                variant="link"
+                onClick={() =>
+                  navigate(`/finance/customer-contracts/${sourceContract._id}`)
+                }
+              >
+                Open source contract
+              </Button>
+            ) : null}
             <Detail label="Source Month" value={invoice.sourceMonth} />
           </CardContent>
         </Card>
