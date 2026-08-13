@@ -1931,6 +1931,59 @@ http.route({
 });
 
 http.route({
+  path: "/daily-usage/capture",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "TENANT_HISTORY_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json().catch(() => ({}));
+      if (!isRecord(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an object" },
+          { status: 400 },
+        );
+      }
+
+      const usageDate =
+        typeof body.usageDate === "string" ? body.usageDate : undefined;
+      const capturedAt =
+        typeof body.capturedAt === "number" ? body.capturedAt : undefined;
+      const tenantVdcIds = Array.isArray(body.tenantVdcIds)
+        ? body.tenantVdcIds.filter(
+            (tenantVdcId): tenantVdcId is string =>
+              typeof tenantVdcId === "string" && tenantVdcId.length > 0,
+          )
+        : undefined;
+
+      const summary = await ctx.runMutation(
+        internal.dailyUsage.captureFromManageOneSnapshots,
+        {
+          ...(usageDate ? { usageDate } : {}),
+          ...(capturedAt ? { capturedAt } : {}),
+          ...(tenantVdcIds ? { tenantVdcIds } : {}),
+        },
+      );
+
+      return Response.json({ success: true, ...summary });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
+
+http.route({
   path: "/cloud-capacity/snapshot",
   method: "POST",
   handler: httpAction(async (ctx, request) => {

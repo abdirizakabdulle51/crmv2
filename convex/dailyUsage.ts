@@ -400,6 +400,7 @@ export const captureFromManageOneSnapshots = internalMutation({
   args: {
     usageDate: v.optional(v.string()),
     capturedAt: v.optional(v.number()),
+    tenantVdcIds: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const capturedAt = args.capturedAt ?? Date.now();
@@ -407,9 +408,16 @@ export const captureFromManageOneSnapshots = internalMutation({
     assertValidDateKey(usageDate);
 
     const tenants = await ctx.db.query("manageOneTenants").collect();
+    const tenantVdcIdFilter =
+      args.tenantVdcIds && args.tenantVdcIds.length > 0
+        ? new Set(args.tenantVdcIds)
+        : null;
+    const selectedTenants = tenantVdcIdFilter
+      ? tenants.filter((tenant) => tenantVdcIdFilter.has(tenant.vdcId))
+      : tenants;
     const catalog = await ctx.db.query("serviceCatalog").collect();
     const rows = buildDailyUsageRowsFromManageOneTenants(
-      tenants,
+      selectedTenants,
       catalog,
       usageDate,
       capturedAt,
@@ -441,7 +449,7 @@ export const captureFromManageOneSnapshots = internalMutation({
 
     return {
       usageDate,
-      inspectedTenants: tenants.length,
+      inspectedTenants: selectedTenants.length,
       capturedRows: rows.length,
       inserted,
       updated,
