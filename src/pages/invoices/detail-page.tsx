@@ -759,10 +759,7 @@ function InvoiceDetailContent() {
               value={formatDateTime(invoice.lockedAt)}
             />
             <Detail label="Sent At" value={formatDateTime(invoice.sentAt)} />
-            <Detail
-              label="Source Quote"
-              value={invoice.sourceReference ?? "-"}
-            />
+            <Detail label="Source Reference" value={invoice.sourceReference ?? "-"} />
             <Detail label="Source Month" value={invoice.sourceMonth} />
           </CardContent>
         </Card>
@@ -792,7 +789,7 @@ function InvoiceDetailContent() {
               <tbody>
                 {invoice.lineItems.map((item, index) => (
                   <tr
-                    key={`${item.catalogItemId}-${index}`}
+                    key={`${item.catalogItemId ?? item.itemName}-${index}`}
                     className="border-b last:border-0"
                   >
                     <td className="p-3 font-medium">{item.itemName}</td>

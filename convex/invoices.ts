@@ -101,7 +101,7 @@ const invoiceStatusValidator = v.union(
 );
 
 const invoiceLineItemValidator = v.object({
-  catalogItemId: v.id("serviceCatalog"),
+  catalogItemId: v.optional(v.id("serviceCatalog")),
   itemName: v.string(),
   serviceCategory: v.string(),
   billingUnit: v.string(),
@@ -487,6 +487,81 @@ function invoiceRelaySnapshot(invoice: Doc<"invoices">) {
   return snapshot;
 }
 
+function discountAmount(
+  line: Doc<"customerContractLineItems">,
+  gross: number,
+) {
+  if (!line.discountType || line.discountValue === undefined) return 0;
+  if (line.discountType === "percentage") {
+    return Math.min(gross, gross * (line.discountValue / 100));
+  }
+  return Math.min(gross, line.discountValue);
+}
+
+function contractLineBaseAmount(line: Doc<"customerContractLineItems">) {
+  const gross = line.includedQuantity * line.contractUnitPrice;
+  return Math.max(0, roundMoney(gross - discountAmount(line, gross)));
+}
+
+function usageMatchesContractLine(
+  usage: Doc<"consumption">,
+  line: Doc<"customerContractLineItems">,
+) {
+  if (line.catalogItemId && usage.catalogItemId === line.catalogItemId) {
+    return true;
+  }
+
+  const normalize = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const usageKey = normalize(usage.serviceType);
+  const itemKey = normalize(line.itemName);
+  const categoryKey = normalize(line.serviceCategory);
+  return (
+    usageKey === itemKey ||
+    usageKey.includes(itemKey) ||
+    itemKey.includes(usageKey) ||
+    (categoryKey.length > 0 && usageKey.includes(categoryKey))
+  );
+}
+
+function contractInvoiceLine(
+  line: Doc<"customerContractLineItems">,
+  usageEntries: Doc<"consumption">[],
+): InvoiceLineItem {
+  const matchedUsage = usageEntries.filter((usage) =>
+    usageMatchesContractLine(usage, line),
+  );
+  const actualQuantity = matchedUsage.reduce((total, usage) => {
+    if (usage.quantity !== undefined) return total + usage.quantity;
+    const price = line.catalogUnitPrice ?? line.contractUnitPrice;
+    if (price > 0) return total + usage.amount / price;
+    return total;
+  }, 0);
+  const overageQuantity = Math.max(0, actualQuantity - line.includedQuantity);
+  const baseAmount = contractLineBaseAmount(line);
+  const overageAmount = roundMoney(
+    overageQuantity * (line.overageUnitPrice ?? line.contractUnitPrice),
+  );
+  const monthlyTotal = roundMoney(baseAmount + overageAmount);
+
+  return {
+    catalogItemId: line.catalogItemId,
+    itemName:
+      overageQuantity > 0
+        ? `${line.itemName} (${roundMoney(overageQuantity)} overage)`
+        : line.itemName,
+    serviceCategory: line.serviceCategory,
+    billingUnit: line.billingUnit,
+    quantity:
+      overageQuantity > 0
+        ? roundMoney(line.includedQuantity + overageQuantity)
+        : line.includedQuantity,
+    monthlyUnitPrice: line.contractUnitPrice,
+    monthlyTotal,
+    yearlyTotal: roundMoney(monthlyTotal * 12),
+  };
+}
+
 function relayUrl() {
   const value =
     process.env.HTGWEB_MAIL_RELAY_URL?.trim() ??
@@ -675,6 +750,103 @@ export const createDraftFromQuote = mutation({
       type: "draft_created",
       actorId: user._id,
       message: `Draft invoice created from quote ${quote.quoteNumber ?? "accepted quote"}.`,
+      now,
+    });
+
+    return invoiceId;
+  },
+});
+
+export const createDraftFromContract = mutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    sourceMonth: v.string(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    if (contract.status === "terminated" || contract.status === "expired") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Terminated or expired contracts cannot create new invoices",
+      });
+    }
+
+    const company = await getCompanyOrThrow(ctx, contract.companyId);
+    assertCanManageCompany(user, company);
+
+    const lines = await ctx.db
+      .query("customerContractLineItems")
+      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+      .collect();
+    if (lines.length === 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Add at least one contract service before creating an invoice",
+      });
+    }
+
+    const usageEntries = await ctx.db
+      .query("consumption")
+      .withIndex("by_company_month", (q) =>
+        q.eq("companyId", contract.companyId).eq("month", args.sourceMonth),
+      )
+      .collect();
+    const lineItems = lines
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((line) => contractInvoiceLine(line, usageEntries));
+    const grandTotal = roundMoney(
+      lineItems.reduce((total, line) => total + line.monthlyTotal, 0),
+    );
+    const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
+    const sellerSnapshot = invoiceProfile
+      ? sellerSnapshotFromProfile(invoiceProfile)
+      : {};
+    const now = Date.now();
+    const dueDate =
+      contract.paymentTermDays === undefined
+        ? undefined
+        : contract.endDate + contract.paymentTermDays * MS_PER_DAY;
+
+    const invoiceId = await ctx.db.insert("invoices", {
+      companyId: contract.companyId,
+      sourceMonth: args.sourceMonth,
+      sourceReference: contract.contractNumber,
+      invoiceProfileId: invoiceProfile?._id,
+      ...sellerSnapshot,
+      createdBy: user._id,
+      status: "draft",
+      dueDate,
+      companyName: company.name,
+      contactName: company.contactName,
+      contactEmail: company.contactEmail,
+      billingEmail: company.contactEmail,
+      lineItems,
+      subtotal: grandTotal,
+      monthlyTotal: grandTotal,
+      yearlyTotal: roundMoney(grandTotal * 12),
+      grandTotal,
+      amountPaid: 0,
+      balanceDue: grandTotal,
+      notes:
+        trimOptional(args.notes) ??
+        `Draft invoice from customer contract ${contract.contractNumber}. Review before issuing.`,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await insertEvent(ctx, {
+      invoiceId,
+      type: "draft_created",
+      actorId: user._id,
+      message: `Draft invoice created from contract ${contract.contractNumber}.`,
       now,
     });
 

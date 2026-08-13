@@ -787,7 +787,7 @@ function InvoicePrintContent() {
             </thead>
             <tbody>
               {invoice.lineItems.map((item, index) => (
-                <tr key={`${item.catalogItemId}-${index}`}>
+                <tr key={`${item.catalogItemId ?? item.itemName}-${index}`}>
                   <td>
                     <div className="line-title">{item.itemName}</div>
                     <div className="line-subtitle">

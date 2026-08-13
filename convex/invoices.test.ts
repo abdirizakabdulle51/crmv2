@@ -741,7 +741,7 @@ describe("invoices", () => {
         invoiceId,
       });
       const expectedBalance = status === "partially_paid" ? "$15.00" : "$20.00";
-      expect(events[events.length - 1]).toMatchObject({
+      expect(events.find((event) => event.type === "overdue")).toMatchObject({
         type: "overdue",
         message: `Invoice marked overdue. Balance due: ${expectedBalance}.`,
       });

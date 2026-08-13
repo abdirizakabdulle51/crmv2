@@ -1,7 +1,14 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, FileSignature, Pencil, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  FileSignature,
+  FileText,
+  Loader2,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
@@ -214,6 +221,7 @@ export default function CustomerContractDetailPage() {
   const updateLineItem = useMutation(api.customerContracts.updateLineItem);
   const removeLineItem = useMutation(api.customerContracts.removeLineItem);
   const updateContract = useMutation(api.customerContracts.update);
+  const createDraftInvoice = useMutation(api.invoices.createDraftFromContract);
   const [editingLine, setEditingLine] = useState<ContractLineItem | null>(null);
   const [form, setForm] = useState<LineItemFormState>(emptyLineItemForm);
   const [contractDialogOpen, setContractDialogOpen] = useState(false);
@@ -222,6 +230,7 @@ export default function CustomerContractDetailPage() {
   const [comparisonMonth, setComparisonMonth] = useState("");
   const [pending, setPending] = useState(false);
   const [contractPending, setContractPending] = useState(false);
+  const [invoicePending, setInvoicePending] = useState(false);
   const activeComparisonMonth =
     comparisonMonth || (contract ? monthInputValue(contract.startDate) : "");
   const usageComparison = useQuery(
@@ -403,6 +412,32 @@ export default function CustomerContractDetailPage() {
     }
   };
 
+  const handleCreateDraftInvoice = async () => {
+    if (!parsedContractId || !activeComparisonMonth) return;
+    if (!lineItems || lineItems.length === 0) {
+      toast.error("Add contract services before creating a draft invoice");
+      return;
+    }
+
+    setInvoicePending(true);
+    try {
+      const invoiceId = await createDraftInvoice({
+        contractId: parsedContractId,
+        sourceMonth: activeComparisonMonth,
+      });
+      toast.success("Draft invoice created");
+      navigate(`/invoices/${invoiceId}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not create draft invoice",
+      );
+    } finally {
+      setInvoicePending(false);
+    }
+  };
+
   if (
     contract === undefined ||
     companies === undefined ||
@@ -464,10 +499,23 @@ export default function CustomerContractDetailPage() {
             Updated {formatDateTime(contract.updatedAt)}
           </div>
           {canManage ? (
-            <Button variant="outline" onClick={() => openContractEdit(contract)}>
-              <Pencil className="mr-2 h-4 w-4" />
-              Edit Contract
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                disabled={invoicePending || lineItems.length === 0}
+                onClick={() => void handleCreateDraftInvoice()}
+              >
+                {invoicePending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <FileText className="mr-2 h-4 w-4" />
+                )}
+                Create Draft Invoice
+              </Button>
+              <Button variant="outline" onClick={() => openContractEdit(contract)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit Contract
+              </Button>
+            </div>
           ) : null}
         </div>
       </div>

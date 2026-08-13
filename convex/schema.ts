@@ -784,7 +784,7 @@ export default defineSchema({
     sellerFooterText: v.optional(v.string()),
     lineItems: v.array(
       v.object({
-        catalogItemId: v.id("serviceCatalog"),
+        catalogItemId: v.optional(v.id("serviceCatalog")),
         itemName: v.string(),
         serviceCategory: v.string(),
         billingUnit: v.string(),

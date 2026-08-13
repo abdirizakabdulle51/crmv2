@@ -278,8 +278,8 @@ describe("InvoiceDetailPage", () => {
 
     renderDetailPage();
 
-    expect(screen.getByText("Source Quote").parentElement).toHaveTextContent(
-      "Source Quote-",
+    expect(screen.getByText("Source Reference").parentElement).toHaveTextContent(
+      "Source Reference-",
     );
     expect(screen.queryByText("quote-1")).not.toBeInTheDocument();
   });
