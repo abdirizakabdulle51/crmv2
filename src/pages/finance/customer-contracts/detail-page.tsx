@@ -676,7 +676,13 @@ export default function CustomerContractDetailPage() {
         <InfoCard label="Currency" value={contract.currency} />
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+      <div
+        className={
+          canEditOriginal
+            ? "grid gap-5 xl:grid-cols-[1.15fr_0.85fr]"
+            : "grid gap-5"
+        }
+      >
         <Card>
           <CardHeader>
             <CardTitle>Contract Services</CardTitle>
@@ -771,194 +777,196 @@ export default function CustomerContractDetailPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{editingLine ? "Edit Service" : "Add Service"}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-4" onSubmit={handleSubmit}>
-              <Field label="Catalog item">
-                <Select
-                  value={form.catalogItemId ?? "custom"}
-                  onValueChange={selectCatalogItem}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="custom">Custom service</SelectItem>
-                    {serviceCatalog.map((item) => (
-                      <SelectItem key={item._id} value={item._id}>
-                        {item.itemName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Service name">
-                  <Input
-                    value={form.itemName}
-                    onChange={(event) =>
-                      setForm({ ...form, itemName: event.target.value })
-                    }
-                  />
-                </Field>
-                <Field label="Category">
-                  <Input
-                    value={form.serviceCategory}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        serviceCategory: event.target.value,
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Included quantity">
-                  <Input
-                    min={0}
-                    step="any"
-                    type="number"
-                    value={form.includedQuantity}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        includedQuantity: event.target.value,
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Unit">
-                  <Input
-                    value={form.unit}
-                    onChange={(event) =>
-                      setForm({ ...form, unit: event.target.value })
-                    }
-                  />
-                </Field>
-                <Field label="Catalog price">
-                  <Input
-                    min={0}
-                    step="any"
-                    type="number"
-                    value={form.catalogUnitPrice}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        catalogUnitPrice: event.target.value,
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Contract price">
-                  <Input
-                    min={0}
-                    step="any"
-                    type="number"
-                    value={form.contractUnitPrice}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        contractUnitPrice: event.target.value,
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Discount type">
+        {canEditOriginal ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                {editingLine ? "Edit Service" : "Add Service"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form className="space-y-4" onSubmit={handleSubmit}>
+                <Field label="Catalog item">
                   <Select
-                    value={form.discountType}
-                    onValueChange={(value) =>
-                      setForm({
-                        ...form,
-                        discountType:
-                          value as LineItemFormState["discountType"],
-                      })
-                    }
+                    value={form.catalogItemId ?? "custom"}
+                    onValueChange={selectCatalogItem}
                   >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">No discount</SelectItem>
-                      <SelectItem value="percentage">Percentage</SelectItem>
-                      <SelectItem value="amount">Amount</SelectItem>
+                      <SelectItem value="custom">Custom service</SelectItem>
+                      {serviceCatalog.map((item) => (
+                        <SelectItem key={item._id} value={item._id}>
+                          {item.itemName}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label="Discount value">
-                  <Input
-                    min={0}
-                    step="any"
-                    type="number"
-                    value={form.discountValue}
-                    onChange={(event) =>
-                      setForm({ ...form, discountValue: event.target.value })
-                    }
-                  />
-                </Field>
-                <Field label="Overage price">
-                  <Input
-                    min={0}
-                    step="any"
-                    type="number"
-                    value={form.overageUnitPrice}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        overageUnitPrice: event.target.value,
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Billing unit">
-                  <Input
-                    value={form.billingUnit}
-                    onChange={(event) =>
-                      setForm({ ...form, billingUnit: event.target.value })
-                    }
-                  />
-                </Field>
-              </div>
-              <Field label="Description">
-                <Textarea
-                  value={form.description}
-                  onChange={(event) =>
-                    setForm({ ...form, description: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label="Notes">
-                <Textarea
-                  value={form.notes}
-                  onChange={(event) =>
-                    setForm({ ...form, notes: event.target.value })
-                  }
-                />
-              </Field>
-              {contractIsLocked ? (
-                <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-                  Original services are locked. Use amendments for later
-                  upgrades, downgrades, or commercial changes.
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Service name">
+                    <Input
+                      value={form.itemName}
+                      onChange={(event) =>
+                        setForm({ ...form, itemName: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Category">
+                    <Input
+                      value={form.serviceCategory}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          serviceCategory: event.target.value,
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="Included quantity">
+                    <Input
+                      min={0}
+                      step="any"
+                      type="number"
+                      value={form.includedQuantity}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          includedQuantity: event.target.value,
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="Unit">
+                    <Input
+                      value={form.unit}
+                      onChange={(event) =>
+                        setForm({ ...form, unit: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Catalog price">
+                    <Input
+                      min={0}
+                      step="any"
+                      type="number"
+                      value={form.catalogUnitPrice}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          catalogUnitPrice: event.target.value,
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="Contract price">
+                    <Input
+                      min={0}
+                      step="any"
+                      type="number"
+                      value={form.contractUnitPrice}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          contractUnitPrice: event.target.value,
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="Discount type">
+                    <Select
+                      value={form.discountType}
+                      onValueChange={(value) =>
+                        setForm({
+                          ...form,
+                          discountType:
+                            value as LineItemFormState["discountType"],
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No discount</SelectItem>
+                        <SelectItem value="percentage">Percentage</SelectItem>
+                        <SelectItem value="amount">Amount</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Discount value">
+                    <Input
+                      min={0}
+                      step="any"
+                      type="number"
+                      value={form.discountValue}
+                      onChange={(event) =>
+                        setForm({ ...form, discountValue: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Overage price">
+                    <Input
+                      min={0}
+                      step="any"
+                      type="number"
+                      value={form.overageUnitPrice}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          overageUnitPrice: event.target.value,
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="Billing unit">
+                    <Input
+                      value={form.billingUnit}
+                      onChange={(event) =>
+                        setForm({ ...form, billingUnit: event.target.value })
+                      }
+                    />
+                  </Field>
                 </div>
-              ) : null}
-              <div className="flex justify-end gap-2">
-                {editingLine ? (
-                  <Button type="button" variant="outline" onClick={resetLineForm}>
-                    Clear
+                <Field label="Description">
+                  <Textarea
+                    value={form.description}
+                    onChange={(event) =>
+                      setForm({ ...form, description: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Notes">
+                  <Textarea
+                    value={form.notes}
+                    onChange={(event) =>
+                      setForm({ ...form, notes: event.target.value })
+                    }
+                  />
+                </Field>
+                <div className="flex justify-end gap-2">
+                  {editingLine ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={resetLineForm}
+                    >
+                      Clear
+                    </Button>
+                  ) : null}
+                  <Button disabled={pending} type="submit">
+                    {pending
+                      ? "Saving..."
+                      : editingLine
+                        ? "Save Service"
+                        : "Add Service"}
                   </Button>
-                ) : null}
-                <Button disabled={!canEditOriginal || pending} type="submit">
-                  {pending
-                    ? "Saving..."
-                    : editingLine
-                      ? "Save Service"
-                      : "Add Service"}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
 
       <Card>
