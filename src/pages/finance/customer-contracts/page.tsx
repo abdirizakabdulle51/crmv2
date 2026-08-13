@@ -14,74 +14,28 @@ import {
   CardTitle,
 } from "@/components/ui/card.tsx";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog.tsx";
-import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty.tsx";
-import { Input } from "@/components/ui/input.tsx";
-import { Label } from "@/components/ui/label.tsx";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
-import { Textarea } from "@/components/ui/textarea.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
+import {
+  ContractDialog,
+  type ContractFormState,
+  type ContractStatus,
+} from "./contract-form.tsx";
+import {
+  FREQUENCY_LABELS,
+  STATUS_LABELS,
+  emptyContractForm,
+  formFromContract,
+  timestampFromDateInput,
+} from "./contract-utils.ts";
 
 type CustomerContract = Doc<"customerContracts"> & { companyName: string };
-type BillingFrequency =
-  | "monthly"
-  | "quarterly"
-  | "every_3_months"
-  | "yearly";
-type ContractStatus =
-  | "draft"
-  | "active"
-  | "expired"
-  | "terminated"
-  | "renewed";
-
-type FormState = {
-  companyId?: Id<"companies">;
-  contractNumber: string;
-  title: string;
-  status: ContractStatus;
-  startDate: string;
-  endDate: string;
-  signedDate: string;
-  currency: string;
-  billingFrequency: BillingFrequency;
-  paymentTermDays: string;
-  signedDocumentUrl: string;
-  notes: string;
-};
-
-const STATUS_LABELS: Record<ContractStatus, string> = {
-  draft: "Draft",
-  active: "Active",
-  expired: "Expired",
-  terminated: "Terminated",
-  renewed: "Renewed",
-};
-
-const FREQUENCY_LABELS: Record<BillingFrequency, string> = {
-  monthly: "Monthly",
-  quarterly: "Quarterly",
-  every_3_months: "Every 3 months",
-  yearly: "Yearly",
-};
 
 function isAdminRole(role: Doc<"users">["role"] | undefined) {
   return role === "ceo" || role === "head_of_business";
@@ -96,55 +50,12 @@ function formatDate(timestamp?: number) {
   }).format(new Date(timestamp));
 }
 
-function dateInputFromTimestamp(timestamp?: number) {
-  if (!timestamp) return "";
-  return new Date(timestamp).toISOString().slice(0, 10);
-}
-
-function timestampFromDateInput(value: string) {
-  return new Date(`${value}T00:00:00.000Z`).getTime();
-}
-
-function emptyForm(): FormState {
-  return {
-    companyId: undefined,
-    contractNumber: "",
-    title: "",
-    status: "draft",
-    startDate: "",
-    endDate: "",
-    signedDate: "",
-    currency: "USD",
-    billingFrequency: "monthly",
-    paymentTermDays: "30",
-    signedDocumentUrl: "",
-    notes: "",
-  };
-}
-
-function formFromContract(contract: CustomerContract): FormState {
-  return {
-    companyId: contract.companyId,
-    contractNumber: contract.contractNumber,
-    title: contract.title,
-    status: contract.status,
-    startDate: dateInputFromTimestamp(contract.startDate),
-    endDate: dateInputFromTimestamp(contract.endDate),
-    signedDate: dateInputFromTimestamp(contract.signedDate),
-    currency: contract.currency,
-    billingFrequency: contract.billingFrequency,
-    paymentTermDays: contract.paymentTermDays?.toString() ?? "",
-    signedDocumentUrl: contract.signedDocumentUrl ?? "",
-    notes: contract.notes ?? "",
-  };
-}
-
 function optionalText(value: string) {
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
 }
 
-function buildPayload(form: FormState) {
+function buildPayload(form: ContractFormState) {
   if (!form.companyId) {
     toast.error("Please select a customer");
     return null;
@@ -200,7 +111,7 @@ export default function CustomerContractsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingContract, setEditingContract] =
     useState<CustomerContract | null>(null);
-  const [form, setForm] = useState<FormState>(emptyForm);
+  const [form, setForm] = useState<ContractFormState>(emptyContractForm);
   const [pending, setPending] = useState(false);
 
   const sortedCompanies = useMemo(
@@ -224,7 +135,7 @@ export default function CustomerContractsPage() {
 
   const openCreate = () => {
     setEditingContract(null);
-    setForm(emptyForm());
+    setForm(emptyContractForm());
     setDialogOpen(true);
   };
 
@@ -412,7 +323,7 @@ export default function CustomerContractsPage() {
       <ContractDialog
         canManage={canManage}
         companies={sortedCompanies}
-        editingContract={editingContract}
+        editing={!!editingContract}
         form={form}
         open={dialogOpen}
         pending={pending}
@@ -454,211 +365,4 @@ function StatusBadge({ status }: { status: ContractStatus }) {
     return <Badge variant="destructive">Terminated</Badge>;
   }
   return <Badge variant="outline">{STATUS_LABELS[status]}</Badge>;
-}
-
-function ContractDialog({
-  canManage,
-  companies,
-  editingContract,
-  form,
-  open,
-  pending,
-  setForm,
-  setOpen,
-  onSubmit,
-}: {
-  canManage: boolean;
-  companies: Doc<"companies">[];
-  editingContract: CustomerContract | null;
-  form: FormState;
-  open: boolean;
-  pending: boolean;
-  setForm: (form: FormState) => void;
-  setOpen: (open: boolean) => void;
-  onSubmit: (event: FormEvent) => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>
-            {editingContract ? "Edit Contract" : "New Contract"}
-          </DialogTitle>
-        </DialogHeader>
-        <form className="space-y-5" onSubmit={onSubmit}>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Customer">
-              <Select
-                value={form.companyId}
-                onValueChange={(value) =>
-                  setForm({ ...form, companyId: value as Id<"companies"> })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select customer" />
-                </SelectTrigger>
-                <SelectContent>
-                  {companies.map((company) => (
-                    <SelectItem key={company._id} value={company._id}>
-                      {company.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Contract number">
-              <Input
-                value={form.contractNumber}
-                onChange={(event) =>
-                  setForm({ ...form, contractNumber: event.target.value })
-                }
-                placeholder="HTG-2026-001"
-              />
-            </Field>
-            <Field label="Title">
-              <Input
-                value={form.title}
-                onChange={(event) =>
-                  setForm({ ...form, title: event.target.value })
-                }
-                placeholder="Managed cloud services contract"
-              />
-            </Field>
-            <Field label="Status">
-              <Select
-                value={form.status}
-                onValueChange={(value) =>
-                  setForm({ ...form, status: value as ContractStatus })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(STATUS_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Start date">
-              <Input
-                type="date"
-                value={form.startDate}
-                onChange={(event) =>
-                  setForm({ ...form, startDate: event.target.value })
-                }
-              />
-            </Field>
-            <Field label="End date">
-              <Input
-                type="date"
-                value={form.endDate}
-                onChange={(event) =>
-                  setForm({ ...form, endDate: event.target.value })
-                }
-              />
-            </Field>
-            <Field label="Signed date">
-              <Input
-                type="date"
-                value={form.signedDate}
-                onChange={(event) =>
-                  setForm({ ...form, signedDate: event.target.value })
-                }
-              />
-            </Field>
-            <Field label="Currency">
-              <Input
-                value={form.currency}
-                onChange={(event) =>
-                  setForm({ ...form, currency: event.target.value })
-                }
-              />
-            </Field>
-            <Field label="Billing frequency">
-              <Select
-                value={form.billingFrequency}
-                onValueChange={(value) =>
-                  setForm({
-                    ...form,
-                    billingFrequency: value as BillingFrequency,
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(FREQUENCY_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Payment terms">
-              <Input
-                min={0}
-                type="number"
-                value={form.paymentTermDays}
-                onChange={(event) =>
-                  setForm({ ...form, paymentTermDays: event.target.value })
-                }
-                placeholder="30"
-              />
-            </Field>
-            <Field label="Signed document link">
-              <Input
-                value={form.signedDocumentUrl}
-                onChange={(event) =>
-                  setForm({ ...form, signedDocumentUrl: event.target.value })
-                }
-                placeholder="https://..."
-              />
-            </Field>
-          </div>
-          <Field label="Notes">
-            <Textarea
-              value={form.notes}
-              onChange={(event) =>
-                setForm({ ...form, notes: event.target.value })
-              }
-              placeholder="Internal contract notes"
-            />
-          </Field>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button disabled={!canManage || pending} type="submit">
-              {pending ? "Saving..." : "Save Contract"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function Field({
-  children,
-  label,
-}: {
-  children: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
-      {children}
-    </div>
-  );
 }

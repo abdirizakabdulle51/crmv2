@@ -32,6 +32,16 @@ import {
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
+import {
+  ContractDialog,
+  type ContractFormState,
+} from "./contract-form.tsx";
+import {
+  FREQUENCY_LABELS,
+  emptyContractForm,
+  formFromContract,
+  timestampFromDateInput,
+} from "./contract-utils.ts";
 
 type ContractLineItem = Doc<"customerContractLineItems">;
 type ServiceCatalogItem = Doc<"serviceCatalog">;
@@ -50,13 +60,6 @@ type LineItemFormState = {
   billingUnit: string;
   notes: string;
 };
-
-const FREQUENCY_LABELS = {
-  monthly: "Monthly",
-  quarterly: "Quarterly",
-  every_3_months: "Every 3 months",
-  yearly: "Yearly",
-} as const;
 
 function isAdminRole(role: Doc<"users">["role"] | undefined) {
   return role === "ceo" || role === "head_of_business";
@@ -182,6 +185,7 @@ export default function CustomerContractDetailPage() {
     api.customerContracts.get,
     parsedContractId ? { contractId: parsedContractId } : "skip",
   );
+  const companies = useQuery(api.companies.list, {});
   const lineItems = useQuery(
     api.customerContracts.listLineItems,
     parsedContractId ? { contractId: parsedContractId } : "skip",
@@ -190,9 +194,14 @@ export default function CustomerContractDetailPage() {
   const createLineItem = useMutation(api.customerContracts.createLineItem);
   const updateLineItem = useMutation(api.customerContracts.updateLineItem);
   const removeLineItem = useMutation(api.customerContracts.removeLineItem);
+  const updateContract = useMutation(api.customerContracts.update);
   const [editingLine, setEditingLine] = useState<ContractLineItem | null>(null);
   const [form, setForm] = useState<LineItemFormState>(emptyLineItemForm);
+  const [contractDialogOpen, setContractDialogOpen] = useState(false);
+  const [contractForm, setContractForm] =
+    useState<ContractFormState>(emptyContractForm);
   const [pending, setPending] = useState(false);
+  const [contractPending, setContractPending] = useState(false);
 
   const lineTotal = useMemo(
     () =>
@@ -203,10 +212,77 @@ export default function CustomerContractDetailPage() {
       ),
     [lineItems],
   );
+  const sortedCompanies = useMemo(
+    () => [...(companies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+    [companies],
+  );
 
   const resetLineForm = () => {
     setEditingLine(null);
     setForm(emptyLineItemForm());
+  };
+
+  const openContractEdit = (
+    loadedContract: NonNullable<typeof contract>,
+  ) => {
+    setContractForm(formFromContract(loadedContract));
+    setContractDialogOpen(true);
+  };
+
+  const handleContractSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!parsedContractId || !contractForm.companyId) {
+      toast.error("Please select a customer");
+      return;
+    }
+    if (
+      !contractForm.contractNumber.trim() ||
+      !contractForm.title.trim() ||
+      !contractForm.startDate ||
+      !contractForm.endDate ||
+      !contractForm.currency.trim()
+    ) {
+      toast.error("Please fill all required contract fields");
+      return;
+    }
+    const paymentTermDays = contractForm.paymentTermDays.trim()
+      ? Number(contractForm.paymentTermDays)
+      : undefined;
+    if (
+      paymentTermDays !== undefined &&
+      (!Number.isFinite(paymentTermDays) || paymentTermDays < 0)
+    ) {
+      toast.error("Payment terms must be a valid number of days");
+      return;
+    }
+    setContractPending(true);
+    try {
+      await updateContract({
+        contractId: parsedContractId,
+        companyId: contractForm.companyId,
+        contractNumber: contractForm.contractNumber.trim(),
+        title: contractForm.title.trim(),
+        status: contractForm.status,
+        startDate: timestampFromDateInput(contractForm.startDate),
+        endDate: timestampFromDateInput(contractForm.endDate),
+        signedDate: contractForm.signedDate
+          ? timestampFromDateInput(contractForm.signedDate)
+          : undefined,
+        currency: contractForm.currency.trim().toUpperCase(),
+        billingFrequency: contractForm.billingFrequency,
+        paymentTermDays,
+        signedDocumentUrl: optionalText(contractForm.signedDocumentUrl),
+        notes: optionalText(contractForm.notes),
+      });
+      toast.success("Customer contract updated");
+      setContractDialogOpen(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not update contract",
+      );
+    } finally {
+      setContractPending(false);
+    }
   };
 
   const selectCatalogItem = (value: string) => {
@@ -299,6 +375,7 @@ export default function CustomerContractDetailPage() {
 
   if (
     contract === undefined ||
+    companies === undefined ||
     lineItems === undefined ||
     serviceCatalog === undefined ||
     currentUser === undefined
@@ -352,9 +429,22 @@ export default function CustomerContractDetailPage() {
           </div>
           <p className="mt-1 text-muted-foreground">{contract.title}</p>
         </div>
-        <div className="text-sm text-muted-foreground">
-          Updated {formatDateTime(contract.updatedAt)}
+        <div className="flex flex-col items-start gap-2 lg:items-end">
+          <div className="text-sm text-muted-foreground">
+            Updated {formatDateTime(contract.updatedAt)}
+          </div>
+          {canManage ? (
+            <Button variant="outline" onClick={() => openContractEdit(contract)}>
+              <Pencil className="mr-2 h-4 w-4" />
+              Edit Contract
+            </Button>
+          ) : null}
         </div>
+      </div>
+
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+        Contract setup only. This page does not generate invoices or change
+        existing invoice billing.
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -368,9 +458,26 @@ export default function CustomerContractDetailPage() {
           value={FREQUENCY_LABELS[contract.billingFrequency]}
         />
         <InfoCard
-          label="Line total"
+          label="Monthly contract total"
           value={formatMoney(lineTotal, contract.currency)}
         />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <InfoCard label="Signed date" value={formatDate(contract.signedDate)} />
+        <InfoCard
+          label="Payment terms"
+          value={
+            contract.paymentTermDays === undefined
+              ? "-"
+              : `${contract.paymentTermDays} days`
+          }
+        />
+        <InfoCard
+          label="Signed document"
+          value={contract.signedDocumentUrl ? "Linked" : "Not attached"}
+        />
+        <InfoCard label="Currency" value={contract.currency} />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
@@ -681,6 +788,17 @@ export default function CustomerContractDetailPage() {
           )}
         </CardContent>
       </Card>
+      <ContractDialog
+        canManage={canManage}
+        companies={sortedCompanies}
+        editing
+        form={contractForm}
+        open={contractDialogOpen}
+        pending={contractPending}
+        setForm={setContractForm}
+        setOpen={setContractDialogOpen}
+        onSubmit={handleContractSubmit}
+      />
     </div>
   );
 }
