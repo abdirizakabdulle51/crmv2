@@ -443,7 +443,7 @@ export function buildMonthlyRollupRows(args: {
           ? {
               contractId: contractMatch.contract._id,
               contractNumber: contractMatch.contract.contractNumber,
-              contractLineItemId: contractLine._id,
+              contractLineItemId: contractMatch.line._id,
             }
           : {}),
       } satisfies RollupRow;
