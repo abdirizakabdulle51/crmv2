@@ -294,6 +294,19 @@ function usageMatchesLine(
   );
 }
 
+function discountAmount(line: Doc<"customerContractLineItems">, gross: number) {
+  if (!line.discountType || line.discountValue === undefined) return 0;
+  if (line.discountType === "percentage") {
+    return Math.min(gross, gross * (line.discountValue / 100));
+  }
+  return Math.min(gross, line.discountValue);
+}
+
+function contractLineBaseAmount(line: Doc<"customerContractLineItems">) {
+  const gross = line.includedQuantity * line.contractUnitPrice;
+  return Math.max(0, gross - discountAmount(line, gross));
+}
+
 function comparisonRow(
   line: Doc<"customerContractLineItems">,
   usageEntries: Doc<"consumption">[],
@@ -312,7 +325,7 @@ function comparisonRow(
     0,
   );
   const overageQuantity = Math.max(0, actualQuantity - line.includedQuantity);
-  const baseAmount = line.includedQuantity * line.contractUnitPrice;
+  const baseAmount = contractLineBaseAmount(line);
   const overageAmount =
     overageQuantity * (line.overageUnitPrice ?? line.contractUnitPrice);
 

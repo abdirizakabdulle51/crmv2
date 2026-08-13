@@ -181,6 +181,19 @@ function formatMoney(value: number | undefined, currency = "USD") {
   }).format(value);
 }
 
+function getLineDiscountAmount(line: ContractLineItem, gross: number) {
+  if (!line.discountType || line.discountValue === undefined) return 0;
+  if (line.discountType === "percentage") {
+    return Math.min(gross, gross * (line.discountValue / 100));
+  }
+  return Math.min(gross, line.discountValue);
+}
+
+function getContractLineAmount(line: ContractLineItem) {
+  const gross = line.includedQuantity * line.contractUnitPrice;
+  return Math.max(0, gross - getLineDiscountAmount(line, gross));
+}
+
 export default function CustomerContractDetailPage() {
   const navigate = useNavigate();
   const { contractId } = useParams();
@@ -224,8 +237,7 @@ export default function CustomerContractDetailPage() {
   const lineTotal = useMemo(
     () =>
       (lineItems ?? []).reduce(
-        (total, line) =>
-          total + line.includedQuantity * line.contractUnitPrice,
+        (total, line) => total + getContractLineAmount(line),
         0,
       ),
     [lineItems],
@@ -558,7 +570,7 @@ export default function CustomerContractDetailPage() {
                         </td>
                         <td className="px-3 py-3 font-medium">
                           {formatMoney(
-                            line.includedQuantity * line.contractUnitPrice,
+                            getContractLineAmount(line),
                             contract.currency,
                           )}
                         </td>
