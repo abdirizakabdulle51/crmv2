@@ -981,6 +981,83 @@ export default defineSchema({
     .index("by_default_active", ["isDefault", "isActive"])
     .index("by_active", ["isActive"]),
 
+  customerContracts: defineTable({
+    companyId: v.id("companies"),
+    contractNumber: v.string(),
+    title: v.string(),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("active"),
+      v.literal("expired"),
+      v.literal("terminated"),
+      v.literal("renewed"),
+    ),
+    startDate: v.number(),
+    endDate: v.number(),
+    signedDate: v.optional(v.number()),
+    currency: v.string(),
+    billingFrequency: v.union(
+      v.literal("monthly"),
+      v.literal("quarterly"),
+      v.literal("every_3_months"),
+      v.literal("yearly"),
+    ),
+    paymentTermDays: v.optional(v.number()),
+    signedDocumentUrl: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    activatedAt: v.optional(v.number()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_company", ["companyId"])
+    .index("by_status", ["status"])
+    .index("by_contract_number", ["contractNumber"])
+    .index("by_start_date", ["startDate"]),
+
+  customerContractEvents: defineTable({
+    contractId: v.id("customerContracts"),
+    actorId: v.id("users"),
+    type: v.union(
+      v.literal("created"),
+      v.literal("updated"),
+      v.literal("activated"),
+      v.literal("terminated"),
+      v.literal("expired"),
+      v.literal("renewed"),
+    ),
+    message: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_contract", ["contractId"])
+    .index("by_actor", ["actorId"])
+    .index("by_type", ["type"]),
+
+  customerContractLineItems: defineTable({
+    contractId: v.id("customerContracts"),
+    catalogItemId: v.optional(v.id("serviceCatalog")),
+    itemName: v.string(),
+    serviceCategory: v.string(),
+    description: v.optional(v.string()),
+    includedQuantity: v.number(),
+    unit: v.string(),
+    catalogUnitPrice: v.optional(v.number()),
+    contractUnitPrice: v.number(),
+    discountType: v.optional(
+      v.union(v.literal("percentage"), v.literal("amount")),
+    ),
+    discountValue: v.optional(v.number()),
+    overageUnitPrice: v.optional(v.number()),
+    billingUnit: v.string(),
+    notes: v.optional(v.string()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_contract", ["contractId"])
+    .index("by_catalog_item", ["catalogItemId"])
+    .index("by_service_category", ["serviceCategory"]),
+
   quotes: defineTable({
     companyId: v.id("companies"),
     createdBy: v.id("users"),

@@ -27,6 +27,7 @@ import {
   Tags,
   SlidersHorizontal,
   Landmark,
+  FileSignature,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -68,6 +69,11 @@ const NAV_ITEMS = [
     to: "/finance/invoice-profiles",
     label: "Invoice Profiles",
     icon: Landmark,
+  },
+  {
+    to: "/finance/customer-contracts",
+    label: "Customer Contracts",
+    icon: FileSignature,
   },
   {
     to: "/finance/settings",
@@ -116,6 +122,7 @@ const NAV_GROUPS = [
       "/finance/reports",
       "/finance/expense-categories",
       "/finance/invoice-profiles",
+      "/finance/customer-contracts",
       "/finance/settings",
     ],
   },
