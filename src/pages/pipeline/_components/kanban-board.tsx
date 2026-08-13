@@ -48,7 +48,89 @@ export default function KanbanBoard({
   // Only show active pipeline stages in board (not won/lost by default)
   const boardStages = STAGES.filter((s) => s !== "won" && s !== "lost");
 
-  const renderStageColumn = (stage: LeadStage) => {
+  const renderLeadCard = (lead: Doc<"leads">, compact = false) => {
+    const company = companyMap.get(lead.companyId);
+
+    if (compact) {
+      return (
+        <Card
+          key={lead._id}
+          className="cursor-pointer transition-colors hover:border-primary/30"
+          onClick={() => onEditLead(lead)}
+        >
+          <CardContent className="flex items-center justify-between gap-3 p-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium">{lead.title}</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {company?.name || "Unknown"}
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-sm font-medium">
+                {formatCurrency(lead.potentialValue)}
+              </div>
+              <div className="mt-1 flex items-center justify-end gap-1 text-xs text-muted-foreground">
+                <CalendarDays className="h-3 w-3" />
+                {format(new Date(lead.expectedCloseDate), "MMM d")}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return (
+      <Card
+        key={lead._id}
+        className="cursor-pointer transition-colors hover:border-primary/30"
+        onClick={() => onEditLead(lead)}
+      >
+        <CardContent className="space-y-2 p-3">
+          <div className="truncate text-sm font-medium">{lead.title}</div>
+          <div className="truncate text-xs text-muted-foreground">
+            {company?.name || "Unknown"}
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+              <DollarSign className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                {formatCurrency(lead.potentialValue)}
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+              <CalendarDays className="h-3 w-3" />
+              {format(new Date(lead.expectedCloseDate), "MMM d")}
+            </div>
+          </div>
+          {lead.nextAction && (
+            <div className="truncate rounded bg-primary/5 px-2 py-1 text-xs text-primary/80">
+              {lead.nextAction}
+            </div>
+          )}
+          <Select
+            value={lead.stage}
+            onValueChange={(v) => handleStageChange(lead._id, v as LeadStage)}
+          >
+            <SelectTrigger
+              className="h-8 w-full text-xs"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STAGES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {STAGE_LABELS[s]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  const renderStageColumn = (stage: LeadStage, compactCards = false) => {
     const stageLeads = leads.filter((l) => l.stage === stage);
     const stageValue = stageLeads.reduce(
       (sum, l) => sum + l.potentialValue,
@@ -82,62 +164,7 @@ export default function KanbanBoard({
               No leads in this stage
             </div>
           ) : (
-            stageLeads.map((lead) => {
-              const company = companyMap.get(lead.companyId);
-              return (
-                <Card
-                  key={lead._id}
-                  className="cursor-pointer transition-colors hover:border-primary/30"
-                  onClick={() => onEditLead(lead)}
-                >
-                  <CardContent className="space-y-2 p-3">
-                    <div className="truncate text-sm font-medium">
-                      {lead.title}
-                    </div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {company?.name || "Unknown"}
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                        <DollarSign className="h-3 w-3 shrink-0" />
-                        <span className="truncate">
-                          {formatCurrency(lead.potentialValue)}
-                        </span>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                        <CalendarDays className="h-3 w-3" />
-                        {format(new Date(lead.expectedCloseDate), "MMM d")}
-                      </div>
-                    </div>
-                    {lead.nextAction && (
-                      <div className="truncate rounded bg-primary/5 px-2 py-1 text-xs text-primary/80">
-                        {lead.nextAction}
-                      </div>
-                    )}
-                    <Select
-                      value={lead.stage}
-                      onValueChange={(v) =>
-                        handleStageChange(lead._id, v as LeadStage)
-                      }
-                    >
-                      <SelectTrigger
-                        className="h-8 w-full text-xs"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {STAGES.map((s) => (
-                          <SelectItem key={s} value={s}>
-                            {STAGE_LABELS[s]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </CardContent>
-                </Card>
-              );
-            })
+            stageLeads.map((lead) => renderLeadCard(lead, compactCards))
           )}
         </div>
       </section>
@@ -147,7 +174,7 @@ export default function KanbanBoard({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {boardStages.map(renderStageColumn)}
+        {boardStages.map((stage) => renderStageColumn(stage))}
       </div>
 
       <div>
@@ -155,7 +182,9 @@ export default function KanbanBoard({
           Closed pipeline
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {(["won", "lost"] as LeadStage[]).map(renderStageColumn)}
+          {(["won", "lost"] as LeadStage[]).map((stage) =>
+            renderStageColumn(stage, true),
+          )}
         </div>
       </div>
     </div>
