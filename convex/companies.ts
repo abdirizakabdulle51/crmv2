@@ -216,6 +216,7 @@ export const update = mutation({
     const { id, ...fields } = args;
     await ctx.db.patch(id, {
       ...fields,
+      name: company.name,
       accountManagerId,
       countryId: isCeoOrHob(currentUser) ? fields.countryId : company.countryId,
     });

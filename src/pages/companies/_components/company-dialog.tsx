@@ -130,6 +130,7 @@ type CompanyFormProps = {
   users: Doc<"users">[];
   onFinished: () => void;
   isActive?: boolean;
+  showManageOneUsage?: boolean;
 };
 
 export function CompanyForm({
@@ -139,13 +140,14 @@ export function CompanyForm({
   users,
   onFinished,
   isActive = true,
+  showManageOneUsage = true,
 }: CompanyFormProps) {
   const createCompany = useMutation(api.companies.create);
   const updateCompany = useMutation(api.companies.update);
   const removeCompany = useMutation(api.companies.remove);
   const manageOneTenants = useQuery(
     api.manageOneTenants.getByCompanyId,
-    company ? { companyId: company._id } : "skip",
+    company && showManageOneUsage ? { companyId: company._id } : "skip",
   );
   const { isAdmin, currentUser } = useCrm();
 
@@ -232,7 +234,7 @@ export function CompanyForm({
 
     try {
       const data = {
-        name: name.trim(),
+        name: company ? company.name : name.trim(),
         sectorId: sectorId as Id<"sectors">,
         countryId: countryId as Id<"countries">,
         accountManagerId: effectiveAccountManagerId as Id<"users">,
@@ -293,8 +295,15 @@ export function CompanyForm({
           <Label>Company Name *</Label>
           <Input
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              if (!company) {
+                setName(e.target.value);
+              }
+            }}
             placeholder="e.g. Acme Corporation"
+            readOnly={!!company}
+            aria-readonly={!!company}
+            className={company ? "bg-muted/40 text-muted-foreground" : undefined}
           />
         </div>
 
@@ -447,29 +456,8 @@ export function CompanyForm({
           />
         </div>
 
-        {company && manageOneTenants && manageOneTenants.length > 0 && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">ManageOne Usage</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {manageOneTenants.length === 1 ? (
-                <ManageOneTenantStats tenant={manageOneTenants[0]} />
-              ) : (
-                <div className="space-y-3 text-sm">
-                  {manageOneTenants.map((tenant) => (
-                    <div
-                      key={tenant._id}
-                      className="rounded-md border px-3 py-2"
-                    >
-                      <div className="font-medium">{tenant.name}</div>
-                      <ManageOneTenantStats tenant={tenant} />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        {showManageOneUsage && (
+          <ManageOneUsageCard manageOneTenants={manageOneTenants} />
         )}
 
         <div className="flex gap-2 pt-2">
@@ -498,6 +486,62 @@ export function CompanyForm({
         loading={deleting}
       />
     </>
+  );
+}
+
+export function ManageOneUsageCard({
+  manageOneTenants,
+}: {
+  manageOneTenants: ManageOneTenant[] | undefined;
+}) {
+  if (!manageOneTenants) {
+    return (
+      <Card className="max-w-5xl">
+        <CardHeader>
+          <CardTitle>ManageOne Usage</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          Loading ManageOne usage...
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (manageOneTenants.length === 0) {
+    return (
+      <Card className="max-w-5xl">
+        <CardHeader>
+          <CardTitle>ManageOne Usage</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+            No linked ManageOne usage has been received for this company yet.
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="max-w-5xl">
+      <CardHeader>
+        <CardTitle>ManageOne Usage</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {manageOneTenants.length === 1 ? (
+          <ManageOneTenantStats tenant={manageOneTenants[0]} />
+        ) : (
+          <div className="space-y-3 text-sm">
+            {manageOneTenants.map((tenant) => (
+              <div key={tenant._id} className="rounded-md border px-3 py-2">
+                <div className="font-medium">{tenant.name}</div>
+                <ManageOneTenantStats tenant={tenant} />
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

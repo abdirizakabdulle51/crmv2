@@ -1,5 +1,6 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   CartesianGrid,
   Line,
@@ -19,11 +20,26 @@ import {
   CardTitle,
 } from "@/components/ui/card.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs.tsx";
 import { ArrowLeft } from "lucide-react";
 import { useCrm } from "@/lib/crm-context.tsx";
-import { CompanyForm } from "./_components/company-dialog.tsx";
+import {
+  CompanyForm,
+  ManageOneUsageCard,
+} from "./_components/company-dialog.tsx";
+import { isDrMode } from "@/lib/dr-mode.ts";
 
 type TenantUsageHistoryRow = Doc<"tenantUsageHistory">;
+type Company = Doc<"companies">;
+type Country = Doc<"countries">;
+type Sector = Doc<"sectors">;
+type User = Doc<"users">;
+type ManageOneTenant = Doc<"manageOneTenants">;
 
 const CHART_GROUPS = [
   {
@@ -214,6 +230,82 @@ function UsageTrendsSection({
   );
 }
 
+function useDrRow<T>(path: string | null) {
+  const [row, setRow] = useState<T | undefined>();
+
+  useEffect(() => {
+    if (!path) {
+      return;
+    }
+
+    const controller = new AbortController();
+    setRow(undefined);
+
+    fetch(path, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`${path} failed: ${response.status}`);
+        }
+        const payload = (await response.json()) as { row: T };
+        return payload.row;
+      })
+      .then(setRow)
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          console.error(error);
+        }
+      });
+
+    return () => controller.abort();
+  }, [path]);
+
+  return row;
+}
+
+function useDrRows<T>(path: string | null) {
+  const [rows, setRows] = useState<T[] | undefined>();
+
+  useEffect(() => {
+    if (!path) {
+      return;
+    }
+
+    const controller = new AbortController();
+    setRows(undefined);
+
+    fetch(path, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`${path} failed: ${response.status}`);
+        }
+        const payload = (await response.json()) as { rows: T[] };
+        return payload.rows;
+      })
+      .then(setRows)
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          console.error(error);
+          setRows([]);
+        }
+      });
+
+    return () => controller.abort();
+  }, [path]);
+
+  return rows;
+}
+
+function DetailItem({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="rounded-md border bg-background/50 p-3">
+      <div className="text-xs font-medium uppercase text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 text-sm font-medium">{value || "-"}</div>
+    </div>
+  );
+}
+
 export default function CompanyDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -221,17 +313,44 @@ export default function CompanyDetailPage() {
   const companyId = id as Id<"companies"> | undefined;
   const canViewTrends = canViewUsageHistory(currentUser?.role);
 
-  const company = useQuery(
+  const convexCompany = useQuery(
     api.companies.getById,
-    companyId ? { id: companyId } : "skip",
+    companyId && !isDrMode ? { id: companyId } : "skip",
   );
-  const countries = useQuery(api.countries.list, {});
-  const sectors = useQuery(api.sectors.list, {});
-  const users = useQuery(api.users.listAll, {});
-  const usageHistory = useQuery(
+  const convexCountries = useQuery(api.countries.list, isDrMode ? "skip" : {});
+  const convexSectors = useQuery(api.sectors.list, isDrMode ? "skip" : {});
+  const convexUsers = useQuery(api.users.listAll, isDrMode ? "skip" : {});
+  const convexUsageHistory = useQuery(
     api.tenantUsageHistory.history,
-    companyId && canViewTrends ? { companyId } : "skip",
+    companyId && canViewTrends && !isDrMode ? { companyId } : "skip",
   );
+  const convexManageOneTenants = useQuery(
+    api.manageOneTenants.getByCompanyId,
+    companyId && !isDrMode ? { companyId } : "skip",
+  );
+  const drCompany = useDrRow<Company>(
+    isDrMode && companyId ? `/api/companies/${companyId}` : null,
+  );
+  const drCountries = useDrRows<Country>(
+    isDrMode ? "/api/countries?limit=1000" : null,
+  );
+  const drSectors = useDrRows<Sector>(
+    isDrMode ? "/api/sectors?limit=1000" : null,
+  );
+  const drUsers = useDrRows<User>(isDrMode ? "/api/users?limit=1000" : null);
+  const drUsageHistory = useDrRows<TenantUsageHistoryRow>(
+    isDrMode && companyId && canViewTrends
+      ? `/api/tenant-usage-history?companyId=${companyId}&limit=2000`
+      : null,
+  );
+  const company = isDrMode ? drCompany : convexCompany;
+  const countries = isDrMode ? drCountries : convexCountries;
+  const sectors = isDrMode ? drSectors : convexSectors;
+  const users = isDrMode ? drUsers : convexUsers;
+  const usageHistory = isDrMode ? drUsageHistory : convexUsageHistory;
+  const manageOneTenants: ManageOneTenant[] | undefined = isDrMode
+    ? []
+    : convexManageOneTenants;
 
   const goBack = () => navigate("/companies");
 
@@ -253,23 +372,109 @@ export default function CompanyDetailPage() {
       </Button>
 
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Edit Company</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {isDrMode ? "Company Details" : "Edit Company"}
+        </h1>
         <p className="mt-1 text-muted-foreground">{company.name}</p>
       </div>
 
-      <Card className="max-w-3xl">
-        <CardContent className="pt-6">
-          <CompanyForm
-            company={company}
-            countries={countries}
-            sectors={sectors}
-            users={users}
-            onFinished={goBack}
-          />
-        </CardContent>
-      </Card>
+      <Tabs defaultValue="company-info" className="max-w-5xl">
+        <TabsList className="grid h-auto w-full grid-cols-3">
+          <TabsTrigger value="company-info">Company Info</TabsTrigger>
+          <TabsTrigger value="usage-trends">Usage Trends</TabsTrigger>
+          <TabsTrigger value="manageone-usage">ManageOne Usage</TabsTrigger>
+        </TabsList>
 
-      {canViewTrends && <UsageTrendsSection history={usageHistory} />}
+        <TabsContent value="company-info" className="mt-4">
+          {isDrMode ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Company Info</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <DetailItem label="Company" value={company.name} />
+                <DetailItem
+                  label="Sector"
+                  value={
+                    sectors.find((sector) => sector._id === company.sectorId)
+                      ?.name
+                  }
+                />
+                <DetailItem
+                  label="Country"
+                  value={
+                    countries.find(
+                      (country) => country._id === company.countryId,
+                    )
+                      ? `${countries.find((country) => country._id === company.countryId)?.name} (${countries.find((country) => country._id === company.countryId)?.region})`
+                      : undefined
+                  }
+                />
+                <DetailItem
+                  label="Account Manager"
+                  value={
+                    users.find((user) => user._id === company.accountManagerId)
+                      ?.name
+                  }
+                />
+                <DetailItem
+                  label="Contract Status"
+                  value={company.contractStatus}
+                />
+                <DetailItem
+                  label="Payment Status"
+                  value={company.paymentStatus}
+                />
+                <DetailItem
+                  label="Payment Terms"
+                  value={
+                    company.paymentTermDays
+                      ? `${company.paymentTermDays} days`
+                      : undefined
+                  }
+                />
+                <DetailItem label="Contact" value={company.contactName} />
+                <DetailItem label="Email" value={company.contactEmail} />
+                <DetailItem label="Website" value={company.website} />
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="max-w-3xl">
+              <CardContent className="pt-6">
+                <CompanyForm
+                  company={company}
+                  countries={countries}
+                  sectors={sectors}
+                  users={users}
+                  onFinished={goBack}
+                  showManageOneUsage={false}
+                />
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="usage-trends" className="mt-4">
+          {canViewTrends ? (
+            <UsageTrendsSection history={usageHistory} />
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Usage Trends</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                  You do not have access to company usage trends.
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="manageone-usage" className="mt-4">
+          <ManageOneUsageCard manageOneTenants={manageOneTenants} />
+        </TabsContent>
+      </Tabs>
 
       <div className="h-12" aria-hidden="true" />
     </div>
