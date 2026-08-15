@@ -18,8 +18,6 @@ import type { PaceMetrics, QuarterlyTargets } from "./_lib/pace-utils.ts";
 export default function PerformancePage() {
   const { currentUser } = useCrm();
   const users = useQuery(api.users.listAll, {});
-  const leads = useQuery(api.leads.list, {});
-  const companies = useQuery(api.companies.list, {});
   const countries = useQuery(api.countries.list, {});
   const sectors = useQuery(api.sectors.list, {});
 
@@ -27,8 +25,9 @@ export default function PerformancePage() {
   const { quarter } = getQuarterRange(today);
   const year = today.getFullYear();
   const targets = useQuery(api.salesTargets.getByYear, { year });
+  const achievement = useQuery(api.targetAchievement.byYear, { year });
 
-  if (!users || !leads || !targets || !companies || !countries || !sectors) {
+  if (!users || !targets || !countries || !sectors || !achievement) {
     return (
       <div className="p-6 md:p-8 space-y-4">
         <Skeleton className="h-8 w-64" />
@@ -42,13 +41,9 @@ export default function PerformancePage() {
     );
   }
 
-  const wonLeads = leads.filter((l) => l.stage === "won");
-
-  // Helper: get achieved value for an AM (all won deals this year)
+  // Helper: get achieved value for an AM (collected invoice payments from assigned accounts)
   const getAchieved = (amId: Id<"users">) =>
-    wonLeads
-      .filter((l) => l.accountManagerId === amId)
-      .reduce((s, l) => s + l.potentialValue, 0);
+    achievement.byAccountManager[amId] ?? 0;
 
   // Helper: get all 4 quarterly targets for an AM
   const getQuarterlyTargets = (amId: Id<"users">): QuarterlyTargets => {
@@ -105,15 +100,12 @@ export default function PerformancePage() {
   }).filter((d) => d.pace.yearlyTarget > 0 || d.pace.achieved > 0);
 
   // Sector rollup (for CEO)
-  const sectorRollup = sectors.map((sector) => {
-    const sectorCompanies = companies.filter((c) => c.sectorId === sector._id);
-    const sectorCompanyIds = new Set(sectorCompanies.map((c) => c._id));
-    const sectorWon = wonLeads.filter(
-      (l) => l.companyId && sectorCompanyIds.has(l.companyId),
-    );
-    const achieved = sectorWon.reduce((s, l) => s + l.potentialValue, 0);
-    return { sector, achieved, dealCount: sectorWon.length };
-  }).filter((d) => d.achieved > 0);
+  const sectorRollup = sectors
+    .map((sector) => ({
+      sector,
+      achieved: achievement.bySector[sector._id] ?? 0,
+    }))
+    .filter((d) => d.achieved > 0);
 
   const isCeoOrHob = currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
   const isGm = currentUser?.role === "country_gm";
@@ -274,7 +266,7 @@ export default function PerformancePage() {
       {isCeoOrHob && sectorRollup.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Won Revenue by Sector</CardTitle>
+            <CardTitle className="text-base">Collected Revenue by Sector</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -282,8 +274,7 @@ export default function PerformancePage() {
                 <thead>
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-2 pr-4 font-medium">Sector</th>
-                    <th className="text-right py-2 px-3 font-medium">Won Revenue</th>
-                    <th className="text-right py-2 px-3 font-medium">Deals Won</th>
+                    <th className="text-right py-2 px-3 font-medium">Collected Revenue</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -293,7 +284,6 @@ export default function PerformancePage() {
                       <tr key={d.sector._id} className="border-b last:border-0">
                         <td className="py-2 pr-4 font-medium">{d.sector.name}</td>
                         <td className="py-2 px-3 text-right">{formatCurrency(d.achieved)}</td>
-                        <td className="py-2 px-3 text-right">{d.dealCount}</td>
                       </tr>
                     ))}
                 </tbody>

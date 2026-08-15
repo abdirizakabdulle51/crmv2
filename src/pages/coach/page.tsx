@@ -37,12 +37,15 @@ export default function CoachPage() {
   const users = useQuery(api.users.listAll, {});
   const leads = useQuery(api.leads.list, {});
   const targets = useQuery(api.salesTargets.list, { year: new Date().getFullYear() });
+  const achievement = useQuery(api.targetAchievement.byYear, {
+    year: new Date().getFullYear(),
+  });
   const companies = useQuery(api.companies.list, {});
   const consumption = useQuery(api.consumption.list, {});
   const sectors = useQuery(api.sectors.list, {});
   const catalog = useQuery(api.serviceCatalog.list, {});
 
-  if (!users || !leads || !targets || !companies || !consumption || !sectors || !catalog) {
+  if (!users || !leads || !targets || !achievement || !companies || !consumption || !sectors || !catalog) {
     return (
       <div className="p-6 md:p-8 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -90,11 +93,8 @@ export default function CoachPage() {
 
     const yearlyTarget = quarterlyTargets.q1 + quarterlyTargets.q2 + quarterlyTargets.q3 + quarterlyTargets.q4;
 
-    // Achieved = sum of won leads for this AM this year
-    const wonLeads = leads.filter(
-      (l) => l.accountManagerId === am._id && l.stage === "won",
-    );
-    const achieved = wonLeads.reduce((sum, l) => sum + l.potentialValue, 0);
+    // Achieved = collected invoice payments from accounts assigned to this AM.
+    const achieved = achievement.byAccountManager[am._id] ?? 0;
 
     const pace = yearlyTarget > 0 ? calculatePace(quarterlyTargets, achieved, today) : null;
 

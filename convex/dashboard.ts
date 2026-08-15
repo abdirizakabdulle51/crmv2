@@ -7,6 +7,7 @@ import {
   canManageUser,
   isCeoOrHob,
 } from "./authorization";
+import { buildCollectedRevenueAchievement } from "./targetAchievement";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 
 type LeadStage = Doc<"leads">["stage"];
@@ -594,13 +595,19 @@ export const summary = query({
       (sum, lead) => sum + lead.potentialValue,
       0,
     );
+    const achievement = await buildCollectedRevenueAchievement(
+      ctx,
+      args.year,
+      companies,
+    );
+    const totalAchievedValue = achievement.total;
     const companyWideTarget = targets.reduce(
       (sum, target) => sum + target.target,
       0,
     );
     const targetAchievementPercent =
       companyWideTarget > 0
-        ? Math.round((totalWonValue / companyWideTarget) * 100)
+        ? Math.round((totalAchievedValue / companyWideTarget) * 100)
         : 0;
 
     const stageCounts = Object.fromEntries(
@@ -669,13 +676,7 @@ export const summary = query({
         (sum, target) => sum + target.target,
         0,
       );
-      const amWonLeads = wonLeads.filter(
-        (lead) => lead.accountManagerId === accountManager._id,
-      );
-      const achieved = amWonLeads.reduce(
-        (sum, lead) => sum + lead.potentialValue,
-        0,
-      );
+      const achieved = achievement.byAccountManager[accountManager._id] ?? 0;
       return {
         name: accountManager.name?.split(" ")[0] || "Unknown",
         fullName: accountManager.name || "Unknown",
@@ -702,13 +703,11 @@ export const summary = query({
           (sum, salesTarget) => sum + salesTarget.target,
           0,
         );
-        const achieved = wonLeads
-          .filter(
-            (lead) =>
-              lead.accountManagerId !== undefined &&
-              userIds.has(lead.accountManagerId),
-          )
-          .reduce((sum, lead) => sum + lead.potentialValue, 0);
+        const achieved = countryUsers.reduce(
+          (sum, accountManager) =>
+            sum + (achievement.byAccountManager[accountManager._id] ?? 0),
+          0,
+        );
         return {
           name: country.name,
           target,
@@ -786,7 +785,7 @@ export const summary = query({
       },
       targets: {
         target: companyWideTarget,
-        achieved: totalWonValue,
+        achieved: totalAchievedValue,
         achievementPercent: targetAchievementPercent,
       },
       pipeline: {
