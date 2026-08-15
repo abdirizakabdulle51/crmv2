@@ -498,7 +498,7 @@ export function ManageOneUsageCard({
     return (
       <Card className="max-w-5xl">
         <CardHeader>
-          <CardTitle>ManageOne Usage</CardTitle>
+          <CardTitle>Billing & Usage</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
           Loading ManageOne usage...
@@ -511,7 +511,7 @@ export function ManageOneUsageCard({
     return (
       <Card className="max-w-5xl">
         <CardHeader>
-          <CardTitle>ManageOne Usage</CardTitle>
+          <CardTitle>Billing & Usage</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
@@ -525,7 +525,7 @@ export function ManageOneUsageCard({
   return (
     <Card className="max-w-5xl">
       <CardHeader>
-        <CardTitle>ManageOne Usage</CardTitle>
+        <CardTitle>Billing & Usage</CardTitle>
       </CardHeader>
       <CardContent>
         {manageOneTenants.length === 1 ? (

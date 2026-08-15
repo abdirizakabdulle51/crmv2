@@ -380,16 +380,16 @@ export default function CompanyDetailPage() {
 
       <Tabs defaultValue="company-info" className="max-w-5xl">
         <TabsList className="grid h-auto w-full grid-cols-3">
-          <TabsTrigger value="company-info">Company Info</TabsTrigger>
+          <TabsTrigger value="company-info">Company Detail</TabsTrigger>
           <TabsTrigger value="usage-trends">Usage Trends</TabsTrigger>
-          <TabsTrigger value="manageone-usage">ManageOne Usage</TabsTrigger>
+          <TabsTrigger value="manageone-usage">Billing & Usage</TabsTrigger>
         </TabsList>
 
         <TabsContent value="company-info" className="mt-4">
           {isDrMode ? (
             <Card>
               <CardHeader>
-                <CardTitle>Company Info</CardTitle>
+                <CardTitle>Company Detail</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <DetailItem label="Company" value={company.name} />
