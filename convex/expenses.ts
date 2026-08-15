@@ -872,6 +872,44 @@ export const cancelExpenseRequest = mutation({
   },
 });
 
+export const archiveExpenseRequest = mutation({
+  args: {
+    expenseId: v.id("expenseRequests"),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (!isCeoOrHob(user)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can delete expenses",
+      });
+    }
+
+    const expense = await getExpenseOrThrow(ctx, args.expenseId);
+    if (expense.archivedAt !== undefined) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "This expense has already been deleted",
+      });
+    }
+
+    const reason = normalizeRequiredText(args.reason, "Delete reason");
+    const now = Date.now();
+    await ctx.db.patch(args.expenseId, {
+      archivedAt: now,
+      updatedAt: now,
+    });
+    await insertExpenseEvent(ctx, {
+      expenseId: args.expenseId,
+      type: "updated",
+      message: `Expense deleted. Reason: ${reason}`,
+      actorId: user._id,
+      now,
+    });
+  },
+});
+
 export const getExpenseRequest = query({
   args: { expenseId: v.id("expenseRequests") },
   handler: async (ctx, args) => {

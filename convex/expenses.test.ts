@@ -740,6 +740,45 @@ describe("expenses", () => {
     expect(submittedForAmA[0]._id).toBe(expenseA);
   });
 
+  it("allows HOB and CEO to archive expenses and hides archived expenses from lists", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await createDraftExpense(t, s);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.expenses.archiveExpenseRequest, {
+        expenseId,
+        reason: "Not allowed",
+      }),
+    ).rejects.toThrow("Only CEO or Head of Business can delete expenses");
+
+    await asUser(t, s.hob).mutation(api.expenses.archiveExpenseRequest, {
+      expenseId,
+      reason: "Production cleanup",
+    });
+
+    const visible = await asUser(t, s.hob).query(
+      api.expenses.listExpenseRequests,
+      {},
+    );
+    expect(visible.map((expense) => expense._id)).not.toContain(expenseId);
+
+    const archived = await t.run(async (ctx) => await ctx.db.get(expenseId));
+    expect(archived).toMatchObject({
+      archivedAt: expect.any(Number),
+    });
+
+    const events = await asUser(t, s.hob).query(
+      api.expenses.listExpenseEvents,
+      { expenseId },
+    );
+    expect(events[events.length - 1]).toMatchObject({
+      type: "updated",
+      message: "Expense deleted. Reason: Production cleanup",
+      actorId: s.hob._id,
+    });
+  });
+
   it("requires auth before generating receipt upload URLs", async () => {
     const t = convexTest(schema, modules);
 

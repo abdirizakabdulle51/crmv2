@@ -269,6 +269,7 @@ export default function ExpenseDetailPage() {
   const rejectExpense = useMutation(api.expenses.rejectExpenseRequest);
   const cancelExpense = useMutation(api.expenses.cancelExpenseRequest);
   const markPaid = useMutation(api.expenses.markExpensePaid);
+  const archiveExpense = useMutation(api.expenses.archiveExpenseRequest);
   const generateReceiptUploadUrl = useMutation(
     api.expenses.generateReceiptUploadUrl,
   );
@@ -354,6 +355,7 @@ export default function ExpenseDetailPage() {
     !["rejected", "paid", "cancelled"].includes(expense.status) &&
     (isRequester || isAdmin);
   const canMarkPaid = expense.status === "approved" && isAdmin;
+  const canDelete = isAdmin;
   const category = categoryMap.get(expense.categoryId);
   const receiptRequired = category?.requiresReceipt === true;
   const company = expense.companyId ? companyMap.get(expense.companyId) : undefined;
@@ -508,6 +510,24 @@ export default function ExpenseDetailPage() {
     }
   };
 
+  const handleDeleteExpense = async () => {
+    setPendingAction("delete");
+    try {
+      await archiveExpense({
+        expenseId: expense._id,
+        reason: "Deleted from CRM expense detail page",
+      });
+      toast.success("Expense deleted");
+      navigate("/finance/expenses");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete expense",
+      );
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   return (
     <div className="space-y-6 p-6 md:p-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -579,6 +599,37 @@ export default function ExpenseDetailPage() {
             >
               Cancel
             </Button>
+          ) : null}
+          {canDelete ? (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="destructive"
+                  disabled={pendingAction === "delete"}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent size="sm">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete this expense?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This removes the expense from CRM lists and keeps an audit
+                    event for production cleanup.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={() => void handleDeleteExpense()}
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           ) : null}
         </div>
       </div>
