@@ -775,6 +775,20 @@ function relaySecret() {
   return value;
 }
 
+function crmEmailEnabled() {
+  const value = process.env.CRM_EMAIL_ENABLED?.trim().toLowerCase();
+  return !value || !["0", "false", "no", "off"].includes(value);
+}
+
+function assertCrmEmailEnabled() {
+  if (!crmEmailEnabled()) {
+    throw new ConvexError({
+      code: "EMAIL_DISABLED",
+      message: "CRM email sending is disabled",
+    });
+  }
+}
+
 async function relayErrorMessage(response: Response) {
   const text = await response.text().catch(() => "");
   try {
@@ -1364,6 +1378,10 @@ export const sendInternalOverdueReminders = internalAction({
     let skipped = initialSkipped;
     let failed = 0;
 
+    if (!crmEmailEnabled()) {
+      return { sent, skipped: skipped + reminders.length, failed };
+    }
+
     for (const reminder of reminders) {
       const email = buildInternalReminderEmail(reminder);
       try {
@@ -1514,6 +1532,10 @@ export const sendCustomerOverdueReminders = internalAction({
     let skipped = initialSkipped;
     let failed = 0;
 
+    if (!crmEmailEnabled()) {
+      return { sent, skipped: skipped + reminders.length, failed };
+    }
+
     for (const reminder of reminders) {
       const email = buildCustomerReminderEmail(reminder.invoice);
       try {
@@ -1576,6 +1598,7 @@ export const sendInvoiceEmail = action({
       internal.invoices.getSendInvoiceContext,
       { invoiceId: args.invoiceId },
     );
+    assertCrmEmailEnabled();
     const email = buildInvoiceEmail(invoice, recipient);
     const response = await fetch(invoiceRelayUrl(), {
       method: "POST",

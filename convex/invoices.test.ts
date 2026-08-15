@@ -874,6 +874,33 @@ describe("invoices", () => {
     });
   });
 
+  it("skips internal overdue reminders when CRM email is disabled", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue");
+    const fetchMock = mockRelaySuccess();
+    vi.stubEnv("CRM_EMAIL_ENABLED", "false");
+
+    const result = await t.action(
+      internal.invoices.sendInternalOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lastInternalReminderAt).toBeUndefined();
+    expect(invoice.internalReminderCount).toBeUndefined();
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(
+      events.some((event) => event.type === "internal_reminder_sent"),
+    ).toBe(false);
+  });
+
   it.each([
     "draft",
     "issued",
@@ -1059,6 +1086,33 @@ describe("invoices", () => {
       type: "customer_reminder_sent",
       message: expect.stringContaining("billing-a@example.com"),
     });
+  });
+
+  it("skips customer overdue reminders when CRM email is disabled", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueInvoiceWithStatus(t, s, "overdue");
+    const fetchMock = mockRelaySuccess();
+    vi.stubEnv("CRM_EMAIL_ENABLED", "false");
+
+    const result = await t.action(
+      internal.invoices.sendCustomerOverdueReminders,
+      { now: Date.UTC(2026, 7, 20, 6), limit: 10 },
+    );
+
+    expect(result).toEqual({ sent: 0, skipped: 1, failed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lastCustomerReminderAt).toBeUndefined();
+    expect(invoice.customerReminderCount).toBeUndefined();
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(
+      events.some((event) => event.type === "customer_reminder_sent"),
+    ).toBe(false);
   });
 
   it("prefers billingEmail over contactEmail for customer reminders", async () => {
@@ -1555,6 +1609,27 @@ describe("invoices", () => {
       monthlyTotal: 20,
     });
     expect("sourceQuoteId" in payload.invoice).toBe(false);
+  });
+
+  it("rejects manual invoice email when CRM email is disabled", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    const fetchMock = mockRelaySuccess();
+    vi.stubEnv("CRM_EMAIL_ENABLED", "false");
+
+    await expect(
+      asUser(t, s.amA).action(api.invoices.sendInvoiceEmail, { invoiceId }),
+    ).rejects.toThrow("CRM email sending is disabled");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.status).toBe("issued");
+    expect(invoice.sentAt).toBeUndefined();
+    expect(invoice.sentTo).toBeUndefined();
+    expect(invoice.sentBy).toBeUndefined();
   });
 
   it("prefers billingEmail over contactEmail when sending", async () => {
