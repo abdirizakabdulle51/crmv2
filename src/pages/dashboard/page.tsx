@@ -1,6 +1,7 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
+import { isDrMode } from "@/lib/dr-mode.ts";
 import {
   AlertTriangle,
   Brain,
@@ -26,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select.tsx";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   BarChart,
@@ -40,6 +41,118 @@ import {
 } from "recharts";
 
 const CURRENT_YEAR = new Date().getFullYear();
+
+type FinanceActivityPoint = {
+  period: string;
+  label: string;
+  invoicesSent: number;
+  invoicesPaid: number;
+  expenses: number;
+};
+
+type DashboardSummary = {
+  year: number;
+  month: string;
+  companies: { total: number; activeContracts: number };
+  leads: { active: number; won: number; wonValue: number };
+  targets: { target: number; achieved: number; achievementPercent: number };
+  pipeline: { stageCounts: Record<string, number>; value: number };
+  usage: {
+    month: string;
+    total: number;
+    entries: number;
+    companiesWithUsage: number;
+  };
+  quotes: {
+    total: number;
+    draft: number;
+    sent: number;
+    accepted: number;
+    monthlyValue: number;
+    acceptedMonthlyValue: number;
+  };
+  aiRecommendations: {
+    openOpportunityCount: number;
+    highPriorityCount: number;
+    estimatedMonthlyValue: number;
+    companiesWithOpportunities: number;
+  };
+  atRisk: { count: number };
+  tasks: {
+    myOpen: number;
+    overdue: number;
+    dueThisWeek: number;
+    blocked: number;
+  };
+  cloudHealth: {
+    regions: number;
+    healthyRegions: number;
+    warningRegions: number;
+    criticalRegions: number;
+    activePingTargets: number;
+    upPingTargets: number;
+    downPingTargets: number;
+  } | null;
+  charts: {
+    accountManagers: {
+      name: string;
+      fullName: string;
+      target: number;
+      achieved: number;
+      percentage: number;
+    }[];
+    countries: {
+      name: string;
+      target: number;
+      achieved: number;
+      percentage: number;
+    }[];
+  };
+  financeActivity: {
+    countries: { id: string; name: string }[];
+    daily: {
+      overall: FinanceActivityPoint[];
+      byCountry: Record<string, FinanceActivityPoint[]>;
+    };
+    monthly: {
+      overall: FinanceActivityPoint[];
+      byCountry: Record<string, FinanceActivityPoint[]>;
+    };
+  } | null;
+};
+
+function useDrDashboardSummary(year: number, enabled: boolean) {
+  const [summary, setSummary] = useState<DashboardSummary | undefined>();
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    const controller = new AbortController();
+    setSummary(undefined);
+
+    fetch(`/api/dashboard/summary?year=${year}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Dashboard summary failed: ${response.status}`);
+        }
+        return response.json() as Promise<DashboardSummary>;
+      })
+      .then(setSummary)
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          console.error(error);
+        }
+      });
+
+    return () => controller.abort();
+  }, [enabled, year]);
+
+  return summary;
+}
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -58,6 +171,10 @@ function formatCompact(value: number): string {
 
 function tooltipFormatter(value: unknown): string {
   return formatCurrency(Number(value));
+}
+
+function financeTooltipFormatter(value: unknown, name: unknown) {
+  return [formatCurrency(Number(value)), String(name)];
 }
 
 function formatMonthLabel(month: string | undefined): string | null {
@@ -141,11 +258,123 @@ function stageLabel(stage: string) {
     .join(" ");
 }
 
+function canViewFinanceActivity(role: string | undefined) {
+  return role === "ceo" || role === "head_of_business";
+}
+
+function FinanceActivityChart({
+  financeActivity,
+}: {
+  financeActivity: NonNullable<DashboardSummary["financeActivity"]>;
+}) {
+  const [breakdown, setBreakdown] = useState<"daily" | "monthly">("monthly");
+  const [countryId, setCountryId] = useState("overall");
+  const rows =
+    countryId === "overall"
+      ? financeActivity[breakdown].overall
+      : (financeActivity[breakdown].byCountry[countryId] ?? []);
+  const chartRows =
+    breakdown === "monthly"
+      ? rows
+      : rows.filter(
+          (row) =>
+            row.invoicesSent > 0 || row.invoicesPaid > 0 || row.expenses > 0,
+        );
+
+  return (
+    <Card>
+      <CardHeader className="gap-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <CardTitle className="text-base">Finance Activity</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Invoices sent, payments received, and paid expenses
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Select value={countryId} onValueChange={setCountryId}>
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {financeActivity.countries.map((country) => (
+                  <SelectItem key={country.id} value={country.id}>
+                    {country.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={breakdown}
+              onValueChange={(value) =>
+                setBreakdown(value as "daily" | "monthly")
+              }
+            >
+              <SelectTrigger className="w-full sm:w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="monthly">Monthly</SelectItem>
+                <SelectItem value="daily">Daily</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {chartRows.length > 0 ? (
+          <div className="h-[320px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={chartRows}
+                margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                <XAxis dataKey="label" className="text-xs" />
+                <YAxis tickFormatter={formatCompact} className="text-xs" />
+                <Tooltip formatter={financeTooltipFormatter} />
+                <Legend />
+                <Bar
+                  dataKey="invoicesSent"
+                  name="Invoices Sent"
+                  fill="oklch(0.6 0.2 260)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="invoicesPaid"
+                  name="Invoices Paid"
+                  fill="oklch(0.6 0.15 170)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="expenses"
+                  name="Expenses"
+                  fill="oklch(0.65 0.18 45)"
+                  radius={[4, 4, 0, 0]}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+            No finance activity found for this selection.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function DashboardPage() {
   const { currentUser } = useCrm();
   const navigate = useNavigate();
   const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
-  const summary = useQuery(api.dashboard.summary, { year: selectedYear });
+  const convexSummary = useQuery(
+    api.dashboard.summary,
+    isDrMode ? "skip" : { year: selectedYear },
+  );
+  const drSummary = useDrDashboardSummary(selectedYear, isDrMode);
+  const summary = isDrMode ? drSummary : convexSummary;
   const isLoading = summary === undefined;
 
   const amChartData = summary?.charts.accountManagers ?? [];
@@ -159,6 +388,7 @@ export default function DashboardPage() {
     ([stage]) => stage !== "won" && stage !== "lost",
   );
   const usageMonthLabel = formatMonthLabel(summary?.usage.month);
+  const financeActivity = summary?.financeActivity;
   const taskSubtitle = `${summary?.tasks.overdue ?? 0} overdue · ${
     summary?.tasks.dueThisWeek ?? 0
   } due this week${
@@ -338,6 +568,12 @@ export default function DashboardPage() {
           </CardContent>
         </ClickableCard>
       )}
+
+      {!isLoading &&
+        canViewFinanceActivity(currentUser?.role) &&
+        financeActivity && (
+          <FinanceActivityChart financeActivity={financeActivity} />
+        )}
 
       {!isLoading &&
         amChartData.length > 0 &&

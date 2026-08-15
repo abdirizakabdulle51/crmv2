@@ -158,6 +158,95 @@ function percentage(used: number, total: number) {
   return Math.round((used / total) * 1000) / 10;
 }
 
+function startOfYear(year: number) {
+  return Date.UTC(year, 0, 1);
+}
+
+function endOfYear(year: number) {
+  return Date.UTC(year + 1, 0, 1) - 1;
+}
+
+function monthKey(timestamp: number) {
+  return new Date(timestamp).toISOString().slice(0, 7);
+}
+
+function dayKey(timestamp: number) {
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function monthLabel(key: string) {
+  const [year, month] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+
+function dayLabel(key: string) {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, month - 1, day)));
+}
+
+function emptyFinancePeriod(period: string, label: string) {
+  return {
+    period,
+    label,
+    invoicesSent: 0,
+    invoicesPaid: 0,
+    expenses: 0,
+  };
+}
+
+function addFinanceAmount(
+  rows: Map<
+    string,
+    {
+      period: string;
+      label: string;
+      invoicesSent: number;
+      invoicesPaid: number;
+      expenses: number;
+    }
+  >,
+  period: string,
+  label: string,
+  field: "invoicesSent" | "invoicesPaid" | "expenses",
+  amount: number,
+) {
+  const row = rows.get(period) ?? emptyFinancePeriod(period, label);
+  row[field] = Math.round((row[field] + amount) * 100) / 100;
+  rows.set(period, row);
+}
+
+function buildMonthlyRows(year: number) {
+  return new Map(
+    Array.from({ length: 12 }, (_, index) => {
+      const period = `${year}-${String(index + 1).padStart(2, "0")}`;
+      return [period, emptyFinancePeriod(period, monthLabel(period))] as const;
+    }),
+  );
+}
+
+function rowsFromMap(
+  rows: Map<
+    string,
+    {
+      period: string;
+      label: string;
+      invoicesSent: number;
+      invoicesPaid: number;
+      expenses: number;
+    }
+  >,
+) {
+  return [...rows.values()].sort((a, b) => a.period.localeCompare(b.period));
+}
+
 function canViewCloudHealth(user: Doc<"users">) {
   return (
     user.role === "ceo" ||
@@ -268,6 +357,195 @@ function buildTasksSummary(tasks: Task[], user: Doc<"users">) {
         task.dueDate <= weekEnd,
     ).length,
     blocked: myActiveTasks.filter((task) => task.status === "blocked").length,
+  };
+}
+
+async function buildFinanceActivity(
+  ctx: QueryCtx,
+  user: Doc<"users">,
+  year: number,
+  companies: Doc<"companies">[],
+  countries: Doc<"countries">[],
+) {
+  if (!isCeoOrHob(user)) {
+    return null;
+  }
+
+  const yearStart = startOfYear(year);
+  const yearEnd = endOfYear(year);
+  const companyCountryIds = new Map(
+    companies.map((company) => [company._id, company.countryId]),
+  );
+  const visibleCompanyIds = new Set(companies.map((company) => company._id));
+  const overallMonthly = buildMonthlyRows(year);
+  const overallDaily = new Map<string, ReturnType<typeof emptyFinancePeriod>>();
+  const countryMonthly = new Map<
+    Id<"countries">,
+    ReturnType<typeof buildMonthlyRows>
+  >();
+  const countryDaily = new Map<
+    Id<"countries">,
+    Map<string, ReturnType<typeof emptyFinancePeriod>>
+  >();
+
+  const ensureCountryMonthly = (countryId: Id<"countries">) => {
+    let rows = countryMonthly.get(countryId);
+    if (!rows) {
+      rows = buildMonthlyRows(year);
+      countryMonthly.set(countryId, rows);
+    }
+    return rows;
+  };
+  const ensureCountryDaily = (countryId: Id<"countries">) => {
+    let rows = countryDaily.get(countryId);
+    if (!rows) {
+      rows = new Map<string, ReturnType<typeof emptyFinancePeriod>>();
+      countryDaily.set(countryId, rows);
+    }
+    return rows;
+  };
+  const addActivity = (
+    timestamp: number | undefined,
+    countryId: Id<"countries"> | undefined,
+    field: "invoicesSent" | "invoicesPaid" | "expenses",
+    amount: number,
+  ) => {
+    if (timestamp === undefined || timestamp < yearStart || timestamp > yearEnd) {
+      return;
+    }
+
+    const monthlyPeriod = monthKey(timestamp);
+    const dailyPeriod = dayKey(timestamp);
+    addFinanceAmount(
+      overallMonthly,
+      monthlyPeriod,
+      monthLabel(monthlyPeriod),
+      field,
+      amount,
+    );
+    addFinanceAmount(
+      overallDaily,
+      dailyPeriod,
+      dayLabel(dailyPeriod),
+      field,
+      amount,
+    );
+
+    if (!countryId) {
+      return;
+    }
+
+    addFinanceAmount(
+      ensureCountryMonthly(countryId),
+      monthlyPeriod,
+      monthLabel(monthlyPeriod),
+      field,
+      amount,
+    );
+    addFinanceAmount(
+      ensureCountryDaily(countryId),
+      dailyPeriod,
+      dayLabel(dailyPeriod),
+      field,
+      amount,
+    );
+  };
+
+  const invoices = (await ctx.db.query("invoices").collect()).filter(
+    (invoice) =>
+      visibleCompanyIds.has(invoice.companyId) &&
+      invoice.isTest !== true &&
+      invoice.hiddenAt === undefined &&
+      invoice.status !== "draft" &&
+      invoice.status !== "void" &&
+      invoice.status !== "cancelled",
+  );
+  const invoicesById = new Map(invoices.map((invoice) => [invoice._id, invoice]));
+  const paidByInvoiceId = new Map<Id<"invoices">, number>();
+  for (const invoice of invoices) {
+    addActivity(
+      invoice.sentAt ?? invoice.issueDate ?? invoice.lockedAt ?? invoice.createdAt,
+      companyCountryIds.get(invoice.companyId),
+      "invoicesSent",
+      invoice.grandTotal,
+    );
+  }
+
+  const payments = await ctx.db.query("invoicePayments").collect();
+  for (const payment of payments) {
+    const invoice = invoicesById.get(payment.invoiceId);
+    if (!invoice) {
+      continue;
+    }
+    paidByInvoiceId.set(
+      invoice._id,
+      Math.round(((paidByInvoiceId.get(invoice._id) ?? 0) + payment.amount) * 100) /
+        100,
+    );
+    addActivity(
+      payment.paidAt,
+      companyCountryIds.get(invoice.companyId),
+      "invoicesPaid",
+      payment.amount,
+    );
+  }
+  for (const invoice of invoices) {
+    const recordedPayments = paidByInvoiceId.get(invoice._id) ?? 0;
+    const unrecordedPaidAmount = Math.round((invoice.amountPaid - recordedPayments) * 100) / 100;
+    if (unrecordedPaidAmount <= 0) {
+      continue;
+    }
+    addActivity(
+      invoice.updatedAt,
+      companyCountryIds.get(invoice.companyId),
+      "invoicesPaid",
+      unrecordedPaidAmount,
+    );
+  }
+
+  const expenses = (await ctx.db.query("expenseRequests").collect()).filter(
+    (expense) =>
+      expense.status === "paid" &&
+      expense.archivedAt === undefined,
+  );
+  for (const expense of expenses) {
+    const countryId =
+      expense.countryId ??
+      (expense.companyId ? companyCountryIds.get(expense.companyId) : undefined);
+    addActivity(expense.paidAt ?? expense.expenseDate, countryId, "expenses", expense.amount);
+  }
+
+  const countryOptions = countries
+    .filter(
+      (country) =>
+        countryMonthly.has(country._id) || countryDaily.has(country._id),
+    )
+    .map((country) => ({ id: country._id, name: country.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return {
+    countries: [{ id: "overall", name: "Overall" }, ...countryOptions],
+    monthly: {
+      overall: rowsFromMap(overallMonthly),
+      byCountry: Object.fromEntries(
+        countryOptions.map((country) => [
+          country.id,
+          rowsFromMap(countryMonthly.get(country.id as Id<"countries">)!),
+        ]),
+      ),
+    },
+    daily: {
+      overall: rowsFromMap(overallDaily),
+      byCountry: Object.fromEntries(
+        countryOptions.map((country) => [
+          country.id,
+          rowsFromMap(
+            countryDaily.get(country.id as Id<"countries">) ??
+              new Map<string, ReturnType<typeof emptyFinancePeriod>>(),
+          ),
+        ]),
+      ),
+    },
   };
 }
 
@@ -435,6 +713,13 @@ export const summary = query({
         };
       })
       .filter((country) => country.target > 0 || country.achieved > 0);
+    const financeActivity = await buildFinanceActivity(
+      ctx,
+      user,
+      args.year,
+      companies,
+      countries,
+    );
 
     let cloudHealth = null;
     if (canViewCloudHealth(user)) {
@@ -523,6 +808,7 @@ export const summary = query({
         accountManagers: amChartData,
         countries: countryChartData,
       },
+      financeActivity,
     };
   },
 });
