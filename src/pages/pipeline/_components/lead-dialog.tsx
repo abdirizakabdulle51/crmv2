@@ -46,7 +46,7 @@ export default function LeadDialog({
   const { isAdmin } = useCrm();
 
   const [title, setTitle] = useState("");
-  const [companyId, setCompanyId] = useState<string>("");
+  const [companyId, setCompanyId] = useState<string>("none");
   const [accountManagerId, setAccountManagerId] = useState<string>("");
   const [stage, setStage] = useState<LeadStage>("new_lead");
   const [potentialValue, setPotentialValue] = useState("");
@@ -59,7 +59,7 @@ export default function LeadDialog({
   useEffect(() => {
     if (lead) {
       setTitle(lead.title);
-      setCompanyId(lead.companyId);
+      setCompanyId(lead.companyId ?? "none");
       setAccountManagerId(lead.accountManagerId || "");
       setStage(lead.stage);
       setPotentialValue(lead.potentialValue.toString());
@@ -73,7 +73,7 @@ export default function LeadDialog({
 
   const resetForm = () => {
     setTitle("");
-    setCompanyId("");
+    setCompanyId("none");
     setAccountManagerId("");
     setStage("new_lead");
     setPotentialValue("");
@@ -85,10 +85,6 @@ export default function LeadDialog({
   const handleSave = async () => {
     if (!title.trim()) {
       toast.error("Lead title is required");
-      return;
-    }
-    if (!companyId) {
-      toast.error("Please select a company");
       return;
     }
     if (!accountManagerId) {
@@ -107,7 +103,10 @@ export default function LeadDialog({
     try {
       const data = {
         title: title.trim(),
-        companyId: companyId as Id<"companies">,
+        companyId:
+          companyId && companyId !== "none"
+            ? (companyId as Id<"companies">)
+            : undefined,
         accountManagerId: accountManagerId as Id<"users">,
         stage,
         potentialValue: Number(potentialValue),
@@ -172,12 +171,13 @@ export default function LeadDialog({
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>Company *</Label>
+              <Label>Company</Label>
               <Select value={companyId} onValueChange={setCompanyId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select company" />
+                  <SelectValue placeholder="No company yet" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="none">No company yet</SelectItem>
                   {companies.map((c) => (
                     <SelectItem key={c._id} value={c._id}>
                       {c.name}

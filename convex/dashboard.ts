@@ -75,7 +75,11 @@ async function getVisibleLeads(
   }
   if (user.role === "country_gm") {
     const allLeads = await ctx.db.query("leads").collect();
-    return allLeads.filter((lead) => visibleCompanyIds.has(lead.companyId));
+    return allLeads.filter(
+      (lead) =>
+        lead.countryId === user.countryId ||
+        (lead.companyId !== undefined && visibleCompanyIds.has(lead.companyId)),
+    );
   }
   return await ctx.db
     .query("leads")

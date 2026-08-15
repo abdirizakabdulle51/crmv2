@@ -108,7 +108,9 @@ export default function PerformancePage() {
   const sectorRollup = sectors.map((sector) => {
     const sectorCompanies = companies.filter((c) => c.sectorId === sector._id);
     const sectorCompanyIds = new Set(sectorCompanies.map((c) => c._id));
-    const sectorWon = wonLeads.filter((l) => sectorCompanyIds.has(l.companyId));
+    const sectorWon = wonLeads.filter(
+      (l) => l.companyId && sectorCompanyIds.has(l.companyId),
+    );
     const achieved = sectorWon.reduce((s, l) => s + l.potentialValue, 0);
     return { sector, achieved, dealCount: sectorWon.length };
   }).filter((d) => d.achieved > 0);

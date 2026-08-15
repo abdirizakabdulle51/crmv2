@@ -74,7 +74,8 @@ export default defineSchema({
 
   leads: defineTable({
     title: v.string(),
-    companyId: v.id("companies"),
+    companyId: v.optional(v.id("companies")),
+    countryId: v.optional(v.id("countries")),
     accountManagerId: v.optional(v.id("users")),
     stage: v.union(
       v.literal("new_lead"),
@@ -91,6 +92,7 @@ export default defineSchema({
     notes: v.optional(v.string()),
   })
     .index("by_account_manager", ["accountManagerId"])
+    .index("by_country", ["countryId"])
     .index("by_stage", ["stage"])
     .index("by_company", ["companyId"]),
 

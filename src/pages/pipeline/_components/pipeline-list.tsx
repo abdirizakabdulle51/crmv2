@@ -77,7 +77,9 @@ export default function PipelineList({
       </div>
 
       {sorted.map((lead) => {
-        const company = companyMap.get(lead.companyId);
+        const company = lead.companyId
+          ? companyMap.get(lead.companyId)
+          : undefined;
         const am = lead.accountManagerId
           ? userMap.get(lead.accountManagerId)
           : undefined;
@@ -98,7 +100,7 @@ export default function PipelineList({
                 )}
               </div>
               <div className="col-span-2 text-sm text-muted-foreground truncate">
-                {company?.name || "Unknown"}
+                {company?.name || "New company lead"}
               </div>
               <div className="col-span-2">
                 <Badge

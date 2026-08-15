@@ -49,7 +49,7 @@ export default function KanbanBoard({
   const boardStages = STAGES.filter((s) => s !== "won" && s !== "lost");
 
   const renderLeadCard = (lead: Doc<"leads">, compact = false) => {
-    const company = companyMap.get(lead.companyId);
+    const company = lead.companyId ? companyMap.get(lead.companyId) : undefined;
 
     if (compact) {
       return (
@@ -62,7 +62,7 @@ export default function KanbanBoard({
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">{lead.title}</div>
               <div className="truncate text-xs text-muted-foreground">
-                {company?.name || "Unknown"}
+                {company?.name || "New company lead"}
               </div>
             </div>
             <div className="shrink-0 text-right">
@@ -88,7 +88,7 @@ export default function KanbanBoard({
         <CardContent className="space-y-2 p-3">
           <div className="truncate text-sm font-medium">{lead.title}</div>
           <div className="truncate text-xs text-muted-foreground">
-            {company?.name || "Unknown"}
+            {company?.name || "New company lead"}
           </div>
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">

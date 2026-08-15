@@ -55,7 +55,11 @@ export const list = query({
         .collect();
       const companyIds = new Set(countryCompanies.map((c) => c._id));
       const allLeads = await ctx.db.query("leads").collect();
-      leads = allLeads.filter((l) => companyIds.has(l.companyId));
+      leads = allLeads.filter(
+        (l) =>
+          l.countryId === currentUser.countryId ||
+          (l.companyId !== undefined && companyIds.has(l.companyId)),
+      );
     } else {
       // Account managers see only their own leads
       leads = await ctx.db
@@ -73,7 +77,7 @@ export const list = query({
 export const create = mutation({
   args: {
     title: v.string(),
-    companyId: v.id("companies"),
+    companyId: v.optional(v.id("companies")),
     accountManagerId: v.id("users"),
     stage: v.union(
       v.literal("new_lead"),
@@ -91,33 +95,38 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const currentUser = await getCurrentUserOrThrow(ctx);
-    const company = await ctx.db.get(args.companyId);
-    if (!company) {
-      throw new ConvexError({
-        code: "NOT_FOUND",
-        message: "Company not found",
-      });
-    }
-    if (!canViewCompany(currentUser, company)) {
-      throw new ConvexError({
-        code: "FORBIDDEN",
-        message: "You do not have permission to create a lead for this company",
-      });
+    const company = args.companyId ? await ctx.db.get(args.companyId) : null;
+    if (args.companyId) {
+      if (!company) {
+        throw new ConvexError({
+          code: "NOT_FOUND",
+          message: "Company not found",
+        });
+      }
+      if (!canViewCompany(currentUser, company)) {
+        throw new ConvexError({
+          code: "FORBIDDEN",
+          message: "You do not have permission to create a lead for this company",
+        });
+      }
     }
     const accountManagerId =
       currentUser.role === "account_manager"
         ? currentUser._id
         : args.accountManagerId;
+    const accountManager = await ctx.db.get(accountManagerId);
+    const countryId = company?.countryId ?? accountManager?.countryId;
     await assertAccountManagerIsInActorScope(
       ctx,
       currentUser,
       accountManagerId,
-      company.countryId,
+      countryId,
     );
 
     return await ctx.db.insert("leads", {
       title: args.title,
       companyId: args.companyId,
+      countryId,
       accountManagerId,
       stage: args.stage,
       potentialValue: args.potentialValue,
@@ -132,7 +141,7 @@ export const update = mutation({
   args: {
     id: v.id("leads"),
     title: v.string(),
-    companyId: v.id("companies"),
+    companyId: v.optional(v.id("companies")),
     accountManagerId: v.id("users"),
     stage: v.union(
       v.literal("new_lead"),
@@ -155,31 +164,35 @@ export const update = mutation({
       throw new ConvexError({ code: "NOT_FOUND", message: "Lead not found" });
     }
     await assertCanManageLead(ctx, currentUser, lead);
-    const company = await ctx.db.get(args.companyId);
-    if (!company) {
-      throw new ConvexError({
-        code: "NOT_FOUND",
-        message: "Company not found",
-      });
-    }
-    if (!canViewCompany(currentUser, company)) {
-      throw new ConvexError({
-        code: "FORBIDDEN",
-        message: "You do not have permission to move this lead to that company",
-      });
+    const company = args.companyId ? await ctx.db.get(args.companyId) : null;
+    if (args.companyId) {
+      if (!company) {
+        throw new ConvexError({
+          code: "NOT_FOUND",
+          message: "Company not found",
+        });
+      }
+      if (!canViewCompany(currentUser, company)) {
+        throw new ConvexError({
+          code: "FORBIDDEN",
+          message: "You do not have permission to move this lead to that company",
+        });
+      }
     }
     const accountManagerId =
       currentUser.role === "account_manager"
         ? currentUser._id
         : args.accountManagerId;
+    const accountManager = await ctx.db.get(accountManagerId);
+    const countryId = company?.countryId ?? accountManager?.countryId;
     await assertAccountManagerIsInActorScope(
       ctx,
       currentUser,
       accountManagerId,
-      company.countryId,
+      countryId,
     );
     const { id, ...fields } = args;
-    await ctx.db.patch(id, { ...fields, accountManagerId });
+    await ctx.db.patch(id, { ...fields, accountManagerId, countryId });
   },
 });
 

@@ -108,7 +108,9 @@ export default function CoachPage() {
       .map((l) => ({
         title: l.title,
         value: l.potentialValue,
-        company: companyMap.get(l.companyId)?.name || "Unknown",
+        company: l.companyId
+          ? companyMap.get(l.companyId)?.name || "Unknown"
+          : "New company lead",
         closeDate: l.expectedCloseDate,
       }))
       .sort((a, b) => b.value - a.value);

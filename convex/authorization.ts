@@ -71,9 +71,14 @@ export async function assertCanManageLead(
     return;
   }
   if (user.role === "country_gm" && user.countryId) {
-    const company = await ctx.db.get(lead.companyId);
-    if (company?.countryId === user.countryId) {
+    if (lead.countryId === user.countryId) {
       return;
+    }
+    if (lead.companyId) {
+      const company = await ctx.db.get(lead.companyId);
+      if (company?.countryId === user.countryId) {
+        return;
+      }
     }
   }
   throw new ConvexError({
