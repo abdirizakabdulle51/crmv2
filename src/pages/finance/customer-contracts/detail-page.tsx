@@ -9,6 +9,8 @@ import { useConvex, useMutation, useQuery } from "convex/react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  Check,
+  ChevronsUpDown,
   Download,
   FileSignature,
   FileText,
@@ -30,6 +32,14 @@ import {
   CardTitle,
 } from "@/components/ui/card.tsx";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command.tsx";
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -38,6 +48,11 @@ import {
 } from "@/components/ui/empty.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover.tsx";
 import {
   Select,
   SelectContent,
@@ -48,6 +63,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
+import { cn } from "@/lib/utils.ts";
 import { ContractDialog, type ContractFormState } from "./contract-form.tsx";
 import {
   FREQUENCY_LABELS,
@@ -278,6 +294,99 @@ function validateSignedDocumentFile(file: File) {
     return false;
   }
   return true;
+}
+
+function CatalogItemCombobox({
+  items,
+  value,
+  onValueChange,
+}: {
+  items: ServiceCatalogItem[];
+  value: Id<"serviceCatalog"> | undefined;
+  onValueChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selectedItem = items.find((item) => item._id === value);
+  const selectedLabel = selectedItem?.itemName ?? "Custom service";
+  const sortedItems = useMemo(
+    () =>
+      [...items].sort((a, b) =>
+        a.itemName.localeCompare(b.itemName, undefined, {
+          sensitivity: "base",
+        }),
+      ),
+    [items],
+  );
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between"
+        >
+          <span className="truncate">{selectedLabel}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-(--radix-popover-trigger-width) p-0"
+        align="start"
+      >
+        <Command>
+          <CommandInput placeholder="Search catalog item..." />
+          <CommandList>
+            <CommandEmpty>No catalog item found.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="Custom service"
+                onSelect={() => {
+                  onValueChange("custom");
+                  setOpen(false);
+                }}
+              >
+                <Check
+                  className={cn(
+                    "mr-2 h-4 w-4",
+                    value ? "opacity-0" : "opacity-100",
+                  )}
+                />
+                Custom service
+              </CommandItem>
+              {sortedItems.map((item) => (
+                <CommandItem
+                  key={item._id}
+                  value={[
+                    item.itemName,
+                    item.serviceCategory,
+                    item.specs,
+                    item.billingUnit,
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  onSelect={() => {
+                    onValueChange(item._id);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      value === item._id ? "opacity-100" : "opacity-0",
+                    )}
+                  />
+                  <span className="truncate">{item.itemName}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export default function CustomerContractDetailPage() {
@@ -1081,22 +1190,11 @@ export default function CustomerContractDetailPage() {
             <CardContent>
               <form className="space-y-4" onSubmit={handleSubmit}>
                 <Field label="Catalog item">
-                  <Select
-                    value={form.catalogItemId ?? "custom"}
+                  <CatalogItemCombobox
+                    items={serviceCatalog}
+                    value={form.catalogItemId}
                     onValueChange={selectCatalogItem}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="custom">Custom service</SelectItem>
-                      {serviceCatalog.map((item) => (
-                        <SelectItem key={item._id} value={item._id}>
-                          {item.itemName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  />
                 </Field>
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field label="Service name">
