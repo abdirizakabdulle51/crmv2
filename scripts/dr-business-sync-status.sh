@@ -7,6 +7,12 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 
+HOA_SYNC_ENV_FILE="${HOA_SYNC_ENV_FILE:-/etc/htgcrm-hoa-sync.env}"
+if [[ -f "$HOA_SYNC_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$HOA_SYNC_ENV_FILE"
+fi
+
 LOG_DIR="${LOG_DIR:-/var/log/htgcrm-dr-sync}"
 LOG_FILE="$LOG_DIR/business-sync.log"
 LAST_SUCCESS_FILE="$LOG_DIR/business_last_success"

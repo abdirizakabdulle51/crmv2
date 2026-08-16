@@ -9,10 +9,21 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
 fi
 
+HOA_SYNC_ENV_FILE="${HOA_SYNC_ENV_FILE:-/etc/htgcrm-hoa-sync.env}"
+HOA_CONVEX_ENV_FILE="${HOA_CONVEX_ENV_FILE:-/etc/htgcrm-hoa-convex.env}"
+if [[ -f "$HOA_SYNC_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$HOA_SYNC_ENV_FILE"
+fi
+if [[ -f "$HOA_CONVEX_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$HOA_CONVEX_ENV_FILE"
+fi
+
 HQ3_CONVEX_SELF_HOSTED_URL="${HQ3_CONVEX_SELF_HOSTED_URL:-}"
 HQ3_CONVEX_SELF_HOSTED_ADMIN_KEY="${HQ3_CONVEX_SELF_HOSTED_ADMIN_KEY:-}"
 HOA_CONVEX_SELF_HOSTED_URL="${HOA_CONVEX_SELF_HOSTED_URL:-}"
-HOA_CONVEX_SELF_HOSTED_ADMIN_KEY="${HOA_CONVEX_SELF_HOSTED_ADMIN_KEY:-}"
+HOA_CONVEX_SELF_HOSTED_ADMIN_KEY="${HOA_CONVEX_SELF_HOSTED_ADMIN_KEY:-${CONVEX_SELF_HOSTED_ADMIN_KEY:-}}"
 
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-/var/backups/htgcrm-dr-sync}"
 LOG_DIR="${LOG_DIR:-/var/log/htgcrm-dr-sync}"
@@ -133,12 +144,20 @@ require_env HOA_CONVEX_SELF_HOSTED_ADMIN_KEY
     exit 1
   fi
 
-  if [[ "$DISABLE_HQ3_HEALTH_CHECK" != "true" ]]; then
+if [[ "$DISABLE_HQ3_HEALTH_CHECK" != "true" ]]; then
     log "Checking HQ3 CRM health: $HQ3_CRM_HEALTH_URL"
     if ! curl -fsS --max-time 10 "$HQ3_CRM_HEALTH_URL" >/dev/null 2>&1; then
       set_state "HOA_ACTIVE_FAILOVER"
       date -Is >"$FAILBACK_REQUIRED_FILE"
       log "HQ3 CRM health check failed; marking HOA_ACTIVE_FAILOVER and skipping business sync"
+      exit 0
+    fi
+  fi
+
+  if [[ -n "${HTGWEB_SYNC_STATUS_URL:-}" ]]; then
+    status="$(curl -fsS --max-time 10 "$HTGWEB_SYNC_STATUS_URL" || true)"
+    if echo "$status" | grep -Eiq 'busy|running|in_progress|syncing'; then
+      log "skip: HTGweb -> HQ3 push is running"
       exit 0
     fi
   fi
