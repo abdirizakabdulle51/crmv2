@@ -17,6 +17,14 @@ const mocks = vi.hoisted(() => ({
     companies: { total: 43, activeContracts: 12 },
     leads: { active: 14, won: 6, wonValue: 39209 },
     targets: { target: 210000, achieved: 39209, achievementPercent: 19 },
+    collectionSummary: {
+      target: 210000,
+      collected: 39209,
+      remaining: 170791,
+      achievementPercent: 19,
+      outstanding: 42000,
+      totalInvoiced: 81209,
+    },
     pipeline: {
       stageCounts: {
         new_lead: 2,
@@ -149,6 +157,13 @@ describe("DashboardPage", () => {
     expect(
       screen.getByText("Welcome back, Abdirizak Abdulle"),
     ).toBeInTheDocument();
+    expect(screen.getByText("Executive Summary")).toBeInTheDocument();
+    expect(
+      screen.getByText("Executive Collection Summary"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Operational Details" }));
+
     expect(screen.getByText("43")).toBeInTheDocument();
     expect(screen.getByText("$24,190")).toBeInTheDocument();
     expect(
@@ -167,6 +182,7 @@ describe("DashboardPage", () => {
     const user = userEvent.setup();
     renderDashboard();
 
+    await user.click(screen.getByRole("tab", { name: "Operational Details" }));
     await user.click(screen.getByRole("link", { name: /Tasks/i }));
     expect(screen.getByTestId("location")).toHaveTextContent("/tasks");
   });

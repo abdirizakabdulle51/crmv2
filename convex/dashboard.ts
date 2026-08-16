@@ -23,6 +23,20 @@ const LEAD_STAGES: LeadStage[] = [
   "lost",
 ];
 
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function isRevenueInvoice(invoice: Doc<"invoices">) {
+  return (
+    invoice.isTest !== true &&
+    invoice.hiddenAt === undefined &&
+    invoice.status !== "draft" &&
+    invoice.status !== "void" &&
+    invoice.status !== "cancelled"
+  );
+}
+
 async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) {
@@ -459,11 +473,7 @@ async function buildFinanceActivity(
   const invoices = (await ctx.db.query("invoices").collect()).filter(
     (invoice) =>
       visibleCompanyIds.has(invoice.companyId) &&
-      invoice.isTest !== true &&
-      invoice.hiddenAt === undefined &&
-      invoice.status !== "draft" &&
-      invoice.status !== "void" &&
-      invoice.status !== "cancelled",
+      isRevenueInvoice(invoice),
   );
   const invoicesById = new Map(invoices.map((invoice) => [invoice._id, invoice]));
   const paidByInvoiceId = new Map<Id<"invoices">, number>();
@@ -554,6 +564,40 @@ async function buildFinanceActivity(
   };
 }
 
+async function buildExecutiveCollectionSummary(
+  ctx: QueryCtx,
+  visibleCompanyIds: Set<Id<"companies">>,
+  target: number,
+  collected: number,
+) {
+  const invoices = (await ctx.db.query("invoices").collect()).filter(
+    (invoice) =>
+      visibleCompanyIds.has(invoice.companyId) &&
+      isRevenueInvoice(invoice),
+  );
+  const totalInvoiced = roundMoney(
+    invoices.reduce((sum, invoice) => sum + invoice.grandTotal, 0),
+  );
+  const outstanding = roundMoney(
+    invoices.reduce(
+      (sum, invoice) =>
+        sum + Math.max(0, invoice.grandTotal - invoice.amountPaid),
+      0,
+    ),
+  );
+  const remaining = roundMoney(Math.max(0, target - collected));
+
+  return {
+    target: roundMoney(target),
+    collected: roundMoney(collected),
+    remaining,
+    achievementPercent:
+      target > 0 ? Math.round((collected / target) * 100) : 0,
+    outstanding,
+    totalInvoiced,
+  };
+}
+
 export const summary = query({
   args: { year: v.number() },
   handler: async (ctx, args) => {
@@ -609,6 +653,12 @@ export const summary = query({
       companyWideTarget > 0
         ? Math.round((totalAchievedValue / companyWideTarget) * 100)
         : 0;
+    const collectionSummary = await buildExecutiveCollectionSummary(
+      ctx,
+      visibleCompanyIds,
+      companyWideTarget,
+      totalAchievedValue,
+    );
 
     const stageCounts = Object.fromEntries(
       LEAD_STAGES.map((stage) => [
@@ -788,6 +838,7 @@ export const summary = query({
         achieved: totalAchievedValue,
         achievementPercent: targetAchievementPercent,
       },
+      collectionSummary,
       pipeline: {
         stageCounts,
         value: pipelineValue,
