@@ -36,6 +36,8 @@ STATE_FILE="${STATE_FILE:-$LOG_DIR/state}"
 FAILBACK_REQUIRED_FILE="${FAILBACK_REQUIRED_FILE:-$LOG_DIR/failback_required}"
 MIN_AVAILABLE_MEM_MB="${BUSINESS_SYNC_MIN_AVAILABLE_MEM_MB:-2048}"
 FAILURE_BACKOFF_SECONDS="${BUSINESS_SYNC_FAILURE_BACKOFF_SECONDS:-900}"
+IGNORE_BACKOFF="${BUSINESS_SYNC_IGNORE_BACKOFF:-false}"
+HOA_IMPORT_READY_TIMEOUT_SECONDS="${HOA_IMPORT_READY_TIMEOUT_SECONDS:-180}"
 
 BUSINESS_TABLES="${BUSINESS_SYNC_TABLES:-countries sectors users companies leads salesTargets manageOneTenants tenantUsageHistory dailyUsageSnapshots activities tasks taskComments taskAttachments notifications consumption serviceCatalog aiRecommendations cloudAdvisorStatuses invoices invoicePayments invoiceEvents expenseCategories expenseRequests expenseEvents expenseReceipts financeSettings invoiceProfiles customerContracts customerContractEvents customerContractAmendments customerContractLineItems quotes}"
 
@@ -75,12 +77,32 @@ available_mem_mb() {
 }
 
 should_backoff_after_failure() {
+  [[ "$IGNORE_BACKOFF" == "true" ]] && return 1
   [[ -f "$LAST_FAILURE_FILE" ]] || return 1
   local now last age
   now="$(date +%s)"
   last="$(date -d "$(cat "$LAST_FAILURE_FILE")" +%s 2>/dev/null || echo 0)"
   age=$((now - last))
   [[ "$age" -lt "$FAILURE_BACKOFF_SECONDS" ]]
+}
+
+wait_for_hoa_import_backend() {
+  local deadline now
+  deadline=$(( $(date +%s) + HOA_IMPORT_READY_TIMEOUT_SECONDS ))
+
+  log "Checking HOA Convex import endpoint: $HOA_CONVEX_IMPORT_URL"
+  while true; do
+    if curl -fsS --max-time 5 "$HOA_CONVEX_IMPORT_URL/version" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    now="$(date +%s)"
+    if [[ "$now" -ge "$deadline" ]]; then
+      return 1
+    fi
+
+    sleep 5
+  done
 }
 
 filter_snapshot() {
@@ -134,7 +156,7 @@ require_env HOA_CONVEX_IMPORT_URL
   fi
 
   if should_backoff_after_failure; then
-    log "Recent business sync failure exists; delaying retry"
+    log "Recent business sync failure exists at $LAST_FAILURE_FILE; delaying retry"
     exit 0
   fi
 
@@ -198,6 +220,12 @@ require_env HOA_CONVEX_IMPORT_URL
   if [[ "$mem_mb" -lt "$MIN_AVAILABLE_MEM_MB" ]]; then
     date -Is >"$LAST_FAILURE_FILE"
     log "ERROR: available memory ${mem_mb}MiB fell below guard before import; skipping HOA import"
+    exit 1
+  fi
+
+  if ! wait_for_hoa_import_backend; then
+    date -Is >"$LAST_FAILURE_FILE"
+    log "ERROR: HOA Convex import endpoint did not become ready within ${HOA_IMPORT_READY_TIMEOUT_SECONDS}s"
     exit 1
   fi
 

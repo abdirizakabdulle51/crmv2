@@ -37,6 +37,10 @@ fi
 
 echo
 
+echo "Log dir: $LOG_DIR"
+echo "Failure marker: $LAST_FAILURE_FILE"
+echo
+
 if [[ -f "$LAST_SUCCESS_FILE" ]]; then
   echo "Last business success: $(cat "$LAST_SUCCESS_FILE")"
 else
