@@ -38,6 +38,9 @@ MIN_AVAILABLE_MEM_MB="${BUSINESS_SYNC_MIN_AVAILABLE_MEM_MB:-2048}"
 FAILURE_BACKOFF_SECONDS="${BUSINESS_SYNC_FAILURE_BACKOFF_SECONDS:-900}"
 IGNORE_BACKOFF="${BUSINESS_SYNC_IGNORE_BACKOFF:-false}"
 HOA_IMPORT_READY_TIMEOUT_SECONDS="${HOA_IMPORT_READY_TIMEOUT_SECONDS:-180}"
+SYNC_TZ="${SYNC_TZ:-Africa/Nairobi}"
+SYNC_START_HHMM="${SYNC_START_HHMM:-0440}"
+SYNC_END_HHMM="${SYNC_END_HHMM:-2200}"
 
 BUSINESS_TABLES="${BUSINESS_SYNC_TABLES:-countries sectors users companies leads salesTargets manageOneTenants tenantUsageHistory dailyUsageSnapshots activities tasks taskComments taskAttachments notifications consumption serviceCatalog aiRecommendations cloudAdvisorStatuses invoices invoicePayments invoiceEvents expenseCategories expenseRequests expenseEvents expenseReceipts financeSettings invoiceProfiles customerContracts customerContractEvents customerContractAmendments customerContractLineItems quotes}"
 
@@ -147,6 +150,14 @@ require_env HOA_CONVEX_IMPORT_URL
   if ! flock -n 9; then
     log "Previous business DR sync still running; skipping this run"
     exit 0
+  fi
+
+  now_hhmm="$(TZ="$SYNC_TZ" date +%H%M)"
+  if [[ "${FORCE_SYNC:-false}" != "true" ]]; then
+    if [[ "$now_hhmm" < "$SYNC_START_HHMM" || "$now_hhmm" == "$SYNC_END_HHMM" || "$now_hhmm" > "$SYNC_END_HHMM" ]]; then
+      log "skip: outside business sync window ${SYNC_START_HHMM}-${SYNC_END_HHMM} $SYNC_TZ"
+      exit 0
+    fi
   fi
 
   current_state="$(get_state)"
