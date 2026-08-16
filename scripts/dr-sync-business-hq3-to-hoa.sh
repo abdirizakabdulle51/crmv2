@@ -24,6 +24,7 @@ HQ3_CONVEX_SELF_HOSTED_URL="${HQ3_CONVEX_SELF_HOSTED_URL:-}"
 HQ3_CONVEX_SELF_HOSTED_ADMIN_KEY="${HQ3_CONVEX_SELF_HOSTED_ADMIN_KEY:-}"
 HOA_CONVEX_SELF_HOSTED_URL="${HOA_CONVEX_SELF_HOSTED_URL:-}"
 HOA_CONVEX_SELF_HOSTED_ADMIN_KEY="${HOA_CONVEX_SELF_HOSTED_ADMIN_KEY:-${CONVEX_SELF_HOSTED_ADMIN_KEY:-}}"
+HOA_CONVEX_IMPORT_URL="${HOA_CONVEX_IMPORT_URL:-http://127.0.0.1:3210}"
 
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-/var/backups/htgcrm-dr-sync}"
 LOG_DIR="${LOG_DIR:-/var/log/htgcrm-dr-sync}"
@@ -117,8 +118,8 @@ PY
 
 require_env HQ3_CONVEX_SELF_HOSTED_URL
 require_env HQ3_CONVEX_SELF_HOSTED_ADMIN_KEY
-require_env HOA_CONVEX_SELF_HOSTED_URL
 require_env HOA_CONVEX_SELF_HOSTED_ADMIN_KEY
+require_env HOA_CONVEX_IMPORT_URL
 
 (
   if ! flock -n 9; then
@@ -144,7 +145,7 @@ require_env HOA_CONVEX_SELF_HOSTED_ADMIN_KEY
     exit 1
   fi
 
-if [[ "$DISABLE_HQ3_HEALTH_CHECK" != "true" ]]; then
+  if [[ "$DISABLE_HQ3_HEALTH_CHECK" != "true" ]]; then
     log "Checking HQ3 CRM health: $HQ3_CRM_HEALTH_URL"
     if ! curl -fsS --max-time 10 "$HQ3_CRM_HEALTH_URL" >/dev/null 2>&1; then
       set_state "HOA_ACTIVE_FAILOVER"
@@ -200,8 +201,8 @@ if [[ "$DISABLE_HQ3_HEALTH_CHECK" != "true" ]]; then
     exit 1
   fi
 
-  log "Importing business tables into HOA Convex deployment"
-  if ! CONVEX_SELF_HOSTED_URL="$HOA_CONVEX_SELF_HOSTED_URL" \
+  log "Importing business tables into HOA Convex deployment through $HOA_CONVEX_IMPORT_URL"
+  if ! CONVEX_SELF_HOSTED_URL="$HOA_CONVEX_IMPORT_URL" \
     CONVEX_SELF_HOSTED_ADMIN_KEY="$HOA_CONVEX_SELF_HOSTED_ADMIN_KEY" \
     pnpm exec convex import "$filtered_snapshot" --replace --yes >>"$LOG_FILE" 2>&1; then
     date -Is >"$LAST_FAILURE_FILE"
