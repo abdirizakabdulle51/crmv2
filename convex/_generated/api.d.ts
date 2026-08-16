@@ -34,6 +34,7 @@ import type * as invoiceProfiles from "../invoiceProfiles.js";
 import type * as invoices from "../invoices.js";
 import type * as leads from "../leads.js";
 import type * as leadsImport from "../leadsImport.js";
+import type * as manageOneHourlyMonitoring from "../manageOneHourlyMonitoring.js";
 import type * as manageOneTenants from "../manageOneTenants.js";
 import type * as notifications from "../notifications.js";
 import type * as pingResults from "../pingResults.js";
@@ -85,6 +86,7 @@ declare const fullApi: ApiFromModules<{
   invoices: typeof invoices;
   leads: typeof leads;
   leadsImport: typeof leadsImport;
+  manageOneHourlyMonitoring: typeof manageOneHourlyMonitoring;
   manageOneTenants: typeof manageOneTenants;
   notifications: typeof notifications;
   pingResults: typeof pingResults;

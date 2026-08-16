@@ -65,6 +65,9 @@ const CoachPage = lazy(() => import("./pages/coach/page.tsx"));
 const ManageOneTenantsPage = lazy(
   () => import("./pages/manageone-tenants/page.tsx"),
 );
+const ManageOneHourlyPage = lazy(
+  () => import("./pages/manageone-hourly/page.tsx"),
+);
 const CloudHealthPage = lazy(() => import("./pages/cloud-health/page.tsx"));
 const CloudHealthAlarmPage = lazy(
   () => import("./pages/cloud-health/alarm-page.tsx"),
@@ -187,6 +190,10 @@ export default function App() {
             <Route
               path="/manageone-tenants"
               element={lazyPage(<ManageOneTenantsPage />)}
+            />
+            <Route
+              path="/manageone-hourly"
+              element={lazyPage(<ManageOneHourlyPage />)}
             />
             <Route
               path="/cloud-health"

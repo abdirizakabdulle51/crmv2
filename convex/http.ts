@@ -302,6 +302,26 @@ type TenantUsageHistoryInput = {
   syncedAt: number;
 };
 
+type ManageOneHourlySnapshotInput = {
+  vdcId: string;
+  domainId?: string;
+  tenantName: string;
+  regionId?: string;
+  regionName?: string;
+  capturedAt: number;
+  ecsInstances: number;
+  ecsCores: number;
+  ecsRamGb: number;
+  evsGb: number;
+  obsGb: number;
+  publicIps: number;
+  loadBalancers: number;
+  vpnGateways: number;
+  natGateways: number;
+  wafInstances: number;
+  rawMetrics?: unknown;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1616,6 +1636,40 @@ function normalizeTenantUsageHistory(value: unknown): TenantUsageHistoryInput {
   };
 }
 
+function normalizeManageOneHourlySnapshot(
+  value: unknown,
+): ManageOneHourlySnapshotInput {
+  if (!isRecord(value)) {
+    throw new Error("Each hourly monitoring row must be an object");
+  }
+
+  return {
+    vdcId: requireUnknownString(value, "vdcId"),
+    tenantName: requireUnknownString(value, "tenantName"),
+    ...(optionalUnknownString(value, "domainId") !== undefined
+      ? { domainId: optionalUnknownString(value, "domainId") }
+      : {}),
+    ...(optionalUnknownString(value, "regionId") !== undefined
+      ? { regionId: optionalUnknownString(value, "regionId") }
+      : {}),
+    ...(optionalUnknownString(value, "regionName") !== undefined
+      ? { regionName: optionalUnknownString(value, "regionName") }
+      : {}),
+    capturedAt: requireUnknownNumber(value, "capturedAt"),
+    ecsInstances: requireUnknownNumber(value, "ecsInstances"),
+    ecsCores: requireUnknownNumber(value, "ecsCores"),
+    ecsRamGb: requireUnknownNumber(value, "ecsRamGb"),
+    evsGb: requireUnknownNumber(value, "evsGb"),
+    obsGb: requireUnknownNumber(value, "obsGb"),
+    publicIps: requireUnknownNumber(value, "publicIps"),
+    loadBalancers: requireUnknownNumber(value, "loadBalancers"),
+    vpnGateways: requireUnknownNumber(value, "vpnGateways"),
+    natGateways: requireUnknownNumber(value, "natGateways"),
+    wafInstances: requireUnknownNumber(value, "wafInstances"),
+    ...(value.rawMetrics !== undefined ? { rawMetrics: value.rawMetrics } : {}),
+  };
+}
+
 http.route({
   path: "/cloud-alarms/sync",
   method: "POST",
@@ -1918,6 +1972,53 @@ http.route({
         inserted: summary.inserted,
         skippedNoLinkedCompany: summary.skippedNoLinkedCompany,
       });
+    } catch (error) {
+      return Response.json(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : "Sync failed",
+        },
+        { status: 400 },
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/manageone-hourly/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (!hasValidSyncSecret(request, "MANAGEONE_HOURLY_SYNC_SECRET")) {
+      return Response.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
+
+    try {
+      const body = await request.json();
+      if (!isRecord(body)) {
+        return Response.json(
+          { success: false, error: "Request body must be an object" },
+          { status: 400 },
+        );
+      }
+      if (!Array.isArray(body.rows)) {
+        return Response.json(
+          { success: false, error: "rows must be an array" },
+          { status: 400 },
+        );
+      }
+
+      const rows = body.rows.map(normalizeManageOneHourlySnapshot);
+      const startedAt =
+        typeof body.startedAt === "number" ? body.startedAt : Date.now();
+      const summary = await ctx.runMutation(
+        internal.manageOneHourlyMonitoring.bulkUpsert,
+        { rows, startedAt },
+      );
+
+      return Response.json({ success: true, ...summary });
     } catch (error) {
       return Response.json(
         {

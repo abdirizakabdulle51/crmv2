@@ -495,6 +495,49 @@ export default defineSchema({
     syncedAt: v.number(),
   }).index("by_company_synced_at", ["linkedCompanyId", "syncedAt"]),
 
+  manageOneHourlySnapshots: defineTable({
+    snapshotKey: v.string(),
+    vdcId: v.string(),
+    domainId: v.optional(v.string()),
+    tenantName: v.string(),
+    linkedCompanyId: v.optional(v.id("companies")),
+    regionId: v.optional(v.string()),
+    regionName: v.optional(v.string()),
+    capturedHour: v.number(),
+    capturedAt: v.number(),
+    ecsInstances: v.number(),
+    ecsCores: v.number(),
+    ecsRamGb: v.number(),
+    evsGb: v.number(),
+    obsGb: v.number(),
+    publicIps: v.number(),
+    loadBalancers: v.number(),
+    vpnGateways: v.number(),
+    natGateways: v.number(),
+    wafInstances: v.number(),
+    rawMetrics: v.optional(v.any()),
+  })
+    .index("by_snapshot_key", ["snapshotKey"])
+    .index("by_hour", ["capturedHour"])
+    .index("by_company_hour", ["linkedCompanyId", "capturedHour"])
+    .index("by_vdc_hour", ["vdcId", "capturedHour"]),
+
+  manageOneHourlySyncRuns: defineTable({
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    status: v.union(
+      v.literal("running"),
+      v.literal("success"),
+      v.literal("failed"),
+    ),
+    rowsReceived: v.number(),
+    rowsUpserted: v.number(),
+    rowsSkipped: v.number(),
+    error: v.optional(v.string()),
+  })
+    .index("by_started_at", ["startedAt"])
+    .index("by_status_started_at", ["status", "startedAt"]),
+
   dailyUsageSnapshots: defineTable({
     companyId: v.id("companies"),
     tenantId: v.id("manageOneTenants"),

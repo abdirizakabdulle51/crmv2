@@ -25,6 +25,7 @@ export function isMonitoringAllowedPath(pathname: string) {
   return (
     pathname === "/cloud-health" ||
     pathname.startsWith("/cloud-health/") ||
+    pathname === "/manageone-hourly" ||
     pathname === "/documentation" ||
     pathname.startsWith("/documentation/")
   );

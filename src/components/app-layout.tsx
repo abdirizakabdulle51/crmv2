@@ -21,6 +21,7 @@ import {
   Cloud,
   CloudSun,
   BookOpen,
+  Clock3,
   ClipboardList,
   ChevronDown,
   ChevronRight,
@@ -99,6 +100,12 @@ const NAV_ITEMS = [
     icon: CloudSun,
     cloudHealthOnly: true,
   },
+  {
+    to: "/manageone-hourly",
+    label: "Hourly Monitoring",
+    icon: Clock3,
+    cloudHealthOnly: true,
+  },
   { to: "/documentation", label: "Documentation", icon: BookOpen },
   { to: "/tasks", label: "Tasks", icon: ClipboardList },
   { to: "/team", label: "Team", icon: Users },
@@ -135,7 +142,7 @@ const NAV_GROUPS = [
   },
   {
     label: "Infrastructure",
-    items: ["/manageone-tenants", "/cloud-health"],
+    items: ["/manageone-tenants", "/cloud-health", "/manageone-hourly"],
   },
   {
     label: "System",
@@ -175,7 +182,11 @@ export default function AppLayout() {
 
   const visibleNavItems = NAV_ITEMS.filter((item) => {
     if (isMonitoringRole(currentUser?.role)) {
-      return item.to === "/cloud-health" || item.to === "/documentation";
+      return (
+        item.to === "/cloud-health" ||
+        item.to === "/manageone-hourly" ||
+        item.to === "/documentation"
+      );
     }
     if (item.adminOnly) {
       return isAdminRole(currentUser?.role);
