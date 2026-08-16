@@ -46,9 +46,12 @@ export default function ManageOneTenantsPage() {
     isAdmin ? {} : "skip",
   );
   const countries = useQuery(api.countries.list, isAdmin ? {} : "skip");
+  const companies = useQuery(api.companies.list, isAdmin ? {} : "skip");
   const sectors = useQuery(api.sectors.list, isAdmin ? {} : "skip");
   const users = useQuery(api.users.listAll, isAdmin ? {} : "skip");
   const linkToCompany = useMutation(api.manageOneTenants.linkToCompany);
+  const reassignCompany = useMutation(api.manageOneTenants.reassignCompany);
+  const unlinkFromCompany = useMutation(api.manageOneTenants.unlinkFromCompany);
   const createCompanyFromTenant = useMutation(
     api.manageOneTenants.createCompanyFromTenant,
   );
@@ -77,7 +80,7 @@ export default function ManageOneTenantsPage() {
     );
   }
 
-  if (!tenants || !countries || !sectors || !users) {
+  if (!tenants || !countries || !companies || !sectors || !users) {
     return (
       <div className="p-6 md:p-8 space-y-4">
         <Skeleton className="h-8 w-56" />
@@ -88,6 +91,9 @@ export default function ManageOneTenantsPage() {
   }
 
   const sortedTenants = [...tenants].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  const sortedCompanies = [...companies].sort((a, b) =>
     a.name.localeCompare(b.name),
   );
   const pageCount = Math.max(1, Math.ceil(sortedTenants.length / pageSize));
@@ -122,6 +128,51 @@ export default function ManageOneTenantsPage() {
       toast.success("Tenant linked to company");
     } catch (error) {
       toast.error("Failed to link tenant", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setSubmittingTenantId(null);
+    }
+  };
+
+  const handleReassignCompany = async (
+    tenantId: Doc<"manageOneTenants">["_id"],
+    companyId: Doc<"companies">["_id"],
+  ) => {
+    setSubmittingTenantId(tenantId);
+    try {
+      const result = await reassignCompany({ tenantId, companyId });
+      const movedCount =
+        result.usageRows.moved + result.usageRows.merged;
+      toast.success(`Tenant linked to ${result.linkedCompanyName}`, {
+        description:
+          movedCount > 0
+            ? `${movedCount} open usage row(s) moved with this tenant`
+            : "No open usage rows needed to move",
+      });
+    } catch (error) {
+      toast.error("Failed to reassign tenant", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setSubmittingTenantId(null);
+    }
+  };
+
+  const handleUnlink = async (tenantId: Doc<"manageOneTenants">["_id"]) => {
+    setSubmittingTenantId(tenantId);
+    try {
+      const result = await unlinkFromCompany({ tenantId });
+      toast.success("Tenant unlinked", {
+        description:
+          result.removedOpenUsageRows > 0
+            ? `${result.removedOpenUsageRows} open usage row(s) removed`
+            : "No open usage rows needed to be removed",
+      });
+    } catch (error) {
+      toast.error("Failed to unlink tenant", {
         description:
           error instanceof Error ? error.message : "Please try again",
       });
@@ -251,46 +302,92 @@ export default function ManageOneTenantsPage() {
                         </div>
                       </td>
                       <td className="p-3 min-w-[220px]">
-                        {tenant.linkedCompanyId ? (
-                          <Link
-                            className="font-medium text-primary hover:underline"
-                            to={`/companies?search=${encodeURIComponent(
-                              tenant.linkedCompanyName || "",
-                            )}`}
-                          >
-                            {tenant.linkedCompanyName || "Linked company"}
-                          </Link>
-                        ) : tenant.suggestedCompanyId ? (
-                          <div className="space-y-2">
+                        <div className="space-y-2">
+                          {tenant.linkedCompanyId ? (
+                            <Link
+                              className="font-medium text-primary hover:underline"
+                              to={`/companies?search=${encodeURIComponent(
+                                tenant.linkedCompanyName || "",
+                              )}`}
+                            >
+                              {tenant.linkedCompanyName || "Linked company"}
+                            </Link>
+                          ) : tenant.suggestedCompanyId ? (
                             <div className="text-sm">
                               Suggested:{" "}
                               <span className="font-medium">
                                 {tenant.suggestedCompanyName}
                               </span>
                             </div>
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() =>
-                                handleConfirmLink(
-                                  tenant._id,
-                                  tenant.suggestedCompanyId as Doc<"companies">["_id"],
-                                )
-                              }
-                              disabled={submittingTenantId === tenant._id}
-                            >
-                              Confirm Link
-                            </Button>
-                          </div>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setCreatingTenant(tenant)}
+                          ) : (
+                            <div className="text-sm text-muted-foreground">
+                              Not linked
+                            </div>
+                          )}
+
+                          <Select
+                            value={tenant.linkedCompanyId ?? undefined}
+                            onValueChange={(companyId) =>
+                              handleReassignCompany(
+                                tenant._id,
+                                companyId as Doc<"companies">["_id"],
+                              )
+                            }
+                            disabled={submittingTenantId === tenant._id}
                           >
-                            Create Company
-                          </Button>
-                        )}
+                            <SelectTrigger className="w-[220px]">
+                              <SelectValue placeholder="Assign company" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {sortedCompanies.map((company) => (
+                                <SelectItem
+                                  key={company._id}
+                                  value={company._id}
+                                >
+                                  {company.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          <div className="flex flex-wrap gap-2">
+                            {tenant.suggestedCompanyId &&
+                              !tenant.linkedCompanyId && (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() =>
+                                    handleConfirmLink(
+                                      tenant._id,
+                                      tenant.suggestedCompanyId as Doc<"companies">["_id"],
+                                    )
+                                  }
+                                  disabled={submittingTenantId === tenant._id}
+                                >
+                                  Confirm Link
+                                </Button>
+                              )}
+                            {!tenant.linkedCompanyId && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setCreatingTenant(tenant)}
+                              >
+                                Create Company
+                              </Button>
+                            )}
+                            {tenant.linkedCompanyId && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleUnlink(tenant._id)}
+                                disabled={submittingTenantId === tenant._id}
+                              >
+                                Unlink
+                              </Button>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="p-3 text-right">
                         {formatNumber(tenant.ecsUsed)}

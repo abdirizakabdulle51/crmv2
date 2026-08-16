@@ -1226,6 +1226,109 @@ function normalizeName(name: string): string {
     .replace(/(vdc|system|test|ltd|inc|co)$/g, "");
 }
 
+function stableSegment(value: string | undefined) {
+  return (value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function dailyUsageSourceKeyFor(input: {
+  companyId: Id<"companies">;
+  tenantId: Id<"manageOneTenants">;
+  usageDate: string;
+  serviceType: string;
+  itemName: string;
+  catalogItemId?: Id<"serviceCatalog">;
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
+}) {
+  return [
+    "manageone",
+    input.usageDate,
+    input.companyId,
+    input.tenantId,
+    stableSegment(input.serviceType),
+    input.catalogItemId ?? stableSegment(input.itemName),
+    stableSegment(input.regionId ?? input.regionName ?? input.dataCenterName),
+  ].join("|");
+}
+
+async function migrateOpenDailyUsageRows(
+  ctx: MutationCtx,
+  tenantId: Id<"manageOneTenants">,
+  companyId: Id<"companies">,
+) {
+  const rows = (await ctx.db.query("dailyUsageSnapshots").collect()).filter(
+    (row) =>
+      row.tenantId === tenantId &&
+      row.companyId !== companyId &&
+      !row.invoiceId &&
+      !row.lockedAt,
+  );
+
+  let moved = 0;
+  let merged = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const sourceKey = dailyUsageSourceKeyFor({
+      companyId,
+      tenantId,
+      usageDate: row.usageDate,
+      serviceType: row.serviceType,
+      itemName: row.itemName,
+      catalogItemId: row.catalogItemId,
+      regionId: row.regionId,
+      regionName: row.regionName,
+      dataCenterName: row.dataCenterName,
+    });
+
+    const existing = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_source_key", (q) => q.eq("sourceKey", sourceKey))
+      .unique();
+
+    if (existing && existing._id !== row._id) {
+      if (existing.invoiceId || existing.lockedAt) {
+        skipped++;
+        continue;
+      }
+
+      const { _id: _rowId, _creationTime: _rowCreationTime, ...patch } = row;
+      await ctx.db.patch(existing._id, {
+        ...patch,
+        companyId,
+        sourceKey,
+      });
+      await ctx.db.delete(row._id);
+      merged++;
+      continue;
+    }
+
+    await ctx.db.patch(row._id, {
+      companyId,
+      sourceKey,
+    });
+    moved++;
+  }
+
+  return { moved, merged, skipped };
+}
+
+async function deleteOpenDailyUsageRows(
+  ctx: MutationCtx,
+  tenantId: Id<"manageOneTenants">,
+) {
+  const rows = (await ctx.db.query("dailyUsageSnapshots").collect()).filter(
+    (row) => row.tenantId === tenantId && !row.invoiceId && !row.lockedAt,
+  );
+
+  for (const row of rows) {
+    await ctx.db.delete(row._id);
+  }
+
+  return rows.length;
+}
+
 export const listWithSuggestions = query({
   args: {},
   handler: async (ctx) => {
@@ -1286,6 +1389,67 @@ export const linkToCompany = mutation({
     }
 
     await ctx.db.patch(args.tenantId, { linkedCompanyId: args.companyId });
+  },
+});
+
+export const reassignCompany = mutation({
+  args: { tenantId: v.id("manageOneTenants"), companyId: v.id("companies") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (user.role !== "ceo" && user.role !== "head_of_business") {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can reassign tenants",
+      });
+    }
+
+    const tenant = await ctx.db.get(args.tenantId);
+    if (!tenant) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Tenant not found" });
+    }
+
+    const company = await ctx.db.get(args.companyId);
+    if (!company) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Company not found",
+      });
+    }
+
+    await ctx.db.patch(args.tenantId, { linkedCompanyId: args.companyId });
+    const usageRows = await migrateOpenDailyUsageRows(
+      ctx,
+      args.tenantId,
+      args.companyId,
+    );
+
+    return { linkedCompanyName: company.name, usageRows };
+  },
+});
+
+export const unlinkFromCompany = mutation({
+  args: { tenantId: v.id("manageOneTenants") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (user.role !== "ceo" && user.role !== "head_of_business") {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can unlink tenants",
+      });
+    }
+
+    const tenant = await ctx.db.get(args.tenantId);
+    if (!tenant) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Tenant not found" });
+    }
+
+    await ctx.db.patch(args.tenantId, { linkedCompanyId: undefined });
+    const removedOpenUsageRows = await deleteOpenDailyUsageRows(
+      ctx,
+      args.tenantId,
+    );
+
+    return { removedOpenUsageRows };
   },
 });
 

@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { convexTest } from "convex-test";
+import schema from "./schema";
+import { modules } from "./test.setup";
+import { api } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel.d.ts";
 import type { Id } from "./_generated/dataModel.d.ts";
 import {
   buildBulkUsagePreview,
   buildUsageHintsForCompany,
 } from "./manageOneTenants";
+
+function asUser(t: ReturnType<typeof convexTest>, user: Doc<"users">) {
+  return t.withIdentity({ tokenIdentifier: user.tokenIdentifier });
+}
 
 function catalogItem(
   id: string,
@@ -1100,5 +1109,158 @@ describe("buildUsageHintsForCompany", () => {
         },
       ]),
     );
+  });
+});
+
+describe("ManageOne tenant billing links", () => {
+  async function seedTenantLinkData(t: ReturnType<typeof convexTest>) {
+    return await t.run(async (ctx) => {
+      const countryId = await ctx.db.insert("countries", {
+        name: "Somalia",
+        region: "East Africa",
+      });
+      const sectorId = await ctx.db.insert("sectors", { name: "Telecom" });
+      const ceoId = await ctx.db.insert("users", {
+        name: "CEO",
+        tokenIdentifier: "ceo-token",
+        role: "ceo",
+        countryId,
+      });
+      const amId = await ctx.db.insert("users", {
+        name: "AM",
+        tokenIdentifier: "am-token",
+        role: "account_manager",
+        countryId,
+      });
+      const oldCompanyId = await ctx.db.insert("companies", {
+        name: "Hormuud",
+        sectorId,
+        countryId,
+        accountManagerId: amId,
+        contractStatus: "active",
+      });
+      const newCompanyId = await ctx.db.insert("companies", {
+        name: "Hormuud ISP",
+        sectorId,
+        countryId,
+        accountManagerId: amId,
+        contractStatus: "active",
+      });
+      const tenantId = await ctx.db.insert("manageOneTenants", {
+        name: "Hormuud-ISP",
+        vdcId: "vdc-hormuud-isp",
+        linkedCompanyId: oldCompanyId,
+        lastSyncedAt: 1,
+      });
+      const invoiceId = await ctx.db.insert("invoices", {
+        invoiceNumber: "INV-2026-0001",
+        companyId: oldCompanyId,
+        companyName: "Hormuud",
+        createdBy: ceoId,
+        status: "issued",
+        issueDate: Date.UTC(2026, 7, 1),
+        dueDate: Date.UTC(2026, 7, 31),
+        lineItems: [],
+        subtotal: 10,
+        monthlyTotal: 10,
+        yearlyTotal: 120,
+        grandTotal: 10,
+        amountPaid: 0,
+        balanceDue: 10,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const openRowId = await ctx.db.insert("dailyUsageSnapshots", {
+        companyId: oldCompanyId,
+        tenantId,
+        tenantName: "Hormuud-ISP",
+        tenantVdcId: "vdc-hormuud-isp",
+        usageDate: "2026-08-16",
+        month: "2026-08",
+        serviceType: "EIP",
+        itemName: "EIP - Active",
+        serviceCategory: "EIP",
+        quantity: 2,
+        unit: "per IP/month",
+        source: "manageone",
+        sourceKey: `manageone|2026-08-16|${oldCompanyId}|${tenantId}|eip|eip-active|`,
+        capturedAt: 1,
+      });
+      const invoicedRowId = await ctx.db.insert("dailyUsageSnapshots", {
+        companyId: oldCompanyId,
+        tenantId,
+        tenantName: "Hormuud-ISP",
+        tenantVdcId: "vdc-hormuud-isp",
+        usageDate: "2026-08-15",
+        month: "2026-08",
+        serviceType: "EIP",
+        itemName: "EIP - Active",
+        serviceCategory: "EIP",
+        quantity: 1,
+        unit: "per IP/month",
+        source: "manageone",
+        sourceKey: `manageone|2026-08-15|${oldCompanyId}|${tenantId}|eip|eip-active|`,
+        capturedAt: 1,
+        invoiceId,
+        lockedAt: 1,
+      });
+
+      return {
+        ceo: (await ctx.db.get(ceoId))!,
+        oldCompanyId,
+        newCompanyId,
+        tenantId,
+        openRowId,
+        invoicedRowId,
+      };
+    });
+  }
+
+  it("reassigns a tenant and moves only open daily usage rows", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedTenantLinkData(t);
+
+    const result = await asUser(t, s.ceo).mutation(
+      api.manageOneTenants.reassignCompany,
+      {
+        tenantId: s.tenantId,
+        companyId: s.newCompanyId,
+      },
+    );
+
+    expect(result.usageRows).toEqual({ moved: 1, merged: 0, skipped: 0 });
+
+    const rows = await t.run(async (ctx) => ({
+      tenant: await ctx.db.get(s.tenantId),
+      open: await ctx.db.get(s.openRowId),
+      invoiced: await ctx.db.get(s.invoicedRowId),
+    }));
+
+    expect(rows.tenant?.linkedCompanyId).toBe(s.newCompanyId);
+    expect(rows.open?.companyId).toBe(s.newCompanyId);
+    expect(rows.open?.sourceKey).toContain(String(s.newCompanyId));
+    expect(rows.invoiced?.companyId).toBe(s.oldCompanyId);
+  });
+
+  it("unlinks a tenant and removes only open daily usage rows", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedTenantLinkData(t);
+
+    const result = await asUser(t, s.ceo).mutation(
+      api.manageOneTenants.unlinkFromCompany,
+      { tenantId: s.tenantId },
+    );
+
+    expect(result.removedOpenUsageRows).toBe(1);
+
+    const rows = await t.run(async (ctx) => ({
+      tenant: await ctx.db.get(s.tenantId),
+      open: await ctx.db.get(s.openRowId),
+      invoiced: await ctx.db.get(s.invoicedRowId),
+    }));
+
+    expect(rows.tenant?.linkedCompanyId).toBeUndefined();
+    expect(rows.open).toBeNull();
+    expect(rows.invoiced?.companyId).toBe(s.oldCompanyId);
   });
 });

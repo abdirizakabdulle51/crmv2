@@ -19,11 +19,14 @@ Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
 
 vi.mock("@/convex/_generated/api.js", () => ({
   api: {
+    companies: { list: "companies.list" },
     countries: { list: "countries.list" },
     manageOneTenants: {
       createCompanyFromTenant: "manageOneTenants.createCompanyFromTenant",
       linkToCompany: "manageOneTenants.linkToCompany",
       listWithSuggestions: "manageOneTenants.listWithSuggestions",
+      reassignCompany: "manageOneTenants.reassignCompany",
+      unlinkFromCompany: "manageOneTenants.unlinkFromCompany",
     },
     sectors: { list: "sectors.list" },
     users: { listAll: "users.listAll" },
@@ -38,6 +41,7 @@ const mocks = vi.hoisted(() => ({
       suggestedCompanyName?: string | null;
     }
   >,
+  companies: [] as Doc<"companies">[],
   countries: [] as Doc<"countries">[],
   sectors: [] as Doc<"sectors">[],
   users: [] as Doc<"users">[],
@@ -47,6 +51,7 @@ vi.mock("convex/react", () => ({
   useMutation: () => vi.fn(),
   useQuery: (query: string) => {
     if (query === "manageOneTenants.listWithSuggestions") return mocks.tenants;
+    if (query === "companies.list") return mocks.companies;
     if (query === "countries.list") return mocks.countries;
     if (query === "sectors.list") return mocks.sectors;
     if (query === "users.listAll") return mocks.users;
@@ -81,6 +86,7 @@ function tenant(index: number): Doc<"manageOneTenants"> {
 
 function seedTenants() {
   mocks.tenants = Array.from({ length: 66 }, (_, index) => tenant(index + 1));
+  mocks.companies = [];
   mocks.countries = [];
   mocks.sectors = [];
   mocks.users = [];
