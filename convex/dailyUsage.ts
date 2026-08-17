@@ -59,6 +59,7 @@ export type DailyUsageSnapshotInput = {
 const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const HOURLY_STALE_MS = 2 * 60 * 60 * 1000;
 
 function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -217,10 +218,7 @@ function contractLineBaseAmount(line: ContractLineItem) {
 }
 
 function contractLineMatchesUsage(
-  row: Pick<
-    RollupRow,
-    "catalogItemId" | "itemName" | "serviceType" | "unit"
-  >,
+  row: Pick<RollupRow, "catalogItemId" | "itemName" | "serviceType" | "unit">,
   line: ContractLineItem,
 ) {
   if (line.catalogItemId && row.catalogItemId === line.catalogItemId) {
@@ -278,7 +276,8 @@ async function loadActiveContractPricingForMonth(
     const contract = contracts
       .filter(
         (candidate) =>
-          candidate.status === "active" && contractCoversMonth(candidate, month),
+          candidate.status === "active" &&
+          contractCoversMonth(candidate, month),
       )
       .sort((a, b) => b.updatedAt - a.updatedAt)[0];
     if (!contract) continue;
@@ -903,6 +902,185 @@ export const review = query({
         companies,
         serviceTypes,
         usageDates,
+      },
+    };
+  },
+});
+
+function latestSnapshotsByTenant(rows: Doc<"manageOneHourlySnapshots">[]) {
+  const latest = new Map<string, Doc<"manageOneHourlySnapshots">>();
+
+  for (const row of rows) {
+    const existing = latest.get(row.vdcId);
+    if (!existing || row.capturedAt > existing.capturedAt) {
+      latest.set(row.vdcId, row);
+    }
+  }
+
+  return [...latest.values()];
+}
+
+function sumHourly(rows: Doc<"manageOneHourlySnapshots">[]) {
+  return rows.reduce(
+    (totals, row) => ({
+      ecs: totals.ecs + row.ecsInstances,
+      cce: totals.cce + (row.cceNodes ?? 0),
+      bms: totals.bms + (row.bmsInstances ?? 0),
+      vcpu: totals.vcpu + row.ecsCores,
+      ramGb: totals.ramGb + row.ecsRamGb,
+      evsGb: totals.evsGb + row.evsGb,
+      sfsGb: totals.sfsGb + (row.sfsGb ?? 0),
+      csbsGb: totals.csbsGb + (row.csbsGb ?? 0),
+      vbsGb: totals.vbsGb + (row.vbsGb ?? 0),
+      obsGb: totals.obsGb + row.obsGb,
+      eip: totals.eip + row.publicIps,
+      elb: totals.elb + row.loadBalancers,
+      vpn: totals.vpn + row.vpnGateways,
+      vpcep: totals.vpcep + (row.vpcepEndpoints ?? 0),
+      nat: totals.nat + row.natGateways,
+      waf: totals.waf + row.wafInstances,
+    }),
+    {
+      ecs: 0,
+      cce: 0,
+      bms: 0,
+      vcpu: 0,
+      ramGb: 0,
+      evsGb: 0,
+      sfsGb: 0,
+      csbsGb: 0,
+      vbsGb: 0,
+      obsGb: 0,
+      eip: 0,
+      elb: 0,
+      vpn: 0,
+      vpcep: 0,
+      nat: 0,
+      waf: 0,
+    },
+  );
+}
+
+function countRowsByService(rows: Doc<"dailyUsageSnapshots">[]) {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    counts.set(row.serviceType, (counts.get(row.serviceType) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([serviceType, rowCount]) => ({ serviceType, rowCount }))
+    .sort((a, b) => a.serviceType.localeCompare(b.serviceType));
+}
+
+export const health = query({
+  args: {
+    month: v.string(),
+    companyId: v.optional(v.id("companies")),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const now = Date.now();
+    const businessDate = dateKeyForTimestamp(now);
+
+    const companies = args.companyId
+      ? [await assertCanManageUsage(ctx, user, args.companyId)]
+      : (await ctx.db.query("companies").collect()).filter((company) =>
+          canViewCompany(user, company),
+        );
+    const visibleCompanyIds = new Set(companies.map((company) => company._id));
+
+    const tenantRows = await ctx.db.query("manageOneTenants").collect();
+    const visibleTenantRows = tenantRows.filter(
+      (tenant) =>
+        tenant.linkedCompanyId && visibleCompanyIds.has(tenant.linkedCompanyId),
+    );
+    const unlinkedTenantCount = args.companyId
+      ? 0
+      : tenantRows.filter((tenant) => !tenant.linkedCompanyId).length;
+
+    const dailyRows = args.companyId
+      ? await ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_company_month", (q) =>
+            q.eq("companyId", args.companyId!).eq("month", args.month),
+          )
+          .collect()
+      : await ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_month", (q) => q.eq("month", args.month))
+          .collect();
+    const visibleDailyRows = dailyRows.filter((row) =>
+      visibleCompanyIds.has(row.companyId),
+    );
+
+    const latestDailyUsageDate =
+      visibleDailyRows
+        .map((row) => row.usageDate)
+        .sort((a, b) => b.localeCompare(a))[0] ?? null;
+    const latestDailyRows = latestDailyUsageDate
+      ? visibleDailyRows.filter((row) => row.usageDate === latestDailyUsageDate)
+      : [];
+    const missingCatalogRows = visibleDailyRows.filter(
+      (row) => !row.catalogItemId,
+    );
+    const attachedRows = visibleDailyRows.filter(
+      (row) => row.invoiceId || row.lockedAt,
+    );
+
+    const hourlyRows = args.companyId
+      ? await ctx.db
+          .query("manageOneHourlySnapshots")
+          .withIndex("by_company_hour", (q) =>
+            q.eq("linkedCompanyId", args.companyId),
+          )
+          .order("desc")
+          .take(500)
+      : await ctx.db
+          .query("manageOneHourlySnapshots")
+          .withIndex("by_hour")
+          .order("desc")
+          .take(500);
+    const visibleHourlyRows = args.companyId
+      ? hourlyRows
+      : hourlyRows.filter(
+          (row) =>
+            row.linkedCompanyId && visibleCompanyIds.has(row.linkedCompanyId),
+        );
+    const latestHourlyRows = latestSnapshotsByTenant(visibleHourlyRows);
+    const latestHourlyCapturedAt =
+      latestHourlyRows.reduce(
+        (latest, row) => Math.max(latest, row.capturedAt),
+        0,
+      ) || null;
+    const staleHourly =
+      latestHourlyCapturedAt === null ||
+      now - latestHourlyCapturedAt > HOURLY_STALE_MS;
+
+    return {
+      month: args.month,
+      scope: args.companyId ? "company" : "all",
+      businessDate,
+      companyCount: companies.length,
+      linkedTenantCount: visibleTenantRows.length,
+      unlinkedTenantCount,
+      latestHourly: {
+        capturedAt: latestHourlyCapturedAt,
+        tenantCount: latestHourlyRows.length,
+        stale: staleHourly,
+        totals: sumHourly(latestHourlyRows),
+      },
+      dailyBilling: {
+        latestUsageDate: latestDailyUsageDate,
+        capturedThroughToday: latestDailyUsageDate === businessDate,
+        rowCount: visibleDailyRows.length,
+        latestDayRowCount: latestDailyRows.length,
+        serviceRows: countRowsByService(latestDailyRows),
+        attachedRowCount: attachedRows.length,
+      },
+      catalog: {
+        missingPriceRowCount: missingCatalogRows.length,
+        missingServices: [
+          ...new Set(missingCatalogRows.map((row) => row.serviceType)),
+        ].sort((a, b) => a.localeCompare(b)),
       },
     };
   },

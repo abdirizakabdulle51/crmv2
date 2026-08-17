@@ -19,6 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card.tsx";
+import { Badge } from "@/components/ui/badge.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import {
   Tabs,
@@ -26,7 +27,14 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs.tsx";
-import { ArrowLeft } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  Clock3,
+  Database,
+  Link2,
+} from "lucide-react";
 import { useCrm } from "@/lib/crm-context.tsx";
 import {
   CompanyForm,
@@ -110,6 +118,251 @@ function formatSyncLabel(value: number) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function currentMonthInputValue() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function formatTimestamp(value?: number | null) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function HealthStatusBadge({
+  healthy,
+  label,
+}: {
+  healthy: boolean;
+  label: string;
+}) {
+  return (
+    <Badge
+      variant="outline"
+      className={
+        healthy
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300"
+          : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+      }
+    >
+      {healthy ? (
+        <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+      ) : (
+        <AlertTriangle className="mr-1 h-3.5 w-3.5" />
+      )}
+      {label}
+    </Badge>
+  );
+}
+
+function UsageHealthPanel({
+  health,
+}: {
+  health:
+    | {
+        month: string;
+        businessDate: string;
+        linkedTenantCount: number;
+        unlinkedTenantCount: number;
+        latestHourly: {
+          capturedAt: number | null;
+          tenantCount: number;
+          stale: boolean;
+          totals: {
+            ecs: number;
+            cce: number;
+            bms: number;
+            vcpu: number;
+            ramGb: number;
+            evsGb: number;
+            sfsGb: number;
+            csbsGb: number;
+            vbsGb: number;
+            obsGb: number;
+            eip: number;
+            elb: number;
+            vpn: number;
+            vpcep: number;
+            nat: number;
+            waf: number;
+          };
+        };
+        dailyBilling: {
+          latestUsageDate: string | null;
+          capturedThroughToday: boolean;
+          rowCount: number;
+          latestDayRowCount: number;
+          attachedRowCount: number;
+        };
+        catalog: {
+          missingPriceRowCount: number;
+          missingServices: string[];
+        };
+      }
+    | undefined;
+}) {
+  if (!health) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Usage Data Health</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-28" />
+          ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const liveOk =
+    Boolean(health.latestHourly.capturedAt) && !health.latestHourly.stale;
+  const dailyOk =
+    Boolean(health.dailyBilling.latestUsageDate) &&
+    health.dailyBilling.capturedThroughToday;
+  const catalogOk = health.catalog.missingPriceRowCount === 0;
+  const linksOk =
+    health.linkedTenantCount > 0 && health.unlinkedTenantCount === 0;
+  const totals = health.latestHourly.totals;
+
+  return (
+    <Card>
+      <CardHeader className="gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>Usage Data Health</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Read-only checks. Billing, quotes, invoices, and contracts are not
+            changed here.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <HealthStatusBadge healthy={liveOk} label="Live snapshot" />
+          <HealthStatusBadge healthy={dailyOk} label="Billing snapshot" />
+          <HealthStatusBadge healthy={catalogOk} label="Catalog pricing" />
+          <HealthStatusBadge healthy={linksOk} label="Tenant links" />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 lg:grid-cols-4">
+          <div className="rounded-md border p-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Clock3 className="h-4 w-4 text-cyan-600" />
+              Live Resources
+            </div>
+            <div className="mt-3 text-xs text-muted-foreground">
+              Latest hourly capture
+            </div>
+            <div className="mt-1 text-sm font-medium">
+              {formatTimestamp(health.latestHourly.capturedAt)}
+            </div>
+            <div className="mt-3 text-xs text-muted-foreground">
+              Tenants in latest view
+            </div>
+            <div className="mt-1 text-lg font-semibold">
+              {health.latestHourly.tenantCount}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Database className="h-4 w-4 text-cyan-600" />
+              Billing Snapshot
+            </div>
+            <div className="mt-3 text-xs text-muted-foreground">
+              Latest daily usage date
+            </div>
+            <div className="mt-1 text-sm font-medium">
+              {health.dailyBilling.latestUsageDate ?? "-"}
+            </div>
+            <div className="mt-3 text-xs text-muted-foreground">
+              Rows captured this month
+            </div>
+            <div className="mt-1 text-lg font-semibold">
+              {health.dailyBilling.rowCount}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Link2 className="h-4 w-4 text-cyan-600" />
+              Company Linking
+            </div>
+            <div className="mt-3 text-xs text-muted-foreground">
+              Linked ManageOne tenants
+            </div>
+            <div className="mt-1 text-lg font-semibold">
+              {health.linkedTenantCount}
+            </div>
+            <div className="mt-3 text-xs text-muted-foreground">
+              Unlinked visible tenants
+            </div>
+            <div className="mt-1 text-sm font-medium">
+              {health.unlinkedTenantCount}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <AlertTriangle className="h-4 w-4 text-cyan-600" />
+              Pricing Gaps
+            </div>
+            <div className="mt-3 text-xs text-muted-foreground">
+              Rows without catalog price
+            </div>
+            <div className="mt-1 text-lg font-semibold">
+              {health.catalog.missingPriceRowCount}
+            </div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              {health.catalog.missingServices.length > 0
+                ? health.catalog.missingServices.join(", ")
+                : "No missing services"}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-md border bg-muted/30 p-3">
+          <div className="mb-2 text-sm font-medium">Latest Live Totals</div>
+          <div className="grid gap-2 text-sm sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ["ECS", totals.ecs],
+              ["ECS-CCE", totals.cce],
+              ["BMS", totals.bms],
+              ["vCPU", totals.vcpu],
+              ["RAM GB", totals.ramGb],
+              ["EVS GB", totals.evsGb],
+              ["SFS GB", totals.sfsGb],
+              ["CSBS GB", totals.csbsGb],
+              ["VBS GB", totals.vbsGb],
+              ["OBS GB", totals.obsGb],
+              ["EIP", totals.eip],
+              ["ELB", totals.elb],
+              ["VPN", totals.vpn],
+              ["VPCEP", totals.vpcep],
+              ["NAT", totals.nat],
+              ["WAF", totals.waf],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded bg-background px-3 py-2">
+                <div className="text-xs text-muted-foreground">{label}</div>
+                <div className="font-semibold">
+                  {formatNumber(Number(value))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 function UsageTrendChart({
@@ -334,6 +587,12 @@ export default function CompanyDetailPage() {
     api.manageOneTenants.getByCompanyId,
     companyId && !isDrMode ? { companyId } : "skip",
   );
+  const usageHealth = useQuery(
+    api.dailyUsage.health,
+    companyId && !isDrMode
+      ? { companyId, month: currentMonthInputValue() }
+      : "skip",
+  );
   const drCompany = useDrRow<Company>(
     isDrMode && companyId ? `/api/companies/${companyId}` : null,
   );
@@ -478,7 +737,10 @@ export default function CompanyDetailPage() {
         </TabsContent>
 
         <TabsContent value="manageone-usage" className="mt-4">
-          <ManageOneUsageCard manageOneTenants={manageOneTenants} />
+          <div className="space-y-4">
+            <UsageHealthPanel health={usageHealth} />
+            <ManageOneUsageCard manageOneTenants={manageOneTenants} />
+          </div>
         </TabsContent>
       </Tabs>
 

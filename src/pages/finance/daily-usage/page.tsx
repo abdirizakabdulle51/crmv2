@@ -2,7 +2,17 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { CalendarDays, Database, FileText, Filter, Search } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarDays,
+  CheckCircle2,
+  Clock3,
+  Database,
+  FileText,
+  Filter,
+  Link2,
+  Search,
+} from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 import { CompanyCombobox } from "@/components/company-combobox.tsx";
@@ -86,6 +96,10 @@ export default function DailyUsagePage() {
   const [creatingDraft, setCreatingDraft] = useState(false);
 
   const review = useQuery(api.dailyUsage.review, {
+    month,
+    companyId: companyId === "all" ? undefined : (companyId as Id<"companies">),
+  });
+  const health = useQuery(api.dailyUsage.health, {
     month,
     companyId: companyId === "all" ? undefined : (companyId as Id<"companies">),
   });
@@ -241,6 +255,8 @@ export default function DailyUsagePage() {
         <SummaryCard label="Services" value={totals.serviceCount} />
         <SummaryCard label="Captured days" value={totals.dayCount} />
       </div>
+
+      <DailyUsageHealthPanel health={health} />
 
       <Card>
         <CardHeader>
@@ -557,6 +573,154 @@ export default function DailyUsagePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function HealthBadge({ healthy, label }: { healthy: boolean; label: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className={
+        healthy
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300"
+          : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+      }
+    >
+      {healthy ? (
+        <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+      ) : (
+        <AlertTriangle className="mr-1 h-3.5 w-3.5" />
+      )}
+      {label}
+    </Badge>
+  );
+}
+
+function DailyUsageHealthPanel({
+  health,
+}: {
+  health:
+    | {
+        businessDate: string;
+        linkedTenantCount: number;
+        unlinkedTenantCount: number;
+        latestHourly: {
+          capturedAt: number | null;
+          tenantCount: number;
+          stale: boolean;
+        };
+        dailyBilling: {
+          latestUsageDate: string | null;
+          capturedThroughToday: boolean;
+          rowCount: number;
+          latestDayRowCount: number;
+          attachedRowCount: number;
+        };
+        catalog: {
+          missingPriceRowCount: number;
+          missingServices: string[];
+        };
+      }
+    | undefined;
+}) {
+  if (!health) {
+    return <Skeleton className="h-40" />;
+  }
+
+  const liveOk =
+    Boolean(health.latestHourly.capturedAt) && !health.latestHourly.stale;
+  const dailyOk =
+    Boolean(health.dailyBilling.latestUsageDate) &&
+    health.dailyBilling.capturedThroughToday;
+  const catalogOk = health.catalog.missingPriceRowCount === 0;
+  const linksOk =
+    health.linkedTenantCount > 0 && health.unlinkedTenantCount === 0;
+
+  return (
+    <Card>
+      <CardHeader className="gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>Usage Data Health</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Safety checks before billing. This panel is read-only and does not
+            change usage entries, quotes, invoices, or contracts.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <HealthBadge healthy={liveOk} label="Live snapshot" />
+          <HealthBadge healthy={dailyOk} label="Billing snapshot" />
+          <HealthBadge healthy={catalogOk} label="Catalog pricing" />
+          <HealthBadge healthy={linksOk} label="Tenant links" />
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3 md:grid-cols-4">
+        <div className="rounded-md border p-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Clock3 className="h-4 w-4 text-cyan-600" />
+            Live Resources
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Latest hourly capture
+          </div>
+          <div className="mt-1 text-sm font-medium">
+            {formatTimestamp(health.latestHourly.capturedAt ?? undefined)}
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Tenants in latest view
+          </div>
+          <div className="font-semibold">{health.latestHourly.tenantCount}</div>
+        </div>
+        <div className="rounded-md border p-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Database className="h-4 w-4 text-cyan-600" />
+            Billing Snapshot
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Latest usage date
+          </div>
+          <div className="mt-1 text-sm font-medium">
+            {health.dailyBilling.latestUsageDate ?? "-"}
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Latest day rows
+          </div>
+          <div className="font-semibold">
+            {health.dailyBilling.latestDayRowCount}
+          </div>
+        </div>
+        <div className="rounded-md border p-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Link2 className="h-4 w-4 text-cyan-600" />
+            Tenant Links
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Linked tenants
+          </div>
+          <div className="font-semibold">{health.linkedTenantCount}</div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Unlinked visible tenants
+          </div>
+          <div className="font-semibold">{health.unlinkedTenantCount}</div>
+        </div>
+        <div className="rounded-md border p-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <AlertTriangle className="h-4 w-4 text-cyan-600" />
+            Pricing Gaps
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Rows without catalog price
+          </div>
+          <div className="font-semibold">
+            {health.catalog.missingPriceRowCount}
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            {health.catalog.missingServices.length > 0
+              ? health.catalog.missingServices.join(", ")
+              : "No missing services"}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
