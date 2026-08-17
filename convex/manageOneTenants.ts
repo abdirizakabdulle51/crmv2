@@ -469,18 +469,34 @@ function hourlyResource(
 function resourcesWithHourlyOverlay(
   tenant: ManageOneTenantDoc,
   snapshot: ManageOneHourlySnapshotDoc,
+  options: { forBilling: boolean },
 ): UsageHintResource[] {
   const nightlyResources = (tenant.resources ?? []).filter(
     (resource) => !HOURLY_RESOURCE_KEYS.has(resourceKey(resource)),
   );
+  const hasStructuredEcsBreakdown = (tenant.ecsFlavors ?? []).length > 0;
+  const hasStructuredEvsBreakdown = (tenant.evsVolumeTypes ?? []).length > 0;
+  const hasStructuredObsBreakdown = (tenant.obsBuckets ?? []).length > 0;
+  const hasStructuredVpnBreakdown = (tenant.vpnGateways?.count ?? 0) > 0;
+  const hasStructuredNatBreakdown = (tenant.natGateways?.items ?? []).length > 0;
   const hourlyResources = [
-    hourlyResource("ecs", "instances", snapshot.ecsInstances),
-    hourlyResource("evs", "gigabytes", snapshot.evsGb),
-    hourlyResource("obsv3", "capacity", snapshot.obsGb),
+    options.forBilling && hasStructuredEcsBreakdown
+      ? undefined
+      : hourlyResource("ecs", "instances", snapshot.ecsInstances),
+    options.forBilling && hasStructuredEvsBreakdown
+      ? undefined
+      : hourlyResource("evs", "gigabytes", snapshot.evsGb),
+    options.forBilling && hasStructuredObsBreakdown
+      ? undefined
+      : hourlyResource("obsv3", "capacity", snapshot.obsGb),
     hourlyResource("vpc", "publicIp", snapshot.publicIps),
     hourlyResource("vpc", "loadbalancer", snapshot.loadBalancers),
-    hourlyResource("vpc", "vpn", snapshot.vpnGateways),
-    hourlyResource("vpc", "nat", snapshot.natGateways),
+    options.forBilling && hasStructuredVpnBreakdown
+      ? undefined
+      : hourlyResource("vpc", "vpn", snapshot.vpnGateways),
+    options.forBilling && hasStructuredNatBreakdown
+      ? undefined
+      : hourlyResource("vpc", "nat", snapshot.natGateways),
     hourlyResource("waf", "waf.instance", snapshot.wafInstances),
   ].filter((resource): resource is UsageHintResource => Boolean(resource));
 
@@ -490,6 +506,7 @@ function resourcesWithHourlyOverlay(
 function tenantWithHourlyUsage(
   tenant: ManageOneTenantDoc,
   snapshot?: ManageOneHourlySnapshotDoc | null,
+  options: { forBilling: boolean } = { forBilling: false },
 ): ManageOneTenantWithLiveUsage {
   if (!snapshot) {
     return tenant;
@@ -501,18 +518,7 @@ function tenantWithHourlyUsage(
     regionName: snapshot.regionName ?? tenant.regionName,
     ecsUsed: snapshot.ecsInstances,
     evsUsed: snapshot.evsGb,
-    resources: resourcesWithHourlyOverlay(tenant, snapshot),
-    ecsFlavors: undefined,
-    evsVolumeTypes: undefined,
-    obsBuckets: undefined,
-    natGateways: undefined,
-    vpnGateways:
-      snapshot.vpnGateways > 0
-        ? {
-            count: snapshot.vpnGateways,
-            resourceTypeName: "CLOUD_VPN_SERVICE",
-          }
-        : undefined,
+    resources: resourcesWithHourlyOverlay(tenant, snapshot, options),
     liveUsageSyncedAt: snapshot.capturedAt,
     liveEcsCores: snapshot.ecsCores,
     liveEcsRamGb: snapshot.ecsRamGb,
@@ -522,6 +528,7 @@ function tenantWithHourlyUsage(
 async function tenantsWithLatestHourlyUsage(
   ctx: QueryCtx,
   tenants: ManageOneTenantDoc[],
+  options: { forBilling?: boolean } = {},
 ): Promise<ManageOneTenantWithLiveUsage[]> {
   const tenantsWithUsage: ManageOneTenantWithLiveUsage[] = [];
 
@@ -532,7 +539,11 @@ async function tenantsWithLatestHourlyUsage(
       .order("desc")
       .first();
 
-    tenantsWithUsage.push(tenantWithHourlyUsage(tenant, snapshot));
+    tenantsWithUsage.push(
+      tenantWithHourlyUsage(tenant, snapshot, {
+        forBilling: options.forBilling ?? false,
+      }),
+    );
   }
 
   return tenantsWithUsage;
@@ -1631,7 +1642,9 @@ export const getUsageHintsForCompany = query({
       )
       .collect();
     const catalog = await ctx.db.query("serviceCatalog").collect();
-    const tenantsWithUsage = await tenantsWithLatestHourlyUsage(ctx, tenants);
+    const tenantsWithUsage = await tenantsWithLatestHourlyUsage(ctx, tenants, {
+      forBilling: true,
+    });
 
     return {
       hints: buildUsageHintsForCompany(tenantsWithUsage, catalog),
@@ -1658,7 +1671,9 @@ export const getBulkUsagePreview = query({
         q.eq("companyId", args.companyId).eq("month", args.month),
       )
       .collect();
-    const tenantsWithUsage = await tenantsWithLatestHourlyUsage(ctx, tenants);
+    const tenantsWithUsage = await tenantsWithLatestHourlyUsage(ctx, tenants, {
+      forBilling: true,
+    });
     const hints = buildUsageHintsForCompany(tenantsWithUsage, catalog);
 
     return buildBulkUsagePreview(hints, catalog, existingEntries);
