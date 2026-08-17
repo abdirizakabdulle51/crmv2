@@ -63,7 +63,10 @@ const usageHistoryItem = {
   obsGb: v.number(),
   sfsGb: v.number(),
   publicIps: v.number(),
+  bmsInstances: v.optional(v.number()),
   wafInstances: v.number(),
+  wafBasicInstances: v.optional(v.number()),
+  wafEnterpriseInstances: v.optional(v.number()),
   syncedAt: v.number(),
 };
 
@@ -84,7 +87,12 @@ function addRowToAggregate(
   aggregate.obsGb += row.obsGb;
   aggregate.sfsGb += row.sfsGb;
   aggregate.publicIps += row.publicIps;
+  aggregate.bmsInstances = (aggregate.bmsInstances ?? 0) + (row.bmsInstances ?? 0);
   aggregate.wafInstances += row.wafInstances;
+  aggregate.wafBasicInstances =
+    (aggregate.wafBasicInstances ?? 0) + (row.wafBasicInstances ?? 0);
+  aggregate.wafEnterpriseInstances =
+    (aggregate.wafEnterpriseInstances ?? 0) + (row.wafEnterpriseInstances ?? 0);
   aggregate.tenantName = `${aggregate.tenantName}, ${row.tenantName}`;
 }
 
@@ -164,7 +172,14 @@ export const bulkInsert = internalMutation({
         obsGb: row.obsGb,
         sfsGb: row.sfsGb,
         publicIps: row.publicIps,
+        ...(row.bmsInstances !== undefined ? { bmsInstances: row.bmsInstances } : {}),
         wafInstances: row.wafInstances,
+        ...(row.wafBasicInstances !== undefined
+          ? { wafBasicInstances: row.wafBasicInstances }
+          : {}),
+        ...(row.wafEnterpriseInstances !== undefined
+          ? { wafEnterpriseInstances: row.wafEnterpriseInstances }
+          : {}),
         syncedAt: row.syncedAt,
       });
       inserted++;

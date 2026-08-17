@@ -22,10 +22,13 @@ const hourlySnapshotInputValidator = v.object({
   evsGb: v.number(),
   obsGb: v.number(),
   publicIps: v.number(),
+  bmsInstances: v.optional(v.number()),
   loadBalancers: v.number(),
   vpnGateways: v.number(),
   natGateways: v.number(),
   wafInstances: v.number(),
+  wafBasicInstances: v.optional(v.number()),
+  wafEnterpriseInstances: v.optional(v.number()),
   rawMetrics: v.optional(v.any()),
 });
 

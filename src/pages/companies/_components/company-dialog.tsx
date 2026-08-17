@@ -47,6 +47,7 @@ type PaymentTermValue = "default" | "7" | "15" | "30";
 type ManageOneTenant = Doc<"manageOneTenants">;
 type ManageOneTenantWithLiveUsage = ManageOneTenant & {
   liveUsageSyncedAt?: number;
+  liveBmsInstances?: number;
   liveEcsCores?: number;
   liveEcsRamGb?: number;
 };
@@ -98,6 +99,14 @@ function ManageOneTenantStats({
           {formatManageOneNumber(tenant.ecsUsed)}
         </div>
       </div>
+      {tenant.liveBmsInstances != null ? (
+        <div>
+          <div className="text-muted-foreground">BMS</div>
+          <div className="font-medium">
+            {formatManageOneNumber(tenant.liveBmsInstances)}
+          </div>
+        </div>
+      ) : null}
       <div>
         <div className="text-muted-foreground">EVS</div>
         <div className="font-medium">

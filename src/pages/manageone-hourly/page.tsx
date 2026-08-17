@@ -104,12 +104,13 @@ export default function ManageOneHourlyPage() {
       (totals, row) => ({
         tenants: totals.tenants + 1,
         ecs: totals.ecs + row.ecsInstances,
+        bms: totals.bms + (row.bmsInstances ?? 0),
         vcpu: totals.vcpu + row.ecsCores,
         ram: totals.ram + row.ecsRamGb,
         evs: totals.evs + row.evsGb,
         nat: totals.nat + row.natGateways,
       }),
-      { tenants: 0, ecs: 0, vcpu: 0, ram: 0, evs: 0, nat: 0 },
+      { tenants: 0, ecs: 0, bms: 0, vcpu: 0, ram: 0, evs: 0, nat: 0 },
     );
   }, [filteredSnapshots]);
 
@@ -149,9 +150,10 @@ export default function ManageOneHourlyPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
         <MetricCard label="Latest tenants" value={summary.tenants} />
         <MetricCard label="ECS" value={summary.ecs} />
+        <MetricCard label="BMS" value={summary.bms} />
         <MetricCard label="vCPU" value={summary.vcpu} />
         <MetricCard label="RAM GB" value={summary.ram} />
         <MetricCard label="EVS GB" value={summary.evs} />
@@ -227,6 +229,7 @@ export default function ManageOneHourlyPage() {
                     <th className="p-3 text-left font-medium">Region</th>
                     <th className="p-3 text-left font-medium">Captured</th>
                     <th className="p-3 text-right font-medium">ECS</th>
+                    <th className="p-3 text-right font-medium">BMS</th>
                     <th className="p-3 text-right font-medium">vCPU</th>
                     <th className="p-3 text-right font-medium">RAM GB</th>
                     <th className="p-3 text-right font-medium">EVS GB</th>
@@ -236,6 +239,8 @@ export default function ManageOneHourlyPage() {
                     <th className="p-3 text-right font-medium">VPN</th>
                     <th className="p-3 text-right font-medium">NAT</th>
                     <th className="p-3 text-right font-medium">WAF</th>
+                    <th className="p-3 text-right font-medium">WAF Basic</th>
+                    <th className="p-3 text-right font-medium">WAF Ent</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -257,6 +262,7 @@ export default function ManageOneHourlyPage() {
                       </td>
                       <td className="p-3">{formatDateTime(row.capturedHour)}</td>
                       <td className="p-3 text-right">{formatNumber(row.ecsInstances)}</td>
+                      <td className="p-3 text-right">{formatNumber(row.bmsInstances ?? 0)}</td>
                       <td className="p-3 text-right">{formatNumber(row.ecsCores)}</td>
                       <td className="p-3 text-right">{formatNumber(row.ecsRamGb)}</td>
                       <td className="p-3 text-right">{formatNumber(row.evsGb)}</td>
@@ -266,6 +272,8 @@ export default function ManageOneHourlyPage() {
                       <td className="p-3 text-right">{formatNumber(row.vpnGateways)}</td>
                       <td className="p-3 text-right">{formatNumber(row.natGateways)}</td>
                       <td className="p-3 text-right">{formatNumber(row.wafInstances)}</td>
+                      <td className="p-3 text-right">{formatNumber(row.wafBasicInstances ?? 0)}</td>
+                      <td className="p-3 text-right">{formatNumber(row.wafEnterpriseInstances ?? 0)}</td>
                     </tr>
                   ))}
                 </tbody>

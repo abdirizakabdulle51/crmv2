@@ -40,6 +40,7 @@ type ManageOneHourlySnapshotDoc = Doc<"manageOneHourlySnapshots">;
 
 type ManageOneTenantWithLiveUsage = ManageOneTenantDoc & {
   liveUsageSyncedAt?: number;
+  liveBmsInstances?: number;
   liveEcsCores?: number;
   liveEcsRamGb?: number;
 };
@@ -440,6 +441,7 @@ function usagePreviewKey(source: {
 
 const HOURLY_RESOURCE_KEYS = new Set([
   "ecs:instances",
+  "bms:instances",
   "evs:gigabytes",
   "obsv3:capacity",
   "vpc:publicIp",
@@ -466,6 +468,14 @@ function hourlyResource(
   return { serviceId, resource, used };
 }
 
+function optionalSnapshotNumber(
+  snapshot: ManageOneHourlySnapshotDoc,
+  key: string,
+): number | undefined {
+  const value = (snapshot as unknown as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function resourcesWithHourlyOverlay(
   tenant: ManageOneTenantDoc,
   snapshot: ManageOneHourlySnapshotDoc,
@@ -479,10 +489,18 @@ function resourcesWithHourlyOverlay(
   const hasStructuredObsBreakdown = (tenant.obsBuckets ?? []).length > 0;
   const hasStructuredVpnBreakdown = (tenant.vpnGateways?.count ?? 0) > 0;
   const hasStructuredNatBreakdown = (tenant.natGateways?.items ?? []).length > 0;
+  const wafBasicInstances = optionalSnapshotNumber(snapshot, "wafBasicInstances");
+  const wafEnterpriseInstances = optionalSnapshotNumber(
+    snapshot,
+    "wafEnterpriseInstances",
+  );
+  const hasWafTierBreakdown =
+    (wafBasicInstances ?? 0) > 0 || (wafEnterpriseInstances ?? 0) > 0;
   const hourlyResources = [
     options.forBilling && hasStructuredEcsBreakdown
       ? undefined
       : hourlyResource("ecs", "instances", snapshot.ecsInstances),
+    hourlyResource("bms", "instances", optionalSnapshotNumber(snapshot, "bmsInstances")),
     options.forBilling && hasStructuredEvsBreakdown
       ? undefined
       : hourlyResource("evs", "gigabytes", snapshot.evsGb),
@@ -497,7 +515,11 @@ function resourcesWithHourlyOverlay(
     options.forBilling && hasStructuredNatBreakdown
       ? undefined
       : hourlyResource("vpc", "nat", snapshot.natGateways),
-    hourlyResource("waf", "waf.instance", snapshot.wafInstances),
+    hasWafTierBreakdown
+      ? undefined
+      : hourlyResource("waf", "waf.instance", snapshot.wafInstances),
+    hourlyResource("waf", "waf.instance.100", wafBasicInstances),
+    hourlyResource("waf", "waf.instance.500", wafEnterpriseInstances),
   ].filter((resource): resource is UsageHintResource => Boolean(resource));
 
   return [...nightlyResources, ...hourlyResources];
@@ -520,6 +542,7 @@ function tenantWithHourlyUsage(
     evsUsed: snapshot.evsGb,
     resources: resourcesWithHourlyOverlay(tenant, snapshot, options),
     liveUsageSyncedAt: snapshot.capturedAt,
+    liveBmsInstances: optionalSnapshotNumber(snapshot, "bmsInstances"),
     liveEcsCores: snapshot.ecsCores,
     liveEcsRamGb: snapshot.ecsRamGb,
   };

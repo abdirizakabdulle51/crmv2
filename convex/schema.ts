@@ -491,7 +491,10 @@ export default defineSchema({
     obsGb: v.number(),
     sfsGb: v.number(),
     publicIps: v.number(),
+    bmsInstances: v.optional(v.number()),
     wafInstances: v.number(),
+    wafBasicInstances: v.optional(v.number()),
+    wafEnterpriseInstances: v.optional(v.number()),
     syncedAt: v.number(),
   }).index("by_company_synced_at", ["linkedCompanyId", "syncedAt"]),
 
@@ -511,10 +514,13 @@ export default defineSchema({
     evsGb: v.number(),
     obsGb: v.number(),
     publicIps: v.number(),
+    bmsInstances: v.optional(v.number()),
     loadBalancers: v.number(),
     vpnGateways: v.number(),
     natGateways: v.number(),
     wafInstances: v.number(),
+    wafBasicInstances: v.optional(v.number()),
+    wafEnterpriseInstances: v.optional(v.number()),
     rawMetrics: v.optional(v.any()),
   })
     .index("by_snapshot_key", ["snapshotKey"])

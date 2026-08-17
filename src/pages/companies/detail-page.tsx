@@ -46,6 +46,7 @@ const CHART_GROUPS = [
     title: "Compute Counts",
     metrics: [
       { key: "ecsInstances", label: "ECS", color: "#35C7C9" },
+      { key: "bmsInstances", label: "BMS", color: "#0f766e" },
       { key: "rdsInstances", label: "RDS", color: "#2563eb" },
       { key: "cceClusters", label: "CCE", color: "#7c3aed" },
     ],
@@ -70,6 +71,8 @@ const CHART_GROUPS = [
     metrics: [
       { key: "publicIps", label: "Public IPs", color: "#0284c7" },
       { key: "wafInstances", label: "WAF", color: "#dc2626" },
+      { key: "wafBasicInstances", label: "WAF Basic", color: "#f97316" },
+      { key: "wafEnterpriseInstances", label: "WAF Ent", color: "#be123c" },
     ],
   },
 ] satisfies Array<{
@@ -78,6 +81,7 @@ const CHART_GROUPS = [
     key: keyof Pick<
       TenantUsageHistoryRow,
       | "ecsInstances"
+      | "bmsInstances"
       | "ecsCores"
       | "ecsRamGb"
       | "rdsInstances"
@@ -87,6 +91,8 @@ const CHART_GROUPS = [
       | "sfsGb"
       | "publicIps"
       | "wafInstances"
+      | "wafBasicInstances"
+      | "wafEnterpriseInstances"
     >;
     label: string;
     color: string;

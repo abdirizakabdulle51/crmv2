@@ -298,7 +298,10 @@ type TenantUsageHistoryInput = {
   obsGb: number;
   sfsGb: number;
   publicIps: number;
+  bmsInstances?: number;
   wafInstances: number;
+  wafBasicInstances?: number;
+  wafEnterpriseInstances?: number;
   syncedAt: number;
 };
 
@@ -315,10 +318,13 @@ type ManageOneHourlySnapshotInput = {
   evsGb: number;
   obsGb: number;
   publicIps: number;
+  bmsInstances?: number;
   loadBalancers: number;
   vpnGateways: number;
   natGateways: number;
   wafInstances: number;
+  wafBasicInstances?: number;
+  wafEnterpriseInstances?: number;
   rawMetrics?: unknown;
 };
 
@@ -1631,7 +1637,21 @@ function normalizeTenantUsageHistory(value: unknown): TenantUsageHistoryInput {
     obsGb: requireUnknownNumber(value, "obsGb"),
     sfsGb: requireUnknownNumber(value, "sfsGb"),
     publicIps: requireUnknownNumber(value, "publicIps"),
+    ...(optionalUnknownNumber(value, "bmsInstances") !== undefined
+      ? { bmsInstances: optionalUnknownNumber(value, "bmsInstances") }
+      : {}),
     wafInstances: requireUnknownNumber(value, "wafInstances"),
+    ...(optionalUnknownNumber(value, "wafBasicInstances") !== undefined
+      ? { wafBasicInstances: optionalUnknownNumber(value, "wafBasicInstances") }
+      : {}),
+    ...(optionalUnknownNumber(value, "wafEnterpriseInstances") !== undefined
+      ? {
+          wafEnterpriseInstances: optionalUnknownNumber(
+            value,
+            "wafEnterpriseInstances",
+          ),
+        }
+      : {}),
     syncedAt: requireUnknownNumber(value, "syncedAt"),
   };
 }
@@ -1662,10 +1682,24 @@ function normalizeManageOneHourlySnapshot(
     evsGb: requireUnknownNumber(value, "evsGb"),
     obsGb: requireUnknownNumber(value, "obsGb"),
     publicIps: requireUnknownNumber(value, "publicIps"),
+    ...(optionalUnknownNumber(value, "bmsInstances") !== undefined
+      ? { bmsInstances: optionalUnknownNumber(value, "bmsInstances") }
+      : {}),
     loadBalancers: requireUnknownNumber(value, "loadBalancers"),
     vpnGateways: requireUnknownNumber(value, "vpnGateways"),
     natGateways: requireUnknownNumber(value, "natGateways"),
     wafInstances: requireUnknownNumber(value, "wafInstances"),
+    ...(optionalUnknownNumber(value, "wafBasicInstances") !== undefined
+      ? { wafBasicInstances: optionalUnknownNumber(value, "wafBasicInstances") }
+      : {}),
+    ...(optionalUnknownNumber(value, "wafEnterpriseInstances") !== undefined
+      ? {
+          wafEnterpriseInstances: optionalUnknownNumber(
+            value,
+            "wafEnterpriseInstances",
+          ),
+        }
+      : {}),
     ...(value.rawMetrics !== undefined ? { rawMetrics: value.rawMetrics } : {}),
   };
 }
