@@ -35,6 +35,15 @@ type UsageHintResource = {
   used: number;
 };
 
+type ManageOneTenantDoc = Doc<"manageOneTenants">;
+type ManageOneHourlySnapshotDoc = Doc<"manageOneHourlySnapshots">;
+
+type ManageOneTenantWithLiveUsage = ManageOneTenantDoc & {
+  liveUsageSyncedAt?: number;
+  liveEcsCores?: number;
+  liveEcsRamGb?: number;
+};
+
 type UsageHintTenant = {
   regionId?: string;
   regionName?: string;
@@ -219,6 +228,12 @@ const USAGE_HINT_RULES: HintRule[] = [
     resource: "vpn",
     serviceCategory: "VPN",
     pricing: "auto",
+  },
+  {
+    serviceId: "vpc",
+    resource: "nat",
+    serviceCategory: "NAT",
+    pricing: "manual",
   },
   {
     serviceId: "vpc",
@@ -421,6 +436,106 @@ function usagePreviewKey(source: {
   dataCenterName?: string;
 }) {
   return `${source.serviceType}:${source.catalogItemId ?? ""}:${regionKey(source)}`;
+}
+
+const HOURLY_RESOURCE_KEYS = new Set([
+  "ecs:instances",
+  "evs:gigabytes",
+  "obsv3:capacity",
+  "vpc:publicIp",
+  "vpc:loadbalancer",
+  "vpc:vpn",
+  "vpc:nat",
+  "waf:waf.instance",
+  "waf:waf.instance.100",
+  "waf:waf.instance.500",
+]);
+
+function resourceKey(resource: UsageHintResource) {
+  return `${resource.serviceId}:${resource.resource}`;
+}
+
+function hourlyResource(
+  serviceId: string,
+  resource: string,
+  used: number | undefined,
+): UsageHintResource | undefined {
+  if (used == null || used <= 0) {
+    return undefined;
+  }
+  return { serviceId, resource, used };
+}
+
+function resourcesWithHourlyOverlay(
+  tenant: ManageOneTenantDoc,
+  snapshot: ManageOneHourlySnapshotDoc,
+): UsageHintResource[] {
+  const nightlyResources = (tenant.resources ?? []).filter(
+    (resource) => !HOURLY_RESOURCE_KEYS.has(resourceKey(resource)),
+  );
+  const hourlyResources = [
+    hourlyResource("ecs", "instances", snapshot.ecsInstances),
+    hourlyResource("evs", "gigabytes", snapshot.evsGb),
+    hourlyResource("obsv3", "capacity", snapshot.obsGb),
+    hourlyResource("vpc", "publicIp", snapshot.publicIps),
+    hourlyResource("vpc", "loadbalancer", snapshot.loadBalancers),
+    hourlyResource("vpc", "vpn", snapshot.vpnGateways),
+    hourlyResource("vpc", "nat", snapshot.natGateways),
+    hourlyResource("waf", "waf.instance", snapshot.wafInstances),
+  ].filter((resource): resource is UsageHintResource => Boolean(resource));
+
+  return [...nightlyResources, ...hourlyResources];
+}
+
+function tenantWithHourlyUsage(
+  tenant: ManageOneTenantDoc,
+  snapshot?: ManageOneHourlySnapshotDoc | null,
+): ManageOneTenantWithLiveUsage {
+  if (!snapshot) {
+    return tenant;
+  }
+
+  return {
+    ...tenant,
+    regionId: snapshot.regionId ?? tenant.regionId,
+    regionName: snapshot.regionName ?? tenant.regionName,
+    ecsUsed: snapshot.ecsInstances,
+    evsUsed: snapshot.evsGb,
+    resources: resourcesWithHourlyOverlay(tenant, snapshot),
+    ecsFlavors: undefined,
+    evsVolumeTypes: undefined,
+    obsBuckets: undefined,
+    natGateways: undefined,
+    vpnGateways:
+      snapshot.vpnGateways > 0
+        ? {
+            count: snapshot.vpnGateways,
+            resourceTypeName: "CLOUD_VPN_SERVICE",
+          }
+        : undefined,
+    liveUsageSyncedAt: snapshot.capturedAt,
+    liveEcsCores: snapshot.ecsCores,
+    liveEcsRamGb: snapshot.ecsRamGb,
+  };
+}
+
+async function tenantsWithLatestHourlyUsage(
+  ctx: QueryCtx,
+  tenants: ManageOneTenantDoc[],
+): Promise<ManageOneTenantWithLiveUsage[]> {
+  const tenantsWithUsage: ManageOneTenantWithLiveUsage[] = [];
+
+  for (const tenant of tenants) {
+    const snapshot = await ctx.db
+      .query("manageOneHourlySnapshots")
+      .withIndex("by_vdc_hour", (q) => q.eq("vdcId", tenant.vdcId))
+      .order("desc")
+      .first();
+
+    tenantsWithUsage.push(tenantWithHourlyUsage(tenant, snapshot));
+  }
+
+  return tenantsWithUsage;
 }
 
 export function buildUsageHintsForCompany(
@@ -1493,12 +1608,14 @@ export const getByCompanyId = query({
   args: { companyId: v.id("companies") },
   handler: async (ctx, args) => {
     await getCurrentUserOrThrow(ctx);
-    return await ctx.db
+    const tenants = await ctx.db
       .query("manageOneTenants")
       .withIndex("by_linked_company", (q) =>
         q.eq("linkedCompanyId", args.companyId),
       )
       .collect();
+
+    return await tenantsWithLatestHourlyUsage(ctx, tenants);
   },
 });
 
@@ -1514,9 +1631,10 @@ export const getUsageHintsForCompany = query({
       )
       .collect();
     const catalog = await ctx.db.query("serviceCatalog").collect();
+    const tenantsWithUsage = await tenantsWithLatestHourlyUsage(ctx, tenants);
 
     return {
-      hints: buildUsageHintsForCompany(tenants, catalog),
+      hints: buildUsageHintsForCompany(tenantsWithUsage, catalog),
     };
   },
 });
@@ -1540,7 +1658,8 @@ export const getBulkUsagePreview = query({
         q.eq("companyId", args.companyId).eq("month", args.month),
       )
       .collect();
-    const hints = buildUsageHintsForCompany(tenants, catalog);
+    const tenantsWithUsage = await tenantsWithLatestHourlyUsage(ctx, tenants);
+    const hints = buildUsageHintsForCompany(tenantsWithUsage, catalog);
 
     return buildBulkUsagePreview(hints, catalog, existingEntries);
   },

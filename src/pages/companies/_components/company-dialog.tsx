@@ -45,13 +45,20 @@ type ContractStatus = "active" | "pending" | "expired" | "terminated";
 type PaymentStatus = "current" | "overdue" | "delinquent";
 type PaymentTermValue = "default" | "7" | "15" | "30";
 type ManageOneTenant = Doc<"manageOneTenants">;
+type ManageOneTenantWithLiveUsage = ManageOneTenant & {
+  liveUsageSyncedAt?: number;
+  liveEcsCores?: number;
+  liveEcsRamGb?: number;
+};
 type ManageOneResource = NonNullable<ManageOneTenant["resources"]>[number];
 
 const KEY_RESOURCE_LABELS: Record<string, string> = {
   publicIp: "EIP",
   vpn: "VPN",
+  nat: "NAT",
   loadbalancer: "Load Balancers",
   waf: "WAF",
+  "waf.instance": "WAF",
   csbs: "Backup",
   backup: "Backup",
 };
@@ -64,7 +71,7 @@ function formatResourceValue(resource: ManageOneResource) {
   return `${used} / ${formatManageOneNumber(resource.total)}`;
 }
 
-function getKeyResources(tenant: ManageOneTenant) {
+function getKeyResources(tenant: ManageOneTenantWithLiveUsage) {
   return (tenant.resources ?? [])
     .filter((resource) => resource.used > 0)
     .map((resource) => ({
@@ -75,8 +82,13 @@ function getKeyResources(tenant: ManageOneTenant) {
     .filter((item) => item.label);
 }
 
-function ManageOneTenantStats({ tenant }: { tenant: ManageOneTenant }) {
+function ManageOneTenantStats({
+  tenant,
+}: {
+  tenant: ManageOneTenantWithLiveUsage;
+}) {
   const keyResources = getKeyResources(tenant);
+  const syncedAt = tenant.liveUsageSyncedAt ?? tenant.lastSyncedAt;
 
   return (
     <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
@@ -92,6 +104,22 @@ function ManageOneTenantStats({ tenant }: { tenant: ManageOneTenant }) {
           {formatManageOneNumber(tenant.evsUsed)}
         </div>
       </div>
+      {tenant.liveEcsCores != null ? (
+        <div>
+          <div className="text-muted-foreground">vCPU</div>
+          <div className="font-medium">
+            {formatManageOneNumber(tenant.liveEcsCores)}
+          </div>
+        </div>
+      ) : null}
+      {tenant.liveEcsRamGb != null ? (
+        <div>
+          <div className="text-muted-foreground">RAM GB</div>
+          <div className="font-medium">
+            {formatManageOneNumber(tenant.liveEcsRamGb)}
+          </div>
+        </div>
+      ) : null}
       <div>
         <div className="text-muted-foreground">Projects</div>
         <div className="font-medium">
@@ -99,10 +127,10 @@ function ManageOneTenantStats({ tenant }: { tenant: ManageOneTenant }) {
         </div>
       </div>
       <div>
-        <div className="text-muted-foreground">Last synced</div>
-        <div className="font-medium">
-          {formatManageOneDate(tenant.lastSyncedAt)}
+        <div className="text-muted-foreground">
+          {tenant.liveUsageSyncedAt ? "Last hourly snapshot" : "Last synced"}
         </div>
+        <div className="font-medium">{formatManageOneDate(syncedAt)}</div>
       </div>
       {keyResources.map(({ label, value, resource }) => (
         <div key={`${resource.serviceId}-${resource.resource}`}>
@@ -492,7 +520,7 @@ export function CompanyForm({
 export function ManageOneUsageCard({
   manageOneTenants,
 }: {
-  manageOneTenants: ManageOneTenant[] | undefined;
+  manageOneTenants: ManageOneTenantWithLiveUsage[] | undefined;
 }) {
   if (!manageOneTenants) {
     return (
