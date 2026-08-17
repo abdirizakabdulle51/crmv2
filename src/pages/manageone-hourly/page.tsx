@@ -22,6 +22,9 @@ import { useCrm } from "@/lib/crm-context.tsx";
 import { Activity, ShieldAlert } from "lucide-react";
 
 type TimeWindow = "24h" | "7d" | "30d";
+const monitoredRegions = ["Hoa-Mogadishu-2", "Mogadishu-region-hq3"] as const;
+const monitoredRegionSet = new Set<string>(monitoredRegions);
+const monitoredRegionValue = "__monitored__";
 
 function formatNumber(value: number | undefined | null, maximumFractionDigits = 1) {
   if (value == null) return "-";
@@ -53,7 +56,7 @@ export default function ManageOneHourlyPage() {
     canView ? {} : "skip",
   );
   const [search, setSearch] = useState("");
-  const [region, setRegion] = useState("all");
+  const [region, setRegion] = useState(monitoredRegionValue);
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("24h");
 
   const filteredSnapshots = useMemo(() => {
@@ -64,7 +67,11 @@ export default function ManageOneHourlyPage() {
 
     return snapshots.filter((row) => {
       if (row.capturedHour < cutoff) return false;
-      if (region !== "all" && (row.regionName || row.regionId || "Unknown") !== region) {
+      const rowRegion = row.regionName || row.regionId || "Unknown";
+      if (region === monitoredRegionValue && !monitoredRegionSet.has(rowRegion)) {
+        return false;
+      }
+      if (region !== monitoredRegionValue && rowRegion !== region) {
         return false;
       }
       if (!query) return true;
@@ -84,11 +91,8 @@ export default function ManageOneHourlyPage() {
   }, [region, search, snapshots, timeWindow]);
 
   const regions = useMemo(() => {
-    if (!snapshots) return [];
-    return Array.from(
-      new Set(snapshots.map((row) => row.regionName || row.regionId || "Unknown")),
-    ).sort((a, b) => a.localeCompare(b));
-  }, [snapshots]);
+    return monitoredRegions;
+  }, []);
 
   const summary = useMemo(() => {
     const latestHour = filteredSnapshots[0]?.capturedHour;
@@ -179,10 +183,10 @@ export default function ManageOneHourlyPage() {
             />
             <Select value={region} onValueChange={setRegion}>
               <SelectTrigger>
-                <SelectValue placeholder="All regions" />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All regions</SelectItem>
+                <SelectItem value={monitoredRegionValue}>HOA + HQ3</SelectItem>
                 {regions.map((item) => (
                   <SelectItem key={item} value={item}>
                     {item}
