@@ -104,13 +104,14 @@ export default function ManageOneHourlyPage() {
       (totals, row) => ({
         tenants: totals.tenants + 1,
         ecs: totals.ecs + row.ecsInstances,
+        cce: totals.cce + (row.cceNodes ?? 0),
         bms: totals.bms + (row.bmsInstances ?? 0),
         vcpu: totals.vcpu + row.ecsCores,
         ram: totals.ram + row.ecsRamGb,
         evs: totals.evs + row.evsGb,
         nat: totals.nat + row.natGateways,
       }),
-      { tenants: 0, ecs: 0, bms: 0, vcpu: 0, ram: 0, evs: 0, nat: 0 },
+      { tenants: 0, ecs: 0, cce: 0, bms: 0, vcpu: 0, ram: 0, evs: 0, nat: 0 },
     );
   }, [filteredSnapshots]);
 
@@ -150,9 +151,10 @@ export default function ManageOneHourlyPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
         <MetricCard label="Latest tenants" value={summary.tenants} />
         <MetricCard label="ECS" value={summary.ecs} />
+        <MetricCard label="ECS-CCE" value={summary.cce} />
         <MetricCard label="BMS" value={summary.bms} />
         <MetricCard label="vCPU" value={summary.vcpu} />
         <MetricCard label="RAM GB" value={summary.ram} />
@@ -229,14 +231,19 @@ export default function ManageOneHourlyPage() {
                     <th className="p-3 text-left font-medium">Region</th>
                     <th className="p-3 text-left font-medium">Captured</th>
                     <th className="p-3 text-right font-medium">ECS</th>
+                    <th className="p-3 text-right font-medium">ECS-CCE</th>
                     <th className="p-3 text-right font-medium">BMS</th>
                     <th className="p-3 text-right font-medium">vCPU</th>
                     <th className="p-3 text-right font-medium">RAM GB</th>
                     <th className="p-3 text-right font-medium">EVS GB</th>
+                    <th className="p-3 text-right font-medium">SFS GB</th>
+                    <th className="p-3 text-right font-medium">CSBS GB</th>
+                    <th className="p-3 text-right font-medium">VBS GB</th>
                     <th className="p-3 text-right font-medium">OBS GB</th>
                     <th className="p-3 text-right font-medium">EIP</th>
                     <th className="p-3 text-right font-medium">ELB</th>
                     <th className="p-3 text-right font-medium">VPN</th>
+                    <th className="p-3 text-right font-medium">VPCEP</th>
                     <th className="p-3 text-right font-medium">NAT</th>
                     <th className="p-3 text-right font-medium">WAF</th>
                     <th className="p-3 text-right font-medium">WAF Basic</th>
@@ -262,14 +269,19 @@ export default function ManageOneHourlyPage() {
                       </td>
                       <td className="p-3">{formatDateTime(row.capturedHour)}</td>
                       <td className="p-3 text-right">{formatNumber(row.ecsInstances)}</td>
+                      <td className="p-3 text-right">{formatNumber(row.cceNodes ?? 0)}</td>
                       <td className="p-3 text-right">{formatNumber(row.bmsInstances ?? 0)}</td>
                       <td className="p-3 text-right">{formatNumber(row.ecsCores)}</td>
                       <td className="p-3 text-right">{formatNumber(row.ecsRamGb)}</td>
                       <td className="p-3 text-right">{formatNumber(row.evsGb)}</td>
+                      <td className="p-3 text-right">{formatNumber(row.sfsGb ?? 0)}</td>
+                      <td className="p-3 text-right">{formatNumber(row.csbsGb ?? 0)}</td>
+                      <td className="p-3 text-right">{formatNumber(row.vbsGb ?? 0)}</td>
                       <td className="p-3 text-right">{formatNumber(row.obsGb)}</td>
                       <td className="p-3 text-right">{formatNumber(row.publicIps)}</td>
                       <td className="p-3 text-right">{formatNumber(row.loadBalancers)}</td>
                       <td className="p-3 text-right">{formatNumber(row.vpnGateways)}</td>
+                      <td className="p-3 text-right">{formatNumber(row.vpcepEndpoints ?? 0)}</td>
                       <td className="p-3 text-right">{formatNumber(row.natGateways)}</td>
                       <td className="p-3 text-right">{formatNumber(row.wafInstances)}</td>
                       <td className="p-3 text-right">{formatNumber(row.wafBasicInstances ?? 0)}</td>

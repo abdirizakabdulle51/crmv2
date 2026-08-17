@@ -441,10 +441,15 @@ function usagePreviewKey(source: {
 
 const HOURLY_RESOURCE_KEYS = new Set([
   "ecs:instances",
+  "cce:hybrid.resource.type.cce.cluster",
   "bms:instances",
   "evs:gigabytes",
+  "sfs:gigabytes",
+  "csbs:backup_capacity",
+  "vbs:volume_backup_capacity",
   "obsv3:capacity",
   "vpc:publicIp",
+  "vpc:endpoint",
   "vpc:loadbalancer",
   "vpc:vpn",
   "vpc:nat",
@@ -500,14 +505,23 @@ function resourcesWithHourlyOverlay(
     options.forBilling && hasStructuredEcsBreakdown
       ? undefined
       : hourlyResource("ecs", "instances", snapshot.ecsInstances),
+    hourlyResource(
+      "cce",
+      "hybrid.resource.type.cce.cluster",
+      optionalSnapshotNumber(snapshot, "cceNodes"),
+    ),
     hourlyResource("bms", "instances", optionalSnapshotNumber(snapshot, "bmsInstances")),
     options.forBilling && hasStructuredEvsBreakdown
       ? undefined
       : hourlyResource("evs", "gigabytes", snapshot.evsGb),
+    hourlyResource("sfs", "gigabytes", optionalSnapshotNumber(snapshot, "sfsGb")),
+    hourlyResource("csbs", "backup_capacity", optionalSnapshotNumber(snapshot, "csbsGb")),
+    hourlyResource("vbs", "volume_backup_capacity", optionalSnapshotNumber(snapshot, "vbsGb")),
     options.forBilling && hasStructuredObsBreakdown
       ? undefined
       : hourlyResource("obsv3", "capacity", snapshot.obsGb),
     hourlyResource("vpc", "publicIp", snapshot.publicIps),
+    hourlyResource("vpc", "endpoint", optionalSnapshotNumber(snapshot, "vpcepEndpoints")),
     hourlyResource("vpc", "loadbalancer", snapshot.loadBalancers),
     options.forBilling && hasStructuredVpnBreakdown
       ? undefined

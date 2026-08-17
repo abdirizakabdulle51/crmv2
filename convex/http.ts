@@ -313,11 +313,16 @@ type ManageOneHourlySnapshotInput = {
   regionName?: string;
   capturedAt: number;
   ecsInstances: number;
+  cceNodes?: number;
   ecsCores: number;
   ecsRamGb: number;
   evsGb: number;
+  sfsGb?: number;
+  csbsGb?: number;
+  vbsGb?: number;
   obsGb: number;
   publicIps: number;
+  vpcepEndpoints?: number;
   bmsInstances?: number;
   loadBalancers: number;
   vpnGateways: number;
@@ -1677,11 +1682,26 @@ function normalizeManageOneHourlySnapshot(
       : {}),
     capturedAt: requireUnknownNumber(value, "capturedAt"),
     ecsInstances: requireUnknownNumber(value, "ecsInstances"),
+    ...(optionalUnknownNumber(value, "cceNodes") !== undefined
+      ? { cceNodes: optionalUnknownNumber(value, "cceNodes") }
+      : {}),
     ecsCores: requireUnknownNumber(value, "ecsCores"),
     ecsRamGb: requireUnknownNumber(value, "ecsRamGb"),
     evsGb: requireUnknownNumber(value, "evsGb"),
+    ...(optionalUnknownNumber(value, "sfsGb") !== undefined
+      ? { sfsGb: optionalUnknownNumber(value, "sfsGb") }
+      : {}),
+    ...(optionalUnknownNumber(value, "csbsGb") !== undefined
+      ? { csbsGb: optionalUnknownNumber(value, "csbsGb") }
+      : {}),
+    ...(optionalUnknownNumber(value, "vbsGb") !== undefined
+      ? { vbsGb: optionalUnknownNumber(value, "vbsGb") }
+      : {}),
     obsGb: requireUnknownNumber(value, "obsGb"),
     publicIps: requireUnknownNumber(value, "publicIps"),
+    ...(optionalUnknownNumber(value, "vpcepEndpoints") !== undefined
+      ? { vpcepEndpoints: optionalUnknownNumber(value, "vpcepEndpoints") }
+      : {}),
     ...(optionalUnknownNumber(value, "bmsInstances") !== undefined
       ? { bmsInstances: optionalUnknownNumber(value, "bmsInstances") }
       : {}),
