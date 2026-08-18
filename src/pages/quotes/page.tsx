@@ -28,22 +28,24 @@ import {
   EmptyDescription,
   EmptyContent,
 } from "@/components/ui/empty.tsx";
-import { Plus, FileText, Eye, Sparkles } from "lucide-react";
+import { Plus, FileText, Eye, Sparkles, Files } from "lucide-react";
 import QuoteCreateDialog from "./_components/quote-create-dialog.tsx";
 import { formatCurrency } from "@/lib/format.ts";
 
 type Quote = Doc<"quotes">;
+type CombinedQuote = Doc<"combinedQuotes">;
 
 export default function QuotesPage() {
   const navigate = useNavigate();
   const companies = useQuery(api.companies.list, {});
   const quotes = useQuery(api.quotes.list, {});
+  const combinedQuotes = useQuery(api.combinedQuotes.list, {});
 
   const [createOpen, setCreateOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [companyFilter, setCompanyFilter] = useState("all");
 
-  if (!companies || !quotes) {
+  if (!companies || !quotes || !combinedQuotes) {
     return (
       <div className="p-6 md:p-8 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -109,6 +111,13 @@ export default function QuotesPage() {
           >
             <Sparkles className="h-4 w-4 mr-2" />
             Generate from Usage
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => navigate("/quotes/combined")}
+          >
+            <Files className="h-4 w-4 mr-2" />
+            Create Combined Quote
           </Button>
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
@@ -263,6 +272,72 @@ export default function QuotesPage() {
                         </tr>
                       );
                     })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {combinedQuotes.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Combined Quotes</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    <th className="text-left p-3 font-medium">Parent Company</th>
+                    <th className="text-left p-3 font-medium">Date</th>
+                    <th className="text-left p-3 font-medium">Month</th>
+                    <th className="text-left p-3 font-medium">Lines</th>
+                    <th className="text-right p-3 font-medium">Total</th>
+                    <th className="text-left p-3 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {combinedQuotes
+                    .slice()
+                    .sort((a: CombinedQuote, b: CombinedQuote) =>
+                      b.date.localeCompare(a.date),
+                    )
+                    .map((quote: CombinedQuote) => (
+                      <tr key={quote._id} className="border-b last:border-0">
+                        <td className="p-3 font-medium">
+                          <div>{quote.parentCompanyName}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {quote.quoteNumber ?? "Draft combined quote"}
+                          </div>
+                        </td>
+                        <td className="p-3 text-muted-foreground">
+                          {quote.date}
+                        </td>
+                        <td className="p-3 text-muted-foreground">
+                          {quote.sourceMonth ?? "-"}
+                        </td>
+                        <td className="p-3 text-muted-foreground">
+                          {quote.lineItems.length}
+                        </td>
+                        <td className="p-3 text-right">
+                          {formatCurrency(quote.grandTotal)}
+                        </td>
+                        <td className="p-3">{statusBadge(quote.status)}</td>
+                        <td className="p-3 text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label="View combined quote"
+                            onClick={() =>
+                              navigate(`/quotes/combined/${quote._id}`)
+                            }
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>

@@ -11,12 +11,16 @@ vi.mock("@/convex/_generated/api.js", () => ({
     quotes: {
       list: "quotes.list",
     },
+    combinedQuotes: {
+      list: "combinedQuotes.list",
+    },
   },
 }));
 
 const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
   quotes: [] as Doc<"quotes">[],
+  combinedQuotes: [] as Doc<"combinedQuotes">[],
 }));
 
 vi.mock("convex/react", () => ({
@@ -27,6 +31,9 @@ vi.mock("convex/react", () => ({
     }
     if (query === "quotes.list") {
       return mocks.quotes;
+    }
+    if (query === "combinedQuotes.list") {
+      return mocks.combinedQuotes;
     }
     return undefined;
   },

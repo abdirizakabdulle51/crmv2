@@ -1213,4 +1213,46 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_created_by", ["createdBy"])
     .index("by_quote_number", ["quoteNumber"]),
+
+  combinedQuotes: defineTable({
+    parentCompanyName: v.string(),
+    createdBy: v.id("users"),
+    quoteNumber: v.optional(v.string()),
+    date: v.string(),
+    expirationDate: v.optional(v.string()),
+    paymentTerms: v.optional(v.string()),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("sent"),
+      v.literal("accepted"),
+    ),
+    sourceMonth: v.optional(v.string()),
+    lineItems: v.array(
+      v.object({
+        sourceCompanyId: v.optional(v.id("companies")),
+        sourceCompanyName: v.optional(v.string()),
+        source: v.union(
+          v.literal("usage"),
+          v.literal("latest_accepted_quote"),
+          v.literal("manual"),
+        ),
+        product: v.string(),
+        quantity: v.number(),
+        unitPrice: v.number(),
+        taxRate: v.number(),
+        discountPercent: v.number(),
+        amount: v.number(),
+      }),
+    ),
+    subtotal: v.number(),
+    taxTotal: v.number(),
+    discountTotal: v.number(),
+    grandTotal: v.number(),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_status", ["status"])
+    .index("by_created_by", ["createdBy"])
+    .index("by_quote_number", ["quoteNumber"]),
 });

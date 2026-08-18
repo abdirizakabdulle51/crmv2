@@ -18,6 +18,7 @@ import type * as cloudAlarms from "../cloudAlarms.js";
 import type * as cloudCapacity from "../cloudCapacity.js";
 import type * as cloudCapacitySnapshots from "../cloudCapacitySnapshots.js";
 import type * as cloudHostGroups from "../cloudHostGroups.js";
+import type * as combinedQuotes from "../combinedQuotes.js";
 import type * as companies from "../companies.js";
 import type * as companiesImport from "../companiesImport.js";
 import type * as consumption from "../consumption.js";
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   cloudCapacity: typeof cloudCapacity;
   cloudCapacitySnapshots: typeof cloudCapacitySnapshots;
   cloudHostGroups: typeof cloudHostGroups;
+  combinedQuotes: typeof combinedQuotes;
   companies: typeof companies;
   companiesImport: typeof companiesImport;
   consumption: typeof consumption;

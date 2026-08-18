@@ -24,6 +24,12 @@ const QuotesPage = lazy(() => import("./pages/quotes/page.tsx"));
 const QuoteGenerateFromUsagePage = lazy(
   () => import("./pages/quotes/generate-page.tsx"),
 );
+const CombinedQuotePage = lazy(
+  () => import("./pages/quotes/combined-page.tsx"),
+);
+const CombinedQuoteDetailPage = lazy(
+  () => import("./pages/quotes/combined-detail-page.tsx"),
+);
 const QuoteFromAdvisorPage = lazy(
   () => import("./pages/quotes/from-advisor-page.tsx"),
 );
@@ -175,6 +181,14 @@ export default function App() {
             <Route
               path="/quotes/generate"
               element={lazyPage(<QuoteGenerateFromUsagePage />)}
+            />
+            <Route
+              path="/quotes/combined"
+              element={lazyPage(<CombinedQuotePage />)}
+            />
+            <Route
+              path="/quotes/combined/:id"
+              element={lazyPage(<CombinedQuoteDetailPage />)}
             />
             <Route
               path="/quotes/from-advisor"
