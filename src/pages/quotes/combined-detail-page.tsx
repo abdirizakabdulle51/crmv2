@@ -118,8 +118,8 @@ function printCombinedQuote(quote: CombinedQuote) {
   const printableNumber = quote.quoteNumber ?? "Draft";
   const title =
     quote.status === "draft"
-      ? `Draft Combined Quote ${printableNumber}`
-      : `Combined Quote ${printableNumber}`;
+      ? `Draft Invoice ${printableNumber}`
+      : `Invoice ${printableNumber}`;
   const rows = quote.lineItems
     .map(
       (line) => `
@@ -373,7 +373,7 @@ function printCombinedQuote(quote: CombinedQuote) {
 
           <dl class="meta">
             <div>
-              <dt>Quote Date</dt>
+              <dt>Invoice Date</dt>
               <dd>${escapeHtml(formatDate(quote.date))}</dd>
             </div>
             <div>
@@ -417,14 +417,8 @@ function printCombinedQuote(quote: CombinedQuote) {
               <br />
               on this account: <strong>${escapeHtml(seller.bankAccountNumber)}</strong>
             </p>
-            <p class="amount-due">Combined yearly approval document for ${escapeHtml(quote.sourceMonth ?? "-")}</p>
+            <p class="amount-due">Annual service invoice for ${escapeHtml(quote.sourceMonth ?? "-")}</p>
             <p class="payment-instruction">${escapeHtml(seller.paymentInstructions)}</p>
-          </div>
-
-          <div class="disclaimer">
-            This combined quote is prepared for parent-office approval and PDF sharing.
-            It does not create, post, replace, or modify CRM invoices, payments, balances,
-            contracts, usage records, or dashboard calculations.
           </div>
 
           <footer class="footer">
@@ -450,12 +444,6 @@ function printCombinedQuote(quote: CombinedQuote) {
             <div>ACC. NAME = ${escapeHtml(seller.bankAccountName)}</div>
             <div>${escapeHtml(seller.bankLocation)}</div>
             <div>${escapeHtml(seller.currencyNote)}</div>
-          </div>
-
-          <div class="disclaimer">
-            Official monthly invoices should continue to be created and managed separately
-            per CRM company. This document is only a consolidated quote/approval summary
-            for the parent office.
           </div>
 
           <footer class="footer">
