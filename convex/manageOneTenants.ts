@@ -562,6 +562,56 @@ function tenantWithHourlyUsage(
   };
 }
 
+function aggregateHourlySnapshots(
+  rows: ManageOneHourlySnapshotDoc[],
+): ManageOneHourlySnapshotDoc | null {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const latestHour = rows.reduce(
+    (latest, row) => Math.max(latest, row.capturedHour),
+    0,
+  );
+  const latestRows = rows.filter((row) => row.capturedHour === latestHour);
+  const [first] = latestRows;
+
+  if (latestRows.length === 1) {
+    return first;
+  }
+
+  return latestRows.slice(1).reduce(
+    (aggregate, row) => ({
+      ...aggregate,
+      capturedAt: Math.max(aggregate.capturedAt, row.capturedAt),
+      ecsInstances: aggregate.ecsInstances + row.ecsInstances,
+      cceNodes: (aggregate.cceNodes ?? 0) + (row.cceNodes ?? 0),
+      bmsInstances:
+        (aggregate.bmsInstances ?? 0) + (row.bmsInstances ?? 0),
+      ecsCores: aggregate.ecsCores + row.ecsCores,
+      ecsRamGb: aggregate.ecsRamGb + row.ecsRamGb,
+      evsGb: aggregate.evsGb + row.evsGb,
+      sfsGb: (aggregate.sfsGb ?? 0) + (row.sfsGb ?? 0),
+      csbsGb: (aggregate.csbsGb ?? 0) + (row.csbsGb ?? 0),
+      vbsGb: (aggregate.vbsGb ?? 0) + (row.vbsGb ?? 0),
+      obsGb: aggregate.obsGb + row.obsGb,
+      publicIps: aggregate.publicIps + row.publicIps,
+      vpcepEndpoints:
+        (aggregate.vpcepEndpoints ?? 0) + (row.vpcepEndpoints ?? 0),
+      loadBalancers: aggregate.loadBalancers + row.loadBalancers,
+      vpnGateways: aggregate.vpnGateways + row.vpnGateways,
+      natGateways: aggregate.natGateways + row.natGateways,
+      wafInstances: aggregate.wafInstances + row.wafInstances,
+      wafBasicInstances:
+        (aggregate.wafBasicInstances ?? 0) + (row.wafBasicInstances ?? 0),
+      wafEnterpriseInstances:
+        (aggregate.wafEnterpriseInstances ?? 0) +
+        (row.wafEnterpriseInstances ?? 0),
+    }),
+    first,
+  );
+}
+
 async function tenantsWithLatestHourlyUsage(
   ctx: QueryCtx,
   tenants: ManageOneTenantDoc[],
@@ -570,11 +620,12 @@ async function tenantsWithLatestHourlyUsage(
   const tenantsWithUsage: ManageOneTenantWithLiveUsage[] = [];
 
   for (const tenant of tenants) {
-    const snapshot = await ctx.db
+    const snapshots = await ctx.db
       .query("manageOneHourlySnapshots")
       .withIndex("by_vdc_hour", (q) => q.eq("vdcId", tenant.vdcId))
       .order("desc")
-      .first();
+      .take(24);
+    const snapshot = aggregateHourlySnapshots(snapshots);
 
     tenantsWithUsage.push(
       tenantWithHourlyUsage(tenant, snapshot, {

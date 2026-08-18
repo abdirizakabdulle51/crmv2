@@ -907,13 +907,17 @@ export const review = query({
   },
 });
 
-function latestSnapshotsByTenant(rows: Doc<"manageOneHourlySnapshots">[]) {
+function latestSnapshotsByTenantRegion(rows: Doc<"manageOneHourlySnapshots">[]) {
   const latest = new Map<string, Doc<"manageOneHourlySnapshots">>();
 
   for (const row of rows) {
-    const existing = latest.get(row.vdcId);
+    const key = [
+      row.vdcId,
+      row.regionId ?? row.regionName ?? "unknown-region",
+    ].join("|");
+    const existing = latest.get(key);
     if (!existing || row.capturedAt > existing.capturedAt) {
-      latest.set(row.vdcId, row);
+      latest.set(key, row);
     }
   }
 
@@ -1045,7 +1049,7 @@ export const health = query({
           (row) =>
             row.linkedCompanyId && visibleCompanyIds.has(row.linkedCompanyId),
         );
-    const latestHourlyRows = latestSnapshotsByTenant(visibleHourlyRows);
+    const latestHourlyRows = latestSnapshotsByTenantRegion(visibleHourlyRows);
     const latestHourlyCapturedAt =
       latestHourlyRows.reduce(
         (latest, row) => Math.max(latest, row.capturedAt),
