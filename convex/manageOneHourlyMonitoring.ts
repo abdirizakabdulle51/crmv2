@@ -8,6 +8,10 @@ type Ctx = QueryCtx | MutationCtx;
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_RETENTION_DELETE_PER_SYNC = 200;
+const MOVEMENT_WINDOWS = [7, 14, 21, 28] as const;
+const MOVEMENT_MAX_ROWS = 40000;
+const MONITORED_REGIONS = ["Hoa-Mogadishu-2", "Mogadishu-region-hq3"] as const;
+const MONITORED_REGION_SCOPE = "monitored";
 
 const hourlySnapshotInputValidator = v.object({
   vdcId: v.string(),
@@ -77,6 +81,91 @@ function assertCanViewMonitoring(user: Doc<"users">) {
 function publicSnapshot(row: Doc<"manageOneHourlySnapshots">) {
   const { rawMetrics: _rawMetrics, ...snapshot } = row;
   return snapshot;
+}
+
+function rowRegion(
+  row: Pick<Doc<"manageOneHourlySnapshots">, "regionName" | "regionId">,
+) {
+  return row.regionName || row.regionId || "Unknown";
+}
+
+function matchesRegionScope(
+  row: Pick<Doc<"manageOneHourlySnapshots">, "regionName" | "regionId">,
+  region: string,
+) {
+  const currentRegion = rowRegion(row);
+  if (region === MONITORED_REGION_SCOPE) {
+    return MONITORED_REGIONS.includes(
+      currentRegion as (typeof MONITORED_REGIONS)[number],
+    );
+  }
+  return currentRegion === region;
+}
+
+function resourceTotals(row: Doc<"manageOneHourlySnapshots">) {
+  return {
+    ecs: row.ecsInstances,
+    cce: row.cceNodes ?? 0,
+    bms: row.bmsInstances ?? 0,
+    vcpu: row.ecsCores,
+    ramGb: row.ecsRamGb,
+    evsGb: row.evsGb,
+    sfsGb: row.sfsGb ?? 0,
+    csbsGb: row.csbsGb ?? 0,
+    vbsGb: row.vbsGb ?? 0,
+    obsGb: row.obsGb,
+    eip: row.publicIps,
+    elb: row.loadBalancers,
+    vpn: row.vpnGateways,
+    vpcep: row.vpcepEndpoints ?? 0,
+    nat: row.natGateways,
+    waf: row.wafInstances,
+  };
+}
+
+function resourceScore(totals: ReturnType<typeof resourceTotals>) {
+  return (
+    totals.ecs +
+    totals.cce +
+    totals.bms +
+    totals.vcpu / 8 +
+    totals.ramGb / 32 +
+    totals.evsGb / 100 +
+    totals.sfsGb / 100 +
+    totals.csbsGb / 100 +
+    totals.vbsGb / 100 +
+    totals.obsGb / 100 +
+    totals.eip +
+    totals.elb +
+    totals.vpn +
+    totals.vpcep +
+    totals.nat +
+    totals.waf
+  );
+}
+
+function subtractTotals(
+  current: ReturnType<typeof resourceTotals>,
+  baseline: ReturnType<typeof resourceTotals>,
+) {
+  return {
+    ecs: current.ecs - baseline.ecs,
+    cce: current.cce - baseline.cce,
+    bms: current.bms - baseline.bms,
+    vcpu: current.vcpu - baseline.vcpu,
+    ramGb: current.ramGb - baseline.ramGb,
+    evsGb: current.evsGb - baseline.evsGb,
+    sfsGb: current.sfsGb - baseline.sfsGb,
+    csbsGb: current.csbsGb - baseline.csbsGb,
+    vbsGb: current.vbsGb - baseline.vbsGb,
+    obsGb: current.obsGb - baseline.obsGb,
+    eip: current.eip - baseline.eip,
+    elb: current.elb - baseline.elb,
+    vpn: current.vpn - baseline.vpn,
+    vpcep: current.vpcep - baseline.vpcep,
+    nat: current.nat - baseline.nat,
+    waf: current.waf - baseline.waf,
+  };
 }
 
 function capturedHour(capturedAt: number) {
@@ -256,5 +345,101 @@ export const latestRun = query({
       .withIndex("by_started_at")
       .order("desc")
       .first();
+  },
+});
+
+export const resourceMovement = query({
+  args: {
+    days: v.union(v.literal(7), v.literal(14), v.literal(21), v.literal(28)),
+    region: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanViewMonitoring(user);
+
+    const days = MOVEMENT_WINDOWS.includes(args.days) ? args.days : 7;
+    const region = args.region ?? MONITORED_REGION_SCOPE;
+    const limit = Math.min(Math.max(Math.floor(args.limit ?? 10), 1), 25);
+    const cutoff = capturedHour(Date.now() - days * 24 * 60 * 60 * 1000);
+    const rows = await ctx.db
+      .query("manageOneHourlySnapshots")
+      .withIndex("by_hour", (q) => q.gte("capturedHour", cutoff))
+      .order("desc")
+      .take(MOVEMENT_MAX_ROWS);
+
+    const scopedRows = rows.filter((row) => matchesRegionScope(row, region));
+    const latestByTenant = new Map<string, Doc<"manageOneHourlySnapshots">>();
+    const baselineByTenant = new Map<string, Doc<"manageOneHourlySnapshots">>();
+
+    for (const row of scopedRows) {
+      const key = row.vdcId;
+      const latest = latestByTenant.get(key);
+      if (!latest || row.capturedHour > latest.capturedHour) {
+        latestByTenant.set(key, row);
+      }
+
+      const baseline = baselineByTenant.get(key);
+      if (!baseline || row.capturedHour < baseline.capturedHour) {
+        baselineByTenant.set(key, row);
+      }
+    }
+
+    const movementRows = [...latestByTenant.values()].map((latest) => {
+      const baseline = baselineByTenant.get(latest.vdcId) ?? latest;
+      const currentTotals = resourceTotals(latest);
+      const baselineTotals = resourceTotals(baseline);
+      const delta = subtractTotals(currentTotals, baselineTotals);
+      const movementScore = resourceScore(delta);
+      const consumptionScore = resourceScore(currentTotals);
+
+      return {
+        tenantName: latest.tenantName,
+        vdcId: latest.vdcId,
+        regionName: latest.regionName,
+        regionId: latest.regionId,
+        latestCapturedHour: latest.capturedHour,
+        baselineCapturedHour: baseline.capturedHour,
+        current: currentTotals,
+        delta,
+        movementScore,
+        consumptionScore,
+      };
+    });
+
+    const procurers = movementRows
+      .filter((row) => row.movementScore > 0)
+      .sort((a, b) => b.movementScore - a.movementScore)
+      .slice(0, limit);
+    const releasers = movementRows
+      .filter((row) => row.movementScore < 0)
+      .sort((a, b) => a.movementScore - b.movementScore)
+      .slice(0, limit);
+    const consumers = movementRows
+      .sort((a, b) => b.consumptionScore - a.consumptionScore)
+      .slice(0, limit);
+
+    const earliestCapturedHour = scopedRows.reduce(
+      (earliest, row) => Math.min(earliest, row.capturedHour),
+      Number.POSITIVE_INFINITY,
+    );
+    const latestCapturedHour = scopedRows.reduce(
+      (latest, row) => Math.max(latest, row.capturedHour),
+      0,
+    );
+
+    return {
+      days,
+      region,
+      rowCount: scopedRows.length,
+      tenantCount: latestByTenant.size,
+      earliestCapturedHour: Number.isFinite(earliestCapturedHour)
+        ? earliestCapturedHour
+        : null,
+      latestCapturedHour: latestCapturedHour || null,
+      procurers,
+      releasers,
+      consumers,
+    };
   },
 });

@@ -42,6 +42,9 @@ import { cn } from "@/lib/utils.ts";
 import {
   Activity,
   Archive,
+  ArrowDownRight,
+  ArrowUpRight,
+  BarChart3,
   Check,
   ChevronDown,
   ChevronsUpDown,
@@ -58,6 +61,8 @@ import {
 } from "lucide-react";
 
 type TimeWindow = "24h" | "7d" | "30d";
+type MovementWindow = 7 | 14 | 21 | 28;
+type PageTab = "hourly" | "movement";
 type ServiceView =
   | "overview"
   | "compute"
@@ -100,7 +105,54 @@ type Snapshot = {
   wafEnterpriseInstances?: number;
 };
 
-function formatNumber(value: number | undefined | null, maximumFractionDigits = 1) {
+type ResourceTotals = {
+  ecs: number;
+  cce: number;
+  bms: number;
+  vcpu: number;
+  ramGb: number;
+  evsGb: number;
+  sfsGb: number;
+  csbsGb: number;
+  vbsGb: number;
+  obsGb: number;
+  eip: number;
+  elb: number;
+  vpn: number;
+  vpcep: number;
+  nat: number;
+  waf: number;
+};
+
+type MovementRow = {
+  tenantName: string;
+  vdcId: string;
+  regionName?: string;
+  regionId?: string;
+  latestCapturedHour: number;
+  baselineCapturedHour: number;
+  current: ResourceTotals;
+  delta: ResourceTotals;
+  movementScore: number;
+  consumptionScore: number;
+};
+
+type MovementReport = {
+  days: MovementWindow;
+  region: string;
+  rowCount: number;
+  tenantCount: number;
+  earliestCapturedHour: number | null;
+  latestCapturedHour: number | null;
+  procurers: MovementRow[];
+  releasers: MovementRow[];
+  consumers: MovementRow[];
+};
+
+function formatNumber(
+  value: number | undefined | null,
+  maximumFractionDigits = 1,
+) {
   if (value == null) return "-";
   return value.toLocaleString(undefined, { maximumFractionDigits });
 }
@@ -127,6 +179,23 @@ function formatDateTime(value: number | undefined | null) {
 function windowStart(window: TimeWindow) {
   const hours = window === "24h" ? 24 : window === "7d" ? 24 * 7 : 24 * 30;
   return Date.now() - hours * 60 * 60 * 1000;
+}
+
+function latestRowsByTenant(rows: Snapshot[]) {
+  const latest = new Map<string, Snapshot>();
+
+  for (const row of rows) {
+    const existing = latest.get(row.vdcId || row.tenantName);
+    if (!existing || row.capturedHour > existing.capturedHour) {
+      latest.set(row.vdcId || row.tenantName, row);
+    }
+  }
+
+  return Array.from(latest.values()).sort((a, b) =>
+    a.tenantName.localeCompare(b.tenantName, undefined, {
+      sensitivity: "base",
+    }),
+  );
 }
 
 function rowRegion(row: Snapshot) {
@@ -195,9 +264,12 @@ function downloadVisibleRows(rows: Snapshot[]) {
       .map(csvCell)
       .join(","),
   );
-  const blob = new Blob([[headers.map(csvCell).join(","), ...lines].join("\n")], {
-    type: "text/csv;charset=utf-8",
-  });
+  const blob = new Blob(
+    [[headers.map(csvCell).join(","), ...lines].join("\n")],
+    {
+      type: "text/csv;charset=utf-8",
+    },
+  );
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -206,6 +278,50 @@ function downloadVisibleRows(rows: Snapshot[]) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function topDeltaItems(delta: ResourceTotals, direction: "up" | "down") {
+  const items = [
+    ["ECS", delta.ecs],
+    ["ECS-CCE", delta.cce],
+    ["BMS", delta.bms],
+    ["vCPU", delta.vcpu],
+    ["RAM GB", delta.ramGb],
+    ["EVS GB", delta.evsGb],
+    ["SFS GB", delta.sfsGb],
+    ["CSBS GB", delta.csbsGb],
+    ["VBS GB", delta.vbsGb],
+    ["OBS GB", delta.obsGb],
+    ["EIP", delta.eip],
+    ["ELB", delta.elb],
+    ["VPN", delta.vpn],
+    ["VPCEP", delta.vpcep],
+    ["NAT", delta.nat],
+    ["WAF", delta.waf],
+  ] as const;
+  const signedItems =
+    direction === "up"
+      ? items
+      : items.map(([label, value]) => [label, -value] as const);
+
+  return signedItems
+    .filter(([, value]) => value > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4);
+}
+
+function totalResources(row: ResourceTotals) {
+  return (
+    row.ecs +
+    row.cce +
+    row.bms +
+    row.eip +
+    row.elb +
+    row.vpn +
+    row.vpcep +
+    row.nat +
+    row.waf
+  );
 }
 
 export default function ManageOneHourlyPage() {
@@ -219,12 +335,28 @@ export default function ManageOneHourlyPage() {
     api.manageOneHourlyMonitoring.latestRun,
     canView ? {} : "skip",
   );
+  const [pageTab, setPageTab] = useState<PageTab>("hourly");
   const [tenant, setTenant] = useState(allTenantsValue);
   const [tenantOpen, setTenantOpen] = useState(false);
   const [region, setRegion] = useState(monitoredRegionValue);
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("24h");
+  const [movementWindow, setMovementWindow] = useState<MovementWindow>(7);
+  const [movementRegion, setMovementRegion] = useState(monitoredRegionValue);
   const [serviceView, setServiceView] = useState<ServiceView>("overview");
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+  const movementReport = useQuery(
+    api.manageOneHourlyMonitoring.resourceMovement,
+    canView && pageTab === "movement"
+      ? {
+          days: movementWindow,
+          region:
+            movementRegion === monitoredRegionValue
+              ? "monitored"
+              : movementRegion,
+          limit: 10,
+        }
+      : "skip",
+  ) as MovementReport | undefined;
 
   const filteredSnapshots = useMemo(() => {
     if (!snapshots) return [];
@@ -234,7 +366,10 @@ export default function ManageOneHourlyPage() {
     return snapshots.filter((row) => {
       if (row.capturedHour < cutoff) return false;
       const currentRegion = rowRegion(row);
-      if (region === monitoredRegionValue && !monitoredRegionSet.has(currentRegion)) {
+      if (
+        region === monitoredRegionValue &&
+        !monitoredRegionSet.has(currentRegion)
+      ) {
         return false;
       }
       if (region !== monitoredRegionValue && currentRegion !== region) {
@@ -258,13 +393,12 @@ export default function ManageOneHourlyPage() {
     return monitoredRegions;
   }, []);
 
-  const summary = useMemo(() => {
-    const latestHour = filteredSnapshots[0]?.capturedHour;
-    const latestRows = latestHour
-      ? filteredSnapshots.filter((row) => row.capturedHour === latestHour)
-      : [];
+  const latestSnapshots = useMemo(() => {
+    return latestRowsByTenant(filteredSnapshots);
+  }, [filteredSnapshots]);
 
-    return latestRows.reduce(
+  const summary = useMemo(() => {
+    return latestSnapshots.reduce(
       (totals, row) => ({
         tenants: totals.tenants + 1,
         ecs: totals.ecs + row.ecsInstances,
@@ -308,7 +442,7 @@ export default function ManageOneHourlyPage() {
         wafEnterprise: 0,
       },
     );
-  }, [filteredSnapshots]);
+  }, [latestSnapshots]);
 
   if (!canView) {
     return (
@@ -351,221 +485,271 @@ export default function ManageOneHourlyPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <span>
-            Last run: {formatDateTime(latestRun?.finishedAt ?? latestRun?.startedAt)}
+            Last run:{" "}
+            {formatDateTime(latestRun?.finishedAt ?? latestRun?.startedAt)}
           </span>
-          {latestRun ? <Badge variant="secondary">{latestRun.status}</Badge> : null}
+          {latestRun ? (
+            <Badge variant="secondary">{latestRun.status}</Badge>
+          ) : null}
           <Badge variant="outline">HOA + HQ3</Badge>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <SummaryCard
-          icon={Cloud}
-          label="Tenants"
-          value={formatNumber(summary.tenants)}
-          detail={tenant === allTenantsValue ? "Selected scope" : selectedTenantLabel}
-        />
-        <SummaryCard
-          icon={Cpu}
-          label="Compute"
-          value={formatNumber(summary.ecs + summary.cce + summary.bms)}
-          detail={`ECS ${formatNumber(summary.ecs)} · CCE ${formatNumber(summary.cce)} · BMS ${formatNumber(summary.bms)}`}
-        />
-        <SummaryCard
-          icon={HardDrive}
-          label="Storage"
-          value={`${formatCompact(summary.evs + summary.obs + summary.sfs)} GB`}
-          detail={`EVS ${formatCompact(summary.evs)} · OBS ${formatCompact(summary.obs)} · SFS ${formatCompact(summary.sfs)}`}
-        />
-        <SummaryCard
-          icon={Network}
-          label="Network"
-          value={formatNumber(
-            summary.eip + summary.elb + summary.vpn + summary.vpcep + summary.nat,
-          )}
-          detail={`EIP ${formatNumber(summary.eip)} · ELB ${formatNumber(summary.elb)} · VPN ${formatNumber(summary.vpn)}`}
-        />
-        <SummaryCard
-          icon={Shield}
-          label="Security"
-          value={formatNumber(summary.waf)}
-          detail={`Basic ${formatNumber(summary.wafBasic)} · Enterprise ${formatNumber(summary.wafEnterprise)}`}
-        />
-      </div>
+      <Tabs
+        value={pageTab}
+        onValueChange={(value) => setPageTab(value as PageTab)}
+      >
+        <TabsList className="grid h-auto w-full grid-cols-2 bg-muted/60 p-1 md:w-[520px]">
+          <TabsTrigger value="hourly">Hourly Monitoring</TabsTrigger>
+          <TabsTrigger value="movement">Resource Movement</TabsTrigger>
+        </TabsList>
 
-      <Card>
-        <CardHeader className="space-y-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Activity className="h-4 w-4 text-primary" />
-                Latest Snapshots
-              </CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Grouped by service area. Use Raw Table when you need every column.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full gap-2 sm:w-auto"
-              onClick={() => downloadVisibleRows(filteredSnapshots)}
-              disabled={filteredSnapshots.length === 0}
-            >
-              <Download className="h-4 w-4" />
-              Export CSV
-            </Button>
+        <TabsContent value="hourly" className="mt-6 space-y-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <SummaryCard
+              icon={Cloud}
+              label="Tenants"
+              value={formatNumber(summary.tenants)}
+              detail={
+                tenant === allTenantsValue
+                  ? "Latest selected scope"
+                  : selectedTenantLabel
+              }
+            />
+            <SummaryCard
+              icon={Cpu}
+              label="Compute"
+              value={formatNumber(summary.ecs + summary.cce + summary.bms)}
+              detail={`ECS ${formatNumber(summary.ecs)} · CCE ${formatNumber(summary.cce)} · BMS ${formatNumber(summary.bms)}`}
+            />
+            <SummaryCard
+              icon={HardDrive}
+              label="Storage"
+              value={`${formatCompact(summary.evs + summary.obs + summary.sfs)} GB`}
+              detail={`EVS ${formatCompact(summary.evs)} · OBS ${formatCompact(summary.obs)} · SFS ${formatCompact(summary.sfs)}`}
+            />
+            <SummaryCard
+              icon={Network}
+              label="Network"
+              value={formatNumber(
+                summary.eip +
+                  summary.elb +
+                  summary.vpn +
+                  summary.vpcep +
+                  summary.nat,
+              )}
+              detail={`EIP ${formatNumber(summary.eip)} · ELB ${formatNumber(summary.elb)} · VPN ${formatNumber(summary.vpn)}`}
+            />
+            <SummaryCard
+              icon={Shield}
+              label="Security"
+              value={formatNumber(summary.waf)}
+              detail={`Basic ${formatNumber(summary.wafBasic)} · Enterprise ${formatNumber(summary.wafEnterprise)}`}
+            />
           </div>
 
-          <div className="grid gap-2 md:grid-cols-[minmax(220px,1.2fr)_minmax(180px,.8fr)_minmax(160px,.7fr)]">
-            <Popover open={tenantOpen} onOpenChange={setTenantOpen}>
-              <PopoverTrigger asChild>
+          <Card>
+            <CardHeader className="space-y-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Activity className="h-4 w-4 text-primary" />
+                    Latest Tenant Snapshots
+                  </CardTitle>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    One current row per tenant. Raw Table keeps the full hourly
+                    audit view.
+                  </p>
+                </div>
                 <Button
                   type="button"
                   variant="outline"
-                  role="combobox"
-                  aria-expanded={tenantOpen}
-                  className="justify-between"
+                  className="w-full gap-2 sm:w-auto"
+                  onClick={() => downloadVisibleRows(latestSnapshots)}
+                  disabled={latestSnapshots.length === 0}
                 >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{selectedTenantLabel}</span>
-                  </span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  <Download className="h-4 w-4" />
+                  Export CSV
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                className="w-(--radix-popover-trigger-width) p-0"
-                align="start"
-              >
-                <Command>
-                  <CommandInput placeholder="Search companies..." />
-                  <CommandList>
-                    <CommandEmpty>No companies found.</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem
-                        value="All companies"
-                        onSelect={() => {
-                          setTenant(allTenantsValue);
-                          setTenantOpen(false);
-                        }}
-                      >
-                        <Check
-                          className={cn(
-                            "mr-2 h-4 w-4",
-                            tenant === allTenantsValue ? "opacity-100" : "opacity-0",
-                          )}
-                        />
-                        All companies
-                      </CommandItem>
-                      {tenants.map((item) => (
-                        <CommandItem
-                          key={item}
-                          value={item}
-                          onSelect={() => {
-                            setTenant(item);
-                            setTenantOpen(false);
-                          }}
-                        >
-                          <Check
-                            className={cn(
-                              "mr-2 h-4 w-4",
-                              tenant === item ? "opacity-100" : "opacity-0",
-                            )}
-                          />
-                          <span className="truncate">{item}</span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+              </div>
 
-            <Select value={region} onValueChange={setRegion}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={monitoredRegionValue}>HOA + HQ3</SelectItem>
-                {regions.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <div className="grid gap-2 md:grid-cols-[minmax(220px,1.2fr)_minmax(180px,.8fr)_minmax(160px,.7fr)]">
+                <Popover open={tenantOpen} onOpenChange={setTenantOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={tenantOpen}
+                      className="justify-between"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{selectedTenantLabel}</span>
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-(--radix-popover-trigger-width) p-0"
+                    align="start"
+                  >
+                    <Command>
+                      <CommandInput placeholder="Search companies..." />
+                      <CommandList>
+                        <CommandEmpty>No companies found.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem
+                            value="All companies"
+                            onSelect={() => {
+                              setTenant(allTenantsValue);
+                              setTenantOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                tenant === allTenantsValue
+                                  ? "opacity-100"
+                                  : "opacity-0",
+                              )}
+                            />
+                            All companies
+                          </CommandItem>
+                          {tenants.map((item) => (
+                            <CommandItem
+                              key={item}
+                              value={item}
+                              onSelect={() => {
+                                setTenant(item);
+                                setTenantOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4",
+                                  tenant === item ? "opacity-100" : "opacity-0",
+                                )}
+                              />
+                              <span className="truncate">{item}</span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
 
-            <Select
-              value={timeWindow}
-              onValueChange={(value) => setTimeWindow(value as TimeWindow)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="24h">Last 24 hours</SelectItem>
-                <SelectItem value="7d">Last 7 days</SelectItem>
-                <SelectItem value="30d">Last 30 days</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {filteredSnapshots.length === 0 ? (
-            <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center">
-              <Activity className="h-8 w-8 text-muted-foreground" />
-              <div className="font-medium">No hourly snapshots found</div>
-              <p className="text-sm text-muted-foreground">
-                Try a wider time range or select All companies.
-              </p>
-            </div>
-          ) : (
-            <Tabs
-              value={serviceView}
-              onValueChange={(value) => setServiceView(value as ServiceView)}
-            >
-              <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start bg-muted/60 p-1 lg:w-fit">
-                <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="compute">Compute</TabsTrigger>
-                <TabsTrigger value="storage">Storage</TabsTrigger>
-                <TabsTrigger value="backup">Backup</TabsTrigger>
-                <TabsTrigger value="network">Network</TabsTrigger>
-                <TabsTrigger value="security">Security</TabsTrigger>
-                <TabsTrigger value="raw">Raw Table</TabsTrigger>
-              </TabsList>
+                <Select value={region} onValueChange={setRegion}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={monitoredRegionValue}>
+                      HOA + HQ3
+                    </SelectItem>
+                    {regions.map((item) => (
+                      <SelectItem key={item} value={item}>
+                        {item}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-              <TabsContent value="overview">
-                <OverviewTable
-                  rows={filteredSnapshots}
-                  expandedRowId={expandedRowId}
-                  onToggleRow={(id) =>
-                    setExpandedRowId(expandedRowId === id ? null : id)
+                <Select
+                  value={timeWindow}
+                  onValueChange={(value) => setTimeWindow(value as TimeWindow)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="24h">Last 24 hours</SelectItem>
+                    <SelectItem value="7d">Last 7 days</SelectItem>
+                    <SelectItem value="30d">Last 30 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {latestSnapshots.length === 0 ? (
+                <EmptyState />
+              ) : (
+                <Tabs
+                  value={serviceView}
+                  onValueChange={(value) =>
+                    setServiceView(value as ServiceView)
                   }
-                />
-              </TabsContent>
-              <TabsContent value="compute">
-                <FocusedTable rows={filteredSnapshots} columns={computeColumns} />
-              </TabsContent>
-              <TabsContent value="storage">
-                <FocusedTable rows={filteredSnapshots} columns={storageColumns} />
-              </TabsContent>
-              <TabsContent value="backup">
-                <FocusedTable rows={filteredSnapshots} columns={backupColumns} />
-              </TabsContent>
-              <TabsContent value="network">
-                <FocusedTable rows={filteredSnapshots} columns={networkColumns} />
-              </TabsContent>
-              <TabsContent value="security">
-                <FocusedTable rows={filteredSnapshots} columns={securityColumns} />
-              </TabsContent>
-              <TabsContent value="raw">
-                <RawTable rows={filteredSnapshots} />
-              </TabsContent>
-            </Tabs>
-          )}
-        </CardContent>
-      </Card>
+                >
+                  <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start bg-muted/60 p-1 lg:w-fit">
+                    <TabsTrigger value="overview">Overview</TabsTrigger>
+                    <TabsTrigger value="compute">Compute</TabsTrigger>
+                    <TabsTrigger value="storage">Storage</TabsTrigger>
+                    <TabsTrigger value="backup">Backup</TabsTrigger>
+                    <TabsTrigger value="network">Network</TabsTrigger>
+                    <TabsTrigger value="security">Security</TabsTrigger>
+                    <TabsTrigger value="raw">Raw Table</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="overview">
+                    <OverviewTable
+                      rows={latestSnapshots}
+                      expandedRowId={expandedRowId}
+                      onToggleRow={(id) =>
+                        setExpandedRowId(expandedRowId === id ? null : id)
+                      }
+                    />
+                  </TabsContent>
+                  <TabsContent value="compute">
+                    <FocusedTable
+                      rows={latestSnapshots}
+                      columns={computeColumns}
+                    />
+                  </TabsContent>
+                  <TabsContent value="storage">
+                    <FocusedTable
+                      rows={latestSnapshots}
+                      columns={storageColumns}
+                    />
+                  </TabsContent>
+                  <TabsContent value="backup">
+                    <FocusedTable
+                      rows={latestSnapshots}
+                      columns={backupColumns}
+                    />
+                  </TabsContent>
+                  <TabsContent value="network">
+                    <FocusedTable
+                      rows={latestSnapshots}
+                      columns={networkColumns}
+                    />
+                  </TabsContent>
+                  <TabsContent value="security">
+                    <FocusedTable
+                      rows={latestSnapshots}
+                      columns={securityColumns}
+                    />
+                  </TabsContent>
+                  <TabsContent value="raw">
+                    <RawTable rows={filteredSnapshots} />
+                  </TabsContent>
+                </Tabs>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="movement" className="mt-6">
+          <ResourceMovementPanel
+            report={movementReport}
+            days={movementWindow}
+            region={movementRegion}
+            regions={regions}
+            onDaysChange={setMovementWindow}
+            onRegionChange={setMovementRegion}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -603,6 +787,320 @@ const securityColumns = [
   ["WAF Enterprise", (row: Snapshot) => row.wafEnterpriseInstances ?? 0],
 ] as const;
 
+function EmptyState() {
+  return (
+    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center">
+      <Activity className="h-8 w-8 text-muted-foreground" />
+      <div className="font-medium">No hourly snapshots found</div>
+      <p className="text-sm text-muted-foreground">
+        Try a wider time range or select All companies.
+      </p>
+    </div>
+  );
+}
+
+function ResourceMovementPanel({
+  report,
+  days,
+  region,
+  regions,
+  onDaysChange,
+  onRegionChange,
+}: {
+  report: MovementReport | undefined;
+  days: MovementWindow;
+  region: string;
+  regions: readonly string[];
+  onDaysChange: (days: MovementWindow) => void;
+  onRegionChange: (region: string) => void;
+}) {
+  const hasHistory =
+    report?.earliestCapturedHour &&
+    report?.latestCapturedHour &&
+    report.earliestCapturedHour !== report.latestCapturedHour;
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader className="space-y-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <BarChart3 className="h-4 w-4 text-primary" />
+                Resource Movement
+              </CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Read-only view of resource increases, releases, and highest
+                consumers.
+              </p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Select
+                value={String(days)}
+                onValueChange={(value) =>
+                  onDaysChange(Number(value) as MovementWindow)
+                }
+              >
+                <SelectTrigger className="min-w-[150px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7">Last 7 days</SelectItem>
+                  <SelectItem value="14">Last 14 days</SelectItem>
+                  <SelectItem value="21">Last 21 days</SelectItem>
+                  <SelectItem value="28">Last 28 days</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Select value={region} onValueChange={onRegionChange}>
+                <SelectTrigger className="min-w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={monitoredRegionValue}>
+                    HOA + HQ3
+                  </SelectItem>
+                  {regions.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {!report ? (
+            <div className="grid gap-4 md:grid-cols-3">
+              <Skeleton className="h-24" />
+              <Skeleton className="h-24" />
+              <Skeleton className="h-24" />
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-3">
+              <MetricCard
+                label="Tenants Compared"
+                value={formatNumber(report.tenantCount)}
+                detail={`${formatNumber(report.rowCount)} hourly rows reviewed`}
+              />
+              <MetricCard
+                label="History Available"
+                value={
+                  hasHistory
+                    ? `${formatDateTime(report.earliestCapturedHour)}`
+                    : "Building"
+                }
+                detail={
+                  hasHistory
+                    ? `Compared to ${formatDateTime(report.latestCapturedHour)}`
+                    : "More history will appear as hourly sync runs"
+                }
+              />
+              <MetricCard
+                label="Region Scope"
+                value={region === monitoredRegionValue ? "HOA + HQ3" : region}
+                detail={`${days}-day movement window`}
+              />
+            </div>
+          )}
+        </CardHeader>
+      </Card>
+
+      {!report ? (
+        <div className="grid gap-4 xl:grid-cols-3">
+          <Skeleton className="h-80" />
+          <Skeleton className="h-80" />
+          <Skeleton className="h-80" />
+        </div>
+      ) : (
+        <div className="grid gap-4 xl:grid-cols-3">
+          <MovementTable
+            title="Top Procurers"
+            description="Tenants with the largest resource increases."
+            icon={ArrowUpRight}
+            rows={report.procurers}
+            direction="up"
+            emptyText="No increases found in this window."
+          />
+          <MovementTable
+            title="Top Releasers"
+            description="Tenants with the largest resource decreases."
+            icon={ArrowDownRight}
+            rows={report.releasers}
+            direction="down"
+            emptyText="No releases found in this window."
+          />
+          <ConsumerRankTable
+            title="Highest Consumers"
+            description="Tenants sorted by latest total resource footprint."
+            rows={report.consumers}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-background p-4">
+      <div className="text-xs font-medium uppercase text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-3 text-lg font-semibold">{value}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+    </div>
+  );
+}
+
+function MovementTable({
+  title,
+  description,
+  icon: Icon,
+  rows,
+  direction,
+  emptyText,
+}: {
+  title: string;
+  description: string;
+  icon: typeof ArrowUpRight;
+  rows: MovementRow[];
+  direction: "up" | "down";
+  emptyText: string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Icon className="h-4 w-4 text-primary" />
+          {title}
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </CardHeader>
+      <CardContent>
+        {rows.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+            {emptyText}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {rows.map((row, index) => (
+              <div key={row.vdcId} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs text-muted-foreground">
+                      #{index + 1}
+                    </div>
+                    <div className="truncate font-medium">{row.tenantName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {row.regionName || row.regionId || "Unknown"}
+                    </div>
+                  </div>
+                  <Badge variant="secondary">
+                    {direction === "up" ? "+" : "-"}
+                    {formatNumber(Math.abs(row.movementScore))}
+                  </Badge>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {topDeltaItems(row.delta, direction).map(([label, value]) => (
+                    <Badge
+                      key={label}
+                      variant="outline"
+                      className="font-normal"
+                    >
+                      {label} {direction === "up" ? "+" : "-"}
+                      {formatNumber(value)}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ConsumerRankTable({
+  title,
+  description,
+  rows,
+}: {
+  title: string;
+  description: string;
+  rows: MovementRow[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Cloud className="h-4 w-4 text-primary" />
+          {title}
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </CardHeader>
+      <CardContent>
+        {rows.length === 0 ? (
+          <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+            No tenant consumption found.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-sm">
+              <thead>
+                <tr className="border-b bg-muted/30">
+                  <th className="p-3 text-left font-medium">Tenant</th>
+                  <th className="p-3 text-right font-medium">Compute</th>
+                  <th className="p-3 text-right font-medium">Storage GB</th>
+                  <th className="p-3 text-right font-medium">Network</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.vdcId} className="border-b last:border-0">
+                    <td className="p-3">
+                      <div className="font-medium">{row.tenantName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {row.regionName || row.regionId || "Unknown"}
+                      </div>
+                    </td>
+                    <td className="p-3 text-right">
+                      {formatNumber(
+                        row.current.ecs + row.current.cce + row.current.bms,
+                      )}
+                    </td>
+                    <td className="p-3 text-right">
+                      {formatCompact(
+                        row.current.evsGb +
+                          row.current.sfsGb +
+                          row.current.csbsGb +
+                          row.current.vbsGb +
+                          row.current.obsGb,
+                      )}
+                    </td>
+                    <td className="p-3 text-right">
+                      {formatNumber(totalResources(row.current))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function SummaryCard({
   icon: Icon,
   label,
@@ -624,7 +1122,9 @@ function SummaryCard({
           <Icon className="h-4 w-4 text-primary" />
         </div>
         <div className="mt-3 text-2xl font-bold">{value}</div>
-        <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div>
+        <div className="mt-1 truncate text-xs text-muted-foreground">
+          {detail}
+        </div>
       </CardContent>
     </Card>
   );
@@ -926,7 +1426,9 @@ function DetailGrid({ row }: { row: Snapshot }) {
             {group.items.map(([label, value]) => (
               <div key={label} className="rounded-md bg-muted/50 p-2">
                 <div className="text-[11px] text-muted-foreground">{label}</div>
-                <div className="text-base font-semibold">{formatNumber(value)}</div>
+                <div className="text-base font-semibold">
+                  {formatNumber(value)}
+                </div>
               </div>
             ))}
           </div>
@@ -972,9 +1474,16 @@ function ChipList({
   return (
     <div className="flex max-w-[260px] flex-wrap gap-1.5">
       {nonZeroItems.map(([label, value, unit]) => (
-        <Badge key={`${label}-${unit ?? ""}`} variant="secondary" className="font-normal">
-          {label} <span className="ml-1 font-semibold">{formatNumber(value)}</span>
-          {unit ? <span className="ml-0.5 text-muted-foreground">{unit}</span> : null}
+        <Badge
+          key={`${label}-${unit ?? ""}`}
+          variant="secondary"
+          className="font-normal"
+        >
+          {label}{" "}
+          <span className="ml-1 font-semibold">{formatNumber(value)}</span>
+          {unit ? (
+            <span className="ml-0.5 text-muted-foreground">{unit}</span>
+          ) : null}
         </Badge>
       ))}
     </div>
