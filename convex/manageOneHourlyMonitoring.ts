@@ -74,6 +74,11 @@ function assertCanViewMonitoring(user: Doc<"users">) {
   });
 }
 
+function publicSnapshot(row: Doc<"manageOneHourlySnapshots">) {
+  const { rawMetrics: _rawMetrics, ...snapshot } = row;
+  return snapshot;
+}
+
 function capturedHour(capturedAt: number) {
   const date = new Date(capturedAt);
   date.setUTCMinutes(0, 0, 0);
@@ -214,7 +219,7 @@ export const latest = query({
       .order("desc")
       .take(limit);
 
-    return rows;
+    return rows.map(publicSnapshot);
   },
 });
 
@@ -228,13 +233,15 @@ export const historyForCompany = query({
     assertCanViewMonitoring(user);
 
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 48), 1), 720);
-    return await ctx.db
+    const rows = await ctx.db
       .query("manageOneHourlySnapshots")
       .withIndex("by_company_hour", (q) =>
         q.eq("linkedCompanyId", args.companyId),
       )
       .order("desc")
       .take(limit);
+
+    return rows.map(publicSnapshot);
   },
 });
 
