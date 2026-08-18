@@ -12,6 +12,8 @@ const MOVEMENT_WINDOWS = [7, 14, 21, 28] as const;
 const MOVEMENT_MAX_ROWS = 40000;
 const MONITORED_REGIONS = ["Hoa-Mogadishu-2", "Mogadishu-region-hq3"] as const;
 const MONITORED_REGION_SCOPE = "monitored";
+// Do not compare old combined-region rows with the resource-space split rows.
+const RESOURCE_SPACE_REGION_SPLIT_AT = Date.parse("2026-08-18T19:40:00.000Z");
 
 const hourlySnapshotInputValidator = v.object({
   vdcId: v.string(),
@@ -428,7 +430,11 @@ export const resourceMovement = query({
     const days = MOVEMENT_WINDOWS.includes(args.days) ? args.days : 7;
     const region = args.region ?? MONITORED_REGION_SCOPE;
     const limit = Math.min(Math.max(Math.floor(args.limit ?? 10), 1), 25);
-    const cutoff = capturedHour(Date.now() - days * 24 * 60 * 60 * 1000);
+    const requestedCutoff = capturedHour(Date.now() - days * 24 * 60 * 60 * 1000);
+    const cutoff = Math.max(
+      requestedCutoff,
+      capturedHour(RESOURCE_SPACE_REGION_SPLIT_AT),
+    );
     const rows = await ctx.db
       .query("manageOneHourlySnapshots")
       .withIndex("by_hour", (q) => q.gte("capturedHour", cutoff))
