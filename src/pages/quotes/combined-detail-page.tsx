@@ -20,6 +20,26 @@ import { toast } from "sonner";
 type CombinedQuote = Doc<"combinedQuotes">;
 type CombinedQuoteStatus = CombinedQuote["status"];
 
+const FALLBACK_SELLER = {
+  legalName: "HTG CLOUDS LIMITED",
+  addressLines: [
+    "Airport road, Next to Ali Jimale Masque",
+    "Wadajir District",
+    "mogadishu BN 00000",
+    "Somalia",
+  ],
+  email: "finance@htgclouds.com",
+  website: "https://htgclouds.com",
+  slogan: "Built for us, Ready for the World.",
+  bankName: "Salaam Somali Bank",
+  bankAccountNumber: "33111777",
+  bankAccountName: "HTG CLOUDS LIMITED",
+  bankLocation: "MOGADISHU - SOMALIA",
+  currencyNote: "All fees are listed in USD",
+  paymentInstructions:
+    "PLEASE PAY BILLS ON DUE DATE BY DEPOSITING IT TO OUR SALAAM SOMALI BANK ACCOUNT.",
+};
+
 function statusBadge(status: CombinedQuoteStatus) {
   switch (status) {
     case "draft":
@@ -55,6 +75,30 @@ function formatQuantity(value: number) {
   });
 }
 
+function escapeHtml(value: string | number | undefined | null) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function toTitleCase(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function formatFooterLocation(value?: string) {
+  const parts = value
+    ?.split(/\s+-\s+|,/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!parts || parts.length === 0) return undefined;
+  return parts.map(toTitleCase).join(", ");
+}
+
 function printCombinedQuote(quote: CombinedQuote) {
   const printWindow = window.open("", "_blank");
   if (!printWindow) {
@@ -62,16 +106,37 @@ function printCombinedQuote(quote: CombinedQuote) {
     return;
   }
 
+  const seller = FALLBACK_SELLER;
+  const footerText = [
+    seller.legalName,
+    formatFooterLocation(seller.bankLocation),
+    seller.email,
+    seller.website,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  const printableNumber = quote.quoteNumber ?? "Draft";
+  const title =
+    quote.status === "draft"
+      ? `Draft Combined Quote ${printableNumber}`
+      : `Combined Quote ${printableNumber}`;
   const rows = quote.lineItems
     .map(
       (line) => `
         <tr>
-          <td>${line.product}</td>
-          <td class="right">${formatQuantity(line.quantity)}</td>
-          <td class="right">${formatCurrency(line.unitPrice)}</td>
-          <td class="right">${line.taxRate ? `${line.taxRate}%` : ""}</td>
-          <td class="right">${line.discountPercent.toFixed(2)}</td>
-          <td class="right">${formatCurrency(line.amount)}</td>
+          <td>
+            <div class="line-title">${escapeHtml(line.product)}</div>
+            ${
+              line.sourceCompanyName
+                ? `<div class="line-subtitle">${escapeHtml(line.sourceCompanyName)}</div>`
+                : ""
+            }
+          </td>
+          <td>${formatQuantity(line.quantity)}</td>
+          <td>${formatCurrency(line.unitPrice)}</td>
+          <td>${line.taxRate ? `${line.taxRate}%` : "-"}</td>
+          <td>${line.discountPercent.toFixed(2)}</td>
+          <td>${formatCurrency(line.amount)}</td>
         </tr>
       `,
     )
@@ -81,170 +146,323 @@ function printCombinedQuote(quote: CombinedQuote) {
     <!doctype html>
     <html>
       <head>
-        <title>${quote.quoteNumber ?? "Combined Quote"} - ${quote.parentCompanyName}</title>
+        <title>${escapeHtml(printableNumber)} - ${escapeHtml(quote.parentCompanyName)}</title>
         <style>
-          @page { size: A4; margin: 16mm; }
+          @page { size: A4; margin: 0; }
+          html,
           body {
+            background: #f8fafc;
             color: #111827;
             font-family: Arial, Helvetica, sans-serif;
             font-size: 13px;
             margin: 0;
           }
+          * { box-sizing: border-box; }
+          .page {
+            background: #fff;
+            display: flex;
+            flex-direction: column;
+            min-height: 297mm;
+            margin: 0 auto 20px;
+            padding: 16mm 14mm 18mm;
+            width: 210mm;
+          }
           .header {
             align-items: flex-start;
-            border-bottom: 2px solid #111827;
             display: flex;
             justify-content: space-between;
-            padding-bottom: 18px;
+            min-height: 44mm;
           }
-          .brand {
+          .logo {
+            display: block;
+            height: 34px;
+            margin-bottom: 12px;
+            object-fit: contain;
+            object-position: left center;
+            width: 114px;
+          }
+          address {
+            display: flex;
+            flex-direction: column;
+            font-style: normal;
+            font-size: 14px;
+            line-height: 1.5;
+          }
+          .slogan {
             color: #07999d;
-            font-size: 24px;
+            font-size: 13px;
             font-weight: 700;
-            letter-spacing: 0;
+            padding-top: 10px;
           }
-          .title {
-            font-size: 28px;
+          .title-row {
+            align-items: flex-start;
+            display: grid;
+            gap: 16mm;
+            grid-template-columns: minmax(0, 1fr) 74mm;
+            margin-bottom: 6mm;
+          }
+          h1 {
+            color: #07999d;
+            font-size: 26px;
+            font-weight: 500;
+            letter-spacing: 0;
+            margin: 0;
+          }
+          .bill-to {
+            font-size: 13px;
+            line-height: 1.45;
+            padding-top: 1mm;
+          }
+          .bill-to-label,
+          .meta dt {
+            color: #37aeb2;
+            font-size: 12px;
             font-weight: 700;
-            margin: 30px 0 20px;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+          }
+          .bill-to-label {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+          }
+          .bill-to-name {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 2px;
           }
           .meta {
             display: grid;
             gap: 18px;
-            grid-template-columns: 1.5fr 1fr 1fr;
-            margin-bottom: 26px;
+            grid-template-columns: repeat(4, 1fr);
+            margin: 0 0 9mm;
           }
-          .label {
-            color: #6b7280;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: .04em;
-            text-transform: uppercase;
-          }
-          .value {
-            font-size: 15px;
-            font-weight: 700;
-            margin-top: 4px;
+          .meta dd {
+            font-size: 13px;
+            margin: 0;
           }
           table {
             border-collapse: collapse;
+            font-size: 13px;
             width: 100%;
+          }
+          tr {
+            break-inside: avoid;
+            page-break-inside: avoid;
           }
           th {
             border-bottom: 1px solid #111827;
-            color: #374151;
-            font-size: 12px;
-            padding: 10px 8px;
+            font-size: 13px;
+            font-weight: 500;
+            padding: 0 0 7px;
             text-align: left;
           }
-          td {
-            border-bottom: 1px solid #e5e7eb;
-            padding: 11px 8px;
+          th:nth-child(n+2),
+          td:nth-child(n+2) {
+            text-align: right;
           }
-          .right { text-align: right; }
+          td {
+            padding: 10px 0 6px;
+            vertical-align: top;
+          }
+          .line-title {
+            font-weight: 500;
+            margin-bottom: 2px;
+          }
+          .line-subtitle {
+            color: #111827;
+          }
           .totals {
             margin-left: auto;
-            margin-top: 28px;
-            width: 280px;
+            margin-top: 14mm;
+            max-width: 82mm;
+            width: 100%;
           }
           .total-row {
             display: flex;
             justify-content: space-between;
-            padding: 7px 0;
           }
           .grand {
-            border-top: 2px solid #111827;
+            border-top: 1px solid #111827;
             color: #07999d;
-            font-size: 18px;
+            font-size: 14px;
             font-weight: 700;
-            margin-top: 8px;
-            padding-top: 12px;
+            padding-top: 9px;
           }
-          .notes {
-            border-top: 1px solid #e5e7eb;
-            color: #4b5563;
-            margin-top: 32px;
-            padding-top: 16px;
-            white-space: pre-wrap;
+          .payment-note {
+            border-top: 1px solid #d1d5db;
+            font-size: 13px;
+            line-height: 1.45;
+            margin-top: 16mm;
+            padding-top: 5mm;
+            width: 128mm;
+          }
+          .payment-note p {
+            margin: 0 0 6px;
+          }
+          .amount-due {
+            color: #6b7280;
+            font-size: 14px;
+            margin-top: 7mm;
+          }
+          .payment-instruction {
+            color: #6b7280;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            text-transform: uppercase;
           }
           .footer {
+            align-items: center;
             border-top: 1px solid #111827;
-            color: #6b7280;
             display: flex;
-            font-size: 12px;
+            font-size: 13px;
+            font-weight: 600;
             justify-content: space-between;
-            margin-top: 50px;
-            padding-top: 10px;
+            margin-top: auto;
+            padding-top: 8px;
+          }
+          .bank-details {
+            color: #6b7280;
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.6;
+            margin-top: 2mm;
+            text-transform: uppercase;
+          }
+          .disclaimer {
+            color: #6b7280;
+            font-size: 12px;
+            line-height: 1.5;
+            margin-top: 9mm;
+          }
+          @media print {
+            body { background: #fff; }
+            .page {
+              box-shadow: none;
+              margin: 0;
+              page-break-after: always;
+            }
+            .page:last-child {
+              page-break-after: auto;
+            }
           }
         </style>
       </head>
       <body>
-        <div class="header">
-          <div>
-            <div class="brand">HTGCLOUDS</div>
-            <div>One System. Every Team. Total Control.</div>
-          </div>
-          <div>
-            <div class="label">Combined Quote</div>
-            <div class="value">${quote.quoteNumber ?? "Draft"}</div>
-          </div>
-        </div>
+        <section class="page">
+          <header class="header">
+            <div>
+              <img class="logo" src="/Logo.svg" alt="HTG Clouds" />
+              <address>
+                ${seller.addressLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+              </address>
+            </div>
+            <div class="slogan">${escapeHtml(seller.slogan)}</div>
+          </header>
 
-        <div class="title">${quote.status === "draft" ? "Draft Combined Quote" : "Combined Quote"}</div>
+          <div class="title-row">
+            <div>
+              <h1>${escapeHtml(title)}</h1>
+            </div>
+            <section class="bill-to" aria-label="Bill To">
+              <div class="bill-to-label">Bill To</div>
+              <div class="bill-to-name">${escapeHtml(quote.parentCompanyName)}</div>
+              <div>Parent / Main Company</div>
+            </section>
+          </div>
 
-        <div class="meta">
-          <div>
-            <div class="label">Parent / Main Company</div>
-            <div class="value">${quote.parentCompanyName}</div>
-          </div>
-          <div>
-            <div class="label">Date</div>
-            <div class="value">${formatDate(quote.date)}</div>
-          </div>
-          <div>
-            <div class="label">Expiration</div>
-            <div class="value">${formatDate(quote.expirationDate)}</div>
-          </div>
-          <div>
-            <div class="label">Usage Month</div>
-            <div class="value">${quote.sourceMonth ?? "-"}</div>
-          </div>
-          <div>
-            <div class="label">Payment Terms</div>
-            <div class="value">${quote.paymentTerms ?? "-"}</div>
-          </div>
-          <div>
-            <div class="label">Status</div>
-            <div class="value">${quote.status.toUpperCase()}</div>
-          </div>
-        </div>
+          <dl class="meta">
+            <div>
+              <dt>Quote Date</dt>
+              <dd>${escapeHtml(formatDate(quote.date))}</dd>
+            </div>
+            <div>
+              <dt>Expiration</dt>
+              <dd>${escapeHtml(formatDate(quote.expirationDate))}</dd>
+            </div>
+            <div>
+              <dt>Source</dt>
+              <dd>${escapeHtml(quote.sourceMonth ?? "-")}</dd>
+            </div>
+            <div>
+              <dt>Reference</dt>
+              <dd>${escapeHtml(printableNumber)}</dd>
+            </div>
+          </dl>
 
-        <table>
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th class="right">Quantity</th>
-              <th class="right">Unit Price</th>
-              <th class="right">Taxes</th>
-              <th class="right">Disc.%</th>
-              <th class="right">Amount</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
+          <table>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Quantity</th>
+                <th>Unit Price</th>
+                <th>Taxes</th>
+                <th>Disc.%</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
 
-        <div class="totals">
-          <div class="total-row"><span>Subtotal</span><span>${formatCurrency(quote.subtotal)}</span></div>
-          <div class="total-row"><span>Discount</span><span>${formatCurrency(quote.discountTotal)}</span></div>
-          <div class="total-row"><span>Taxes</span><span>${formatCurrency(quote.taxTotal)}</span></div>
-          <div class="total-row grand"><span>Total</span><span>${formatCurrency(quote.grandTotal)}</span></div>
-        </div>
+          <div class="totals">
+            <div class="total-row"><span>Subtotal</span><span>${formatCurrency(quote.subtotal)}</span></div>
+            <div class="total-row"><span>Discount</span><span>${formatCurrency(quote.discountTotal)}</span></div>
+            <div class="total-row"><span>Taxes</span><span>${formatCurrency(quote.taxTotal)}</span></div>
+            <div class="total-row grand"><span>Total</span><span>${formatCurrency(quote.grandTotal)}</span></div>
+          </div>
 
-        ${quote.notes ? `<div class="notes">${quote.notes}</div>` : ""}
-        <div class="footer">
-          <span>Generated by HTGCLOUDS CRM</span>
-          <span>This document does not create or replace CRM invoices.</span>
-        </div>
+          <div class="payment-note" aria-label="Payment communication">
+            <p>
+              Payment Communication: <strong>${escapeHtml(printableNumber)}</strong>
+              <br />
+              on this account: <strong>${escapeHtml(seller.bankAccountNumber)}</strong>
+            </p>
+            <p class="amount-due">Combined yearly approval document for ${escapeHtml(quote.sourceMonth ?? "-")}</p>
+            <p class="payment-instruction">${escapeHtml(seller.paymentInstructions)}</p>
+          </div>
+
+          <div class="disclaimer">
+            This combined quote is prepared for parent-office approval and PDF sharing.
+            It does not create, post, replace, or modify CRM invoices, payments, balances,
+            contracts, usage records, or dashboard calculations.
+          </div>
+
+          <footer class="footer">
+            <span>${escapeHtml(footerText)}</span>
+            <span>Page 1 / 2</span>
+          </footer>
+        </section>
+
+        <section class="page">
+          <header class="header">
+            <div>
+              <img class="logo" src="/Logo.svg" alt="HTG Clouds" />
+              <address>
+                ${seller.addressLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+              </address>
+            </div>
+            <div class="slogan">${escapeHtml(seller.slogan)}</div>
+          </header>
+
+          <div class="bank-details">
+            <div>BANK = ${escapeHtml(seller.bankName)}</div>
+            <div>ACCOUNT # = ${escapeHtml(seller.bankAccountNumber)}</div>
+            <div>ACC. NAME = ${escapeHtml(seller.bankAccountName)}</div>
+            <div>${escapeHtml(seller.bankLocation)}</div>
+            <div>${escapeHtml(seller.currencyNote)}</div>
+          </div>
+
+          <div class="disclaimer">
+            Official monthly invoices should continue to be created and managed separately
+            per CRM company. This document is only a consolidated quote/approval summary
+            for the parent office.
+          </div>
+
+          <footer class="footer">
+            <span>${escapeHtml(footerText)}</span>
+            <span>Page 2 / 2</span>
+          </footer>
+        </section>
       </body>
     </html>
   `);
