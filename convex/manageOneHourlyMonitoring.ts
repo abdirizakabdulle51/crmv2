@@ -123,6 +123,53 @@ function resourceTotals(row: Doc<"manageOneHourlySnapshots">) {
   };
 }
 
+type ResourceTotals = ReturnType<typeof resourceTotals>;
+
+function emptyResourceTotals(): ResourceTotals {
+  return {
+    ecs: 0,
+    cce: 0,
+    bms: 0,
+    vcpu: 0,
+    ramGb: 0,
+    evsGb: 0,
+    sfsGb: 0,
+    csbsGb: 0,
+    vbsGb: 0,
+    obsGb: 0,
+    eip: 0,
+    elb: 0,
+    vpn: 0,
+    vpcep: 0,
+    nat: 0,
+    waf: 0,
+  };
+}
+
+function addTotals(
+  left: ResourceTotals,
+  right: ResourceTotals,
+): ResourceTotals {
+  return {
+    ecs: left.ecs + right.ecs,
+    cce: left.cce + right.cce,
+    bms: left.bms + right.bms,
+    vcpu: left.vcpu + right.vcpu,
+    ramGb: left.ramGb + right.ramGb,
+    evsGb: left.evsGb + right.evsGb,
+    sfsGb: left.sfsGb + right.sfsGb,
+    csbsGb: left.csbsGb + right.csbsGb,
+    vbsGb: left.vbsGb + right.vbsGb,
+    obsGb: left.obsGb + right.obsGb,
+    eip: left.eip + right.eip,
+    elb: left.elb + right.elb,
+    vpn: left.vpn + right.vpn,
+    vpcep: left.vpcep + right.vpcep,
+    nat: left.nat + right.nat,
+    waf: left.waf + right.waf,
+  };
+}
+
 function resourceScore(totals: ReturnType<typeof resourceTotals>) {
   return (
     totals.ecs +
@@ -142,6 +189,26 @@ function resourceScore(totals: ReturnType<typeof resourceTotals>) {
     totals.nat +
     totals.waf
   );
+}
+
+function movementGroupKey(
+  row: Doc<"manageOneHourlySnapshots">,
+  region: string,
+) {
+  if (region === MONITORED_REGION_SCOPE) {
+    return row.vdcId;
+  }
+  return [row.vdcId, row.regionId ?? row.regionName ?? "unknown-region"].join(
+    "|",
+  );
+}
+
+function regionScopeLabel(regionNames: Set<string>, fallbackRegion?: string) {
+  const names = [...regionNames].filter(Boolean).sort();
+  if (names.length > 1) {
+    return "HOA + HQ3";
+  }
+  return names[0] ?? fallbackRegion ?? "Unknown";
 }
 
 function subtractTotals(
@@ -369,37 +436,66 @@ export const resourceMovement = query({
       .take(MOVEMENT_MAX_ROWS);
 
     const scopedRows = rows.filter((row) => matchesRegionScope(row, region));
-    const latestByTenant = new Map<string, Doc<"manageOneHourlySnapshots">>();
-    const baselineByTenant = new Map<string, Doc<"manageOneHourlySnapshots">>();
+    const groups = new Map<
+      string,
+      {
+        tenantName: string;
+        vdcId: string;
+        regionNames: Set<string>;
+        regionIds: Set<string>;
+        hourlyTotals: Map<number, ResourceTotals>;
+      }
+    >();
 
     for (const row of scopedRows) {
-      const key = row.vdcId;
-      const latest = latestByTenant.get(key);
-      if (!latest || row.capturedHour > latest.capturedHour) {
-        latestByTenant.set(key, row);
-      }
+      const key = movementGroupKey(row, region);
+      const group =
+        groups.get(key) ??
+        {
+          tenantName: row.tenantName,
+          vdcId: row.vdcId,
+          regionNames: new Set<string>(),
+          regionIds: new Set<string>(),
+          hourlyTotals: new Map<number, ResourceTotals>(),
+        };
 
-      const baseline = baselineByTenant.get(key);
-      if (!baseline || row.capturedHour < baseline.capturedHour) {
-        baselineByTenant.set(key, row);
-      }
+      group.tenantName = row.tenantName;
+      if (row.regionName) group.regionNames.add(row.regionName);
+      if (row.regionId) group.regionIds.add(row.regionId);
+
+      const currentHourTotals =
+        group.hourlyTotals.get(row.capturedHour) ?? emptyResourceTotals();
+      group.hourlyTotals.set(
+        row.capturedHour,
+        addTotals(currentHourTotals, resourceTotals(row)),
+      );
+      groups.set(key, group);
     }
 
-    const movementRows = [...latestByTenant.values()].map((latest) => {
-      const baseline = baselineByTenant.get(latest.vdcId) ?? latest;
-      const currentTotals = resourceTotals(latest);
-      const baselineTotals = resourceTotals(baseline);
+    const movementRows = [...groups.entries()].map(([key, group]) => {
+      const hours = [...group.hourlyTotals.keys()].sort((a, b) => a - b);
+      const baselineHour = hours[0] ?? 0;
+      const latestHour = hours[hours.length - 1] ?? baselineHour;
+      const currentTotals =
+        group.hourlyTotals.get(latestHour) ?? emptyResourceTotals();
+      const baselineTotals =
+        group.hourlyTotals.get(baselineHour) ?? currentTotals;
       const delta = subtractTotals(currentTotals, baselineTotals);
       const movementScore = resourceScore(delta);
       const consumptionScore = resourceScore(currentTotals);
+      const regionIds = [...group.regionIds].filter(Boolean).sort();
 
       return {
-        tenantName: latest.tenantName,
-        vdcId: latest.vdcId,
-        regionName: latest.regionName,
-        regionId: latest.regionId,
-        latestCapturedHour: latest.capturedHour,
-        baselineCapturedHour: baseline.capturedHour,
+        key,
+        tenantName: group.tenantName,
+        vdcId: group.vdcId,
+        regionName: regionScopeLabel(group.regionNames),
+        regionId:
+          regionIds.length > 1
+            ? regionIds.join(", ")
+            : (regionIds[0] ?? undefined),
+        latestCapturedHour: latestHour,
+        baselineCapturedHour: baselineHour,
         current: currentTotals,
         delta,
         movementScore,
@@ -432,7 +528,7 @@ export const resourceMovement = query({
       days,
       region,
       rowCount: scopedRows.length,
-      tenantCount: latestByTenant.size,
+      tenantCount: groups.size,
       earliestCapturedHour: Number.isFinite(earliestCapturedHour)
         ? earliestCapturedHour
         : null,

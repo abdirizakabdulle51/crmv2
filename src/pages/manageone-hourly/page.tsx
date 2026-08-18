@@ -125,6 +125,7 @@ type ResourceTotals = {
 };
 
 type MovementRow = {
+  key?: string;
   tenantName: string;
   vdcId: string;
   regionName?: string;
@@ -185,9 +186,13 @@ function latestRowsByTenant(rows: Snapshot[]) {
   const latest = new Map<string, Snapshot>();
 
   for (const row of rows) {
-    const existing = latest.get(row.vdcId || row.tenantName);
+    const key = [
+      row.vdcId || row.tenantName,
+      row.regionId || row.regionName || "unknown-region",
+    ].join("|");
+    const existing = latest.get(key);
     if (!existing || row.capturedHour > existing.capturedHour) {
-      latest.set(row.vdcId || row.tenantName, row);
+      latest.set(key, row);
     }
   }
 
@@ -993,7 +998,10 @@ function MovementTable({
         ) : (
           <div className="space-y-3">
             {rows.map((row, index) => (
-              <div key={row.vdcId} className="rounded-lg border p-3">
+              <div
+                key={row.key ?? `${row.vdcId}-${row.regionId ?? index}`}
+                className="rounded-lg border p-3"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">
@@ -1065,8 +1073,11 @@ function ConsumerRankTable({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr key={row.vdcId} className="border-b last:border-0">
+                {rows.map((row, index) => (
+                  <tr
+                    key={row.key ?? `${row.vdcId}-${row.regionId ?? index}`}
+                    className="border-b last:border-0"
+                  >
                     <td className="p-3">
                       <div className="font-medium">{row.tenantName}</div>
                       <div className="text-xs text-muted-foreground">
