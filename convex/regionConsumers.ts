@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
-import { canViewCloudHealth, isMonitoring } from "./authorization";
+import { canViewCloudHealth } from "./authorization";
 
 async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
@@ -129,7 +129,7 @@ export const topConsumersByRegion = query({
         .map((company) => [company._id, company.name]),
     );
 
-    const visibleConsumers = tenants
+    return tenants
       .map((tenant) => ({
         tenantId: tenant._id,
         tenantName: tenant.name,
@@ -142,22 +142,5 @@ export const topConsumersByRegion = query({
       .filter((consumer) => consumer.value > 0)
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
-
-    if (!isMonitoring(user)) {
-      return visibleConsumers;
-    }
-
-    return visibleConsumers.map((consumer, index) => {
-      const {
-        tenantId: _tenantId,
-        linkedCompanyId: _linkedCompanyId,
-        ...redacted
-      } = consumer;
-      return {
-        ...redacted,
-        tenantName: `Consumer ${index + 1}`,
-        companyName: null,
-      };
-    });
   },
 });

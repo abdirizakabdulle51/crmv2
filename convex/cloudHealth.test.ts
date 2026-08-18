@@ -765,12 +765,12 @@ describe("Cloud Health", () => {
       { regionName: "Hoa-Mogadishu-2", metric: "storage" },
     );
     expect(monitoringConsumers[0]).toMatchObject({
-      tenantName: "Consumer 1",
-      companyName: null,
+      tenantName: "Safari VDC",
+      companyName: "Safari",
       value: 9000,
     });
-    expect(monitoringConsumers[0]).not.toHaveProperty("tenantId");
-    expect(monitoringConsumers[0]).not.toHaveProperty("linkedCompanyId");
+    expect(monitoringConsumers[0]).toHaveProperty("tenantId");
+    expect(monitoringConsumers[0]).toHaveProperty("linkedCompanyId");
 
     await expect(
       asUser(t, users.am).query(api.regionConsumers.topConsumersByRegion, {
