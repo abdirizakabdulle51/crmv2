@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { internalMutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
@@ -53,6 +54,7 @@ function uptimePercent(results: Doc<"pingResults">[]) {
 
 const MAX_RECENT_HISTORY_SAMPLES_PER_TARGET = 2_000;
 const MAX_PING_HISTORY_RANGE_MS = 14 * 24 * 60 * 60 * 1000;
+const MAX_DRY_RUN_PAGE_SIZE = 1_000;
 
 export const bulkUpsert = internalMutation({
   args: {
@@ -324,6 +326,50 @@ export const historyForActiveTargetsInRange = query({
 
         return row;
       }),
+    };
+  },
+});
+
+export const dryRunOldPingResultsPage = query({
+  args: {
+    olderThanMs: v.optional(v.number()),
+    nowMs: v.optional(v.number()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanViewCloudHealth(user);
+
+    const olderThanMs = args.olderThanMs ?? MAX_PING_HISTORY_RANGE_MS;
+    const nowMs = args.nowMs ?? Date.now();
+    const cutoff = nowMs - olderThanMs;
+    const requestedItems = args.paginationOpts.numItems;
+    const paginationOpts = {
+      ...args.paginationOpts,
+      numItems: Math.min(requestedItems, MAX_DRY_RUN_PAGE_SIZE),
+    };
+    const page = await ctx.db
+      .query("pingResults")
+      .withIndex("by_checked_at", (q) => q.lt("checkedAt", cutoff))
+      .paginate(paginationOpts);
+
+    const checkedAts = page.page.map((result) => result.checkedAt);
+
+    return {
+      dryRun: true,
+      table: "pingResults",
+      action: "count_only",
+      olderThanMs,
+      cutoff,
+      pageCount: page.page.length,
+      requestedPageSize: requestedItems,
+      effectivePageSize: paginationOpts.numItems,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+      oldestCheckedAt:
+        checkedAts.length > 0 ? Math.min(...checkedAts) : null,
+      newestCheckedAt:
+        checkedAts.length > 0 ? Math.max(...checkedAts) : null,
     };
   },
 });

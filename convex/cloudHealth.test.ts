@@ -345,6 +345,98 @@ describe("Cloud Health", () => {
     ]);
   });
 
+  it("dry-runs old ping result counts in bounded pages without deleting rows", async () => {
+    const t = convexTest(schema, modules);
+    const users = await seedUsers(t);
+    const targetId = await asUser(t, users.ceo).mutation(
+      api.pingTargets.create,
+      {
+        name: "ISP A",
+        ip: "196.201.0.1",
+      },
+    );
+    const now = Date.UTC(2026, 7, 19, 4, 35, 0);
+    const fifteenDaysAgo = now - 15 * 24 * 60 * 60 * 1000;
+    const sixteenDaysAgo = now - 16 * 24 * 60 * 60 * 1000;
+
+    await t.mutation(internal.pingResults.bulkUpsert, {
+      results: [
+        {
+          targetId,
+          success: true,
+          latencyMs: 10,
+          checkedAt: sixteenDaysAgo,
+        },
+        {
+          targetId,
+          success: true,
+          latencyMs: 12,
+          checkedAt: fifteenDaysAgo,
+        },
+        {
+          targetId,
+          success: true,
+          latencyMs: 20,
+          checkedAt: now - 60_000,
+        },
+      ],
+    });
+
+    const firstPage = await asUser(t, users.gm).query(
+      api.pingResults.dryRunOldPingResultsPage,
+      {
+        nowMs: now,
+        paginationOpts: { cursor: null, numItems: 1 },
+      },
+    );
+
+    expect(firstPage).toMatchObject({
+      dryRun: true,
+      table: "pingResults",
+      action: "count_only",
+      pageCount: 1,
+      requestedPageSize: 1,
+      effectivePageSize: 1,
+      isDone: false,
+      oldestCheckedAt: sixteenDaysAgo,
+      newestCheckedAt: sixteenDaysAgo,
+    });
+
+    const secondPage = await asUser(t, users.gm).query(
+      api.pingResults.dryRunOldPingResultsPage,
+      {
+        nowMs: now,
+        paginationOpts: {
+          cursor: firstPage.continueCursor,
+          numItems: 10,
+        },
+      },
+    );
+
+    expect(secondPage).toMatchObject({
+      dryRun: true,
+      table: "pingResults",
+      action: "count_only",
+      pageCount: 1,
+      isDone: true,
+      oldestCheckedAt: fifteenDaysAgo,
+      newestCheckedAt: fifteenDaysAgo,
+    });
+
+    const recentHistory = await asUser(t, users.gm).query(
+      api.pingResults.recentHistory,
+      { targetId, limit: 10 },
+    );
+    expect(recentHistory).toHaveLength(3);
+
+    await expect(
+      asUser(t, users.am).query(api.pingResults.dryRunOldPingResultsPage, {
+        nowMs: now,
+        paginationOpts: { cursor: null, numItems: 1 },
+      }),
+    ).rejects.toThrow(/Cloud Health/);
+  });
+
   it("queries active ping target history by time range and buckets long ranges hourly", async () => {
     const t = convexTest(schema, modules);
     const users = await seedUsers(t);
