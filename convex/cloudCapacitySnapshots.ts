@@ -114,16 +114,20 @@ export const append = internalMutation({
 });
 
 export const historyForRegion = query({
-  args: { regionId: v.string() },
+  args: { regionId: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     assertCanViewCloudHealth(user);
+    const limit = Math.min(args.limit ?? 5_000, 10_000);
 
-    return await ctx.db
+    const snapshots = await ctx.db
       .query("cloudCapacitySnapshots")
       .withIndex("by_region_snapshot_at", (q) =>
         q.eq("regionId", args.regionId),
       )
-      .collect();
+      .order("desc")
+      .take(limit);
+
+    return snapshots.sort((a, b) => a.snapshotAt - b.snapshotAt);
   },
 });

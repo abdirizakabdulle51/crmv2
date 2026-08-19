@@ -51,6 +51,8 @@ function uptimePercent(results: Doc<"pingResults">[]) {
   return Math.round((successful / results.length) * 1000) / 10;
 }
 
+const MAX_RECENT_HISTORY_SAMPLES_PER_TARGET = 2_000;
+
 export const bulkUpsert = internalMutation({
   args: {
     results: v.array(
@@ -147,6 +149,10 @@ export const recentHistoryForActiveTargets = query({
     assertCanViewCloudHealth(user);
 
     const limit = Math.min(args.limit ?? 100, 500);
+    const samplesPerTarget = Math.min(
+      Math.max(limit * 4, limit),
+      MAX_RECENT_HISTORY_SAMPLES_PER_TARGET,
+    );
     const targets = await ctx.db
       .query("pingTargets")
       .withIndex("by_active", (q) => q.eq("active", true))
@@ -167,7 +173,8 @@ export const recentHistoryForActiveTargets = query({
             .withIndex("by_target_checked_at", (q) =>
               q.eq("targetId", target._id),
             )
-            .collect(),
+            .order("desc")
+            .take(samplesPerTarget),
         ),
       )
     )

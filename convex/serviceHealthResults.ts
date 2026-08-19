@@ -52,6 +52,8 @@ function uptimePercent(results: Doc<"serviceHealthResults">[]) {
   return Math.round((successful / results.length) * 1000) / 10;
 }
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
 export const bulkInsert = internalMutation({
   args: {
     results: v.array(
@@ -80,26 +82,35 @@ export const latestStatusByTarget = query({
     const user = await getCurrentUserOrThrow(ctx);
     assertCanViewCloudHealth(user);
     const targets = await ctx.db.query("serviceHealthTargets").collect();
-    const since = Date.now() - 24 * 60 * 60 * 1000;
-    const results = await ctx.db.query("serviceHealthResults").collect();
+    const since = Date.now() - ONE_DAY_MS;
 
-    return targets
-      .map((target) => {
-        const targetResults = results
-          .filter((result) => result.targetId === target._id)
-          .sort((a, b) => b.checkedAt - a.checkedAt);
-        const recentResults = targetResults.filter(
-          (result) => result.checkedAt >= since,
-        );
+    const rows = [];
+    for (const target of targets) {
+      const [latest, recentResults] = await Promise.all([
+        ctx.db
+          .query("serviceHealthResults")
+          .withIndex("by_target_checked_at", (q) =>
+            q.eq("targetId", target._id),
+          )
+          .order("desc")
+          .first(),
+        ctx.db
+          .query("serviceHealthResults")
+          .withIndex("by_target_checked_at", (q) =>
+            q.eq("targetId", target._id).gte("checkedAt", since),
+          )
+          .collect(),
+      ]);
 
-        return {
-          target,
-          latest: targetResults[0] ?? null,
-          uptime24hPercent: uptimePercent(recentResults),
-          samples24h: recentResults.length,
-        };
-      })
-      .sort((a, b) => a.target.name.localeCompare(b.target.name));
+      rows.push({
+        target,
+        latest,
+        uptime24hPercent: uptimePercent(recentResults),
+        samples24h: recentResults.length,
+      });
+    }
+
+    return rows.sort((a, b) => a.target.name.localeCompare(b.target.name));
   },
 });
 
@@ -116,8 +127,9 @@ export const recentHistory = query({
     const results = await ctx.db
       .query("serviceHealthResults")
       .withIndex("by_target_checked_at", (q) => q.eq("targetId", args.targetId))
-      .collect();
+      .order("desc")
+      .take(limit);
 
-    return results.sort((a, b) => b.checkedAt - a.checkedAt).slice(0, limit);
+    return results;
   },
 });
