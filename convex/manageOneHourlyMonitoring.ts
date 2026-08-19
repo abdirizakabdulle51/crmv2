@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, query } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { canViewCloudHealth } from "./authorization";
@@ -8,6 +9,7 @@ type Ctx = QueryCtx | MutationCtx;
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_RETENTION_DELETE_PER_SYNC = 200;
+const MAX_DRY_RUN_PAGE_SIZE = 1_000;
 const MOVEMENT_WINDOWS = [7, 14, 21, 28] as const;
 const MOVEMENT_MAX_ROWS = 40000;
 const MONITORED_REGIONS = ["Hoa-Mogadishu-2", "Mogadishu-region-hq3"] as const;
@@ -542,6 +544,46 @@ export const resourceMovement = query({
       procurers,
       releasers,
       consumers,
+    };
+  },
+});
+
+export const dryRunOldHourlySnapshotsPage = internalQuery({
+  args: {
+    olderThanMs: v.optional(v.number()),
+    nowMs: v.optional(v.number()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const olderThanMs = args.olderThanMs ?? RETENTION_MS;
+    const nowMs = args.nowMs ?? Date.now();
+    const cutoff = capturedHour(nowMs - olderThanMs);
+    const requestedItems = args.paginationOpts.numItems;
+    const paginationOpts = {
+      ...args.paginationOpts,
+      numItems: Math.min(requestedItems, MAX_DRY_RUN_PAGE_SIZE),
+    };
+    const page = await ctx.db
+      .query("manageOneHourlySnapshots")
+      .withIndex("by_hour", (q) => q.lt("capturedHour", cutoff))
+      .paginate(paginationOpts);
+    const capturedHours = page.page.map((row) => row.capturedHour);
+
+    return {
+      dryRun: true,
+      table: "manageOneHourlySnapshots",
+      action: "count_only",
+      olderThanMs,
+      cutoff,
+      pageCount: page.page.length,
+      requestedPageSize: requestedItems,
+      effectivePageSize: paginationOpts.numItems,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+      oldestCapturedHour:
+        capturedHours.length > 0 ? Math.min(...capturedHours) : null,
+      newestCapturedHour:
+        capturedHours.length > 0 ? Math.max(...capturedHours) : null,
     };
   },
 });

@@ -1,8 +1,12 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, query } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { canViewCloudHealth, isMonitoring } from "./authorization";
+
+const DEFAULT_INACTIVE_ALARM_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_DRY_RUN_PAGE_SIZE = 1_000;
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -293,5 +297,54 @@ export const listActiveByRegion = query({
       }))
       .map((alarm) => redactAlarmForMonitoring(alarm, user))
       .sort((a, b) => b.latestOccurUtc - a.latestOccurUtc);
+  },
+});
+
+export const dryRunOldInactiveAlarmsPage = internalQuery({
+  args: {
+    olderThanMs: v.optional(v.number()),
+    nowMs: v.optional(v.number()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const olderThanMs =
+      args.olderThanMs ?? DEFAULT_INACTIVE_ALARM_RETENTION_MS;
+    const nowMs = args.nowMs ?? Date.now();
+    const cutoff = nowMs - olderThanMs;
+    const requestedItems = args.paginationOpts.numItems;
+    const paginationOpts = {
+      ...args.paginationOpts,
+      numItems: Math.min(requestedItems, MAX_DRY_RUN_PAGE_SIZE),
+    };
+    const page = await ctx.db
+      .query("cloudAlarms")
+      .withIndex("by_active", (q) => q.eq("active", false))
+      .paginate(paginationOpts);
+    const matchingAlarms = page.page.filter((alarm) => {
+      const inactiveAt = alarm.inactiveAt ?? alarm.lastSyncedAt;
+      return inactiveAt < cutoff;
+    });
+    const inactiveAts = matchingAlarms.map(
+      (alarm) => alarm.inactiveAt ?? alarm.lastSyncedAt,
+    );
+
+    return {
+      dryRun: true,
+      table: "cloudAlarms",
+      action: "count_only",
+      scope: "inactive_only",
+      olderThanMs,
+      cutoff,
+      scannedPageCount: page.page.length,
+      matchingPageCount: matchingAlarms.length,
+      requestedPageSize: requestedItems,
+      effectivePageSize: paginationOpts.numItems,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+      oldestInactiveAt:
+        inactiveAts.length > 0 ? Math.min(...inactiveAts) : null,
+      newestInactiveAt:
+        inactiveAts.length > 0 ? Math.max(...inactiveAts) : null,
+    };
   },
 });

@@ -1,8 +1,12 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, query } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
 import { canViewCloudHealth } from "./authorization";
+
+const DEFAULT_CAPACITY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const MAX_DRY_RUN_PAGE_SIZE = 1_000;
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -129,5 +133,46 @@ export const historyForRegion = query({
       .take(limit);
 
     return snapshots.sort((a, b) => a.snapshotAt - b.snapshotAt);
+  },
+});
+
+export const dryRunOldCapacitySnapshotsPage = internalQuery({
+  args: {
+    olderThanMs: v.optional(v.number()),
+    nowMs: v.optional(v.number()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const olderThanMs = args.olderThanMs ?? DEFAULT_CAPACITY_RETENTION_MS;
+    const nowMs = args.nowMs ?? Date.now();
+    const cutoff = nowMs - olderThanMs;
+    const requestedItems = args.paginationOpts.numItems;
+    const paginationOpts = {
+      ...args.paginationOpts,
+      numItems: Math.min(requestedItems, MAX_DRY_RUN_PAGE_SIZE),
+    };
+    const page = await ctx.db
+      .query("cloudCapacitySnapshots")
+      .paginate(paginationOpts);
+    const matchingSnapshots = page.page.filter(
+      (snapshot) => snapshot.snapshotAt < cutoff,
+    );
+    const snapshotAts = matchingSnapshots.map((snapshot) => snapshot.snapshotAt);
+
+    return {
+      dryRun: true,
+      table: "cloudCapacitySnapshots",
+      action: "count_only",
+      olderThanMs,
+      cutoff,
+      scannedPageCount: page.page.length,
+      matchingPageCount: matchingSnapshots.length,
+      requestedPageSize: requestedItems,
+      effectivePageSize: paginationOpts.numItems,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+      oldestSnapshotAt: snapshotAts.length > 0 ? Math.min(...snapshotAts) : null,
+      newestSnapshotAt: snapshotAts.length > 0 ? Math.max(...snapshotAts) : null,
+    };
   },
 });

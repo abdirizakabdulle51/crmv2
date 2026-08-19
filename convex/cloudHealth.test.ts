@@ -430,6 +430,188 @@ describe("Cloud Health", () => {
     expect(recentHistory).toHaveLength(3);
   });
 
+  it("dry-runs old hourly, alarm, and capacity counts without deleting rows", async () => {
+    const t = convexTest(schema, modules);
+    await seedUsers(t);
+    const now = Date.UTC(2026, 7, 19, 4, 35, 0);
+    const oldHourly = now - 31 * 24 * 60 * 60 * 1000;
+    const recentHourly = now - 2 * 24 * 60 * 60 * 1000;
+    const oldCapacity = now - 91 * 24 * 60 * 60 * 1000;
+    const recentCapacity = now - 7 * 24 * 60 * 60 * 1000;
+    const oldInactiveAlarm = now - 31 * 24 * 60 * 60 * 1000;
+    const recentInactiveAlarm = now - 2 * 24 * 60 * 60 * 1000;
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("manageOneHourlySnapshots", {
+        snapshotKey: "old-vdc|som-1|old",
+        vdcId: "old-vdc",
+        tenantName: "Old Tenant",
+        regionId: "som-1",
+        regionName: "Somalia Region",
+        capturedHour: oldHourly,
+        capturedAt: oldHourly,
+        ecsInstances: 1,
+        ecsCores: 2,
+        ecsRamGb: 4,
+        evsGb: 40,
+        obsGb: 0,
+        publicIps: 1,
+        loadBalancers: 0,
+        vpnGateways: 0,
+        natGateways: 0,
+        wafInstances: 0,
+      });
+      await ctx.db.insert("manageOneHourlySnapshots", {
+        snapshotKey: "recent-vdc|som-1|recent",
+        vdcId: "recent-vdc",
+        tenantName: "Recent Tenant",
+        regionId: "som-1",
+        regionName: "Somalia Region",
+        capturedHour: recentHourly,
+        capturedAt: recentHourly,
+        ecsInstances: 1,
+        ecsCores: 2,
+        ecsRamGb: 4,
+        evsGb: 40,
+        obsGb: 0,
+        publicIps: 1,
+        loadBalancers: 0,
+        vpnGateways: 0,
+        natGateways: 0,
+        wafInstances: 0,
+      });
+      await ctx.db.insert("cloudCapacitySnapshots", {
+        regionId: "som-1",
+        regionName: "Somalia Region",
+        cpuUsed: 40,
+        cpuTotal: 100,
+        memoryUsedGb: 500,
+        memoryTotalGb: 1000,
+        storageUsedGb: 4000,
+        storageTotalGb: 10000,
+        snapshotAt: oldCapacity,
+      });
+      await ctx.db.insert("cloudCapacitySnapshots", {
+        regionId: "som-1",
+        regionName: "Somalia Region",
+        cpuUsed: 45,
+        cpuTotal: 100,
+        memoryUsedGb: 550,
+        memoryTotalGb: 1000,
+        storageUsedGb: 4500,
+        storageTotalGb: 10000,
+        snapshotAt: recentCapacity,
+      });
+      await ctx.db.insert("cloudAlarms", {
+        csn: 1,
+        alarmId: "old-alarm",
+        alarmName: "Old inactive alarm",
+        severity: 2,
+        cleared: 1,
+        acked: 0,
+        category: 1,
+        eventType: 1,
+        occurUtc: oldInactiveAlarm,
+        arriveUtc: oldInactiveAlarm,
+        latestOccurUtc: oldInactiveAlarm,
+        rawPayload: { alarmId: "old-alarm" },
+        active: false,
+        firstSeenAt: oldInactiveAlarm,
+        lastSyncedAt: oldInactiveAlarm,
+        inactiveAt: oldInactiveAlarm,
+      });
+      await ctx.db.insert("cloudAlarms", {
+        csn: 2,
+        alarmId: "recent-alarm",
+        alarmName: "Recent inactive alarm",
+        severity: 3,
+        cleared: 1,
+        acked: 0,
+        category: 1,
+        eventType: 1,
+        occurUtc: recentInactiveAlarm,
+        arriveUtc: recentInactiveAlarm,
+        latestOccurUtc: recentInactiveAlarm,
+        rawPayload: { alarmId: "recent-alarm" },
+        active: false,
+        firstSeenAt: recentInactiveAlarm,
+        lastSyncedAt: recentInactiveAlarm,
+        inactiveAt: recentInactiveAlarm,
+      });
+      await ctx.db.insert("cloudAlarms", {
+        csn: 3,
+        alarmId: "active-alarm",
+        alarmName: "Active alarm",
+        severity: 1,
+        cleared: 0,
+        acked: 0,
+        category: 1,
+        eventType: 1,
+        occurUtc: oldInactiveAlarm,
+        arriveUtc: oldInactiveAlarm,
+        latestOccurUtc: oldInactiveAlarm,
+        rawPayload: { alarmId: "active-alarm" },
+        active: true,
+        firstSeenAt: oldInactiveAlarm,
+        lastSyncedAt: oldInactiveAlarm,
+      });
+    });
+
+    const hourly = await t.query(
+      internal.manageOneHourlyMonitoring.dryRunOldHourlySnapshotsPage,
+      {
+        nowMs: now,
+        paginationOpts: { cursor: null, numItems: 10 },
+      },
+    );
+    expect(hourly).toMatchObject({
+      dryRun: true,
+      table: "manageOneHourlySnapshots",
+      action: "count_only",
+      pageCount: 1,
+      isDone: true,
+      oldestCapturedHour: oldHourly,
+      newestCapturedHour: oldHourly,
+    });
+
+    const capacity = await t.query(
+      internal.cloudCapacitySnapshots.dryRunOldCapacitySnapshotsPage,
+      {
+        nowMs: now,
+        paginationOpts: { cursor: null, numItems: 10 },
+      },
+    );
+    expect(capacity).toMatchObject({
+      dryRun: true,
+      table: "cloudCapacitySnapshots",
+      action: "count_only",
+      scannedPageCount: 2,
+      matchingPageCount: 1,
+      isDone: true,
+      oldestSnapshotAt: oldCapacity,
+      newestSnapshotAt: oldCapacity,
+    });
+
+    const alarms = await t.query(
+      internal.cloudAlarms.dryRunOldInactiveAlarmsPage,
+      {
+        nowMs: now,
+        paginationOpts: { cursor: null, numItems: 10 },
+      },
+    );
+    expect(alarms).toMatchObject({
+      dryRun: true,
+      table: "cloudAlarms",
+      action: "count_only",
+      scope: "inactive_only",
+      scannedPageCount: 2,
+      matchingPageCount: 1,
+      isDone: true,
+      oldestInactiveAt: oldInactiveAlarm,
+      newestInactiveAt: oldInactiveAlarm,
+    });
+  });
+
   it("queries active ping target history by time range and buckets long ranges hourly", async () => {
     const t = convexTest(schema, modules);
     const users = await seedUsers(t);
