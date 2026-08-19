@@ -30,10 +30,15 @@ import {
 import {
   AlertTriangle,
   ArrowLeft,
+  BarChart3,
   CheckCircle2,
   Clock3,
   Database,
+  DollarSign,
+  FileText,
   Link2,
+  Receipt,
+  WalletCards,
 } from "lucide-react";
 import { useCrm } from "@/lib/crm-context.tsx";
 import {
@@ -41,6 +46,7 @@ import {
   ManageOneUsageCard,
 } from "./_components/company-dialog.tsx";
 import { isDrMode } from "@/lib/dr-mode.ts";
+import { formatCurrency } from "@/lib/format.ts";
 
 type TenantUsageHistoryRow = Doc<"tenantUsageHistory">;
 type Company = Doc<"companies">;
@@ -139,6 +145,20 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+function formatDateLabel(value?: number | null) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function formatDateKeyLabel(value: string) {
+  const [, month, day] = value.split("-");
+  return month && day ? `${month}/${day}` : value;
 }
 
 function HealthStatusBadge({
@@ -489,6 +509,358 @@ function UsageTrendsSection({
   );
 }
 
+function FinancialMetricCard({
+  title,
+  value,
+  detail,
+  icon,
+}: {
+  title: string;
+  value: string;
+  detail: string;
+  icon: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border bg-background p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-medium text-muted-foreground">{title}</div>
+        <div className="text-cyan-600">{icon}</div>
+      </div>
+      <div className="mt-3 text-2xl font-semibold">{value}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+    </div>
+  );
+}
+
+function BillingUsageSection({
+  snapshot,
+}: {
+  snapshot:
+    | {
+        month: string;
+        currentBalance: number;
+        upcomingCharges: number;
+        paidThisMonth: number;
+        projectedMonthEnd: number | null;
+        dailyUsageReady: boolean;
+        latestUsageDate: string | null;
+        dailySeries: Array<{
+          usageDate: string;
+          dailyCharge: number;
+          cumulativeCharge: number;
+        }>;
+        chargeBreakdown: Array<{
+          serviceType: string;
+          amount: number;
+          billableQuantity: number;
+          capturedDays: number;
+          unpricedCount: number;
+        }>;
+        openInvoices: Array<{
+          _id: Id<"invoices">;
+          invoiceNumber?: string;
+          status: string;
+          issueDate?: number;
+          dueDate?: number;
+          grandTotal: number;
+          amountPaid: number;
+          balanceDue: number;
+        }>;
+        recentPayments: Array<{
+          _id: Id<"invoicePayments">;
+          invoiceId: Id<"invoices">;
+          invoiceNumber?: string;
+          amount: number;
+          paidAt: number;
+          method?: string;
+          reference?: string;
+        }>;
+        unpricedCount: number;
+        uninvoicedRowCount: number;
+        dailyRowCount: number;
+      }
+    | undefined;
+}) {
+  if (!snapshot) {
+    return (
+      <Card className="max-w-5xl">
+        <CardHeader>
+          <CardTitle>Billing & Usage</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-28" />
+            ))}
+          </div>
+          <Skeleton className="h-72 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const chartData = snapshot.dailySeries.map((row) => ({
+    ...row,
+    label: formatDateKeyLabel(row.usageDate),
+  }));
+
+  return (
+    <div className="max-w-5xl space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Billing & Usage</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Read-only view of customer balance, payments, and current month usage.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <FinancialMetricCard
+              title="Current Balance"
+              value={formatCurrency(snapshot.currentBalance)}
+              detail="Open invoice balance due"
+              icon={<WalletCards className="h-4 w-4" />}
+            />
+            <FinancialMetricCard
+              title="Current Usage Bill"
+              value={
+                snapshot.dailyUsageReady
+                  ? formatCurrency(snapshot.upcomingCharges)
+                  : "Not calculated"
+              }
+              detail={
+                snapshot.dailyUsageReady
+                  ? "Unbilled usage as of today"
+                  : "Daily billing snapshot missing"
+              }
+              icon={<Receipt className="h-4 w-4" />}
+            />
+            <FinancialMetricCard
+              title="Paid This Month"
+              value={formatCurrency(snapshot.paidThisMonth)}
+              detail={`Payments recorded for ${snapshot.month}`}
+              icon={<DollarSign className="h-4 w-4" />}
+            />
+            <FinancialMetricCard
+              title="Projected Month End"
+              value={
+                snapshot.projectedMonthEnd === null
+                  ? "Not available"
+                  : formatCurrency(snapshot.projectedMonthEnd)
+              }
+              detail={
+                snapshot.latestUsageDate
+                  ? "Estimated full-month usage"
+                  : "No daily usage captured"
+              }
+              icon={<BarChart3 className="h-4 w-4" />}
+            />
+          </div>
+
+          {!snapshot.dailyUsageReady ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              Daily usage has not been calculated for this month. Upcoming
+              charges and projection will appear after the midnight billing sync
+              or Auto-fill from ManageOne runs.
+            </div>
+          ) : null}
+
+          <div className="rounded-md border p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="font-medium">Daily Billing Trend</div>
+                <div className="text-xs text-muted-foreground">
+                  Daily usage cost and month-to-date total.
+                </div>
+              </div>
+              <Badge variant="outline">{snapshot.month}</Badge>
+            </div>
+            {chartData.length > 0 ? (
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData}>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      className="stroke-border"
+                    />
+                    <XAxis
+                      dataKey="label"
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <YAxis
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(value) => `$${Number(value) / 1000}k`}
+                      width={56}
+                    />
+                    <Tooltip
+                      formatter={(value, name) => [
+                        formatCurrency(Number(value)),
+                        name === "dailyCharge"
+                          ? "Daily usage cost"
+                          : "Month-to-date total",
+                      ]}
+                      labelClassName="text-foreground"
+                      contentStyle={{
+                        background: "var(--card)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "8px",
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="dailyCharge"
+                      name="Daily usage cost"
+                      stroke="#35C7C9"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="cumulativeCharge"
+                      name="Month-to-date total"
+                      stroke="#2563eb"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+                No daily billing rows found for this company and month.
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Charge Breakdown</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {snapshot.chargeBreakdown.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="py-2 font-medium">Service</th>
+                      <th className="py-2 text-right font-medium">Amount</th>
+                      <th className="py-2 text-right font-medium">Days</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {snapshot.chargeBreakdown.map((row) => (
+                      <tr key={row.serviceType} className="border-b last:border-0">
+                        <td className="py-2 font-medium">{row.serviceType}</td>
+                        <td className="py-2 text-right">
+                          {row.unpricedCount > 0
+                            ? "Missing price"
+                            : formatCurrency(row.amount)}
+                        </td>
+                        <td className="py-2 text-right text-muted-foreground">
+                          {row.capturedDays}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+                No uninvoiced usage charges for this month.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Invoices & Payments</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <FileText className="h-4 w-4 text-cyan-600" />
+                Open invoices
+              </div>
+              {snapshot.openInvoices.length > 0 ? (
+                <div className="space-y-2">
+                  {snapshot.openInvoices.map((invoice) => (
+                    <div
+                      key={invoice._id}
+                      className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
+                    >
+                      <div>
+                        <div className="font-medium">
+                          {invoice.invoiceNumber ?? "Draft invoice"}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Due {formatDateLabel(invoice.dueDate)}
+                        </div>
+                      </div>
+                      <div className="text-left sm:text-right">
+                        <div className="font-semibold">
+                          {formatCurrency(invoice.balanceDue)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {invoice.status.replace("_", " ")}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No open invoices.
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <DollarSign className="h-4 w-4 text-cyan-600" />
+                Recent payments this month
+              </div>
+              {snapshot.recentPayments.length > 0 ? (
+                <div className="space-y-2">
+                  {snapshot.recentPayments.map((payment) => (
+                    <div
+                      key={payment._id}
+                      className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
+                    >
+                      <div>
+                        <div className="font-medium">
+                          {payment.invoiceNumber ?? "Invoice"}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatDateLabel(payment.paidAt)}
+                        </div>
+                      </div>
+                      <div className="text-left font-semibold sm:text-right">
+                        {formatCurrency(payment.amount)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No payments recorded this month.
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 function useDrRow<T>(path: string | null) {
   const [row, setRow] = useState<T | undefined>();
 
@@ -593,6 +965,12 @@ export default function CompanyDetailPage() {
       ? { companyId, month: currentMonthInputValue() }
       : "skip",
   );
+  const billingSnapshot = useQuery(
+    api.dailyUsage.companyBillingSnapshot,
+    companyId && !isDrMode
+      ? { companyId, month: currentMonthInputValue() }
+      : "skip",
+  );
   const drCompany = useDrRow<Company>(
     isDrMode && companyId ? `/api/companies/${companyId}` : null,
   );
@@ -644,10 +1022,11 @@ export default function CompanyDetailPage() {
       </div>
 
       <Tabs defaultValue="company-info" className="max-w-5xl">
-        <TabsList className="grid h-auto w-full grid-cols-3">
+        <TabsList className="grid h-auto w-full grid-cols-2 lg:grid-cols-4">
           <TabsTrigger value="company-info">Company Detail</TabsTrigger>
           <TabsTrigger value="usage-trends">Usage Trends</TabsTrigger>
-          <TabsTrigger value="manageone-usage">Billing & Usage</TabsTrigger>
+          <TabsTrigger value="manageone-usage">Cloud Resources</TabsTrigger>
+          <TabsTrigger value="billing-usage">Billing & Usage</TabsTrigger>
         </TabsList>
 
         <TabsContent value="company-info" className="mt-4">
@@ -741,6 +1120,23 @@ export default function CompanyDetailPage() {
             <UsageHealthPanel health={usageHealth} />
             <ManageOneUsageCard manageOneTenants={manageOneTenants} />
           </div>
+        </TabsContent>
+
+        <TabsContent value="billing-usage" className="mt-4">
+          {isDrMode ? (
+            <Card className="max-w-5xl">
+              <CardHeader>
+                <CardTitle>Billing & Usage</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                  Billing snapshot is available in the live CRM.
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <BillingUsageSection snapshot={billingSnapshot} />
+          )}
         </TabsContent>
       </Tabs>
 

@@ -7,7 +7,10 @@ import {
   assertNotMonitoring,
   canViewCompany,
 } from "./authorization";
-import { buildUsageHintsForCompany } from "./manageOneTenants";
+import {
+  buildUsageHintsForCompany,
+  tenantsWithLatestHourlyUsage,
+} from "./manageOneTenants";
 
 type CatalogItem = Doc<"serviceCatalog">;
 type ManageOneTenant = Doc<"manageOneTenants">;
@@ -63,6 +66,13 @@ const HOURLY_STALE_MS = 2 * 60 * 60 * 1000;
 
 function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function monthBounds(month: string) {
+  return {
+    start: monthStartTimestamp(month),
+    end: monthEndTimestamp(month),
+  };
 }
 
 function getCurrentUserOrThrow(ctx: QueryCtx | MutationCtx) {
@@ -485,7 +495,7 @@ export function buildDailyUsageRowsFromManageOneTenants(
   capturedAt: number,
 ): DailyUsageSnapshotInput[] {
   const month = usageDate.slice(0, 7);
-  const rows: DailyUsageSnapshotInput[] = [];
+  const rowsBySourceKey = new Map<string, DailyUsageSnapshotInput>();
 
   for (const tenant of tenants) {
     if (!tenant.linkedCompanyId) {
@@ -496,14 +506,16 @@ export function buildDailyUsageRowsFromManageOneTenants(
     for (const hint of hints) {
       const lineItems =
         hint.lineItems ??
-        (hint.suggestedCatalogItemId
+        (hint.quantity > 0
           ? [
               {
                 label: hint.serviceCategory,
                 serviceCategory: hint.serviceCategory,
                 quantity: hint.quantity,
                 pricing: hint.pricing,
-                suggestedCatalogItemId: hint.suggestedCatalogItemId,
+                ...(hint.suggestedCatalogItemId
+                  ? { suggestedCatalogItemId: hint.suggestedCatalogItemId }
+                  : {}),
                 ...optionalRegionFields(hint),
               },
             ]
@@ -525,7 +537,7 @@ export function buildDailyUsageRowsFromManageOneTenants(
           ...optionalRegionFields(lineItem),
         });
 
-        rows.push({
+        const row: DailyUsageSnapshotInput = {
           companyId: tenant.linkedCompanyId,
           tenantId: tenant._id,
           tenantName: tenant.name,
@@ -553,12 +565,23 @@ export function buildDailyUsageRowsFromManageOneTenants(
           sourceSyncedAt: tenant.lastSyncedAt,
           capturedAt,
           ...regionFields,
-        });
+        };
+        const existing = rowsBySourceKey.get(row.sourceKey);
+        if (existing) {
+          existing.quantity += row.quantity;
+          existing.capturedAt = Math.max(existing.capturedAt, row.capturedAt);
+          existing.sourceSyncedAt = Math.max(
+            existing.sourceSyncedAt ?? 0,
+            row.sourceSyncedAt ?? 0,
+          );
+        } else {
+          rowsBySourceKey.set(row.sourceKey, row);
+        }
       }
     }
   }
 
-  return rows;
+  return [...rowsBySourceKey.values()];
 }
 
 export const captureFromManageOneSnapshots = internalMutation({
@@ -571,6 +594,7 @@ export const captureFromManageOneSnapshots = internalMutation({
     const capturedAt = args.capturedAt ?? Date.now();
     const usageDate = args.usageDate ?? dateKeyForTimestamp(capturedAt);
     assertValidDateKey(usageDate);
+    const month = usageDate.slice(0, 7);
 
     const tenants = await ctx.db.query("manageOneTenants").collect();
     const tenantVdcIdFilter =
@@ -581,16 +605,23 @@ export const captureFromManageOneSnapshots = internalMutation({
       ? tenants.filter((tenant) => tenantVdcIdFilter.has(tenant.vdcId))
       : tenants;
     const catalog = await ctx.db.query("serviceCatalog").collect();
-    const rows = buildDailyUsageRowsFromManageOneTenants(
+    const selectedTenantsWithUsage = await tenantsWithLatestHourlyUsage(
+      ctx,
       selectedTenants,
+      { forBilling: true },
+    );
+    const rows = buildDailyUsageRowsFromManageOneTenants(
+      selectedTenantsWithUsage,
       catalog,
       usageDate,
       capturedAt,
     );
+    const currentSourceKeys = new Set(rows.map((row) => row.sourceKey));
 
     let inserted = 0;
     let updated = 0;
     let skippedLocked = 0;
+    let removedStale = 0;
 
     for (const row of rows) {
       const existing = await ctx.db
@@ -612,6 +643,37 @@ export const captureFromManageOneSnapshots = internalMutation({
       }
     }
 
+    for (const tenant of selectedTenants) {
+      if (!tenant.linkedCompanyId) {
+        continue;
+      }
+      const existingRows = await ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", tenant.linkedCompanyId as Id<"companies">).eq(
+            "month",
+            month,
+          ),
+        )
+        .collect();
+      for (const existing of existingRows) {
+        if (
+          existing.source !== "manageone" ||
+          existing.usageDate !== usageDate ||
+          existing.tenantId !== tenant._id ||
+          currentSourceKeys.has(existing.sourceKey)
+        ) {
+          continue;
+        }
+        if (existing.lockedAt || existing.invoiceId) {
+          skippedLocked++;
+          continue;
+        }
+        await ctx.db.delete(existing._id);
+        removedStale++;
+      }
+    }
+
     return {
       usageDate,
       inspectedTenants: selectedTenants.length,
@@ -619,6 +681,7 @@ export const captureFromManageOneSnapshots = internalMutation({
       inserted,
       updated,
       skippedLocked,
+      removedStale,
     };
   },
 });
@@ -903,6 +966,183 @@ export const review = query({
         serviceTypes,
         usageDates,
       },
+    };
+  },
+});
+
+export const companyBillingSnapshot = query({
+  args: {
+    companyId: v.id("companies"),
+    month: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const company = await assertCanManageUsage(ctx, user, args.companyId);
+    const { start: monthStart, end: monthEnd } = monthBounds(args.month);
+
+    const invoices = (
+      await ctx.db
+        .query("invoices")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect()
+    ).filter((invoice) => !(invoice.isTest || invoice.hiddenAt));
+    const openInvoices = invoices.filter((invoice) =>
+      ["issued", "sent", "partially_paid", "overdue"].includes(invoice.status),
+    );
+
+    let paidThisMonth = 0;
+    const recentPayments = [];
+    for (const invoice of invoices) {
+      const payments = await ctx.db
+        .query("invoicePayments")
+        .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+        .collect();
+      for (const payment of payments) {
+        if (payment.paidAt >= monthStart && payment.paidAt <= monthEnd) {
+          paidThisMonth = roundMoney(paidThisMonth + payment.amount);
+          recentPayments.push({
+            _id: payment._id,
+            invoiceId: invoice._id,
+            invoiceNumber: invoice.invoiceNumber,
+            amount: payment.amount,
+            paidAt: payment.paidAt,
+            method: payment.method,
+            reference: payment.reference,
+          });
+        }
+      }
+    }
+
+    const dailyRows = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_company_month", (q) =>
+        q.eq("companyId", args.companyId).eq("month", args.month),
+      )
+      .collect();
+    const uninvoicedRows = dailyRows.filter(
+      (row) => !row.invoiceId && !row.lockedAt,
+    );
+
+    const catalogById = new Map(
+      (await ctx.db.query("serviceCatalog").collect()).map((item) => [
+        item._id,
+        item,
+      ]),
+    );
+    const companyNameById = new Map<Id<"companies">, string>([
+      [company._id, company.name],
+    ]);
+    const contractPricingByCompany = await loadActiveContractPricingForMonth(
+      ctx,
+      [company._id],
+      args.month,
+    );
+    const upcomingRollupRows = buildMonthlyRollupRows({
+      rows: uninvoicedRows,
+      catalogById,
+      companyNameById,
+      month: args.month,
+      contractPricingByCompany,
+    });
+    const upcomingCharges = roundMoney(
+      upcomingRollupRows.reduce(
+        (total, row) => total + (row.estimatedAmount ?? 0),
+        0,
+      ),
+    );
+
+    const usageDates = [...new Set(dailyRows.map((row) => row.usageDate))]
+      .filter(Boolean)
+      .sort();
+    let cumulative = 0;
+    const dailySeries = usageDates.map((usageDate) => {
+      const rowsForDay = dailyRows.filter((row) => row.usageDate === usageDate);
+      const dayRollup = buildMonthlyRollupRows({
+        rows: rowsForDay,
+        catalogById,
+        companyNameById,
+        month: args.month,
+        contractPricingByCompany,
+      });
+      const dailyCharge = roundMoney(
+        dayRollup.reduce((total, row) => total + (row.estimatedAmount ?? 0), 0),
+      );
+      cumulative = roundMoney(cumulative + dailyCharge);
+      return {
+        usageDate,
+        dailyCharge,
+        cumulativeCharge: cumulative,
+      };
+    });
+    const projectedMonthEnd =
+      dailySeries.length === 0
+        ? null
+        : roundMoney((cumulative / dailySeries.length) * daysInMonth(args.month));
+
+    const chargeBreakdownByService = new Map<
+      string,
+      {
+        serviceType: string;
+        amount: number;
+        billableQuantity: number;
+        capturedDays: number;
+        unpricedCount: number;
+      }
+    >();
+    for (const row of upcomingRollupRows) {
+      const existing = chargeBreakdownByService.get(row.serviceType) ?? {
+        serviceType: row.serviceType,
+        amount: 0,
+        billableQuantity: 0,
+        capturedDays: 0,
+        unpricedCount: 0,
+      };
+      existing.amount = roundMoney(existing.amount + (row.estimatedAmount ?? 0));
+      existing.billableQuantity = roundMoney(
+        existing.billableQuantity + row.billableQuantity,
+      );
+      existing.capturedDays = Math.max(existing.capturedDays, row.capturedDays);
+      existing.unpricedCount += row.estimatedAmount === undefined ? 1 : 0;
+      chargeBreakdownByService.set(row.serviceType, existing);
+    }
+
+    return {
+      month: args.month,
+      companyId: args.companyId,
+      companyName: company.name,
+      currentBalance: roundMoney(
+        openInvoices.reduce((total, invoice) => total + invoice.balanceDue, 0),
+      ),
+      upcomingCharges,
+      paidThisMonth,
+      projectedMonthEnd,
+      dailyUsageReady: dailyRows.length > 0,
+      latestUsageDate: usageDates[usageDates.length - 1] ?? null,
+      dailySeries,
+      chargeBreakdown: [...chargeBreakdownByService.values()].sort(
+        (a, b) => b.amount - a.amount,
+      ),
+      openInvoices: openInvoices
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 5)
+        .map((invoice) => ({
+          _id: invoice._id,
+          invoiceNumber: invoice.invoiceNumber,
+          status: invoice.status,
+          issueDate: invoice.issueDate,
+          dueDate: invoice.dueDate,
+          grandTotal: invoice.grandTotal,
+          amountPaid: invoice.amountPaid,
+          balanceDue: invoice.balanceDue,
+        })),
+      recentPayments: recentPayments
+        .sort((a, b) => b.paidAt - a.paidAt)
+        .slice(0, 5),
+      unpricedCount: upcomingRollupRows.filter(
+        (row) => row.estimatedAmount === undefined,
+      ).length,
+      uninvoicedRowCount: uninvoicedRows.length,
+      dailyRowCount: dailyRows.length,
     };
   },
 });

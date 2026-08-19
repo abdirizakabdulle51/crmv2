@@ -39,6 +39,7 @@ type ManageOneTenantDoc = Doc<"manageOneTenants">;
 type ManageOneHourlySnapshotDoc = Doc<"manageOneHourlySnapshots">;
 
 type ManageOneTenantWithLiveUsage = ManageOneTenantDoc & {
+  billingFromHourly?: boolean;
   liveUsageSyncedAt?: number;
   liveBmsInstances?: number;
   liveEcsCores?: number;
@@ -46,6 +47,7 @@ type ManageOneTenantWithLiveUsage = ManageOneTenantDoc & {
 };
 
 type UsageHintTenant = {
+  billingFromHourly?: boolean;
   regionId?: string;
   regionName?: string;
   resources?: UsageHintResource[];
@@ -457,6 +459,7 @@ const HOURLY_RESOURCE_KEYS = new Set([
   "waf:waf.instance.100",
   "waf:waf.instance.500",
 ]);
+const MIN_STORAGE_REMAINDER_GB = 0.05;
 
 function resourceKey(resource: UsageHintResource) {
   return `${resource.serviceId}:${resource.resource}`;
@@ -490,10 +493,6 @@ function resourcesWithHourlyOverlay(
     (resource) => !HOURLY_RESOURCE_KEYS.has(resourceKey(resource)),
   );
   const hasStructuredEcsBreakdown = (tenant.ecsFlavors ?? []).length > 0;
-  const hasStructuredEvsBreakdown = (tenant.evsVolumeTypes ?? []).length > 0;
-  const hasStructuredObsBreakdown = (tenant.obsBuckets ?? []).length > 0;
-  const hasStructuredVpnBreakdown = (tenant.vpnGateways?.count ?? 0) > 0;
-  const hasStructuredNatBreakdown = (tenant.natGateways?.items ?? []).length > 0;
   const wafBasicInstances = optionalSnapshotNumber(snapshot, "wafBasicInstances");
   const wafEnterpriseInstances = optionalSnapshotNumber(
     snapshot,
@@ -511,24 +510,16 @@ function resourcesWithHourlyOverlay(
       optionalSnapshotNumber(snapshot, "cceNodes"),
     ),
     hourlyResource("bms", "instances", optionalSnapshotNumber(snapshot, "bmsInstances")),
-    options.forBilling && hasStructuredEvsBreakdown
-      ? undefined
-      : hourlyResource("evs", "gigabytes", snapshot.evsGb),
+    hourlyResource("evs", "gigabytes", snapshot.evsGb),
     hourlyResource("sfs", "gigabytes", optionalSnapshotNumber(snapshot, "sfsGb")),
     hourlyResource("csbs", "backup_capacity", optionalSnapshotNumber(snapshot, "csbsGb")),
     hourlyResource("vbs", "volume_backup_capacity", optionalSnapshotNumber(snapshot, "vbsGb")),
-    options.forBilling && hasStructuredObsBreakdown
-      ? undefined
-      : hourlyResource("obsv3", "capacity", snapshot.obsGb),
+    hourlyResource("obsv3", "capacity", snapshot.obsGb),
     hourlyResource("vpc", "publicIp", snapshot.publicIps),
     hourlyResource("vpc", "endpoint", optionalSnapshotNumber(snapshot, "vpcepEndpoints")),
     hourlyResource("vpc", "loadbalancer", snapshot.loadBalancers),
-    options.forBilling && hasStructuredVpnBreakdown
-      ? undefined
-      : hourlyResource("vpc", "vpn", snapshot.vpnGateways),
-    options.forBilling && hasStructuredNatBreakdown
-      ? undefined
-      : hourlyResource("vpc", "nat", snapshot.natGateways),
+    hourlyResource("vpc", "vpn", snapshot.vpnGateways),
+    hourlyResource("vpc", "nat", snapshot.natGateways),
     hasWafTierBreakdown
       ? undefined
       : hourlyResource("waf", "waf.instance", snapshot.wafInstances),
@@ -550,6 +541,7 @@ function tenantWithHourlyUsage(
 
   return {
     ...tenant,
+    ...(options.forBilling ? { billingFromHourly: true } : {}),
     regionId: snapshot.regionId ?? tenant.regionId,
     regionName: snapshot.regionName ?? tenant.regionName,
     ecsUsed: snapshot.ecsInstances,
@@ -612,8 +604,8 @@ function aggregateHourlySnapshots(
   );
 }
 
-async function tenantsWithLatestHourlyUsage(
-  ctx: QueryCtx,
+export async function tenantsWithLatestHourlyUsage(
+  ctx: QueryCtx | MutationCtx,
   tenants: ManageOneTenantDoc[],
   options: { forBilling?: boolean } = {},
 ): Promise<ManageOneTenantWithLiveUsage[]> {
@@ -662,6 +654,7 @@ export function buildUsageHintsForCompany(
   );
 
   for (const tenant of tenants) {
+    const preferHourlyBilling = tenant.billingFromHourly === true;
     const tenantRegionFields = optionalRegionFields(tenant);
     const tenantResources = tenant.resources ?? [];
     const wafBasicQuantity = tenantResources
@@ -859,6 +852,90 @@ export function buildUsageHintsForCompany(
       });
     }
 
+    if (preferHourlyBilling) {
+      const hourlyEvsTotal =
+        tenantResources.find(
+          (resource) =>
+            resource.serviceId === "evs" && resource.resource === "gigabytes",
+        )?.used ?? 0;
+      const structuredEvsTotal = evsLineItems.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      );
+      const unclassifiedEvsGb = hourlyEvsTotal - structuredEvsTotal;
+      if (unclassifiedEvsGb > MIN_STORAGE_REMAINDER_GB) {
+        const pricedEvsStorageItems = evsLineItems.filter(
+          (item) =>
+            item.suggestedCatalogItemId &&
+            item.label !== "EVS - Disk Managed Fee",
+        );
+        const fallbackEvsItem =
+          pricedEvsStorageItems.length === 1
+            ? pricedEvsStorageItems[0]
+            : undefined;
+        evsLineItems.push({
+          label: fallbackEvsItem?.label ?? "Unclassified EVS",
+          quantity: unclassifiedEvsGb,
+          pricing: fallbackEvsItem ? "auto" : "manual",
+          ...(fallbackEvsItem?.suggestedCatalogItemId
+            ? { suggestedCatalogItemId: fallbackEvsItem.suggestedCatalogItemId }
+            : { needsManualPricing: true }),
+          ...tenantRegionFields,
+          ...optionalRegionFields(fallbackEvsItem ?? {}),
+        });
+      }
+
+      const hourlyObsTotal =
+        tenantResources.find(
+          (resource) =>
+            resource.serviceId === "obsv3" && resource.resource === "capacity",
+        )?.used ?? 0;
+      const structuredObsTotal = obsLineItems.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      );
+      const unclassifiedObsGb = hourlyObsTotal - structuredObsTotal;
+      if (unclassifiedObsGb > MIN_STORAGE_REMAINDER_GB) {
+        const pricedObsItems = obsLineItems.filter(
+          (item) => item.suggestedCatalogItemId,
+        );
+        const fallbackObsItem =
+          pricedObsItems.length === 1 ? pricedObsItems[0] : undefined;
+        obsLineItems.push({
+          label: fallbackObsItem?.label ?? "Unclassified OBS",
+          serviceCategory: "OBS",
+          quantity: unclassifiedObsGb,
+          pricing: fallbackObsItem ? "auto" : "manual",
+          ...(fallbackObsItem?.suggestedCatalogItemId
+            ? { suggestedCatalogItemId: fallbackObsItem.suggestedCatalogItemId }
+            : { needsManualPricing: true }),
+          ...tenantRegionFields,
+          ...optionalRegionFields(fallbackObsItem ?? {}),
+        });
+      }
+
+      const hourlyNatTotal =
+        tenantResources.find(
+          (resource) =>
+            resource.serviceId === "vpc" && resource.resource === "nat",
+        )?.used ?? 0;
+      const structuredNatTotal = natGatewayLineItems.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      );
+      const unclassifiedNatCount = hourlyNatTotal - structuredNatTotal;
+      if (unclassifiedNatCount > 0.0001) {
+        natGatewayLineItems.push({
+          label: "Unclassified NAT",
+          serviceCategory: "NAT",
+          quantity: unclassifiedNatCount,
+          pricing: "manual",
+          needsManualPricing: true,
+          ...tenantRegionFields,
+        });
+      }
+    }
+
     for (const bandwidth of tenant.eipBandwidths ?? []) {
       if (bandwidth.count <= 0) {
         continue;
@@ -890,7 +967,8 @@ export function buildUsageHintsForCompany(
       if (
         resource.serviceId === "cce" &&
         resource.resource === "hybrid.resource.type.cce.cluster" &&
-        ecsLineItems.some((item) => item.serviceCategory === "ECS-CCE")
+        ecsLineItems.some((item) => item.serviceCategory === "ECS-CCE") &&
+        !preferHourlyBilling
       ) {
         continue;
       }
@@ -913,6 +991,20 @@ export function buildUsageHintsForCompany(
         resource.serviceId === "obsv3" &&
         resource.resource === "capacity" &&
         obsLineItems.length > 0
+      ) {
+        continue;
+      }
+      if (
+        resource.serviceId === "evs" &&
+        resource.resource === "gigabytes" &&
+        evsLineItems.length > 0
+      ) {
+        continue;
+      }
+      if (
+        resource.serviceId === "vpc" &&
+        resource.resource === "nat" &&
+        natGatewayLineItems.length > 0
       ) {
         continue;
       }

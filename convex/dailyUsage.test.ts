@@ -197,6 +197,67 @@ describe("daily usage capture helpers", () => {
     expect(rows).toEqual([]);
   });
 
+  it("uses hourly billing totals instead of stale structured resource breakdowns", () => {
+    const companyId = "company1" as Id<"companies">;
+    const rows = buildDailyUsageRowsFromManageOneTenants(
+      [
+        {
+          ...tenant({
+            linkedCompanyId: companyId,
+            evsVolumeTypes: [
+              {
+                volumeType: "SSD",
+                totalGb: 2188,
+                count: 10,
+              },
+            ],
+            natGateways: {
+              count: 1,
+              resourceTypeName: "NAT Gateway",
+              items: [
+                {
+                  id: "nat-1",
+                  name: "nat-1",
+                  resourceTypeName: "NAT Gateway",
+                },
+              ],
+            },
+            resources: [
+              { serviceId: "evs", resource: "gigabytes", used: 150959 },
+              { serviceId: "vpc", resource: "nat", used: 17 },
+            ],
+          }),
+          billingFromHourly: true,
+        },
+      ] as Array<Doc<"manageOneTenants"> & { billingFromHourly: true }>,
+      [],
+      "2026-08-19",
+      1787120000000,
+    );
+
+    const quantityFor = (serviceType: string) =>
+      rows
+        .filter((row) => row.serviceType === serviceType)
+        .reduce((sum, row) => sum + row.quantity, 0);
+
+    expect(quantityFor("EVS")).toBe(150959);
+    expect(quantityFor("NAT")).toBe(17);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          serviceType: "EVS",
+          itemName: "Unclassified EVS",
+          quantity: 148771,
+        }),
+        expect.objectContaining({
+          serviceType: "NAT",
+          itemName: "Unclassified NAT",
+          quantity: 16,
+        }),
+      ]),
+    );
+  });
+
   it("prices active contract daily usage from the contract minimum before catalog price", () => {
     const companyId = "company1" as Id<"companies">;
     const obsCatalogId = "obs-fusion" as Id<"serviceCatalog">;
