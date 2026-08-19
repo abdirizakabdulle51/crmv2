@@ -374,11 +374,18 @@ describe("Cloud Health", () => {
       active: false,
     });
     const rangeStart = Date.UTC(2026, 6, 29, 0, 0, 0);
+    const oldHour = rangeStart - 20 * 24 * 60 * 60 * 1000;
     const firstHour = Date.UTC(2026, 6, 29, 9, 0, 0);
     const secondHour = Date.UTC(2026, 6, 29, 10, 0, 0);
 
     await t.mutation(internal.pingResults.bulkUpsert, {
       results: [
+        {
+          targetId: targetA,
+          success: true,
+          latencyMs: 77,
+          checkedAt: oldHour,
+        },
         {
           targetId: targetA,
           success: true,
@@ -443,6 +450,18 @@ describe("Cloud Health", () => {
         [targetB]: null,
       },
     ]);
+
+    const clampedHistory = await asUser(t, users.gm).query(
+      api.pingResults.historyForActiveTargetsInRange,
+      {
+        from: oldHour,
+        to: rangeStart + 2 * 24 * 60 * 60 * 1000,
+      },
+    );
+
+    expect(
+      clampedHistory.buckets.some((bucket) => bucket.checkedAt === oldHour),
+    ).toBe(false);
   });
 
   it("hard-deletes ping targets and their appended result history for admins only", async () => {

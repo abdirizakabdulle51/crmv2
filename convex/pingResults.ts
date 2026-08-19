@@ -52,6 +52,7 @@ function uptimePercent(results: Doc<"pingResults">[]) {
 }
 
 const MAX_RECENT_HISTORY_SAMPLES_PER_TARGET = 2_000;
+const MAX_PING_HISTORY_RANGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 export const bulkUpsert = internalMutation({
   args: {
@@ -248,7 +249,8 @@ export const historyForActiveTargetsInRange = query({
       .withIndex("by_active", (q) => q.eq("active", true))
       .collect();
     const activeTargets = targets.sort((a, b) => a.name.localeCompare(b.name));
-    const rangeMs = Math.max(0, args.to - args.from);
+    const from = Math.max(args.from, args.to - MAX_PING_HISTORY_RANGE_MS);
+    const rangeMs = Math.max(0, args.to - from);
     const bucketSizeMs =
       rangeMs <= 24 * 60 * 60 * 1000 ? 60 * 1000 : 60 * 60 * 1000;
 
@@ -265,7 +267,7 @@ export const historyForActiveTargetsInRange = query({
       await ctx.db
         .query("pingResults")
         .withIndex("by_checked_at", (q) =>
-          q.gte("checkedAt", args.from).lte("checkedAt", args.to),
+          q.gte("checkedAt", from).lte("checkedAt", args.to),
         )
         .collect()
     )

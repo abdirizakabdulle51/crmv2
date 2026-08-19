@@ -274,18 +274,15 @@ type LatencyRangeId =
   | "last_24_hours"
   | "last_2_days"
   | "last_7_days"
-  | "last_30_days"
+  | "last_14_days"
   | "yesterday"
   | "day_before_yesterday"
   | "this_day_last_week"
   | "previous_week"
-  | "previous_month"
   | "today"
   | "today_so_far"
   | "this_week"
-  | "this_week_so_far"
-  | "this_month"
-  | "this_month_so_far";
+  | "this_week_so_far";
 
 const LATENCY_RANGE_OPTIONS: Array<{ id: LatencyRangeId; label: string }> = [
   { id: "last_5_minutes", label: "Last 5 minutes" },
@@ -298,18 +295,15 @@ const LATENCY_RANGE_OPTIONS: Array<{ id: LatencyRangeId; label: string }> = [
   { id: "last_24_hours", label: "Last 24 hours" },
   { id: "last_2_days", label: "Last 2 days" },
   { id: "last_7_days", label: "Last 7 days" },
-  { id: "last_30_days", label: "Last 30 days" },
+  { id: "last_14_days", label: "Last 14 days" },
   { id: "yesterday", label: "Yesterday" },
   { id: "day_before_yesterday", label: "Day before yesterday" },
   { id: "this_day_last_week", label: "This day last week" },
   { id: "previous_week", label: "Previous week" },
-  { id: "previous_month", label: "Previous month" },
   { id: "today", label: "Today" },
   { id: "today_so_far", label: "Today so far" },
   { id: "this_week", label: "This week" },
   { id: "this_week_so_far", label: "This week so far" },
-  { id: "this_month", label: "This month" },
-  { id: "this_month_so_far", label: "This month so far" },
 ];
 
 function startOfDay(date: Date) {
@@ -380,8 +374,8 @@ function getLatencyRange(rangeId: LatencyRangeId, nowMs: number) {
       return { from: nowMs - 2 * 24 * 60 * 60 * 1000, to: nowMs };
     case "last_7_days":
       return { from: nowMs - 7 * 24 * 60 * 60 * 1000, to: nowMs };
-    case "last_30_days":
-      return { from: nowMs - 30 * 24 * 60 * 60 * 1000, to: nowMs };
+    case "last_14_days":
+      return { from: nowMs - 14 * 24 * 60 * 60 * 1000, to: nowMs };
     case "yesterday":
       return {
         from: startOfDay(previousDay).getTime(),
@@ -405,19 +399,6 @@ function getLatencyRange(rangeId: LatencyRangeId, nowMs: number) {
         to: endOfWeek(previousWeek).getTime(),
       };
     }
-    case "previous_month":
-      return {
-        from: new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime(),
-        to: new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          0,
-          23,
-          59,
-          59,
-          999,
-        ).getTime(),
-      };
     case "today":
       return { from: startOfDay(now).getTime(), to: endOfDay(now).getTime() };
     case "today_so_far":
@@ -426,13 +407,6 @@ function getLatencyRange(rangeId: LatencyRangeId, nowMs: number) {
       return { from: startOfWeek(now).getTime(), to: endOfWeek(now).getTime() };
     case "this_week_so_far":
       return { from: startOfWeek(now).getTime(), to: nowMs };
-    case "this_month":
-      return {
-        from: startOfMonth(now).getTime(),
-        to: endOfMonth(now).getTime(),
-      };
-    case "this_month_so_far":
-      return { from: startOfMonth(now).getTime(), to: nowMs };
   }
 }
 
