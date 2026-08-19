@@ -382,8 +382,8 @@ describe("Cloud Health", () => {
       ],
     });
 
-    const firstPage = await asUser(t, users.gm).query(
-      api.pingResults.dryRunOldPingResultsPage,
+    const firstPage = await t.query(
+      internal.pingResults.dryRunOldPingResultsPage,
       {
         nowMs: now,
         paginationOpts: { cursor: null, numItems: 1 },
@@ -402,8 +402,8 @@ describe("Cloud Health", () => {
       newestCheckedAt: sixteenDaysAgo,
     });
 
-    const secondPage = await asUser(t, users.gm).query(
-      api.pingResults.dryRunOldPingResultsPage,
+    const secondPage = await t.query(
+      internal.pingResults.dryRunOldPingResultsPage,
       {
         nowMs: now,
         paginationOpts: {
@@ -428,13 +428,6 @@ describe("Cloud Health", () => {
       { targetId, limit: 10 },
     );
     expect(recentHistory).toHaveLength(3);
-
-    await expect(
-      asUser(t, users.am).query(api.pingResults.dryRunOldPingResultsPage, {
-        nowMs: now,
-        paginationOpts: { cursor: null, numItems: 1 },
-      }),
-    ).rejects.toThrow(/Cloud Health/);
   });
 
   it("queries active ping target history by time range and buckets long ranges hourly", async () => {

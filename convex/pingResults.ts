@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import { internalMutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
 import { canViewCloudHealth } from "./authorization";
@@ -330,16 +330,13 @@ export const historyForActiveTargetsInRange = query({
   },
 });
 
-export const dryRunOldPingResultsPage = query({
+export const dryRunOldPingResultsPage = internalQuery({
   args: {
     olderThanMs: v.optional(v.number()),
     nowMs: v.optional(v.number()),
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
-    const user = await getCurrentUserOrThrow(ctx);
-    assertCanViewCloudHealth(user);
-
     const olderThanMs = args.olderThanMs ?? MAX_PING_HISTORY_RANGE_MS;
     const nowMs = args.nowMs ?? Date.now();
     const cutoff = nowMs - olderThanMs;
