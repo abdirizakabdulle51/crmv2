@@ -741,7 +741,7 @@ function BillingUsageSection({
                     <Tooltip
                       formatter={(value, name) => [
                         formatCurrency(Number(value)),
-                        name === "dailyCharge"
+                        name === "Daily usage cost"
                           ? "Daily usage cost"
                           : "Month-to-date total",
                       ]}
