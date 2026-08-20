@@ -161,6 +161,18 @@ function formatDateKeyLabel(value: string) {
   return month && day ? `${month}/${day}` : value;
 }
 
+function billingFrequencyLabel(value: string) {
+  switch (value) {
+    case "yearly":
+      return "year";
+    case "quarterly":
+    case "every_3_months":
+      return "quarter";
+    default:
+      return "month";
+  }
+}
+
 function HealthStatusBadge({
   healthy,
   label,
@@ -542,6 +554,32 @@ function BillingUsageSection({
         upcomingCharges: number;
         paidThisMonth: number;
         projectedMonthEnd: number | null;
+        contractCoverage: {
+          contractId: Id<"customerContracts">;
+          contractNumber: string;
+          title: string;
+          billingFrequency: string;
+          capturedDays: number;
+          monthDayCount: number;
+          contractPeriodAmount: number;
+          frequencyMonthCount: number;
+          coverageBasis: "month_to_date" | "contract_period";
+          monthlyMinimum: number;
+          includedToDate: number;
+          usageToDate: number;
+          extraToDate: number;
+          status: "within_contract" | "overage" | "pricing_not_configured";
+          rows: Array<{
+            lineItemId: Id<"customerContractLineItems">;
+            itemName: string;
+            serviceCategory: string;
+            includedQuantity: number;
+            unit: string;
+            amount: number;
+            includedAmount: number;
+            extraAmount: number;
+          }>;
+        } | null;
         dailyUsageReady: boolean;
         latestUsageDate: string | null;
         dailySeries: Array<{
@@ -656,6 +694,10 @@ function BillingUsageSection({
               icon={<BarChart3 className="h-4 w-4" />}
             />
           </div>
+
+          {snapshot.contractCoverage ? (
+            <ContractCoveragePanel coverage={snapshot.contractCoverage} />
+          ) : null}
 
           {!snapshot.dailyUsageReady ? (
             <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -856,6 +898,148 @@ function BillingUsageSection({
             </div>
           </CardContent>
         </Card>
+      </div>
+    </div>
+  );
+}
+
+function ContractCoveragePanel({
+  coverage,
+}: {
+  coverage: NonNullable<
+    NonNullable<Parameters<typeof BillingUsageSection>[0]["snapshot"]>["contractCoverage"]
+  >;
+}) {
+  const visibleRows = coverage.rows.filter(
+    (row) => row.amount > 0 || row.includedAmount > 0,
+  );
+  const frequencyLabel = billingFrequencyLabel(coverage.billingFrequency);
+  const hasConfiguredContractValue = coverage.contractPeriodAmount > 0;
+  const remainingCoverage = hasConfiguredContractValue
+    ? Math.max(0, coverage.includedToDate - coverage.usageToDate)
+    : 0;
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="font-medium">Contract Coverage</div>
+            <Badge
+              variant={
+                coverage.status === "overage"
+                  ? "destructive"
+                  : coverage.status === "pricing_not_configured"
+                    ? "outline"
+                    : "secondary"
+              }
+            >
+              {coverage.status === "overage"
+                ? "Extra usage"
+                : coverage.status === "pricing_not_configured"
+                  ? "Pricing not configured"
+                  : "Within contract"}
+            </Badge>
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {coverage.contractNumber} · {coverage.title}
+          </div>
+        </div>
+        <div className="grid gap-3 text-sm sm:grid-cols-4">
+          <div>
+            <div className="text-xs text-muted-foreground">Contract value</div>
+            <div className="font-semibold">
+              {formatCurrency(coverage.contractPeriodAmount)}
+              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                / {frequencyLabel}
+              </span>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">
+              {coverage.coverageBasis === "contract_period"
+                ? "Used this period"
+                : "Covered so far"}
+            </div>
+            <div className="font-semibold">
+              {formatCurrency(coverage.usageToDate)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">
+              {coverage.coverageBasis === "contract_period"
+                ? "Remaining coverage"
+                : "Covered so far"}
+            </div>
+            <div className="font-semibold">
+              {hasConfiguredContractValue
+                ? formatCurrency(
+                    coverage.coverageBasis === "contract_period"
+                      ? remainingCoverage
+                      : coverage.includedToDate,
+                  )
+                : "-"}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">Extra so far</div>
+            <div className="font-semibold">
+              {hasConfiguredContractValue
+                ? formatCurrency(coverage.extraToDate)
+                : "-"}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {visibleRows.length > 0 ? (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead>
+              <tr className="border-b text-left text-muted-foreground">
+                <th className="py-2 font-medium">Service</th>
+                <th className="py-2 text-right font-medium">Included</th>
+                <th className="py-2 text-right font-medium">Covered</th>
+                <th className="py-2 text-right font-medium">Current usage</th>
+                <th className="py-2 text-right font-medium">Extra</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((row) => (
+                <tr key={row.lineItemId} className="border-b last:border-0">
+                  <td className="py-2">
+                    <div className="font-medium">{row.itemName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {row.serviceCategory}
+                    </div>
+                  </td>
+                  <td className="py-2 text-right text-muted-foreground">
+                    {row.includedQuantity} {row.unit}
+                  </td>
+                  <td className="py-2 text-right">
+                    {formatCurrency(row.includedAmount)}
+                  </td>
+                  <td className="py-2 text-right">
+                    {formatCurrency(row.amount)}
+                  </td>
+                  <td className="py-2 text-right">
+                    {row.extraAmount > 0
+                      ? formatCurrency(row.extraAmount)
+                      : "-"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      <div className="mt-3 text-xs text-muted-foreground">
+        {coverage.status === "pricing_not_configured"
+          ? "This contract exists, but its priced contract services are not configured yet. This is read-only and does not create or change invoices."
+          : coverage.coverageBasis === "contract_period"
+            ? `Based on current usage for ${coverage.billingFrequency} contract coverage. This is read-only and does not create or change invoices.`
+            : `Based on ${coverage.capturedDays} of ${coverage.monthDayCount} captured billing days. This is read-only and does not create or change invoices.`}
       </div>
     </div>
   );

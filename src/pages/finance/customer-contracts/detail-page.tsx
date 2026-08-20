@@ -105,6 +105,12 @@ const ALLOWED_SIGNED_DOCUMENT_TYPES = new Set([
   "image/png",
 ]);
 
+function contractTotalLabel(
+  billingFrequency: ContractFormState["billingFrequency"],
+) {
+  return `${FREQUENCY_LABELS[billingFrequency]} contract total`;
+}
+
 function isAdminRole(role: Doc<"users">["role"] | undefined) {
   return role === "ceo" || role === "head_of_business";
 }
@@ -888,7 +894,7 @@ export default function CustomerContractDetailPage() {
           value={FREQUENCY_LABELS[contract.billingFrequency]}
         />
         <InfoCard
-          label="Monthly contract total"
+          label={contractTotalLabel(contract.billingFrequency)}
           value={formatMoney(lineTotal, contract.currency)}
         />
       </div>

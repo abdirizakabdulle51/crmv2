@@ -254,6 +254,14 @@ type ContractPricingContext = Map<
   }
 >;
 
+function billingFrequencyMonths(
+  frequency: Doc<"customerContracts">["billingFrequency"],
+) {
+  if (frequency === "quarterly" || frequency === "every_3_months") return 3;
+  if (frequency === "yearly") return 12;
+  return 1;
+}
+
 function findContractLineForRollupRow(
   row: Pick<
     RollupRow,
@@ -1050,6 +1058,116 @@ export const companyBillingSnapshot = query({
         0,
       ),
     );
+    const activeContractContext = contractPricingByCompany.get(company._id);
+    const contractCoverage =
+      activeContractContext === undefined
+        ? null
+        : (() => {
+            const monthDayCount = daysInMonth(args.month);
+            const capturedDays =
+              [...new Set(dailyRows.map((row) => row.usageDate))].length || 0;
+            const capturedMonthFraction =
+              monthDayCount > 0 ? capturedDays / monthDayCount : 0;
+            const frequencyMonthCount = billingFrequencyMonths(
+              activeContractContext.contract.billingFrequency,
+            );
+            const contractPeriodAmount = roundMoney(
+              activeContractContext.lines.reduce(
+                (total, line) => total + contractLineBaseAmount(line),
+                0,
+              ),
+            );
+            const monthlyMinimum = roundMoney(
+              contractPeriodAmount / frequencyMonthCount,
+            );
+            const useFullContractCoverage = frequencyMonthCount > 1;
+            const includedToDate = useFullContractCoverage
+              ? contractPeriodAmount
+              : roundMoney(monthlyMinimum * capturedMonthFraction);
+            const contractRows = upcomingRollupRows.filter(
+              (row) => row.contractLineItemId !== undefined,
+            );
+            const usageToDate = roundMoney(
+              contractRows.reduce(
+                (total, row) => total + (row.estimatedAmount ?? 0),
+                0,
+              ),
+            );
+            const extraToDate = roundMoney(
+              contractRows.reduce((total, row) => {
+                const line = activeContractContext.lines.find(
+                  (candidate) => candidate._id === row.contractLineItemId,
+                );
+                if (!line || row.estimatedAmount === undefined) return total;
+                const lineContractAmount = contractLineBaseAmount(line);
+                const lineIncludedToDate = useFullContractCoverage
+                  ? lineContractAmount
+                  : roundMoney(
+                      (lineContractAmount / frequencyMonthCount) *
+                        capturedMonthFraction,
+                    );
+                return total + Math.max(0, row.estimatedAmount - lineIncludedToDate);
+              }, 0),
+            );
+            const coverageStatus =
+              contractPeriodAmount <= 0
+                ? ("pricing_not_configured" as const)
+                : extraToDate > 0
+                  ? ("overage" as const)
+                  : ("within_contract" as const);
+
+            return {
+              contractId: activeContractContext.contract._id,
+              contractNumber: activeContractContext.contract.contractNumber,
+              title: activeContractContext.contract.title,
+              billingFrequency: activeContractContext.contract.billingFrequency,
+              capturedDays,
+              monthDayCount,
+              contractPeriodAmount,
+              frequencyMonthCount,
+              coverageBasis: useFullContractCoverage
+                ? ("contract_period" as const)
+                : ("month_to_date" as const),
+              monthlyMinimum,
+              includedToDate,
+              usageToDate,
+              extraToDate:
+                contractPeriodAmount <= 0 ? 0 : extraToDate,
+              status: coverageStatus,
+              rows: activeContractContext.lines.map((line) => {
+                const matchedRows = contractRows.filter(
+                  (row) => row.contractLineItemId === line._id,
+                );
+                const amount = roundMoney(
+                  matchedRows.reduce(
+                    (total, row) => total + (row.estimatedAmount ?? 0),
+                    0,
+                  ),
+                );
+                const lineContractAmount = contractLineBaseAmount(line);
+                const includedAmount = useFullContractCoverage
+                  ? lineContractAmount
+                  : roundMoney(
+                      (lineContractAmount / frequencyMonthCount) *
+                        capturedMonthFraction,
+                    );
+
+                return {
+                  lineItemId: line._id,
+                  itemName: line.itemName,
+                  serviceCategory: line.serviceCategory,
+                  includedQuantity: line.includedQuantity,
+                  unit: line.unit,
+                  amount,
+                  includedAmount,
+                  extraAmount:
+                    contractPeriodAmount <= 0
+                      ? 0
+                      : roundMoney(Math.max(0, amount - includedAmount)),
+                };
+              }),
+            };
+          })();
 
     const usageDates = [...new Set(dailyRows.map((row) => row.usageDate))]
       .filter(Boolean)
@@ -1116,6 +1234,7 @@ export const companyBillingSnapshot = query({
       upcomingCharges,
       paidThisMonth,
       projectedMonthEnd,
+      contractCoverage,
       dailyUsageReady: dailyRows.length > 0,
       latestUsageDate: usageDates[usageDates.length - 1] ?? null,
       dailySeries,
