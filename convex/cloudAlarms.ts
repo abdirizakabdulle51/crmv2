@@ -55,15 +55,7 @@ function redactAlarmForMonitoring<T extends Doc<"cloudAlarms">>(
     return alarm;
   }
 
-  const { linkedCompanyId: _linkedCompanyId, ...redacted } = alarm;
-  return {
-    ...redacted,
-    linkedCompanyName: null,
-    vdcId: "",
-    vdcName: "",
-    tenantId: "",
-    tenant: "",
-  };
+  return alarm;
 }
 
 const alarmInputValidator = v.object({
@@ -238,15 +230,13 @@ export const listActive = query({
       return [];
     }
 
-    const linkedCompanyIds = isMonitoring(user)
-      ? new Set<Id<"companies">>()
-      : new Set(
-          filteredAlarms
-            .map((alarm) => alarm.linkedCompanyId)
-            .filter((companyId): companyId is Id<"companies"> =>
-              Boolean(companyId),
-            ),
-        );
+    const linkedCompanyIds = new Set(
+      filteredAlarms
+        .map((alarm) => alarm.linkedCompanyId)
+        .filter((companyId): companyId is Id<"companies"> =>
+          Boolean(companyId),
+        ),
+    );
     const companyPairs = await Promise.all(
       [...linkedCompanyIds].map(async (companyId) => {
         const company = await ctx.db.get(companyId);
@@ -281,9 +271,7 @@ export const listActiveByRegion = query({
         q.eq("logicalRegionId", args.logicalRegionId).eq("active", true),
       )
       .collect();
-    const companies = isMonitoring(user)
-      ? []
-      : await ctx.db.query("companies").collect();
+    const companies = await ctx.db.query("companies").collect();
     const companyNames = new Map(
       companies.map((company) => [company._id, company.name]),
     );

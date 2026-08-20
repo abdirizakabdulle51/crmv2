@@ -196,15 +196,13 @@ export const cloudHealthOverview = query({
       ctx.db.query("pingTargets").collect(),
     ]);
 
-    const companyIds = isMonitoring(user)
-      ? new Set<Id<"companies">>()
-      : new Set(
-          activeAlarms
-            .map((alarm) => alarm.linkedCompanyId)
-            .filter((companyId): companyId is Id<"companies"> =>
-              Boolean(companyId),
-            ),
-        );
+    const companyIds = new Set(
+      activeAlarms
+        .map((alarm) => alarm.linkedCompanyId)
+        .filter((companyId): companyId is Id<"companies"> =>
+          Boolean(companyId),
+        ),
+    );
     const companyPairs = await Promise.all(
       [...companyIds].map(async (companyId) => {
         const company = await ctx.db.get(companyId);
@@ -300,18 +298,7 @@ export const cloudHealthOverview = query({
               ? (companyNames.get(alarm.linkedCompanyId) ?? null)
               : null,
           };
-          if (!isMonitoring(user)) {
-            return row;
-          }
-          const { linkedCompanyId: _linkedCompanyId, ...redacted } = row;
-          return {
-            ...redacted,
-            linkedCompanyName: null,
-            vdcId: "",
-            vdcName: "",
-            tenantId: "",
-            tenant: "",
-          };
+          return row;
         })
         .sort((a, b) => b.latestOccurUtc - a.latestOccurUtc),
       hostGroupsSummary: {
