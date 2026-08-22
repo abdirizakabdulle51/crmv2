@@ -15,6 +15,7 @@ type ConfirmDeleteDialogProps = {
   onConfirm: () => void;
   title?: string;
   description?: string;
+  confirmLabel?: string;
   loading?: boolean;
 };
 
@@ -24,6 +25,7 @@ export default function ConfirmDeleteDialog({
   onConfirm,
   title = "Delete this item?",
   description = "This action is irreversible. The item will be permanently removed.",
+  confirmLabel = "Delete",
   loading = false,
 }: ConfirmDeleteDialogProps) {
   return (
@@ -40,7 +42,7 @@ export default function ConfirmDeleteDialog({
             onClick={onConfirm}
             disabled={loading}
           >
-            {loading ? "Deleting..." : "Delete"}
+            {loading ? `${confirmLabel}...` : confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
