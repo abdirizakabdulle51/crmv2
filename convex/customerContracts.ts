@@ -895,6 +895,42 @@ export const activate = mutation({
   },
 });
 
+export const terminate = mutation({
+  args: { contractId: v.id("customerContracts") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    if (contract.status !== "active") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only active contracts can be terminated",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+
+    const now = Date.now();
+    await ctx.db.patch(args.contractId, {
+      status: "terminated",
+      updatedAt: now,
+    });
+    await insertEvent(
+      ctx,
+      args.contractId,
+      user._id,
+      "terminated",
+      `Customer contract ${contract.contractNumber} terminated`,
+    );
+    return { terminated: true };
+  },
+});
+
 export const createAmendment = mutation({
   args: {
     contractId: v.id("customerContracts"),
@@ -959,6 +995,68 @@ export const createAmendment = mutation({
       `${amendmentTypeLabel(args.type)} amendment ${amendmentNumber} recorded`,
     );
     return amendmentId;
+  },
+});
+
+export const remove = mutation({
+  args: { contractId: v.id("customerContracts") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    if (contract.status !== "draft") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Only draft contracts can be deleted. Terminate active contracts instead.",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+
+    const linkedInvoice = (
+      await ctx.db
+        .query("invoices")
+        .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
+        .collect()
+    ).find((invoice) => invoice.sourceReference === contract.contractNumber);
+    if (linkedInvoice) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "This contract already has a linked invoice. Cancel or handle the invoice before deleting the contract.",
+      });
+    }
+
+    const lineItems = await ctx.db
+      .query("customerContractLineItems")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    const amendments = await ctx.db
+      .query("customerContractAmendments")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    const events = await ctx.db
+      .query("customerContractEvents")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+
+    for (const lineItem of lineItems) {
+      await ctx.db.delete(lineItem._id);
+    }
+    for (const amendment of amendments) {
+      await ctx.db.delete(amendment._id);
+    }
+    for (const event of events) {
+      await ctx.db.delete(event._id);
+    }
+    await ctx.db.delete(args.contractId);
+    return { deleted: true };
   },
 });
 

@@ -967,6 +967,7 @@ export const previewContractInvoiceBatch = query({
     const contracts = await ctx.db.query("customerContracts").collect();
     const rows = await Promise.all(
       contracts.map(async (contract) => {
+        if (contract.status === "terminated") return null;
         const company = await ctx.db.get(contract.companyId);
         if (!company || !canViewCompany(user, company)) return null;
         const lineItems = await ctx.db
@@ -1052,6 +1053,7 @@ export const createDraftsFromContracts = mutation({
     }> = [];
 
     for (const contract of contracts) {
+      if (contract.status === "terminated") continue;
       try {
         const result = await createContractDraftInvoice(ctx, {
           user,

@@ -9,6 +9,7 @@ import { useConvex, useMutation, useQuery } from "convex/react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  Ban,
   Check,
   ChevronsUpDown,
   Download,
@@ -25,6 +26,7 @@ import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import ConfirmDeleteDialog from "@/components/confirm-delete-dialog.tsx";
 import {
   Card,
   CardContent,
@@ -418,6 +420,8 @@ export default function CustomerContractDetailPage() {
   const updateLineItem = useMutation(api.customerContracts.updateLineItem);
   const removeLineItem = useMutation(api.customerContracts.removeLineItem);
   const updateContract = useMutation(api.customerContracts.update);
+  const removeContract = useMutation(api.customerContracts.remove);
+  const terminateContract = useMutation(api.customerContracts.terminate);
   const activateContract = useMutation(api.customerContracts.activate);
   const createAmendment = useMutation(api.customerContracts.createAmendment);
   const generateSignedDocumentUploadUrl = useMutation(
@@ -438,6 +442,10 @@ export default function CustomerContractDetailPage() {
   const [comparisonMonth, setComparisonMonth] = useState("");
   const [pending, setPending] = useState(false);
   const [contractPending, setContractPending] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletePending, setDeletePending] = useState(false);
+  const [terminateDialogOpen, setTerminateDialogOpen] = useState(false);
+  const [terminatePending, setTerminatePending] = useState(false);
   const [invoicePending, setInvoicePending] = useState(false);
   const [activationPending, setActivationPending] = useState(false);
   const [amendmentPending, setAmendmentPending] = useState(false);
@@ -538,6 +546,38 @@ export default function CustomerContractDetailPage() {
       );
     } finally {
       setContractPending(false);
+    }
+  };
+
+  const handleDeleteContract = async () => {
+    if (!parsedContractId) return;
+    setDeletePending(true);
+    try {
+      await removeContract({ contractId: parsedContractId });
+      toast.success("Draft contract deleted");
+      navigate("/finance/customer-contracts");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not delete contract",
+      );
+    } finally {
+      setDeletePending(false);
+    }
+  };
+
+  const handleTerminateContract = async () => {
+    if (!parsedContractId) return;
+    setTerminatePending(true);
+    try {
+      await terminateContract({ contractId: parsedContractId });
+      toast.success("Contract terminated");
+      setTerminateDialogOpen(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not terminate contract",
+      );
+    } finally {
+      setTerminatePending(false);
     }
   };
 
@@ -850,14 +890,39 @@ export default function CustomerContractDetailPage() {
                 )}
                 Create Draft Invoice
               </Button>
-              {canEditOriginal ? (
+              {contractIsActive ? (
                 <Button
                   variant="outline"
-                  onClick={() => openContractEdit(contract)}
+                  className="text-red-600 hover:text-red-700"
+                  disabled={terminatePending}
+                  onClick={() => setTerminateDialogOpen(true)}
                 >
-                  <Pencil className="mr-2 h-4 w-4" />
-                  Edit Contract
+                  {terminatePending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Ban className="mr-2 h-4 w-4" />
+                  )}
+                  Terminate Contract
                 </Button>
+              ) : null}
+              {canEditOriginal ? (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => openContractEdit(contract)}
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit Contract
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="text-red-600 hover:text-red-700"
+                    onClick={() => setDeleteDialogOpen(true)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete Contract
+                  </Button>
+                </>
               ) : null}
             </div>
           ) : null}
@@ -1663,6 +1728,27 @@ export default function CustomerContractDetailPage() {
           )}
         </CardContent>
       </Card>
+      <ConfirmDeleteDialog
+        open={terminateDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !terminatePending) setTerminateDialogOpen(false);
+        }}
+        onConfirm={() => void handleTerminateContract()}
+        loading={terminatePending}
+        title="Terminate active contract?"
+        description={`This marks ${contract.contractNumber} as terminated. Existing invoices, services, amendments, and audit history will stay in the CRM.`}
+        confirmLabel="Terminate"
+      />
+      <ConfirmDeleteDialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !deletePending) setDeleteDialogOpen(false);
+        }}
+        onConfirm={() => void handleDeleteContract()}
+        loading={deletePending}
+        title="Delete draft contract?"
+        description={`This permanently deletes ${contract.contractNumber}. Only draft contracts with no linked invoices can be deleted.`}
+      />
       <ContractDialog
         canManage={canManage}
         companies={sortedCompanies}

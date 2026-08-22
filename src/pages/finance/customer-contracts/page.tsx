@@ -9,12 +9,14 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
+import ConfirmDeleteDialog from "@/components/confirm-delete-dialog.tsx";
 import {
   Card,
   CardContent,
@@ -160,6 +162,7 @@ export default function CustomerContractsPage() {
   const companies = useQuery(api.companies.list, {});
   const createContract = useMutation(api.customerContracts.create);
   const updateContract = useMutation(api.customerContracts.update);
+  const removeContract = useMutation(api.customerContracts.remove);
   const createBatchDrafts = useMutation(api.invoices.createDraftsFromContracts);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -167,6 +170,9 @@ export default function CustomerContractsPage() {
     useState<CustomerContract | null>(null);
   const [form, setForm] = useState<ContractFormState>(emptyContractForm);
   const [pending, setPending] = useState(false);
+  const [deletingContract, setDeletingContract] =
+    useState<CustomerContract | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
   const [batchMonth, setBatchMonth] = useState(currentMonthInputValue);
   const [batchPending, setBatchPending] = useState(false);
   const batchPreview = useQuery(
@@ -178,9 +184,18 @@ export default function CustomerContractsPage() {
     () => [...(companies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [companies],
   );
+  const visibleContracts = useMemo(
+    () =>
+      (contracts ?? []).filter((contract) => contract.status !== "terminated"),
+    [contracts],
+  );
+  const visibleBatchPreview = useMemo(
+    () => batchPreview ?? [],
+    [batchPreview],
+  );
 
   const summary = useMemo(() => {
-    const rows = contracts ?? [];
+    const rows = visibleContracts;
     return {
       total: rows.length,
       active: rows.filter((contract) => contract.status === "active").length,
@@ -193,9 +208,9 @@ export default function CustomerContractsPage() {
         return daysUntilEnd >= 0 && daysUntilEnd <= 60;
       }).length,
     };
-  }, [contracts]);
+  }, [visibleContracts]);
   const batchSummary = useMemo(() => {
-    const rows = batchPreview ?? [];
+    const rows = visibleBatchPreview;
     return {
       ready: rows.filter((row) => row.status === "ready").length,
       alreadyInvoiced: rows.filter((row) => row.status === "already_invoiced")
@@ -204,10 +219,10 @@ export default function CustomerContractsPage() {
         (row) => row.status !== "ready" && row.status !== "already_invoiced",
       ).length,
     };
-  }, [batchPreview]);
+  }, [visibleBatchPreview]);
   const renewalRows = useMemo(
     () =>
-      [...(contracts ?? [])]
+      [...visibleContracts]
         .map((contract) => {
           const daysLeft = daysUntil(contract.endDate);
           const state = getRenewalState(contract);
@@ -215,7 +230,7 @@ export default function CustomerContractsPage() {
         })
         .filter((row) => row.state !== "healthy" && row.state !== "closed")
         .sort((a, b) => a.daysLeft - b.daysLeft),
-    [contracts],
+    [visibleContracts],
   );
   const renewalSummary = useMemo(
     () => ({
@@ -261,6 +276,22 @@ export default function CustomerContractsPage() {
       );
     } finally {
       setPending(false);
+    }
+  };
+
+  const handleDeleteContract = async () => {
+    if (!deletingContract) return;
+    setDeletePending(true);
+    try {
+      await removeContract({ contractId: deletingContract._id });
+      toast.success("Draft contract deleted");
+      setDeletingContract(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not delete contract",
+      );
+    } finally {
+      setDeletePending(false);
     }
   };
 
@@ -466,7 +497,7 @@ export default function CustomerContractsPage() {
               </Button>
             </div>
 
-            {batchPreview && batchPreview.length > 0 ? (
+            {visibleBatchPreview.length > 0 ? (
               <div className="overflow-x-auto rounded-md border">
                 <table className="w-full min-w-[820px] text-sm">
                   <thead>
@@ -479,7 +510,7 @@ export default function CustomerContractsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {batchPreview.map((row) => (
+                    {visibleBatchPreview.map((row) => (
                       <tr key={row.contractId} className="border-b last:border-0">
                         <td className="px-3 py-2">
                           <div className="font-medium">
@@ -514,7 +545,7 @@ export default function CustomerContractsPage() {
           <CardTitle>Contracts</CardTitle>
         </CardHeader>
         <CardContent>
-          {contracts.length === 0 ? (
+          {visibleContracts.length === 0 ? (
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
@@ -544,7 +575,7 @@ export default function CustomerContractsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {contracts.map((contract) => (
+                  {visibleContracts.map((contract) => (
                     <tr key={contract._id} className="border-b last:border-0">
                       <td className="px-3 py-3">
                         <div className="font-medium">
@@ -584,14 +615,27 @@ export default function CustomerContractsPage() {
                       </td>
                       {canManage ? (
                         <td className="px-3 py-3">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openEdit(contract)}
-                          >
-                            <Pencil className="mr-2 h-4 w-4" />
-                            Edit
-                          </Button>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openEdit(contract)}
+                            >
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Edit
+                            </Button>
+                            {contract.status === "draft" ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-red-600 hover:text-red-700"
+                                onClick={() => setDeletingContract(contract)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </Button>
+                            ) : null}
+                          </div>
                         </td>
                       ) : null}
                     </tr>
@@ -602,6 +646,21 @@ export default function CustomerContractsPage() {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmDeleteDialog
+        open={!!deletingContract}
+        onOpenChange={(open) => {
+          if (!open && !deletePending) setDeletingContract(null);
+        }}
+        onConfirm={() => void handleDeleteContract()}
+        loading={deletePending}
+        title="Delete draft contract?"
+        description={
+          deletingContract
+            ? `This permanently deletes ${deletingContract.contractNumber}. Only draft contracts with no linked invoices can be deleted.`
+            : undefined
+        }
+      />
 
       <ContractDialog
         canManage={canManage}
