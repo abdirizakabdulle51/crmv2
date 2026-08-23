@@ -118,8 +118,14 @@ function printCombinedQuote(quote: CombinedQuote) {
   const printableNumber = quote.quoteNumber ?? "Draft";
   const title =
     quote.status === "draft"
-      ? `Draft Invoice ${printableNumber}`
-      : `Invoice ${printableNumber}`;
+      ? `Draft Combined Quote ${printableNumber}`
+      : `Combined Quote ${printableNumber}`;
+  const notesHtml = quote.notes
+    ? quote.notes
+        .split(/\r?\n/)
+        .map((line) => `<p>${escapeHtml(line)}</p>`)
+        .join("")
+    : "";
   const rows = quote.lineItems
     .map(
       (line) => `
@@ -299,6 +305,23 @@ function printCombinedQuote(quote: CombinedQuote) {
           .payment-note p {
             margin: 0 0 6px;
           }
+          .quote-notes {
+            border-top: 1px solid #d1d5db;
+            font-size: 13px;
+            line-height: 1.55;
+            margin-top: 9mm;
+            padding-top: 5mm;
+          }
+          .quote-notes h2 {
+            color: #37aeb2;
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            margin: 0 0 6px;
+            text-transform: uppercase;
+          }
+          .quote-notes p {
+            margin: 0 0 6px;
+          }
           .amount-due {
             color: #6b7280;
             font-size: 14px;
@@ -445,6 +468,15 @@ function printCombinedQuote(quote: CombinedQuote) {
             <div>${escapeHtml(seller.bankLocation)}</div>
             <div>${escapeHtml(seller.currencyNote)}</div>
           </div>
+
+          ${
+            notesHtml
+              ? `<section class="quote-notes" aria-label="Quote notes">
+                  <h2>Notes</h2>
+                  ${notesHtml}
+                </section>`
+              : ""
+          }
 
           <footer class="footer">
             <span>${escapeHtml(footerText)}</span>
