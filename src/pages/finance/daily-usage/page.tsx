@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -95,13 +95,26 @@ export default function DailyUsagePage() {
   const [search, setSearch] = useState("");
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [showCapturedRows, setShowCapturedRows] = useState(false);
+  const [loadReview, setLoadReview] = useState(false);
   const shouldLoadCapturedRows = showCapturedRows || companyId !== "all";
 
-  const review = useQuery(api.dailyUsage.review, {
-    month,
-    companyId: companyId === "all" ? undefined : (companyId as Id<"companies">),
-    includeRows: shouldLoadCapturedRows,
-  });
+  useEffect(() => {
+    setLoadReview(false);
+    const timer = window.setTimeout(() => setLoadReview(true), 300);
+    return () => window.clearTimeout(timer);
+  }, [month, companyId]);
+
+  const review = useQuery(
+    api.dailyUsage.review,
+    loadReview
+      ? {
+          month,
+          companyId:
+            companyId === "all" ? undefined : (companyId as Id<"companies">),
+          includeRows: shouldLoadCapturedRows,
+        }
+      : "skip",
+  );
   const health = useQuery(api.dailyUsage.health, {
     month,
     companyId: companyId === "all" ? undefined : (companyId as Id<"companies">),
@@ -159,6 +172,7 @@ export default function DailyUsagePage() {
     });
   }, [review?.rollup.rows, search, serviceType]);
 
+  const reviewLoading = !review;
   const totals = useMemo(() => {
     if (!shouldLoadCapturedRows && review?.summary) {
       return {
@@ -168,6 +182,16 @@ export default function DailyUsagePage() {
         serviceCount: review.summary.serviceCount,
         locked: review.summary.lockedCount,
         attached: review.rollup.totals.attachedCount,
+      };
+    }
+    if (health) {
+      return {
+        rows: health.dailyBilling.rowCount,
+        companyCount: health.companyCount,
+        dayCount: health.dailyBilling.latestUsageDate ? 1 : 0,
+        serviceCount: Object.keys(health.dailyBilling.serviceRows).length,
+        locked: 0,
+        attached: health.dailyBilling.attachedRowCount,
       };
     }
     const companyCount = new Set(rows.map((row) => row.companyId)).size;
@@ -181,7 +205,13 @@ export default function DailyUsagePage() {
       locked: rows.filter((row) => row.lockedAt).length,
       attached: rows.filter((row) => row.invoiceId || row.lockedAt).length,
     };
-  }, [review?.rollup.totals.attachedCount, review?.summary, rows, shouldLoadCapturedRows]);
+  }, [
+    health,
+    review?.rollup.totals.attachedCount,
+    review?.summary,
+    rows,
+    shouldLoadCapturedRows,
+  ]);
 
   const rollupTotals = useMemo(
     () => ({
@@ -198,6 +228,7 @@ export default function DailyUsagePage() {
     [rollupRows],
   );
   const canCreateDraft =
+    Boolean(review) &&
     companyId !== "all" &&
     rollupRows.length > 0 &&
     rollupTotals.unpricedRows === 0 &&
@@ -236,7 +267,7 @@ export default function DailyUsagePage() {
     }
   }
 
-  if (!companies || !review) {
+  if (!companies) {
     return (
       <div className="space-y-6 p-6 md:p-8">
         <Skeleton className="h-8 w-56" />
@@ -311,7 +342,7 @@ export default function DailyUsagePage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All services</SelectItem>
-                  {review.filters.serviceTypes.map((service) => (
+                  {(review?.filters.serviceTypes ?? []).map((service) => (
                     <SelectItem key={service} value={service}>
                       {service}
                     </SelectItem>
@@ -327,7 +358,7 @@ export default function DailyUsagePage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All days</SelectItem>
-                  {review.filters.usageDates.map((date) => (
+                  {(review?.filters.usageDates ?? []).map((date) => (
                     <SelectItem key={date} value={date}>
                       {formatDate(date)}
                     </SelectItem>
@@ -358,7 +389,8 @@ export default function DailyUsagePage() {
             <CardTitle>Monthly Rollup Preview</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
               Read-only month-end preview from captured daily rows. Estimated
-              quantities are prorated across {review.rollup.daysInMonth} days.
+              quantities are prorated across{" "}
+              {review?.rollup.daysInMonth ?? "-"} days.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -396,7 +428,16 @@ export default function DailyUsagePage() {
             />
           </div>
 
-          {rollupRows.length === 0 ? (
+          {reviewLoading ? (
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Skeleton className="h-24" />
+                <Skeleton className="h-24" />
+                <Skeleton className="h-24" />
+              </div>
+              <Skeleton className="h-64" />
+            </div>
+          ) : rollupRows.length === 0 ? (
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
