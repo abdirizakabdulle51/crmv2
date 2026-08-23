@@ -7,6 +7,7 @@ import {
   canViewCompany,
   isCeoOrHob,
 } from "./authorization";
+import { buildContractUsageBilling } from "./contractBilling";
 
 type Ctx = QueryCtx | MutationCtx;
 type ContractStatus = "draft" | "active" | "expired" | "terminated" | "renewed";
@@ -234,6 +235,36 @@ async function getVisibleCompany(
     });
   }
   return company;
+}
+
+function openContractStatusLabel(status: Doc<"customerContracts">["status"]) {
+  if (status === "draft") return "Draft";
+  if (status === "active") return "Active";
+  return status;
+}
+
+async function assertCompanyHasNoOpenContract(
+  ctx: Ctx,
+  company: Doc<"companies">,
+  excludeContractId?: Id<"customerContracts">,
+) {
+  const existingOpenContract = (
+    await ctx.db
+      .query("customerContracts")
+      .withIndex("by_company", (q) => q.eq("companyId", company._id))
+      .collect()
+  ).find(
+    (contract) =>
+      contract._id !== excludeContractId &&
+      (contract.status === "draft" || contract.status === "active"),
+  );
+
+  if (!existingOpenContract) return;
+
+  throw new ConvexError({
+    code: "BAD_REQUEST",
+    message: `${company.name} already has a contract: ${existingOpenContract.contractNumber} [${openContractStatusLabel(existingOpenContract.status)}] - edit or terminate it instead of creating a new one`,
+  });
 }
 
 function normalizeFields(args: ContractInput) {
@@ -610,39 +641,20 @@ export const usageComparison = query({
     }
     await getVisibleCompany(ctx, user, contract.companyId);
 
-    const [lines, usageEntries] = await Promise.all([
-      ctx.db
-        .query("customerContractLineItems")
-        .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
-        .collect(),
-      ctx.db
-        .query("consumption")
-        .withIndex("by_company_month", (q) =>
-          q.eq("companyId", contract.companyId).eq("month", args.month),
-        )
-        .collect(),
-    ]);
-    const rows = lines
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .map((line) => comparisonRow(line, usageEntries));
+    const billing = await buildContractUsageBilling(ctx, {
+      contract,
+      sourceMonth: args.month,
+    });
 
     return {
       month: args.month,
-      rows,
-      totals: {
-        contractMinimum: rows.reduce((total, row) => total + row.baseAmount, 0),
-        overage: rows.reduce((total, row) => total + row.overageAmount, 0),
-        projected: rows.reduce((total, row) => total + row.projectedAmount, 0),
-        usageAmount: usageEntries.reduce(
-          (total, usage) => total + usage.amount,
-          0,
-        ),
-        matchedEntries: rows.reduce(
-          (total, row) => total + row.matchedEntries,
-          0,
-        ),
-        totalUsageEntries: usageEntries.length,
-      },
+      periodStartMonth: billing.periodStartMonth,
+      periodEndMonth: billing.periodEndMonth,
+      effectiveEndMonth: billing.effectiveEndMonth,
+      capturedDays: billing.capturedDays,
+      dailyRowCount: billing.dailyRowCount,
+      rows: billing.rows,
+      totals: billing.totals,
     };
   },
 });
@@ -667,7 +679,8 @@ export const invoiceSchedule = query({
     )
       .filter(
         (invoice) =>
-          invoice.sourceReference === contract.contractNumber &&
+          (invoice.sourceContractId === contract._id ||
+            invoice.sourceReference === contract.contractNumber) &&
           invoiceIsOpen(invoice.status),
       )
       .sort((a, b) => (b.sourceMonth ?? "").localeCompare(a.sourceMonth ?? ""));
@@ -793,7 +806,8 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     assertCanManageContracts(user);
-    await getVisibleCompany(ctx, user, args.companyId);
+    const company = await getVisibleCompany(ctx, user, args.companyId);
+    await assertCompanyHasNoOpenContract(ctx, company);
     const fields = normalizeFields(args);
     const now = Date.now();
     const contractId = await ctx.db.insert("customerContracts", {
@@ -830,7 +844,8 @@ export const update = mutation({
       });
     }
     assertDraftContract(existing);
-    await getVisibleCompany(ctx, user, args.companyId);
+    const company = await getVisibleCompany(ctx, user, args.companyId);
+    await assertCompanyHasNoOpenContract(ctx, company, args.contractId);
     const fields = normalizeFields(args);
     const activatedAt =
       existing.status !== "active" && fields.status === "active"
@@ -1024,7 +1039,11 @@ export const remove = mutation({
         .query("invoices")
         .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
         .collect()
-    ).find((invoice) => invoice.sourceReference === contract.contractNumber);
+    ).find(
+      (invoice) =>
+        invoice.sourceContractId === contract._id ||
+        invoice.sourceReference === contract.contractNumber,
+    );
     if (linkedInvoice) {
       throw new ConvexError({
         code: "BAD_REQUEST",

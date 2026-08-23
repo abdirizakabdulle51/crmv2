@@ -820,8 +820,18 @@ export default defineSchema({
   invoices: defineTable({
     companyId: v.id("companies"),
     sourceQuoteId: v.optional(v.id("quotes")),
+    sourceType: v.optional(
+      v.union(
+        v.literal("quote"),
+        v.literal("contract"),
+        v.literal("daily_usage"),
+      ),
+    ),
+    sourceContractId: v.optional(v.id("customerContracts")),
     sourceMonth: v.optional(v.string()),
     sourceReference: v.optional(v.string()),
+    contractPeriodStartMonth: v.optional(v.string()),
+    contractPeriodEndMonth: v.optional(v.string()),
     invoiceProfileId: v.optional(v.id("invoiceProfiles")),
     createdBy: v.id("users"),
     invoiceNumber: v.optional(v.string()),

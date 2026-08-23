@@ -16,6 +16,7 @@ import {
   canViewCompany,
   isCeoOrHob,
 } from "./authorization";
+import { buildContractUsageBilling } from "./contractBilling";
 
 type Ctx = QueryCtx | MutationCtx;
 type InvoiceStatus = Doc<"invoices">["status"];
@@ -599,7 +600,8 @@ async function findContractInvoiceForMonth(
   return (
     invoices.find(
       (invoice) =>
-        invoice.sourceReference === contract.contractNumber &&
+        (invoice.sourceContractId === contract._id ||
+          invoice.sourceReference === contract.contractNumber) &&
         invoice.sourceMonth === sourceMonth &&
         invoice.status !== "cancelled" &&
         invoice.status !== "void",
@@ -645,29 +647,49 @@ async function createContractDraftInvoice(
   const company = await getCompanyOrThrow(ctx, contract.companyId);
   assertCanManageCompany(user, company);
 
-  const lines = await ctx.db
-    .query("customerContractLineItems")
-    .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
-    .collect();
-  if (lines.length === 0) {
+  const billing = await buildContractUsageBilling(ctx, {
+    contract,
+    sourceMonth,
+  });
+  if (billing.lines.length === 0) {
     throw new ConvexError({
       code: "BAD_REQUEST",
       message: "Add at least one contract service before creating an invoice",
     });
   }
+  if (billing.dailyRowCount === 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "No daily usage snapshots found for this contract billing period",
+    });
+  }
+  if (billing.unpricedCount > 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "All daily usage rows must have contract or catalog pricing before creating a contract invoice",
+    });
+  }
 
-  const usageEntries = await ctx.db
-    .query("consumption")
-    .withIndex("by_company_month", (q) =>
-      q.eq("companyId", contract.companyId).eq("month", sourceMonth),
-    )
-    .collect();
-  const lineItems = lines
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .map((line) => contractInvoiceLine(line, usageEntries));
-  const grandTotal = roundMoney(
-    lineItems.reduce((total, line) => total + line.monthlyTotal, 0),
-  );
+  const grandTotal = roundMoney(billing.overageAmount);
+  if (grandTotal <= 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `No billable contract overage for ${contract.contractNumber} in ${sourceMonth}`,
+    });
+  }
+  const lineItems: InvoiceLineItem[] = [
+    {
+      itemName: `Contract usage overage - ${contract.contractNumber}`,
+      serviceCategory: "Contract Overage",
+      billingUnit: "billing period",
+      quantity: 1,
+      monthlyUnitPrice: grandTotal,
+      monthlyTotal: grandTotal,
+      yearlyTotal: roundMoney(grandTotal * 12),
+    },
+  ];
   const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
   const sellerSnapshot = invoiceProfile
     ? sellerSnapshotFromProfile(invoiceProfile)
@@ -680,8 +702,12 @@ async function createContractDraftInvoice(
 
   const invoiceId = await ctx.db.insert("invoices", {
     companyId: contract.companyId,
+    sourceType: "contract",
+    sourceContractId: contract._id,
     sourceMonth,
     sourceReference: contract.contractNumber,
+    contractPeriodStartMonth: billing.periodStartMonth,
+    contractPeriodEndMonth: billing.periodEndMonth,
     invoiceProfileId: invoiceProfile?._id,
     ...sellerSnapshot,
     createdBy: user._id,
@@ -700,7 +726,7 @@ async function createContractDraftInvoice(
     balanceDue: grandTotal,
     notes:
       trimOptional(args.notes) ??
-      `Draft invoice from customer contract ${contract.contractNumber}. Review before issuing.`,
+      `Draft invoice from customer contract ${contract.contractNumber}. Usage valued from daily snapshots for ${billing.periodStartMonth} through ${billing.effectiveEndMonth}; contract credit ${billing.contractPeriodAmount}, usage ${billing.usageToDate}. Review before issuing.`,
     createdAt: now,
     updatedAt: now,
   });
@@ -887,6 +913,24 @@ export const createDraftFromQuote = mutation({
 
     const company = await getCompanyOrThrow(ctx, quote.companyId);
     assertCanManageCompany(user, company);
+    if (quote.sourceMonth) {
+      const coveringContract = (
+        await ctx.db
+          .query("customerContracts")
+          .withIndex("by_company", (q) => q.eq("companyId", quote.companyId))
+          .collect()
+      ).find(
+        (contract) =>
+          contract.status === "active" &&
+          contractCoversMonth(contract, quote.sourceMonth!),
+      );
+      if (coveringContract) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: `Quote ${quote.quoteNumber ?? quote._id} is for ${quote.sourceMonth}, which is covered by active contract ${coveringContract.contractNumber}. Use contract billing so the contract credit is applied.`,
+        });
+      }
+    }
     const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
     const sellerSnapshot = invoiceProfile
       ? sellerSnapshotFromProfile(invoiceProfile)
@@ -897,6 +941,7 @@ export const createDraftFromQuote = mutation({
     const invoiceId = await ctx.db.insert("invoices", {
       companyId: quote.companyId,
       sourceQuoteId: quote._id,
+      sourceType: "quote",
       sourceMonth: quote.sourceMonth,
       sourceReference: quote.quoteNumber,
       invoiceProfileId: invoiceProfile?._id,

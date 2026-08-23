@@ -11,6 +11,7 @@ import {
   buildUsageHintsForCompany,
   tenantsWithLatestHourlyUsage,
 } from "./manageOneTenants";
+import { buildContractUsageBilling } from "./contractBilling";
 
 type CatalogItem = Doc<"serviceCatalog">;
 type ManageOneTenant = Doc<"manageOneTenants">;
@@ -826,6 +827,7 @@ export const createDraftInvoiceFromRollup = mutation({
 
     const invoiceId = await ctx.db.insert("invoices", {
       companyId: company._id,
+      sourceType: "daily_usage",
       sourceMonth: args.month,
       sourceReference,
       invoiceProfileId: invoiceProfile?._id,
@@ -997,10 +999,42 @@ export const companyBillingSnapshot = query({
     const openInvoices = invoices.filter((invoice) =>
       ["issued", "sent", "partially_paid", "overdue"].includes(invoice.status),
     );
+    const contracts = await ctx.db
+      .query("customerContracts")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect();
+    const contractById = new Map(contracts.map((contract) => [contract._id, contract]));
+    const contractByNumber = new Map(
+      contracts.map((contract) => [contract.contractNumber, contract]),
+    );
+    const resolveInvoiceContract = (invoice: Doc<"invoices">) => {
+      if (invoice.sourceContractId) {
+        const contract = contractById.get(invoice.sourceContractId);
+        if (contract) return contract;
+      }
+      if (invoice.sourceReference) {
+        return contractByNumber.get(invoice.sourceReference) ?? null;
+      }
+      return null;
+    };
+    const invoiceSourceDetails = (invoice: Doc<"invoices">) => {
+      const contract = resolveInvoiceContract(invoice);
+      return {
+        sourceType: invoice.sourceType,
+        sourceMonth: invoice.sourceMonth,
+        sourceReference: invoice.sourceReference,
+        sourceContractId: contract?._id ?? invoice.sourceContractId,
+        contractNumber: contract?.contractNumber,
+        contractTitle: contract?.title,
+        contractPeriodStartMonth: invoice.contractPeriodStartMonth,
+        contractPeriodEndMonth: invoice.contractPeriodEndMonth,
+      };
+    };
 
     let paidThisMonth = 0;
     const recentPayments = [];
     for (const invoice of invoices) {
+      const sourceDetails = invoiceSourceDetails(invoice);
       const payments = await ctx.db
         .query("invoicePayments")
         .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
@@ -1016,6 +1050,7 @@ export const companyBillingSnapshot = query({
             paidAt: payment.paidAt,
             method: payment.method,
             reference: payment.reference,
+            ...sourceDetails,
           });
         }
       }
@@ -1059,115 +1094,76 @@ export const companyBillingSnapshot = query({
       ),
     );
     const activeContractContext = contractPricingByCompany.get(company._id);
-    const contractCoverage =
+    const activeContractId = activeContractContext?.contract._id;
+    const currentBalanceForActiveContract =
+      activeContractId === undefined
+        ? 0
+        : roundMoney(
+            openInvoices.reduce((total, invoice) => {
+              const contract = resolveInvoiceContract(invoice);
+              return contract?._id === activeContractId
+                ? total + invoice.balanceDue
+                : total;
+            }, 0),
+          );
+    const paidThisMonthForActiveContract =
+      activeContractId === undefined
+        ? 0
+        : roundMoney(
+            recentPayments.reduce(
+              (total, payment) =>
+                payment.sourceContractId === activeContractId
+                  ? total + payment.amount
+                  : total,
+              0,
+            ),
+          );
+    const sharedContractCoverage =
       activeContractContext === undefined
         ? null
-        : (() => {
-            const monthDayCount = daysInMonth(args.month);
-            const capturedDays =
-              [...new Set(dailyRows.map((row) => row.usageDate))].length || 0;
-            const capturedMonthFraction =
-              monthDayCount > 0 ? capturedDays / monthDayCount : 0;
-            const frequencyMonthCount = billingFrequencyMonths(
-              activeContractContext.contract.billingFrequency,
-            );
-            const contractPeriodAmount = roundMoney(
-              activeContractContext.lines.reduce(
-                (total, line) => total + contractLineBaseAmount(line),
-                0,
-              ),
-            );
-            const monthlyMinimum = roundMoney(
-              contractPeriodAmount / frequencyMonthCount,
-            );
-            const useFullContractCoverage = frequencyMonthCount > 1;
-            const includedToDate = useFullContractCoverage
-              ? contractPeriodAmount
-              : roundMoney(monthlyMinimum * capturedMonthFraction);
-            const contractRows = upcomingRollupRows.filter(
-              (row) => row.contractLineItemId !== undefined,
-            );
-            const usageToDate = roundMoney(
-              contractRows.reduce(
-                (total, row) => total + (row.estimatedAmount ?? 0),
-                0,
-              ),
-            );
-            const extraToDate = roundMoney(
-              contractRows.reduce((total, row) => {
-                const line = activeContractContext.lines.find(
-                  (candidate) => candidate._id === row.contractLineItemId,
-                );
-                if (!line || row.estimatedAmount === undefined) return total;
-                const lineContractAmount = contractLineBaseAmount(line);
-                const lineIncludedToDate = useFullContractCoverage
-                  ? lineContractAmount
-                  : roundMoney(
-                      (lineContractAmount / frequencyMonthCount) *
-                        capturedMonthFraction,
-                    );
-                return total + Math.max(0, row.estimatedAmount - lineIncludedToDate);
-              }, 0),
-            );
-            const coverageStatus =
-              contractPeriodAmount <= 0
+        : await buildContractUsageBilling(ctx, {
+            contract: activeContractContext.contract,
+            sourceMonth: args.month,
+          });
+    const normalizedContractCoverage =
+      sharedContractCoverage === null
+        ? null
+        : {
+            contractId: sharedContractCoverage.contract._id,
+            contractNumber: sharedContractCoverage.contract.contractNumber,
+            title: sharedContractCoverage.contract.title,
+            billingFrequency: sharedContractCoverage.contract.billingFrequency,
+            capturedDays: sharedContractCoverage.capturedDays,
+            monthDayCount: daysInMonth(args.month),
+            contractPeriodAmount: sharedContractCoverage.contractPeriodAmount,
+            frequencyMonthCount: sharedContractCoverage.frequencyMonthCount,
+            coverageBasis: "contract_period" as const,
+            monthlyMinimum: roundMoney(
+              sharedContractCoverage.contractPeriodAmount /
+                sharedContractCoverage.frequencyMonthCount,
+            ),
+            includedToDate: sharedContractCoverage.contractPeriodAmount,
+            usageToDate: sharedContractCoverage.usageToDate,
+            extraToDate: sharedContractCoverage.overageAmount,
+            status:
+              sharedContractCoverage.contractPeriodAmount <= 0
                 ? ("pricing_not_configured" as const)
-                : extraToDate > 0
+                : sharedContractCoverage.overageAmount > 0
                   ? ("overage" as const)
-                  : ("within_contract" as const);
-
-            return {
-              contractId: activeContractContext.contract._id,
-              contractNumber: activeContractContext.contract.contractNumber,
-              title: activeContractContext.contract.title,
-              billingFrequency: activeContractContext.contract.billingFrequency,
-              capturedDays,
-              monthDayCount,
-              contractPeriodAmount,
-              frequencyMonthCount,
-              coverageBasis: useFullContractCoverage
-                ? ("contract_period" as const)
-                : ("month_to_date" as const),
-              monthlyMinimum,
-              includedToDate,
-              usageToDate,
-              extraToDate:
-                contractPeriodAmount <= 0 ? 0 : extraToDate,
-              status: coverageStatus,
-              rows: activeContractContext.lines.map((line) => {
-                const matchedRows = contractRows.filter(
-                  (row) => row.contractLineItemId === line._id,
-                );
-                const amount = roundMoney(
-                  matchedRows.reduce(
-                    (total, row) => total + (row.estimatedAmount ?? 0),
-                    0,
-                  ),
-                );
-                const lineContractAmount = contractLineBaseAmount(line);
-                const includedAmount = useFullContractCoverage
-                  ? lineContractAmount
-                  : roundMoney(
-                      (lineContractAmount / frequencyMonthCount) *
-                        capturedMonthFraction,
-                    );
-
-                return {
-                  lineItemId: line._id,
-                  itemName: line.itemName,
-                  serviceCategory: line.serviceCategory,
-                  includedQuantity: line.includedQuantity,
-                  unit: line.unit,
-                  amount,
-                  includedAmount,
-                  extraAmount:
-                    contractPeriodAmount <= 0
-                      ? 0
-                      : roundMoney(Math.max(0, amount - includedAmount)),
-                };
-              }),
-            };
-          })();
+                  : ("within_contract" as const),
+            rows: sharedContractCoverage.rows
+              .filter((row) => row.pricingSource === "contract")
+              .map((row) => ({
+                lineItemId: row.lineItemId as Id<"customerContractLineItems">,
+                itemName: row.itemName,
+                serviceCategory: row.serviceCategory,
+                includedQuantity: row.includedQuantity,
+                unit: row.unit,
+                amount: row.usageAmount,
+                includedAmount: row.baseAmount,
+                extraAmount: 0,
+              })),
+          };
 
     const usageDates = [...new Set(dailyRows.map((row) => row.usageDate))]
       .filter(Boolean)
@@ -1231,10 +1227,12 @@ export const companyBillingSnapshot = query({
       currentBalance: roundMoney(
         openInvoices.reduce((total, invoice) => total + invoice.balanceDue, 0),
       ),
+      currentBalanceForActiveContract,
       upcomingCharges,
       paidThisMonth,
+      paidThisMonthForActiveContract,
       projectedMonthEnd,
-      contractCoverage,
+      contractCoverage: normalizedContractCoverage,
       dailyUsageReady: dailyRows.length > 0,
       latestUsageDate: usageDates[usageDates.length - 1] ?? null,
       dailySeries,
@@ -1253,6 +1251,7 @@ export const companyBillingSnapshot = query({
           grandTotal: invoice.grandTotal,
           amountPaid: invoice.amountPaid,
           balanceDue: invoice.balanceDue,
+          ...invoiceSourceDetails(invoice),
         })),
       recentPayments: recentPayments
         .sort((a, b) => b.paidAt - a.paidAt)

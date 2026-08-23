@@ -161,6 +161,45 @@ function formatDateKeyLabel(value: string) {
   return month && day ? `${month}/${day}` : value;
 }
 
+function formatMonthKeyLabel(value?: string) {
+  if (!value) return undefined;
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) return value;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    year: "numeric",
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+
+function invoiceSourceLabel(source: {
+  sourceType?: "quote" | "contract" | "daily_usage";
+  sourceMonth?: string;
+  sourceReference?: string;
+  contractNumber?: string;
+  contractPeriodStartMonth?: string;
+  contractPeriodEndMonth?: string;
+}) {
+  if (source.contractNumber) {
+    const periodStart =
+      formatMonthKeyLabel(source.contractPeriodStartMonth) ??
+      formatMonthKeyLabel(source.sourceMonth);
+    const periodEnd = formatMonthKeyLabel(source.contractPeriodEndMonth);
+    const period =
+      periodStart && periodEnd && periodStart !== periodEnd
+        ? `${periodStart} - ${periodEnd}`
+        : periodStart;
+    return period ? `${source.contractNumber} · ${period}` : source.contractNumber;
+  }
+  if (source.sourceType === "quote" && source.sourceReference) {
+    return `Quote ${source.sourceReference}`;
+  }
+  if (source.sourceType === "daily_usage") {
+    const month = formatMonthKeyLabel(source.sourceMonth);
+    return month ? `Daily usage · ${month}` : "Daily usage";
+  }
+  return source.sourceReference;
+}
+
 function billingFrequencyLabel(value: string) {
   switch (value) {
     case "yearly":
@@ -551,8 +590,10 @@ function BillingUsageSection({
     | {
         month: string;
         currentBalance: number;
+        currentBalanceForActiveContract: number;
         upcomingCharges: number;
         paidThisMonth: number;
+        paidThisMonthForActiveContract: number;
         projectedMonthEnd: number | null;
         contractCoverage: {
           contractId: Id<"customerContracts">;
@@ -603,6 +644,14 @@ function BillingUsageSection({
           grandTotal: number;
           amountPaid: number;
           balanceDue: number;
+          sourceType?: "quote" | "contract" | "daily_usage";
+          sourceMonth?: string;
+          sourceReference?: string;
+          sourceContractId?: Id<"customerContracts">;
+          contractNumber?: string;
+          contractTitle?: string;
+          contractPeriodStartMonth?: string;
+          contractPeriodEndMonth?: string;
         }>;
         recentPayments: Array<{
           _id: Id<"invoicePayments">;
@@ -612,6 +661,14 @@ function BillingUsageSection({
           paidAt: number;
           method?: string;
           reference?: string;
+          sourceType?: "quote" | "contract" | "daily_usage";
+          sourceMonth?: string;
+          sourceReference?: string;
+          sourceContractId?: Id<"customerContracts">;
+          contractNumber?: string;
+          contractTitle?: string;
+          contractPeriodStartMonth?: string;
+          contractPeriodEndMonth?: string;
         }>;
         unpricedCount: number;
         uninvoicedRowCount: number;
@@ -641,6 +698,11 @@ function BillingUsageSection({
     ...row,
     label: formatDateKeyLabel(row.usageDate),
   }));
+  const coverage = snapshot.contractCoverage;
+  const remainingContractCredit =
+    coverage && coverage.contractPeriodAmount > 0
+      ? Math.max(0, coverage.contractPeriodAmount - coverage.usageToDate)
+      : 0;
 
   return (
     <div className="max-w-5xl space-y-4">
@@ -656,40 +718,70 @@ function BillingUsageSection({
             <FinancialMetricCard
               title="Current Balance"
               value={formatCurrency(snapshot.currentBalance)}
-              detail="Open invoice balance due"
+              detail={
+                coverage
+                  ? `${formatCurrency(
+                      snapshot.currentBalanceForActiveContract,
+                    )} for ${coverage.contractNumber}; ${formatCurrency(
+                      snapshot.currentBalance,
+                    )} all open`
+                  : "Open invoice balance due"
+              }
               icon={<WalletCards className="h-4 w-4" />}
             />
             <FinancialMetricCard
-              title="Current Usage Bill"
+              title={coverage ? "Billable Extra So Far" : "Current Usage Bill"}
               value={
-                snapshot.dailyUsageReady
-                  ? formatCurrency(snapshot.upcomingCharges)
-                  : "Not calculated"
+                coverage
+                  ? coverage.contractPeriodAmount > 0
+                    ? formatCurrency(coverage.extraToDate)
+                    : "-"
+                  : snapshot.dailyUsageReady
+                    ? formatCurrency(snapshot.upcomingCharges)
+                    : "Not calculated"
               }
               detail={
-                snapshot.dailyUsageReady
-                  ? "Unbilled usage as of today"
-                  : "Daily billing snapshot missing"
+                coverage
+                  ? `After contract credit for ${coverage.contractNumber}`
+                  : snapshot.dailyUsageReady
+                    ? "Unbilled usage as of today"
+                    : "Daily billing snapshot missing"
               }
               icon={<Receipt className="h-4 w-4" />}
             />
             <FinancialMetricCard
               title="Paid This Month"
               value={formatCurrency(snapshot.paidThisMonth)}
-              detail={`Payments recorded for ${snapshot.month}`}
+              detail={
+                coverage
+                  ? `${formatCurrency(
+                      snapshot.paidThisMonthForActiveContract,
+                    )} for ${coverage.contractNumber}; ${formatCurrency(
+                      snapshot.paidThisMonth,
+                    )} all payments`
+                  : `Payments recorded for ${snapshot.month}`
+              }
               icon={<DollarSign className="h-4 w-4" />}
             />
             <FinancialMetricCard
-              title="Projected Month End"
+              title={coverage ? "Remaining Contract Credit" : "Projected Month End"}
               value={
-                snapshot.projectedMonthEnd === null
-                  ? "Not available"
-                  : formatCurrency(snapshot.projectedMonthEnd)
+                coverage
+                  ? coverage.contractPeriodAmount > 0
+                    ? formatCurrency(remainingContractCredit)
+                    : "-"
+                  : snapshot.projectedMonthEnd === null
+                    ? "Not available"
+                    : formatCurrency(snapshot.projectedMonthEnd)
               }
               detail={
-                snapshot.latestUsageDate
-                  ? "Estimated full-month usage"
-                  : "No daily usage captured"
+                coverage
+                  ? `Usage ${formatCurrency(coverage.usageToDate)} of ${formatCurrency(
+                      coverage.contractPeriodAmount,
+                    )} contract credit`
+                  : snapshot.latestUsageDate
+                    ? "Estimated full-month usage"
+                    : "No daily usage captured"
               }
               icon={<BarChart3 className="h-4 w-4" />}
             />
@@ -833,29 +925,33 @@ function BillingUsageSection({
               </div>
               {snapshot.openInvoices.length > 0 ? (
                 <div className="space-y-2">
-                  {snapshot.openInvoices.map((invoice) => (
-                    <div
-                      key={invoice._id}
-                      className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
-                    >
-                      <div>
-                        <div className="font-medium">
-                          {invoice.invoiceNumber ?? "Draft invoice"}
+                  {snapshot.openInvoices.map((invoice) => {
+                    const sourceLabel = invoiceSourceLabel(invoice);
+                    return (
+                      <div
+                        key={invoice._id}
+                        className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
+                      >
+                        <div>
+                          <div className="font-medium">
+                            {invoice.invoiceNumber ?? "Draft invoice"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {sourceLabel ? `${sourceLabel} · ` : ""}
+                            Due {formatDateLabel(invoice.dueDate)}
+                          </div>
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          Due {formatDateLabel(invoice.dueDate)}
+                        <div className="text-left sm:text-right">
+                          <div className="font-semibold">
+                            {formatCurrency(invoice.balanceDue)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {invoice.status.replace("_", " ")}
+                          </div>
                         </div>
                       </div>
-                      <div className="text-left sm:text-right">
-                        <div className="font-semibold">
-                          {formatCurrency(invoice.balanceDue)}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {invoice.status.replace("_", " ")}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
@@ -871,24 +967,28 @@ function BillingUsageSection({
               </div>
               {snapshot.recentPayments.length > 0 ? (
                 <div className="space-y-2">
-                  {snapshot.recentPayments.map((payment) => (
-                    <div
-                      key={payment._id}
-                      className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
-                    >
-                      <div>
-                        <div className="font-medium">
-                          {payment.invoiceNumber ?? "Invoice"}
+                  {snapshot.recentPayments.map((payment) => {
+                    const sourceLabel = invoiceSourceLabel(payment);
+                    return (
+                      <div
+                        key={payment._id}
+                        className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
+                      >
+                        <div>
+                          <div className="font-medium">
+                            {payment.invoiceNumber ?? "Invoice"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {sourceLabel ? `${sourceLabel} · ` : ""}
+                            {formatDateLabel(payment.paidAt)}
+                          </div>
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {formatDateLabel(payment.paidAt)}
+                        <div className="text-left font-semibold sm:text-right">
+                          {formatCurrency(payment.amount)}
                         </div>
                       </div>
-                      <div className="text-left font-semibold sm:text-right">
-                        {formatCurrency(payment.amount)}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">

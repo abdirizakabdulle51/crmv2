@@ -459,7 +459,9 @@ export default function CustomerContractDetailPage() {
     "upload" | "download" | null
   >(null);
   const activeComparisonMonth =
-    comparisonMonth || (contract ? monthInputValue(contract.startDate) : "");
+    comparisonMonth ||
+    invoiceSchedule?.currentMonth ||
+    (contract ? monthInputValue(contract.startDate) : "");
   const usageComparison = useQuery(
     api.customerContracts.usageComparison,
     parsedContractId && activeComparisonMonth
@@ -486,8 +488,13 @@ export default function CustomerContractDetailPage() {
   const contractIsActive = contract?.status === "active";
   const contractIsLocked = !!contract && contract.status !== "draft";
   const canEditOriginal = canManage && contractIsDraft;
+  const billableOverage = usageComparison?.totals.overage ?? 0;
   const canCreateInvoice =
-    canManage && contractIsActive && (lineItems?.length ?? 0) > 0;
+    canManage &&
+    contractIsActive &&
+    (lineItems?.length ?? 0) > 0 &&
+    usageComparison !== undefined &&
+    billableOverage > 0;
 
   const resetLineForm = () => {
     setEditingLine(null);
@@ -784,6 +791,12 @@ export default function CustomerContractDetailPage() {
       toast.error("Add contract services before creating a draft invoice");
       return;
     }
+    if (usageComparison !== undefined && billableOverage <= 0) {
+      toast.info(
+        `No billable contract overage for ${contract.contractNumber} in ${activeComparisonMonth}`,
+      );
+      return;
+    }
 
     setInvoicePending(true);
     try {
@@ -894,7 +907,11 @@ export default function CustomerContractDetailPage() {
                 ) : (
                   <FileText className="mr-2 h-4 w-4" />
                 )}
-                Create Draft Invoice
+                {contractIsActive &&
+                usageComparison !== undefined &&
+                billableOverage <= 0
+                  ? "No Billable Overage"
+                  : "Create Draft Invoice"}
               </Button>
               {contractIsActive ? (
                 <Button
@@ -1604,7 +1621,7 @@ export default function CustomerContractDetailPage() {
             <div className="space-y-4">
               <div className="grid gap-4 md:grid-cols-4">
                 <UsageSummaryCard
-                  label="Contract minimum"
+                  label="Contract credit"
                   value={formatMoney(
                     usageComparison.totals.contractMinimum,
                     contract.currency,
@@ -1618,7 +1635,7 @@ export default function CustomerContractDetailPage() {
                   )}
                 />
                 <UsageSummaryCard
-                  label="Projected bill"
+                  label="Billable extra"
                   value={formatMoney(
                     usageComparison.totals.projected,
                     contract.currency,
@@ -1634,14 +1651,12 @@ export default function CustomerContractDetailPage() {
                   <thead>
                     <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                       <th className="px-3 py-3">Service</th>
-                      <th className="px-3 py-3">Included</th>
-                      <th className="px-3 py-3">Actual</th>
-                      <th className="px-3 py-3">Overage</th>
-                      <th className="px-3 py-3">Contract Price</th>
-                      <th className="px-3 py-3">Overage Price</th>
-                      <th className="px-3 py-3">Base</th>
-                      <th className="px-3 py-3">Extra</th>
-                      <th className="px-3 py-3">Projected</th>
+                      <th className="px-3 py-3">Credit Qty</th>
+                      <th className="px-3 py-3">Actual Qty</th>
+                      <th className="px-3 py-3">Source</th>
+                      <th className="px-3 py-3">Unit Price</th>
+                      <th className="px-3 py-3">Credit Value</th>
+                      <th className="px-3 py-3">Usage Value</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1663,12 +1678,12 @@ export default function CustomerContractDetailPage() {
                           {formatQuantity(row.actualQuantity)} {row.unit}
                         </td>
                         <td className="px-3 py-3">
-                          {row.overageQuantity > 0 ? (
-                            <Badge variant="destructive">
-                              {formatQuantity(row.overageQuantity)}
-                            </Badge>
+                          {row.pricingSource === "unpriced" ? (
+                            <Badge variant="destructive">Missing price</Badge>
+                          ) : row.pricingSource === "catalog" ? (
+                            <Badge variant="outline">Catalog</Badge>
                           ) : (
-                            <Badge variant="secondary">Within limit</Badge>
+                            <Badge variant="secondary">Contract</Badge>
                           )}
                         </td>
                         <td className="px-3 py-3">
@@ -1678,16 +1693,10 @@ export default function CustomerContractDetailPage() {
                           )}
                         </td>
                         <td className="px-3 py-3">
-                          {formatMoney(row.overageUnitPrice, contract.currency)}
-                        </td>
-                        <td className="px-3 py-3">
                           {formatMoney(row.baseAmount, contract.currency)}
                         </td>
-                        <td className="px-3 py-3">
-                          {formatMoney(row.overageAmount, contract.currency)}
-                        </td>
                         <td className="px-3 py-3 font-medium">
-                          {formatMoney(row.projectedAmount, contract.currency)}
+                          {formatMoney(row.usageAmount, contract.currency)}
                         </td>
                       </tr>
                     ))}
@@ -1695,8 +1704,10 @@ export default function CustomerContractDetailPage() {
                 </table>
               </div>
               <p className="text-xs text-muted-foreground">
-                Usage is matched by catalog item when available, otherwise by
-                service name/category. The projected bill is for review only.
+                Usage is valued from daily ManageOne snapshots. Contract lines
+                use contract pricing, non-contract usage uses catalog pricing,
+                and billable extra is calculated only after total usage exceeds
+                the contract credit for the billing period.
               </p>
             </div>
           )}
