@@ -956,6 +956,7 @@ export const review = query({
   args: {
     month: v.string(),
     companyId: v.optional(v.id("companies")),
+    includeRows: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -992,15 +993,17 @@ export const review = query({
       .map(([companyId, companyName]) => ({ companyId, companyName }))
       .sort((a, b) => a.companyName.localeCompare(b.companyName));
 
-    const sortedRows = [...visibleRows].sort((a, b) => {
-      const dateCompare = b.usageDate.localeCompare(a.usageDate);
-      if (dateCompare !== 0) return dateCompare;
-      const companyCompare = (
-        companyNameById.get(a.companyId) ?? ""
-      ).localeCompare(companyNameById.get(b.companyId) ?? "");
-      if (companyCompare !== 0) return companyCompare;
-      return a.serviceType.localeCompare(b.serviceType);
-    });
+    const sortedRows = args.includeRows
+      ? [...visibleRows].sort((a, b) => {
+          const dateCompare = b.usageDate.localeCompare(a.usageDate);
+          if (dateCompare !== 0) return dateCompare;
+          const companyCompare = (
+            companyNameById.get(a.companyId) ?? ""
+          ).localeCompare(companyNameById.get(b.companyId) ?? "");
+          if (companyCompare !== 0) return companyCompare;
+          return a.serviceType.localeCompare(b.serviceType);
+        })
+      : [];
 
     const catalog = await ctx.db.query("serviceCatalog").collect();
     const catalogById = new Map(catalog.map((item) => [item._id, item]));

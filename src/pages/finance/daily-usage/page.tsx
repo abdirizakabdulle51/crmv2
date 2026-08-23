@@ -94,10 +94,13 @@ export default function DailyUsagePage() {
   const [usageDate, setUsageDate] = useState("all");
   const [search, setSearch] = useState("");
   const [creatingDraft, setCreatingDraft] = useState(false);
+  const [showCapturedRows, setShowCapturedRows] = useState(false);
+  const shouldLoadCapturedRows = showCapturedRows || companyId !== "all";
 
   const review = useQuery(api.dailyUsage.review, {
     month,
     companyId: companyId === "all" ? undefined : (companyId as Id<"companies">),
+    includeRows: shouldLoadCapturedRows,
   });
   const health = useQuery(api.dailyUsage.health, {
     month,
@@ -157,6 +160,16 @@ export default function DailyUsagePage() {
   }, [review?.rollup.rows, search, serviceType]);
 
   const totals = useMemo(() => {
+    if (!shouldLoadCapturedRows && review?.summary) {
+      return {
+        rows: review.summary.rowCount,
+        companyCount: review.summary.companyCount,
+        dayCount: review.summary.dayCount,
+        serviceCount: review.summary.serviceCount,
+        locked: review.summary.lockedCount,
+        attached: review.rollup.totals.attachedCount,
+      };
+    }
     const companyCount = new Set(rows.map((row) => row.companyId)).size;
     const dayCount = new Set(rows.map((row) => row.usageDate)).size;
     const serviceCount = new Set(rows.map((row) => row.serviceType)).size;
@@ -168,7 +181,7 @@ export default function DailyUsagePage() {
       locked: rows.filter((row) => row.lockedAt).length,
       attached: rows.filter((row) => row.invoiceId || row.lockedAt).length,
     };
-  }, [rows]);
+  }, [review?.rollup.totals.attachedCount, review?.summary, rows, shouldLoadCapturedRows]);
 
   const rollupTotals = useMemo(
     () => ({
@@ -273,6 +286,7 @@ export default function DailyUsagePage() {
                 onChange={(event) => {
                   setMonth(event.target.value);
                   setUsageDate("all");
+                  setShowCapturedRows(false);
                 }}
               />
             </div>
@@ -281,7 +295,11 @@ export default function DailyUsagePage() {
               <CompanyCombobox
                 companies={companies}
                 value={companyId}
-                onValueChange={setCompanyId}
+                onValueChange={(value) => {
+                  setCompanyId(value);
+                  setUsageDate("all");
+                  setShowCapturedRows(false);
+                }}
                 className="sm:w-full"
               />
             </div>
@@ -475,10 +493,34 @@ export default function DailyUsagePage() {
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">{totals.attached} attached</Badge>
             <Badge variant="outline">{totals.locked} locked</Badge>
+            {!shouldLoadCapturedRows ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowCapturedRows(true)}
+              >
+                Load captured rows
+              </Button>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent>
-          {rows.length === 0 ? (
+          {!shouldLoadCapturedRows ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Database className="h-6 w-6" />
+                </EmptyMedia>
+                <EmptyTitle>Captured rows are hidden for faster loading.</EmptyTitle>
+                <EmptyDescription>
+                  Summary, health checks, and monthly rollup are loaded. Select
+                  one customer or load captured rows to review the detailed
+                  daily snapshot table.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : rows.length === 0 ? (
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
