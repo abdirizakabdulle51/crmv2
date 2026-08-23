@@ -959,6 +959,14 @@ export const review = query({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
+    const companyRows = args.companyId
+      ? [await assertCanManageUsage(ctx, user, args.companyId)]
+      : (await ctx.db.query("companies").collect()).filter((company) =>
+          canViewCompany(user, company),
+        );
+    const companyNameById = new Map(
+      companyRows.map((company) => [company._id, company.name]),
+    );
 
     const rows = args.companyId
       ? await ctx.db
@@ -972,19 +980,7 @@ export const review = query({
           .withIndex("by_month", (q) => q.eq("month", args.month))
           .collect();
 
-    const visibleRows = [];
-    const companyNameById = new Map<Id<"companies">, string>();
-
-    for (const row of rows) {
-      const company = args.companyId
-        ? await assertCanManageUsage(ctx, user, row.companyId)
-        : await ctx.db.get(row.companyId);
-      if (!company || !canViewCompany(user, company)) {
-        continue;
-      }
-      visibleRows.push(row);
-      companyNameById.set(row.companyId, company.name);
-    }
+    const visibleRows = rows.filter((row) => companyNameById.has(row.companyId));
 
     const serviceTypes = [...new Set(visibleRows.map((row) => row.serviceType))]
       .filter(Boolean)
