@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -332,10 +332,9 @@ function totalResources(row: ResourceTotals) {
 export default function ManageOneHourlyPage() {
   const { currentUser } = useCrm();
   const canView = canViewCloudHealth(currentUser?.role);
-  const [loadSnapshots, setLoadSnapshots] = useState(false);
   const snapshots = useQuery(
     api.manageOneHourlyMonitoring.latest,
-    canView && loadSnapshots ? { limit: 500 } : "skip",
+    canView ? { limit: 500 } : "skip",
   ) as Snapshot[] | undefined;
   const latestRun = useQuery(
     api.manageOneHourlyMonitoring.latestRun,
@@ -350,12 +349,6 @@ export default function ManageOneHourlyPage() {
   const [movementRegion, setMovementRegion] = useState(monitoredRegionValue);
   const [serviceView, setServiceView] = useState<ServiceView>("overview");
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!canView) return;
-    const timer = window.setTimeout(() => setLoadSnapshots(true), 300);
-    return () => window.clearTimeout(timer);
-  }, [canView]);
-
   const movementReport = useQuery(
     api.manageOneHourlyMonitoring.resourceMovement,
     canView && pageTab === "movement"
@@ -471,7 +464,15 @@ export default function ManageOneHourlyPage() {
     );
   }
 
-  const snapshotsLoading = !snapshots;
+  if (!snapshots || latestRun === undefined) {
+    return (
+      <div className="space-y-4 p-6 md:p-8">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-28 w-full" />
+        <Skeleton className="h-80 w-full" />
+      </div>
+    );
+  }
 
   const selectedTenantLabel =
     tenant === allTenantsValue ? "All companies" : tenant || "All companies";
@@ -490,9 +491,7 @@ export default function ManageOneHourlyPage() {
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <span>
             Last run:{" "}
-            {latestRun === undefined
-              ? "loading..."
-              : formatDateTime(latestRun?.finishedAt ?? latestRun?.startedAt)}
+            {formatDateTime(latestRun?.finishedAt ?? latestRun?.startedAt)}
           </span>
           {latestRun ? (
             <Badge variant="secondary">{latestRun.status}</Badge>
@@ -511,56 +510,48 @@ export default function ManageOneHourlyPage() {
         </TabsList>
 
         <TabsContent value="hourly" className="mt-6 space-y-6">
-          {snapshotsLoading ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-              {Array.from({ length: 5 }).map((_, index) => (
-                <Skeleton key={index} className="h-28" />
-              ))}
-            </div>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-              <SummaryCard
-                icon={Cloud}
-                label="Tenants"
-                value={formatNumber(summary.tenants)}
-                detail={
-                  tenant === allTenantsValue
-                    ? "Latest selected scope"
-                    : selectedTenantLabel
-                }
-              />
-              <SummaryCard
-                icon={Cpu}
-                label="Compute"
-                value={formatNumber(summary.ecs + summary.cce + summary.bms)}
-                detail={`ECS ${formatNumber(summary.ecs)} · CCE ${formatNumber(summary.cce)} · BMS ${formatNumber(summary.bms)}`}
-              />
-              <SummaryCard
-                icon={HardDrive}
-                label="Storage"
-                value={`${formatCompact(summary.evs + summary.obs + summary.sfs)} GB`}
-                detail={`EVS ${formatCompact(summary.evs)} · OBS ${formatCompact(summary.obs)} · SFS ${formatCompact(summary.sfs)}`}
-              />
-              <SummaryCard
-                icon={Network}
-                label="Network"
-                value={formatNumber(
-                  summary.eip +
-                    summary.elb +
-                    summary.vpn +
-                    summary.vpcep +
-                    summary.nat,
-                )}
-                detail={`EIP ${formatNumber(summary.eip)} · ELB ${formatNumber(summary.elb)} · VPN ${formatNumber(summary.vpn)}`}
-              />
-              <SummaryCard
-                icon={Shield}
-                label="Security"
-                value={formatNumber(summary.waf)}
-                detail={`Basic ${formatNumber(summary.wafBasic)} · Enterprise ${formatNumber(summary.wafEnterprise)}`}
-              />
-            </div>
-          )}
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <SummaryCard
+              icon={Cloud}
+              label="Tenants"
+              value={formatNumber(summary.tenants)}
+              detail={
+                tenant === allTenantsValue
+                  ? "Latest selected scope"
+                  : selectedTenantLabel
+              }
+            />
+            <SummaryCard
+              icon={Cpu}
+              label="Compute"
+              value={formatNumber(summary.ecs + summary.cce + summary.bms)}
+              detail={`ECS ${formatNumber(summary.ecs)} · CCE ${formatNumber(summary.cce)} · BMS ${formatNumber(summary.bms)}`}
+            />
+            <SummaryCard
+              icon={HardDrive}
+              label="Storage"
+              value={`${formatCompact(summary.evs + summary.obs + summary.sfs)} GB`}
+              detail={`EVS ${formatCompact(summary.evs)} · OBS ${formatCompact(summary.obs)} · SFS ${formatCompact(summary.sfs)}`}
+            />
+            <SummaryCard
+              icon={Network}
+              label="Network"
+              value={formatNumber(
+                summary.eip +
+                  summary.elb +
+                  summary.vpn +
+                  summary.vpcep +
+                  summary.nat,
+              )}
+              detail={`EIP ${formatNumber(summary.eip)} · ELB ${formatNumber(summary.elb)} · VPN ${formatNumber(summary.vpn)}`}
+            />
+            <SummaryCard
+              icon={Shield}
+              label="Security"
+              value={formatNumber(summary.waf)}
+              detail={`Basic ${formatNumber(summary.wafBasic)} · Enterprise ${formatNumber(summary.wafEnterprise)}`}
+            />
+          </div>
 
           <Card>
             <CardHeader className="space-y-4">
@@ -686,12 +677,7 @@ export default function ManageOneHourlyPage() {
               </div>
             </CardHeader>
             <CardContent>
-              {snapshotsLoading ? (
-                <div className="space-y-4">
-                  <Skeleton className="h-10 w-full max-w-3xl" />
-                  <Skeleton className="h-80 w-full" />
-                </div>
-              ) : latestSnapshots.length === 0 ? (
+              {latestSnapshots.length === 0 ? (
                 <EmptyState />
               ) : (
                 <Tabs
