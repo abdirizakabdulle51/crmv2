@@ -2,6 +2,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -159,6 +161,14 @@ function formatDateLabel(value?: number | null) {
 function formatDateKeyLabel(value: string) {
   const [, month, day] = value.split("-");
   return month && day ? `${month}/${day}` : value;
+}
+
+function formatHourLabel(value: number) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+  }).format(new Date(value));
 }
 
 function formatMonthKeyLabel(value?: string) {
@@ -628,6 +638,10 @@ function BillingUsageSection({
           dailyCharge: number;
           cumulativeCharge: number;
         }>;
+        hourlySeries: Array<{
+          capturedHour: number;
+          estimatedHourlyCost: number;
+        }>;
         chargeBreakdown: Array<{
           serviceType: string;
           amount: number;
@@ -676,6 +690,8 @@ function BillingUsageSection({
       }
     | undefined;
 }) {
+  const [chartMode, setChartMode] = useState<"daily" | "hourly">("daily");
+
   if (!snapshot) {
     return (
       <Card className="max-w-5xl">
@@ -694,10 +710,17 @@ function BillingUsageSection({
     );
   }
 
-  const chartData = snapshot.dailySeries.map((row) => ({
-    ...row,
+  const dailyChartData = snapshot.dailySeries.map((row) => ({
     label: formatDateKeyLabel(row.usageDate),
+    value: row.dailyCharge,
   }));
+  const hourlyChartData = snapshot.hourlySeries.map((row) => ({
+    label: formatHourLabel(row.capturedHour),
+    value: row.estimatedHourlyCost,
+  }));
+  const chartData = chartMode === "daily" ? dailyChartData : hourlyChartData;
+  const chartValueName =
+    chartMode === "daily" ? "Daily usage cost" : "Estimated hourly cost";
   const coverage = snapshot.contractCoverage;
   const remainingContractCredit =
     coverage && coverage.contractPeriodAmount > 0
@@ -802,17 +825,54 @@ function BillingUsageSection({
           <div className="rounded-md border p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <div className="font-medium">Daily Billing Trend</div>
-                <div className="text-xs text-muted-foreground">
-                  Daily usage cost and month-to-date total.
+                <div className="font-medium">
+                  {chartMode === "daily"
+                    ? "Daily Usage Cost"
+                    : "Hourly Usage Cost"}
                 </div>
+                {chartMode === "hourly" ? (
+                  <div className="text-xs text-muted-foreground">
+                    Hourly chart is for visibility/estimate only and is not used
+                    for invoice math.
+                  </div>
+                ) : null}
               </div>
-              <Badge variant="outline">{snapshot.month}</Badge>
+              <div className="flex items-center gap-2">
+                <div className="rounded-md border bg-muted p-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={
+                      chartMode === "daily"
+                        ? "bg-[#35C7C9] text-white shadow-sm hover:bg-[#2fb3b5] hover:text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }
+                    onClick={() => setChartMode("daily")}
+                  >
+                    Daily
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={
+                      chartMode === "hourly"
+                        ? "bg-[#35C7C9] text-white shadow-sm hover:bg-[#2fb3b5] hover:text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }
+                    onClick={() => setChartMode("hourly")}
+                  >
+                    Hourly
+                  </Button>
+                </div>
+                <Badge variant="outline">{snapshot.month}</Badge>
+              </div>
             </div>
             {chartData.length > 0 ? (
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
+                  <BarChart data={chartData}>
                     <CartesianGrid
                       strokeDasharray="3 3"
                       className="stroke-border"
@@ -827,15 +887,17 @@ function BillingUsageSection({
                       tickLine={false}
                       axisLine={false}
                       tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => `$${Number(value) / 1000}k`}
+                      tickFormatter={(value) =>
+                        Number(value) >= 1000
+                          ? `$${Number(value) / 1000}k`
+                          : formatCurrency(Number(value))
+                      }
                       width={56}
                     />
                     <Tooltip
                       formatter={(value, name) => [
                         formatCurrency(Number(value)),
-                        name === "Daily usage cost"
-                          ? "Daily usage cost"
-                          : "Month-to-date total",
+                        name,
                       ]}
                       labelClassName="text-foreground"
                       contentStyle={{
@@ -844,28 +906,20 @@ function BillingUsageSection({
                         borderRadius: "8px",
                       }}
                     />
-                    <Line
-                      type="monotone"
-                      dataKey="dailyCharge"
-                      name="Daily usage cost"
-                      stroke="#35C7C9"
-                      strokeWidth={2}
-                      dot={false}
+                    <Bar
+                      dataKey="value"
+                      name={chartValueName}
+                      fill="#35C7C9"
+                      radius={[4, 4, 0, 0]}
                     />
-                    <Line
-                      type="monotone"
-                      dataKey="cumulativeCharge"
-                      name="Month-to-date total"
-                      stroke="#2563eb"
-                      strokeWidth={2}
-                      dot={false}
-                    />
-                  </LineChart>
+                  </BarChart>
                 </ResponsiveContainer>
               </div>
             ) : (
               <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                No daily billing rows found for this company and month.
+                {chartMode === "daily"
+                  ? "No daily billing rows found for this company and month."
+                  : "No hourly monitoring rows found for this company and month."}
               </div>
             )}
           </div>
@@ -1305,12 +1359,12 @@ export default function CompanyDetailPage() {
         <p className="mt-1 text-muted-foreground">{company.name}</p>
       </div>
 
-      <Tabs defaultValue="company-info" className="max-w-5xl">
+      <Tabs defaultValue="billing-usage" className="max-w-5xl">
         <TabsList className="grid h-auto w-full grid-cols-2 lg:grid-cols-4">
-          <TabsTrigger value="company-info">Company Detail</TabsTrigger>
+          <TabsTrigger value="billing-usage">Billing</TabsTrigger>
           <TabsTrigger value="usage-trends">Usage Trends</TabsTrigger>
           <TabsTrigger value="manageone-usage">Cloud Resources</TabsTrigger>
-          <TabsTrigger value="billing-usage">Billing & Usage</TabsTrigger>
+          <TabsTrigger value="company-info">Company Detail</TabsTrigger>
         </TabsList>
 
         <TabsContent value="company-info" className="mt-4">

@@ -69,6 +69,95 @@ function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function averageHourlyPrice(items: CatalogItem[]) {
+  const prices = items
+    .map((item) => item.hourlyPrice)
+    .filter((price): price is number => price !== undefined);
+  if (prices.length === 0) return 0;
+  return prices.reduce((total, price) => total + price, 0) / prices.length;
+}
+
+function hourlyPriceForCategory(
+  catalog: CatalogItem[],
+  category: string,
+  preferredItemName?: string,
+) {
+  const categoryItems = catalog.filter((item) => item.serviceCategory === category);
+  if (preferredItemName) {
+    const preferred = categoryItems.find(
+      (item) => normalizedKey(item.itemName) === normalizedKey(preferredItemName),
+    );
+    if (preferred?.hourlyPrice !== undefined) return preferred.hourlyPrice;
+  }
+  return averageHourlyPrice(categoryItems);
+}
+
+function estimateHourlySnapshotCost(
+  rows: Doc<"manageOneHourlySnapshots">[],
+  catalog: CatalogItem[],
+) {
+  const totals = rows.reduce(
+    (sum, row) => ({
+      ecs: sum.ecs + row.ecsInstances,
+      cce: sum.cce + (row.cceNodes ?? 0),
+      bms: sum.bms + (row.bmsInstances ?? 0),
+      evsGb: sum.evsGb + row.evsGb,
+      sfsGb: sum.sfsGb + (row.sfsGb ?? 0),
+      csbsGb: sum.csbsGb + (row.csbsGb ?? 0),
+      vbsGb: sum.vbsGb + (row.vbsGb ?? 0),
+      obsGb: sum.obsGb + row.obsGb,
+      eip: sum.eip + row.publicIps,
+      elb: sum.elb + row.loadBalancers,
+      vpn: sum.vpn + row.vpnGateways,
+      vpcep: sum.vpcep + (row.vpcepEndpoints ?? 0),
+      nat: sum.nat + row.natGateways,
+      waf: sum.waf + row.wafInstances,
+      wafBasic: sum.wafBasic + (row.wafBasicInstances ?? 0),
+      wafEnterprise: sum.wafEnterprise + (row.wafEnterpriseInstances ?? 0),
+    }),
+    {
+      ecs: 0,
+      cce: 0,
+      bms: 0,
+      evsGb: 0,
+      sfsGb: 0,
+      csbsGb: 0,
+      vbsGb: 0,
+      obsGb: 0,
+      eip: 0,
+      elb: 0,
+      vpn: 0,
+      vpcep: 0,
+      nat: 0,
+      waf: 0,
+      wafBasic: 0,
+      wafEnterprise: 0,
+    },
+  );
+  const wafWithTierBreakdown = totals.wafBasic > 0 || totals.wafEnterprise > 0;
+  const untieredWaf = wafWithTierBreakdown ? 0 : totals.waf;
+
+  return roundMoney(
+    totals.ecs * hourlyPriceForCategory(catalog, "ECS") +
+      totals.cce * hourlyPriceForCategory(catalog, "ECS-CCE") +
+      totals.bms * hourlyPriceForCategory(catalog, "BMS") +
+      totals.evsGb * hourlyPriceForCategory(catalog, "EVS") +
+      totals.sfsGb * hourlyPriceForCategory(catalog, "SFS") +
+      totals.csbsGb * hourlyPriceForCategory(catalog, "CSBS") +
+      totals.vbsGb * hourlyPriceForCategory(catalog, "VBS") +
+      totals.obsGb * hourlyPriceForCategory(catalog, "OBS") +
+      totals.eip * hourlyPriceForCategory(catalog, "EIP", "EIP - Active") +
+      totals.elb * hourlyPriceForCategory(catalog, "ELB", "ELB - Shared") +
+      totals.vpn * hourlyPriceForCategory(catalog, "VPN") +
+      totals.vpcep * hourlyPriceForCategory(catalog, "VPCEP") +
+      totals.nat * hourlyPriceForCategory(catalog, "NAT") +
+      untieredWaf * hourlyPriceForCategory(catalog, "WAF") +
+      totals.wafBasic * hourlyPriceForCategory(catalog, "WAF", "Basic WAF") +
+      totals.wafEnterprise *
+        hourlyPriceForCategory(catalog, "WAF", "Enterprise WAF"),
+  );
+}
+
 function monthBounds(month: string) {
   return {
     start: monthStartTimestamp(month),
@@ -763,12 +852,8 @@ export const createDraftInvoiceFromRollup = mutation({
       });
     }
 
-    const catalogById = new Map(
-      (await ctx.db.query("serviceCatalog").collect()).map((item) => [
-        item._id,
-        item,
-      ]),
-    );
+    const catalog = await ctx.db.query("serviceCatalog").collect();
+    const catalogById = new Map(catalog.map((item) => [item._id, item]));
     const companyNameById = new Map<Id<"companies">, string>([
       [company._id, company.name],
     ]);
@@ -921,12 +1006,8 @@ export const review = query({
       return a.serviceType.localeCompare(b.serviceType);
     });
 
-    const catalogById = new Map(
-      (await ctx.db.query("serviceCatalog").collect()).map((item) => [
-        item._id,
-        item,
-      ]),
-    );
+    const catalog = await ctx.db.query("serviceCatalog").collect();
+    const catalogById = new Map(catalog.map((item) => [item._id, item]));
     const contractPricingByCompany = await loadActiveContractPricingForMonth(
       ctx,
       [...companyNameById.keys()],
@@ -1066,12 +1147,8 @@ export const companyBillingSnapshot = query({
       (row) => !row.invoiceId && !row.lockedAt,
     );
 
-    const catalogById = new Map(
-      (await ctx.db.query("serviceCatalog").collect()).map((item) => [
-        item._id,
-        item,
-      ]),
-    );
+    const catalog = await ctx.db.query("serviceCatalog").collect();
+    const catalogById = new Map(catalog.map((item) => [item._id, item]));
     const companyNameById = new Map<Id<"companies">, string>([
       [company._id, company.name],
     ]);
@@ -1192,6 +1269,28 @@ export const companyBillingSnapshot = query({
       dailySeries.length === 0
         ? null
         : roundMoney((cumulative / dailySeries.length) * daysInMonth(args.month));
+    const hourlyRows = await ctx.db
+      .query("manageOneHourlySnapshots")
+      .withIndex("by_company_hour", (q) =>
+        q.eq("linkedCompanyId", args.companyId).gte("capturedHour", monthStart),
+      )
+      .collect();
+    const hourlyRowsForMonth = hourlyRows.filter(
+      (row) => row.capturedHour <= monthEnd,
+    );
+    const hourlyRowsByHour = new Map<number, Doc<"manageOneHourlySnapshots">[]>();
+    for (const row of hourlyRowsForMonth) {
+      const rowsForHour = hourlyRowsByHour.get(row.capturedHour) ?? [];
+      rowsForHour.push(row);
+      hourlyRowsByHour.set(row.capturedHour, rowsForHour);
+    }
+    const hourlySeries = [...hourlyRowsByHour.entries()]
+      .sort(([left], [right]) => left - right)
+      .slice(-24)
+      .map(([capturedHour, rows]) => ({
+        capturedHour,
+        estimatedHourlyCost: estimateHourlySnapshotCost(rows, catalog),
+      }));
 
     const chargeBreakdownByService = new Map<
       string,
@@ -1236,9 +1335,9 @@ export const companyBillingSnapshot = query({
       dailyUsageReady: dailyRows.length > 0,
       latestUsageDate: usageDates[usageDates.length - 1] ?? null,
       dailySeries,
-      chargeBreakdown: [...chargeBreakdownByService.values()].sort(
-        (a, b) => b.amount - a.amount,
-      ),
+      hourlySeries,
+      chargeBreakdown: [...chargeBreakdownByService.values()]
+        .sort((a, b) => b.amount - a.amount),
       openInvoices: openInvoices
         .sort((a, b) => b.createdAt - a.createdAt)
         .slice(0, 5)
