@@ -810,10 +810,6 @@ function BillingUsageSection({
             />
           </div>
 
-          {snapshot.contractCoverage ? (
-            <ContractCoveragePanel coverage={snapshot.contractCoverage} />
-          ) : null}
-
           {!snapshot.dailyUsageReady ? (
             <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               Daily usage has not been calculated for this month. Upcoming
@@ -923,6 +919,10 @@ function BillingUsageSection({
               </div>
             )}
           </div>
+
+          {snapshot.contractCoverage ? (
+            <ContractCoveragePanel coverage={snapshot.contractCoverage} />
+          ) : null}
         </CardContent>
       </Card>
 
