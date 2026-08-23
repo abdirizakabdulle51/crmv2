@@ -411,6 +411,18 @@ function findObsCatalogItem(
   )[0];
 }
 
+function findStandardObsCatalogItem(catalog: UsageHintCatalogItem[]) {
+  return findObsCatalogItem(
+    {
+      bucketName: "unclassified",
+      totalGb: 0,
+      catalogItemName: "Fusion bucket",
+      storageClass: "Standard",
+    },
+    catalog,
+  );
+}
+
 function optionalRegionFields(source: {
   regionId?: string;
   regionName?: string;
@@ -899,18 +911,28 @@ export function buildUsageHintsForCompany(
         const pricedObsItems = obsLineItems.filter(
           (item) => item.suggestedCatalogItemId,
         );
-        const fallbackObsItem =
-          pricedObsItems.length === 1 ? pricedObsItems[0] : undefined;
+        const fallbackObsLineItem =
+          pricedObsItems.length === 1
+            ? pricedObsItems[0]
+            : undefined;
+        const fallbackObsCatalogItem =
+          fallbackObsLineItem ? undefined : findStandardObsCatalogItem(catalog);
+        const suggestedCatalogItemId =
+          fallbackObsLineItem?.suggestedCatalogItemId ??
+          fallbackObsCatalogItem?._id;
         obsLineItems.push({
-          label: fallbackObsItem?.label ?? "Unclassified OBS",
+          label:
+            fallbackObsLineItem?.label ??
+            fallbackObsCatalogItem?.itemName ??
+            "Unclassified OBS",
           serviceCategory: "OBS",
           quantity: unclassifiedObsGb,
-          pricing: fallbackObsItem ? "auto" : "manual",
-          ...(fallbackObsItem?.suggestedCatalogItemId
-            ? { suggestedCatalogItemId: fallbackObsItem.suggestedCatalogItemId }
+          pricing: suggestedCatalogItemId ? "auto" : "manual",
+          ...(suggestedCatalogItemId
+            ? { suggestedCatalogItemId }
             : { needsManualPricing: true }),
           ...tenantRegionFields,
-          ...optionalRegionFields(fallbackObsItem ?? {}),
+          ...optionalRegionFields(fallbackObsLineItem ?? {}),
         });
       }
 
