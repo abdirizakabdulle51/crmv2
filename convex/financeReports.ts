@@ -390,6 +390,7 @@ export const summary = query({
       ),
       expenseStatusSummary: [...statusSummary.values()],
       incomeByRegion: [...regionIncome.values()]
+        .filter((row) => row.region !== "Unassigned")
         .map((row) => ({
           region: row.region,
           income: row.income,
@@ -490,8 +491,9 @@ export const invoicePaymentsByRegionExport = query({
         const country = company ? scope.countryMap.get(company.countryId) : undefined;
         const recordedBy = scope.userMap.get(payment.recordedBy);
 
-        return paymentRegionAllocations(invoice, payment.amount).map(
-          (allocation) => ({
+        return paymentRegionAllocations(invoice, payment.amount)
+          .filter((allocation) => allocation.region !== "Unassigned")
+          .map((allocation) => ({
             paymentDate: payment.paidAt,
             invoiceNumber: invoice.invoiceNumber ?? "",
             customerCompany: invoice.companyName,
@@ -506,8 +508,7 @@ export const invoicePaymentsByRegionExport = query({
             recordedAt: payment.createdAt,
             invoiceStatus: invoice.status,
             sourceReference: invoice.sourceReference ?? "",
-          }),
-        );
+          }));
       })
       .sort((a, b) =>
         a.paymentDate === b.paymentDate

@@ -348,7 +348,7 @@ describe("finance reports", () => {
     expect(report.totals.income).toBe(50);
   });
 
-  it("uses Unassigned for missing regions and legacy invoices without line totals", async () => {
+  it("excludes Unassigned from region income while keeping it in totals", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     await insertInvoiceWithPayment(t, {
@@ -374,14 +374,7 @@ describe("finance reports", () => {
       endMonth: "2026-08",
     });
 
-    expect(report.incomeByRegion).toEqual([
-      {
-        region: "Unassigned",
-        income: 100,
-        paymentCount: 2,
-        invoiceCount: 2,
-      },
-    ]);
+    expect(report.incomeByRegion).toEqual([]);
     expect(report.totals.income).toBe(100);
   });
 
@@ -706,7 +699,7 @@ describe("finance reports", () => {
     });
   });
 
-  it("exports Unassigned for legacy invoice region income", async () => {
+  it("excludes Unassigned from legacy invoice region income export", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     await insertInvoiceWithPayment(t, {
@@ -724,12 +717,7 @@ describe("finance reports", () => {
       },
     );
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      region: "Unassigned",
-      allocatedAmount: 80,
-      originalPaymentAmount: 80,
-    });
+    expect(rows).toEqual([]);
   });
 
   it("excludes test hidden void and cancelled invoices from payment export", async () => {
