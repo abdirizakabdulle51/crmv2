@@ -11,7 +11,7 @@ const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_RETENTION_DELETE_PER_SYNC = 200;
 const MAX_DRY_RUN_PAGE_SIZE = 1_000;
 const MOVEMENT_WINDOWS = [7, 14, 21, 28] as const;
-const MOVEMENT_MAX_ROWS = 40000;
+const MOVEMENT_HOUR_ROW_LIMIT = 5_000;
 const MONITORED_REGIONS = ["Hoa-Mogadishu-2", "Mogadishu-region-hq3"] as const;
 const MONITORED_REGION_SCOPE = "monitored";
 // Do not compare old combined-region rows with the resource-space split rows.
@@ -437,11 +437,46 @@ export const resourceMovement = query({
       requestedCutoff,
       capturedHour(RESOURCE_SPACE_REGION_SPLIT_AT),
     );
-    const rows = await ctx.db
+    const latestRow = await ctx.db
       .query("manageOneHourlySnapshots")
       .withIndex("by_hour", (q) => q.gte("capturedHour", cutoff))
       .order("desc")
-      .take(MOVEMENT_MAX_ROWS);
+      .first();
+
+    if (!latestRow) {
+      return {
+        days,
+        region,
+        rowCount: 0,
+        tenantCount: 0,
+        earliestCapturedHour: null,
+        latestCapturedHour: null,
+        procurers: [],
+        releasers: [],
+        consumers: [],
+      };
+    }
+
+    const baselineRow = await ctx.db
+      .query("manageOneHourlySnapshots")
+      .withIndex("by_hour", (q) => q.gte("capturedHour", cutoff))
+      .order("asc")
+      .first();
+    const baselineHour = baselineRow?.capturedHour ?? latestRow.capturedHour;
+    const latestHour = latestRow.capturedHour;
+
+    const latestRows = await ctx.db
+      .query("manageOneHourlySnapshots")
+      .withIndex("by_hour", (q) => q.eq("capturedHour", latestHour))
+      .take(MOVEMENT_HOUR_ROW_LIMIT);
+    const baselineRows =
+      baselineHour === latestHour
+        ? []
+        : await ctx.db
+            .query("manageOneHourlySnapshots")
+            .withIndex("by_hour", (q) => q.eq("capturedHour", baselineHour))
+            .take(MOVEMENT_HOUR_ROW_LIMIT);
+    const rows = [...baselineRows, ...latestRows];
 
     const scopedRows = rows.filter((row) => matchesRegionScope(row, region));
     const groups = new Map<
@@ -451,7 +486,9 @@ export const resourceMovement = query({
         vdcId: string;
         regionNames: Set<string>;
         regionIds: Set<string>;
-        hourlyTotals: Map<number, ResourceTotals>;
+        baselineTotals: ResourceTotals;
+        currentTotals: ResourceTotals;
+        hasBaseline: boolean;
       }
     >();
 
@@ -464,30 +501,32 @@ export const resourceMovement = query({
           vdcId: row.vdcId,
           regionNames: new Set<string>(),
           regionIds: new Set<string>(),
-          hourlyTotals: new Map<number, ResourceTotals>(),
+          baselineTotals: emptyResourceTotals(),
+          currentTotals: emptyResourceTotals(),
+          hasBaseline: false,
         };
 
       group.tenantName = row.tenantName;
       if (row.regionName) group.regionNames.add(row.regionName);
       if (row.regionId) group.regionIds.add(row.regionId);
 
-      const currentHourTotals =
-        group.hourlyTotals.get(row.capturedHour) ?? emptyResourceTotals();
-      group.hourlyTotals.set(
-        row.capturedHour,
-        addTotals(currentHourTotals, resourceTotals(row)),
-      );
+      if (row.capturedHour === latestHour) {
+        group.currentTotals = addTotals(group.currentTotals, resourceTotals(row));
+      } else if (row.capturedHour === baselineHour) {
+        group.baselineTotals = addTotals(
+          group.baselineTotals,
+          resourceTotals(row),
+        );
+        group.hasBaseline = true;
+      }
       groups.set(key, group);
     }
 
     const movementRows = [...groups.entries()].map(([key, group]) => {
-      const hours = [...group.hourlyTotals.keys()].sort((a, b) => a - b);
-      const baselineHour = hours[0] ?? 0;
-      const latestHour = hours[hours.length - 1] ?? baselineHour;
-      const currentTotals =
-        group.hourlyTotals.get(latestHour) ?? emptyResourceTotals();
-      const baselineTotals =
-        group.hourlyTotals.get(baselineHour) ?? currentTotals;
+      const currentTotals = group.currentTotals;
+      const baselineTotals = group.hasBaseline
+        ? group.baselineTotals
+        : currentTotals;
       const delta = subtractTotals(currentTotals, baselineTotals);
       const movementScore = resourceScore(delta);
       const consumptionScore = resourceScore(currentTotals);
