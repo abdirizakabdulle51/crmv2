@@ -64,9 +64,24 @@ const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const HOURLY_STALE_MS = 2 * 60 * 60 * 1000;
+const BILLABLE_DAILY_USAGE_REGIONS = new Set([
+  "Mogadishu-region-hq3",
+  "Hoa-Mogadishu-2",
+]);
 
 function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function isBillableDailyUsageRegion(
+  row: Pick<Doc<"dailyUsageSnapshots">, "regionName" | "dataCenterName">,
+) {
+  const region = (row.regionName ?? row.dataCenterName)?.trim();
+  return region ? BILLABLE_DAILY_USAGE_REGIONS.has(region) : false;
+}
+
+function billableDailyUsageRows(rows: Doc<"dailyUsageSnapshots">[]) {
+  return rows.filter(isBillableDailyUsageRegion);
 }
 
 function averageHourlyPrice(items: CatalogItem[]) {
@@ -831,12 +846,14 @@ export const createDraftInvoiceFromRollup = mutation({
       });
     }
 
-    const rows = await ctx.db
-      .query("dailyUsageSnapshots")
-      .withIndex("by_company_month", (q) =>
-        q.eq("companyId", args.companyId).eq("month", args.month),
-      )
-      .collect();
+    const rows = billableDailyUsageRows(
+      await ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", args.companyId).eq("month", args.month),
+        )
+        .collect(),
+    );
     if (rows.length === 0) {
       throw new ConvexError({
         code: "BAD_REQUEST",
@@ -969,17 +986,19 @@ export const review = query({
       companyRows.map((company) => [company._id, company.name]),
     );
 
-    const rows = args.companyId
-      ? await ctx.db
-          .query("dailyUsageSnapshots")
-          .withIndex("by_company_month", (q) =>
-            q.eq("companyId", args.companyId!).eq("month", args.month),
-          )
-          .collect()
-      : await ctx.db
-          .query("dailyUsageSnapshots")
-          .withIndex("by_month", (q) => q.eq("month", args.month))
-          .collect();
+    const rows = billableDailyUsageRows(
+      args.companyId
+        ? await ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_company_month", (q) =>
+              q.eq("companyId", args.companyId!).eq("month", args.month),
+            )
+            .collect()
+        : await ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_month", (q) => q.eq("month", args.month))
+            .collect(),
+    );
 
     const visibleRows = rows.filter((row) => companyNameById.has(row.companyId));
 
@@ -1136,12 +1155,14 @@ export const companyBillingSnapshot = query({
       }
     }
 
-    const dailyRows = await ctx.db
-      .query("dailyUsageSnapshots")
-      .withIndex("by_company_month", (q) =>
-        q.eq("companyId", args.companyId).eq("month", args.month),
-      )
-      .collect();
+    const dailyRows = billableDailyUsageRows(
+      await ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", args.companyId).eq("month", args.month),
+        )
+        .collect(),
+    );
     const uninvoicedRows = dailyRows.filter(
       (row) => !row.invoiceId && !row.lockedAt,
     );
@@ -1457,17 +1478,19 @@ export const health = query({
       ? 0
       : tenantRows.filter((tenant) => !tenant.linkedCompanyId).length;
 
-    const dailyRows = args.companyId
-      ? await ctx.db
-          .query("dailyUsageSnapshots")
-          .withIndex("by_company_month", (q) =>
-            q.eq("companyId", args.companyId!).eq("month", args.month),
-          )
-          .collect()
-      : await ctx.db
-          .query("dailyUsageSnapshots")
-          .withIndex("by_month", (q) => q.eq("month", args.month))
-          .collect();
+    const dailyRows = billableDailyUsageRows(
+      args.companyId
+        ? await ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_company_month", (q) =>
+              q.eq("companyId", args.companyId!).eq("month", args.month),
+            )
+            .collect()
+        : await ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_month", (q) => q.eq("month", args.month))
+            .collect(),
+    );
     const visibleDailyRows = dailyRows.filter((row) =>
       visibleCompanyIds.has(row.companyId),
     );
