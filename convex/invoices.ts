@@ -1854,17 +1854,13 @@ export const recordPayment = mutation({
         message: "Payment amount must be positive",
       });
     }
-    if (amount > roundMoney(invoice.balanceDue)) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Payment cannot exceed the balance due",
-      });
-    }
-
     const now = Date.now();
     const paidAt = args.paidAt ?? now;
-    const nextAmountPaid = roundMoney(invoice.amountPaid + amount);
-    const nextBalanceDue = roundMoney(invoice.balanceDue - amount);
+    const currentBalanceDue = roundMoney(invoice.balanceDue);
+    const appliedAmount = roundMoney(Math.min(amount, currentBalanceDue));
+    const extraServiceRevenueAmount = roundMoney(amount - appliedAmount);
+    const nextAmountPaid = roundMoney(invoice.amountPaid + appliedAmount);
+    const nextBalanceDue = roundMoney(currentBalanceDue - appliedAmount);
     const nextStatus: InvoiceStatus =
       nextBalanceDue === 0 ? "paid" : "partially_paid";
     const method = trimOptional(args.method) ?? PAYMENT_METHOD_BANK_TRANSFER;
@@ -1883,6 +1879,9 @@ export const recordPayment = mutation({
     await ctx.db.insert("invoicePayments", {
       invoiceId: args.invoiceId,
       amount,
+      appliedAmount,
+      extraServiceRevenueAmount:
+        extraServiceRevenueAmount > 0 ? extraServiceRevenueAmount : undefined,
       paidAt,
       method,
       reference,
@@ -1900,6 +1899,9 @@ export const recordPayment = mutation({
 
     const details = [
       `Payment of ${formatMoney(amount)} recorded.`,
+      extraServiceRevenueAmount > 0
+        ? `Applied to invoice: ${formatMoney(appliedAmount)}. Extra Service Revenue: ${formatMoney(extraServiceRevenueAmount)}.`
+        : undefined,
       method ? `Method: ${method}.` : undefined,
       reference ? `Reference: ${reference}.` : undefined,
       `Balance due: ${formatMoney(nextBalanceDue)}.`,

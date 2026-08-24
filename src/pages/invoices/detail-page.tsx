@@ -465,10 +465,6 @@ function InvoiceDetailContent() {
       toast.error("Enter a positive payment amount");
       return;
     }
-    if (amount > invoice.balanceDue) {
-      toast.error("Payment cannot exceed the balance due");
-      return;
-    }
 
     setIsRecordingPayment(true);
     try {
@@ -918,7 +914,9 @@ function InvoiceDetailContent() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/30">
-                    <th className="p-3 text-left font-medium">Amount</th>
+                    <th className="p-3 text-left font-medium">
+                      Payment Received
+                    </th>
                     <th className="p-3 text-left font-medium">
                       Payment Date
                     </th>
@@ -932,13 +930,27 @@ function InvoiceDetailContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {payments.map((payment) => (
+                  {payments.map((payment) => {
+                    const extraServiceRevenueAmount =
+                      payment.extraServiceRevenueAmount ?? 0;
+                    return (
                     <tr
                       key={payment._id}
                       className="border-b last:border-0"
                     >
                       <td className="p-3 font-medium">
-                        {formatCurrency(payment.amount)}
+                        <div>{formatCurrency(payment.amount)}</div>
+                        {extraServiceRevenueAmount > 0 ? (
+                          <div className="mt-1 text-xs font-normal text-muted-foreground">
+                            Applied:{" "}
+                            {formatCurrency(
+                              payment.appliedAmount ?? payment.amount,
+                            )}
+                            <br />
+                            Extra Service Revenue:{" "}
+                            {formatCurrency(extraServiceRevenueAmount)}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="p-3 text-muted-foreground">
                         {formatDate(payment.paidAt)}
@@ -957,7 +969,8 @@ function InvoiceDetailContent() {
                         {formatDateTime(payment.createdAt)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1114,6 +1127,12 @@ function RecordPaymentDialog({
   const isOverBalance = Number.isFinite(numericAmount)
     ? numericAmount > balanceDue
     : false;
+  const appliedAmount = Number.isFinite(numericAmount)
+    ? Math.min(numericAmount, balanceDue)
+    : 0;
+  const extraServiceRevenueAmount = Number.isFinite(numericAmount)
+    ? Math.max(0, numericAmount - balanceDue)
+    : 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1141,9 +1160,17 @@ function RecordPaymentDialog({
               placeholder="0.00"
             />
             {isOverBalance ? (
-              <p className="text-xs text-destructive">
-                Payment cannot exceed the balance due.
-              </p>
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <div className="font-medium">
+                  This payment is above the invoice balance.
+                </div>
+                <div className="mt-1">
+                  {formatCurrency(appliedAmount)} will be applied to the invoice.
+                  {" "}
+                  {formatCurrency(extraServiceRevenueAmount)} will be recorded as
+                  Extra Service Revenue and will not become customer credit.
+                </div>
+              </div>
             ) : null}
           </div>
 
@@ -1219,7 +1246,7 @@ function RecordPaymentDialog({
             <Button
               type="submit"
               className="bg-cyan-600 text-white hover:bg-cyan-700"
-              disabled={pending || isOverBalance}
+              disabled={pending}
             >
               {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {pending ? "Recording..." : "Record Payment"}

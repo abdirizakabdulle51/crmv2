@@ -1795,7 +1795,7 @@ describe("invoices", () => {
     ).rejects.toThrow("Payments can only be recorded for payable invoices");
   });
 
-  it("rejects zero, negative, and over-balance payments", async () => {
+  it("rejects zero and negative payments", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const invoiceId = await issueDraftForA(t, s);
@@ -1812,12 +1812,6 @@ describe("invoices", () => {
         amount: -1,
       }),
     ).rejects.toThrow("Payment amount must be positive");
-    await expect(
-      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
-        invoiceId,
-        amount: 25,
-      }),
-    ).rejects.toThrow("Payment cannot exceed the balance due");
   });
 
   it("records partial payments and creates payment and event records", async () => {
@@ -1939,6 +1933,46 @@ describe("invoices", () => {
       amountPaid: 20,
       balanceDue: 0,
     });
+  });
+
+  it("records above-balance payments as extra service revenue", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+
+    await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+      invoiceId,
+      amount: 25,
+      method: "Bank Transfer",
+      reference: "SSB-EXTRA",
+    });
+
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice).toMatchObject({
+      status: "paid",
+      amountPaid: 20,
+      balanceDue: 0,
+    });
+
+    const payments = await asUser(t, s.amA).query(api.invoices.listPayments, {
+      invoiceId,
+    });
+    expect(payments).toHaveLength(1);
+    expect(payments[0]).toMatchObject({
+      amount: 25,
+      appliedAmount: 20,
+      extraServiceRevenueAmount: 5,
+      reference: "SSB-EXTRA",
+    });
+
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(events[events.length - 1].message).toContain(
+      "Applied to invoice: $20.00. Extra Service Revenue: $5.00.",
+    );
   });
 
   it("allows payments for sent, overdue, and partially paid invoices", async () => {

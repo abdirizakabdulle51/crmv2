@@ -618,7 +618,7 @@ describe("InvoiceDetailPage", () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Payment recorded");
   });
 
-  it("blocks over-balance payment submission in the dialog", async () => {
+  it("allows over-balance payment submission as extra service revenue", async () => {
     const user = userEvent.setup();
     renderDetailPage();
 
@@ -627,12 +627,22 @@ describe("InvoiceDetailPage", () => {
     await user.type(within(dialog).getByLabelText("Amount"), "1001");
 
     expect(
-      within(dialog).getByText("Payment cannot exceed the balance due."),
+      within(dialog).getByText("This payment is above the invoice balance."),
     ).toBeInTheDocument();
     expect(
+      within(dialog).getByText(/Extra Service Revenue/i),
+    ).toBeInTheDocument();
+
+    await user.click(
       within(dialog).getByRole("button", { name: "Record Payment" }),
-    ).toBeDisabled();
-    expect(mocks.recordPayment).not.toHaveBeenCalled();
+    );
+
+    expect(mocks.recordPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        invoiceId: "invoice-1",
+        amount: 1001,
+      }),
+    );
   });
 
   it("shows an error toast if recording payment fails", async () => {

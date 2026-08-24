@@ -913,6 +913,8 @@ export default defineSchema({
   invoicePayments: defineTable({
     invoiceId: v.id("invoices"),
     amount: v.number(),
+    appliedAmount: v.optional(v.number()),
+    extraServiceRevenueAmount: v.optional(v.number()),
     paidAt: v.number(),
     method: v.optional(v.string()),
     reference: v.optional(v.string()),
