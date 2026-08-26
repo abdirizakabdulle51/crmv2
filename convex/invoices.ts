@@ -910,6 +910,22 @@ export const createDraftFromQuote = mutation({
         message: "Only accepted quotes can be invoiced",
       });
     }
+    if ((quote.discountPercent ?? 0) > 0) {
+      if (quote.discountApprovalStatus === "pending") {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message:
+            "Discount approval is still pending. It must be approved before this quote can be invoiced.",
+        });
+      }
+      if (quote.discountApprovalStatus === "rejected") {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message:
+            "Discount approval was rejected. Change or remove the discount before creating an invoice.",
+        });
+      }
+    }
 
     const company = await getCompanyOrThrow(ctx, quote.companyId);
     assertCanManageCompany(user, company);
@@ -938,6 +954,20 @@ export const createDraftFromQuote = mutation({
 
     const now = Date.now();
     const grandTotal = quote.monthlyGrandTotal;
+    const invoiceLineItems: InvoiceLineItem[] = quote.lineItems.map(
+      (lineItem) => ({ ...lineItem }),
+    );
+    if ((quote.discountPercent ?? 0) > 0) {
+      invoiceLineItems.push({
+        itemName: `Quote discount (${quote.discountPercent}%)`,
+        serviceCategory: "Discount",
+        billingUnit: "quote discount",
+        quantity: 1,
+        monthlyUnitPrice: -(quote.monthlyDiscountTotal ?? 0),
+        monthlyTotal: -(quote.monthlyDiscountTotal ?? 0),
+        yearlyTotal: -(quote.yearlyDiscountTotal ?? 0),
+      });
+    }
     const invoiceId = await ctx.db.insert("invoices", {
       companyId: quote.companyId,
       sourceQuoteId: quote._id,
@@ -953,8 +983,8 @@ export const createDraftFromQuote = mutation({
       contactName: company.contactName,
       contactEmail: company.contactEmail,
       billingEmail: company.contactEmail,
-      lineItems: quote.lineItems.map((lineItem) => ({ ...lineItem })),
-      subtotal: quote.monthlyGrandTotal,
+      lineItems: invoiceLineItems,
+      subtotal: quote.monthlySubtotal ?? quote.monthlyGrandTotal,
       monthlyTotal: quote.monthlyGrandTotal,
       yearlyTotal: quote.yearlyGrandTotal,
       grandTotal,

@@ -52,6 +52,7 @@ export default function QuoteCreateDialog({
 
   const [companyId, setCompanyId] = useState("");
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [discountPercent, setDiscountPercent] = useState("");
   const [notes, setNotes] = useState("");
 
   // Add line item state
@@ -96,14 +97,22 @@ export default function QuoteCreateDialog({
     setLineItems(lineItems.filter((_, i) => i !== index));
   };
 
-  const monthlyGrandTotal = lineItems.reduce(
+  const monthlySubtotal = lineItems.reduce(
     (sum, li) => sum + li.monthlyTotal,
     0,
   );
-  const yearlyGrandTotal = lineItems.reduce(
+  const yearlySubtotal = lineItems.reduce(
     (sum, li) => sum + li.yearlyTotal,
     0,
   );
+  const discountValue = Math.min(
+    100,
+    Math.max(0, parseFloat(discountPercent) || 0),
+  );
+  const monthlyDiscountTotal = monthlySubtotal * (discountValue / 100);
+  const yearlyDiscountTotal = yearlySubtotal * (discountValue / 100);
+  const monthlyGrandTotal = monthlySubtotal - monthlyDiscountTotal;
+  const yearlyGrandTotal = yearlySubtotal - yearlyDiscountTotal;
 
   const handleCreate = async () => {
     if (!companyId) {
@@ -121,6 +130,7 @@ export default function QuoteCreateDialog({
         lineItems,
         monthlyGrandTotal,
         yearlyGrandTotal,
+        discountPercent: discountValue,
         notes: notes.trim() || undefined,
       });
       toast.success("Quote created");
@@ -134,6 +144,7 @@ export default function QuoteCreateDialog({
   const resetForm = () => {
     setCompanyId("");
     setLineItems([]);
+    setDiscountPercent("");
     setNotes("");
     setSelectedCatalogId("");
     setQuantity("");
@@ -239,65 +250,113 @@ export default function QuoteCreateDialog({
 
           {/* Line items table */}
           {lineItems.length > 0 && (
-            <div className="border rounded-lg overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="text-left p-2 font-medium">Item</th>
-                    <th className="text-left p-2 font-medium">Unit</th>
-                    <th className="text-right p-2 font-medium">Qty</th>
-                    <th className="text-right p-2 font-medium">Monthly</th>
-                    <th className="text-right p-2 font-medium">Yearly</th>
-                    <th className="p-2 w-8"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lineItems.map((li, idx) => (
-                    <tr key={idx} className="border-b last:border-0">
-                      <td className="p-2">
-                        <div className="font-medium">{li.itemName}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {li.serviceCategory}
-                        </div>
-                      </td>
-                      <td className="p-2 text-muted-foreground">
-                        {li.billingUnit}
-                      </td>
-                      <td className="p-2 text-right">{li.quantity}</td>
-                      <td className="p-2 text-right">
-                        {formatCurrency(li.monthlyTotal)}
-                      </td>
-                      <td className="p-2 text-right">
-                        {formatCurrency(li.yearlyTotal)}
-                      </td>
-                      <td className="p-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeLineItem(idx)}
-                          className="cursor-pointer"
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                        </Button>
-                      </td>
+            <div className="space-y-3">
+              <div className="flex justify-end">
+                <div className="w-full max-w-[180px] space-y-2">
+                  <Label className="text-xs" htmlFor="quote-discount-percent">
+                    Discount %
+                  </Label>
+                  <Input
+                    id="quote-discount-percent"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={discountPercent}
+                    onChange={(event) => setDiscountPercent(event.target.value)}
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="text-left p-2 font-medium">Item</th>
+                      <th className="text-left p-2 font-medium">Unit</th>
+                      <th className="text-right p-2 font-medium">Qty</th>
+                      <th className="text-right p-2 font-medium">Monthly</th>
+                      <th className="text-right p-2 font-medium">Yearly</th>
+                      <th className="p-2 w-8"></th>
                     </tr>
-                  ))}
-                </tbody>
-                <tfoot className="border-t bg-muted/20">
-                  <tr>
-                    <td colSpan={3} className="p-2 font-semibold text-right">
-                      Grand Total
-                    </td>
-                    <td className="p-2 text-right font-bold">
-                      {formatCurrency(monthlyGrandTotal)}
-                    </td>
-                    <td className="p-2 text-right font-bold">
-                      {formatCurrency(yearlyGrandTotal)}
-                    </td>
-                    <td></td>
-                  </tr>
-                </tfoot>
-              </table>
+                  </thead>
+                  <tbody>
+                    {lineItems.map((li, idx) => (
+                      <tr key={idx} className="border-b last:border-0">
+                        <td className="p-2">
+                          <div className="font-medium">{li.itemName}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {li.serviceCategory}
+                          </div>
+                        </td>
+                        <td className="p-2 text-muted-foreground">
+                          {li.billingUnit}
+                        </td>
+                        <td className="p-2 text-right">{li.quantity}</td>
+                        <td className="p-2 text-right">
+                          {formatCurrency(li.monthlyTotal)}
+                        </td>
+                        <td className="p-2 text-right">
+                          {formatCurrency(li.yearlyTotal)}
+                        </td>
+                        <td className="p-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeLineItem(idx)}
+                            className="cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t bg-muted/20">
+                    <tr>
+                      <td colSpan={3} className="p-2 font-semibold text-right">
+                        Subtotal
+                      </td>
+                      <td className="p-2 text-right font-bold">
+                        {formatCurrency(monthlySubtotal)}
+                      </td>
+                      <td className="p-2 text-right font-bold">
+                        {formatCurrency(yearlySubtotal)}
+                      </td>
+                      <td></td>
+                    </tr>
+                    {discountValue > 0 && (
+                      <tr>
+                        <td
+                          colSpan={3}
+                          className="p-2 font-semibold text-right"
+                        >
+                          Discount ({discountValue}%)
+                        </td>
+                        <td className="p-2 text-right font-bold text-emerald-700">
+                          -{formatCurrency(monthlyDiscountTotal)}
+                        </td>
+                        <td className="p-2 text-right font-bold text-emerald-700">
+                          -{formatCurrency(yearlyDiscountTotal)}
+                        </td>
+                        <td></td>
+                      </tr>
+                    )}
+                    <tr>
+                      <td colSpan={3} className="p-2 font-semibold text-right">
+                        Grand Total
+                      </td>
+                      <td className="p-2 text-right font-bold">
+                        {formatCurrency(monthlyGrandTotal)}
+                      </td>
+                      <td className="p-2 text-right font-bold">
+                        {formatCurrency(yearlyGrandTotal)}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             </div>
           )}
 

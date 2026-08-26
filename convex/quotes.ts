@@ -11,6 +11,12 @@ import { buildCloudAdvisorRecommendationKey } from "./cloudAdvisorKeys";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 
 type Ctx = QueryCtx | MutationCtx;
+type DiscountApprovalLevel =
+  | "self"
+  | "account_manager"
+  | "country_gm"
+  | "head_of_business"
+  | "ceo";
 
 async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
@@ -77,6 +83,182 @@ function optionalRegionFields(entry: {
     ...(entry.regionName ? { regionName: entry.regionName } : {}),
     ...(entry.dataCenterName ? { dataCenterName: entry.dataCenterName } : {}),
   };
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function normalizedDiscountPercent(value?: number) {
+  if (value === undefined || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(100, Math.max(0, value));
+}
+
+function calculateQuoteTotals(
+  lineItems: Array<{
+    monthlyTotal: number;
+    yearlyTotal: number;
+  }>,
+  discountPercent?: number,
+) {
+  const normalizedDiscount = normalizedDiscountPercent(discountPercent);
+  const monthlySubtotal = roundMoney(
+    lineItems.reduce((sum, item) => sum + item.monthlyTotal, 0),
+  );
+  const yearlySubtotal = roundMoney(
+    lineItems.reduce((sum, item) => sum + item.yearlyTotal, 0),
+  );
+  const monthlyDiscountTotal = roundMoney(
+    monthlySubtotal * (normalizedDiscount / 100),
+  );
+  const yearlyDiscountTotal = roundMoney(
+    yearlySubtotal * (normalizedDiscount / 100),
+  );
+
+  return {
+    discountPercent: normalizedDiscount,
+    monthlySubtotal,
+    yearlySubtotal,
+    monthlyDiscountTotal,
+    yearlyDiscountTotal,
+    monthlyGrandTotal: roundMoney(monthlySubtotal - monthlyDiscountTotal),
+    yearlyGrandTotal: roundMoney(yearlySubtotal - yearlyDiscountTotal),
+  };
+}
+
+function discountApprovalLevelForPercent(
+  discountPercent: number,
+): DiscountApprovalLevel {
+  if (discountPercent <= 5) return "self";
+  if (discountPercent <= 10) return "account_manager";
+  if (discountPercent <= 15) return "country_gm";
+  if (discountPercent <= 25) return "head_of_business";
+  return "ceo";
+}
+
+function discountLimitForUser(user: Doc<"users">) {
+  switch (user.role) {
+    case "ceo":
+      return 50;
+    case "head_of_business":
+      return 25;
+    case "country_gm":
+      return 15;
+    case "account_manager":
+      return 10;
+    default:
+      return 5;
+  }
+}
+
+function discountLevelLabel(level: DiscountApprovalLevel) {
+  switch (level) {
+    case "account_manager":
+      return "Account Manager";
+    case "country_gm":
+      return "Country Manager";
+    case "head_of_business":
+      return "HOB";
+    case "ceo":
+      return "CEO";
+    default:
+      return "Team";
+  }
+}
+
+function assertDiscountCanProceed(quote: Doc<"quotes">) {
+  const discountPercent = quote.discountPercent ?? 0;
+  if (discountPercent <= 0) return;
+  if (quote.discountApprovalStatus === "pending") {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "Discount approval is still pending. It must be approved before this quote can proceed.",
+    });
+  }
+  if (quote.discountApprovalStatus === "rejected") {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "Discount approval was rejected. Change or remove the discount before this quote can proceed.",
+    });
+  }
+}
+
+async function findDiscountApprovers(
+  ctx: MutationCtx,
+  company: Doc<"companies">,
+  level: DiscountApprovalLevel,
+) {
+  const users = await ctx.db.query("users").collect();
+  const activeUsers = users.filter((user) => !user.isDisabled);
+
+  if (level === "account_manager" && company.accountManagerId) {
+    const accountManager = await ctx.db.get(company.accountManagerId);
+    if (accountManager && !accountManager.isDisabled) {
+      return [accountManager];
+    }
+  }
+
+  const roleOrder =
+    level === "account_manager"
+      ? ["account_manager", "country_gm", "head_of_business", "ceo"]
+      : level === "country_gm"
+        ? ["country_gm", "head_of_business", "ceo"]
+        : level === "head_of_business"
+          ? ["head_of_business", "ceo"]
+          : level === "ceo"
+            ? ["ceo"]
+            : [];
+
+  for (const role of roleOrder) {
+    const matches = activeUsers.filter((user) => {
+      if (user.role !== role) return false;
+      if (role === "country_gm") {
+        return user.countryId === company.countryId;
+      }
+      if (role === "account_manager") {
+        return user._id === company.accountManagerId;
+      }
+      return true;
+    });
+    if (matches.length > 0) return matches;
+  }
+
+  return [];
+}
+
+async function notifyDiscountApprovers(
+  ctx: MutationCtx,
+  args: {
+    quote: Doc<"quotes">;
+    company: Doc<"companies">;
+    requester: Doc<"users">;
+    level: DiscountApprovalLevel;
+    discountPercent: number;
+  },
+) {
+  const approvers = await findDiscountApprovers(ctx, args.company, args.level);
+  const now = Date.now();
+  await Promise.all(
+    approvers
+      .filter((approver) => approver._id !== args.requester._id)
+      .map((approver) =>
+        ctx.db.insert("notifications", {
+          recipientId: approver._id,
+          actorId: args.requester._id,
+          type: "quote_discount_approval_requested",
+          title: "Quote discount approval requested",
+          body: `${args.discountPercent}% discount for ${args.company.name} requires ${discountLevelLabel(args.level)} approval.`,
+          entityType: "quote",
+          entityId: args.quote._id,
+          href: `/quotes/${args.quote._id}`,
+          createdAt: now,
+        }),
+      ),
+  );
 }
 
 function normalizeCatalogName(value: string) {
@@ -396,6 +578,7 @@ export const create = mutation({
     lineItems: v.array(lineItemValidator),
     monthlyGrandTotal: v.number(),
     yearlyGrandTotal: v.number(),
+    discountPercent: v.optional(v.number()),
     notes: v.optional(v.string()),
     sourceMonth: v.optional(v.string()),
   },
@@ -404,18 +587,71 @@ export const create = mutation({
     const company = await getCompanyOrThrow(ctx, args.companyId);
     assertCanManageCompany(user, company);
     const now = new Date();
-    return await ctx.db.insert("quotes", {
+    const totals = calculateQuoteTotals(args.lineItems, args.discountPercent);
+    if (totals.discountPercent > 50) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Discounts above 50% require CEO review outside CRM.",
+      });
+    }
+    const approvalLevel = discountApprovalLevelForPercent(
+      totals.discountPercent,
+    );
+    const isApprovedByRequester =
+      totals.discountPercent <= discountLimitForUser(user);
+    const quoteId = await ctx.db.insert("quotes", {
       companyId: args.companyId,
       createdBy: user._id,
       quoteNumber: await nextQuoteNumber(ctx, now),
       date: now.toISOString().slice(0, 10),
       status: "draft",
       lineItems: args.lineItems,
-      monthlyGrandTotal: args.monthlyGrandTotal,
-      yearlyGrandTotal: args.yearlyGrandTotal,
+      discountPercent: totals.discountPercent,
+      monthlySubtotal: totals.monthlySubtotal,
+      yearlySubtotal: totals.yearlySubtotal,
+      monthlyDiscountTotal: totals.monthlyDiscountTotal,
+      yearlyDiscountTotal: totals.yearlyDiscountTotal,
+      discountApprovalStatus:
+        totals.discountPercent <= 0
+          ? "not_required"
+          : isApprovedByRequester
+            ? totals.discountPercent <= 5
+              ? "not_required"
+              : "approved"
+            : "pending",
+      discountApprovalLevel: approvalLevel,
+      discountRequestedBy:
+        totals.discountPercent > 0 && !isApprovedByRequester
+          ? user._id
+          : undefined,
+      discountRequestedAt:
+        totals.discountPercent > 0 && !isApprovedByRequester
+          ? now.getTime()
+          : undefined,
+      discountApprovedBy:
+        totals.discountPercent > 5 && isApprovedByRequester
+          ? user._id
+          : undefined,
+      discountApprovedAt:
+        totals.discountPercent > 5 && isApprovedByRequester
+          ? now.getTime()
+          : undefined,
+      monthlyGrandTotal: totals.monthlyGrandTotal,
+      yearlyGrandTotal: totals.yearlyGrandTotal,
       notes: args.notes,
       sourceMonth: args.sourceMonth,
     });
+    const quote = await ctx.db.get(quoteId);
+    if (quote && quote.discountApprovalStatus === "pending") {
+      await notifyDiscountApprovers(ctx, {
+        quote,
+        company,
+        requester: user,
+        level: approvalLevel,
+        discountPercent: totals.discountPercent,
+      });
+    }
+    return quoteId;
   },
 });
 
@@ -436,7 +672,197 @@ export const updateStatus = mutation({
       throw new ConvexError({ code: "NOT_FOUND", message: "Quote not found" });
     }
     await assertCanManageQuote(ctx, user, quote);
+    if (args.status !== "draft") {
+      assertDiscountCanProceed(quote);
+    }
     await ctx.db.patch(args.id, { status: args.status });
+  },
+});
+
+/** Update a draft quote discount and recompute totals */
+export const updateDiscount = mutation({
+  args: {
+    id: v.id("quotes"),
+    discountPercent: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const quote = await ctx.db.get(args.id);
+    if (!quote) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Quote not found" });
+    }
+    await assertCanManageQuote(ctx, user, quote);
+    if (quote.status !== "draft") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only draft quotes can be discounted",
+      });
+    }
+
+    const totals = calculateQuoteTotals(quote.lineItems, args.discountPercent);
+    if (totals.discountPercent > 50) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Discounts above 50% require CEO review outside CRM.",
+      });
+    }
+    const company = await getCompanyOrThrow(ctx, quote.companyId);
+    const approvalLevel = discountApprovalLevelForPercent(
+      totals.discountPercent,
+    );
+    const isApprovedByRequester =
+      totals.discountPercent <= discountLimitForUser(user);
+    const now = Date.now();
+    const approvalStatus =
+      totals.discountPercent <= 0
+        ? "not_required"
+        : isApprovedByRequester
+          ? totals.discountPercent <= 5
+            ? "not_required"
+            : "approved"
+          : "pending";
+    await ctx.db.patch(args.id, {
+      discountPercent: totals.discountPercent,
+      monthlySubtotal: totals.monthlySubtotal,
+      yearlySubtotal: totals.yearlySubtotal,
+      monthlyDiscountTotal: totals.monthlyDiscountTotal,
+      yearlyDiscountTotal: totals.yearlyDiscountTotal,
+      discountApprovalStatus: approvalStatus,
+      discountApprovalLevel: approvalLevel,
+      discountRequestedBy:
+        totals.discountPercent > 0 && approvalStatus === "pending"
+          ? user._id
+          : undefined,
+      discountRequestedAt:
+        totals.discountPercent > 0 && approvalStatus === "pending"
+          ? now
+          : undefined,
+      discountApprovedBy:
+        totals.discountPercent > 5 && approvalStatus === "approved"
+          ? user._id
+          : undefined,
+      discountApprovedAt:
+        totals.discountPercent > 5 && approvalStatus === "approved"
+          ? now
+          : undefined,
+      discountRejectedBy: undefined,
+      discountRejectedAt: undefined,
+      discountApprovalNote: undefined,
+      monthlyGrandTotal: totals.monthlyGrandTotal,
+      yearlyGrandTotal: totals.yearlyGrandTotal,
+    });
+    const updatedQuote = await ctx.db.get(args.id);
+    if (updatedQuote && approvalStatus === "pending") {
+      await notifyDiscountApprovers(ctx, {
+        quote: updatedQuote,
+        company,
+        requester: user,
+        level: approvalLevel,
+        discountPercent: totals.discountPercent,
+      });
+    }
+    return {
+      discountPercent: totals.discountPercent,
+      discountApprovalStatus: approvalStatus,
+      discountApprovalLevel: approvalLevel,
+    };
+  },
+});
+
+export const approveDiscount = mutation({
+  args: { id: v.id("quotes") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const quote = await ctx.db.get(args.id);
+    if (!quote) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Quote not found" });
+    }
+    await assertCanManageQuote(ctx, user, quote);
+    const discountPercent = quote.discountPercent ?? 0;
+    if (quote.discountApprovalStatus !== "pending" || discountPercent <= 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "This quote does not have a pending discount approval.",
+      });
+    }
+    if (discountLimitForUser(user) < discountPercent) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Your role cannot approve this discount percentage.",
+      });
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      discountApprovalStatus: "approved",
+      discountApprovedBy: user._id,
+      discountApprovedAt: now,
+      discountRejectedBy: undefined,
+      discountRejectedAt: undefined,
+      discountApprovalNote: undefined,
+    });
+    if (quote.discountRequestedBy && quote.discountRequestedBy !== user._id) {
+      await ctx.db.insert("notifications", {
+        recipientId: quote.discountRequestedBy,
+        actorId: user._id,
+        type: "quote_discount_approved",
+        title: "Quote discount approved",
+        body: `${discountPercent}% discount was approved.`,
+        entityType: "quote",
+        entityId: quote._id,
+        href: `/quotes/${quote._id}`,
+        createdAt: now,
+      });
+    }
+  },
+});
+
+export const rejectDiscount = mutation({
+  args: {
+    id: v.id("quotes"),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const quote = await ctx.db.get(args.id);
+    if (!quote) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Quote not found" });
+    }
+    await assertCanManageQuote(ctx, user, quote);
+    const discountPercent = quote.discountPercent ?? 0;
+    if (quote.discountApprovalStatus !== "pending" || discountPercent <= 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "This quote does not have a pending discount approval.",
+      });
+    }
+    if (discountLimitForUser(user) < discountPercent) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Your role cannot reject this discount percentage.",
+      });
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      discountApprovalStatus: "rejected",
+      discountRejectedBy: user._id,
+      discountRejectedAt: now,
+      discountApprovedBy: undefined,
+      discountApprovedAt: undefined,
+      discountApprovalNote: args.note?.trim() || undefined,
+    });
+    if (quote.discountRequestedBy && quote.discountRequestedBy !== user._id) {
+      await ctx.db.insert("notifications", {
+        recipientId: quote.discountRequestedBy,
+        actorId: user._id,
+        type: "quote_discount_rejected",
+        title: "Quote discount rejected",
+        body: `${discountPercent}% discount was rejected.`,
+        entityType: "quote",
+        entityId: quote._id,
+        href: `/quotes/${quote._id}`,
+        createdAt: now,
+      });
+    }
   },
 });
 

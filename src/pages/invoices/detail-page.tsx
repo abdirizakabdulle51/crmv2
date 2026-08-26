@@ -252,19 +252,54 @@ function eventMessage(event: InvoiceEvent) {
 }
 
 function lineItemRegionLabel(item: InvoiceLineItem) {
+  if (isDiscountLineItem(item)) {
+    return "Discount";
+  }
   return item.regionName || item.dataCenterName || item.regionId || "Unassigned";
 }
 
 function hasLineItemRegion(item: InvoiceLineItem) {
-  return Boolean(item.regionName || item.dataCenterName || item.regionId);
+  return (
+    !isDiscountLineItem(item) &&
+    Boolean(item.regionName || item.dataCenterName || item.regionId)
+  );
+}
+
+function isDiscountLineItem(item: InvoiceLineItem) {
+  return (
+    item.serviceCategory.toLowerCase() === "discount" ||
+    item.billingUnit.toLowerCase() === "quote discount"
+  );
 }
 
 function buildRegionTotals(lineItems: InvoiceLineItem[]) {
   const totals = new Map<string, number>();
+  let discountTotal = 0;
+
   for (const item of lineItems) {
+    if (isDiscountLineItem(item)) {
+      discountTotal += item.monthlyTotal;
+      continue;
+    }
+
     const label = lineItemRegionLabel(item);
     totals.set(label, (totals.get(label) ?? 0) + item.monthlyTotal);
   }
+
+  const totalBasis = [...totals.values()].reduce((sum, value) => sum + value, 0);
+  if (discountTotal !== 0 && totalBasis > 0) {
+    const entries = [...totals.entries()];
+    let allocatedDiscount = 0;
+    entries.forEach(([label, basis], index) => {
+      const share =
+        index === entries.length - 1
+          ? discountTotal - allocatedDiscount
+          : Math.round((discountTotal * basis * 100) / totalBasis) / 100;
+      allocatedDiscount += share;
+      totals.set(label, (totals.get(label) ?? 0) + share);
+    });
+  }
+
   return [...totals.entries()].map(([label, total]) => ({ label, total }));
 }
 
