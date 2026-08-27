@@ -9,6 +9,14 @@ import {
 } from "./authorization";
 import { buildCloudAdvisorRecommendationKey } from "./cloudAdvisorKeys";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
+import {
+  calculateInvoiceTotals,
+  calculateLineItems,
+  multiplyMoney,
+  toCents,
+  withLineMoneyCents,
+} from "./money";
+import { usageBelongsToContract } from "./contractPricing";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -60,8 +68,6 @@ const lineItemValidator = v.object({
   billingUnit: v.string(),
   quantity: v.number(),
   monthlyUnitPrice: v.number(),
-  monthlyTotal: v.number(),
-  yearlyTotal: v.number(),
   regionId: v.optional(v.string()),
   regionName: v.optional(v.string()),
   dataCenterName: v.optional(v.string()),
@@ -194,12 +200,47 @@ export const buildQuotePreviewFromUsage = query({
     const company = await getCompanyOrThrow(ctx, args.companyId);
     assertCanManageCompany(user, company);
 
-    const entries = await ctx.db
+    const recordedEntries = await ctx.db
       .query("consumption")
       .withIndex("by_company_month", (q) =>
         q.eq("companyId", args.companyId).eq("month", args.month),
       )
       .collect();
+    const [year, monthNumber] = args.month.split("-").map(Number);
+    const monthStart = Date.UTC(year, monthNumber - 1, 1);
+    const monthEnd = Date.UTC(year, monthNumber, 1) - 1;
+    const contracts = (
+      await ctx.db
+        .query("customerContracts")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect()
+    ).filter(
+      (contract) =>
+        contract.status === "active" &&
+        contract.startDate <= monthEnd &&
+        contract.endDate >= monthStart,
+    );
+    const contractCatalogIds = new Map<string, Set<string>>();
+    for (const contract of contracts) {
+      const lines = await ctx.db
+        .query("customerContractLineItems")
+        .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+        .collect();
+      contractCatalogIds.set(
+        contract._id,
+        new Set(lines.flatMap((line) => (line.catalogItemId ? [line.catalogItemId] : []))),
+      );
+    }
+    const entries = recordedEntries.filter(
+      (entry) =>
+        !contracts.some((contract) =>
+          usageBelongsToContract(
+            entry,
+            contract,
+            contractCatalogIds.get(contract._id) ?? new Set(),
+          ),
+        ),
+    );
     const existingQuote = (
       await ctx.db
         .query("quotes")
@@ -237,7 +278,12 @@ export const buildQuotePreviewFromUsage = query({
         continue;
       }
 
-      const monthlyTotal = entry.quantity * catalogItem.monthlyPrice;
+      const [calculatedLine] = calculateLineItems([
+        {
+          quantity: entry.quantity,
+          monthlyUnitPrice: catalogItem.monthlyPrice,
+        },
+      ]);
       lineItems.push({
         catalogItemId: catalogItem._id,
         itemName: catalogItem.itemName,
@@ -245,25 +291,25 @@ export const buildQuotePreviewFromUsage = query({
         billingUnit: catalogItem.billingUnit,
         quantity: entry.quantity,
         monthlyUnitPrice: catalogItem.monthlyPrice,
-        monthlyTotal,
+        monthlyTotal: calculatedLine.monthlyTotal,
         yearlyTotal: catalogItem.yearlyPrice
-          ? entry.quantity * catalogItem.yearlyPrice
-          : monthlyTotal * 12,
+          ? calculateLineItems([
+              {
+                quantity: entry.quantity,
+                monthlyUnitPrice: catalogItem.yearlyPrice,
+              },
+            ])[0].monthlyTotal
+          : calculatedLine.yearlyTotal,
         ...optionalRegionFields(entry),
       });
     }
 
+    const totals = calculateInvoiceTotals(lineItems);
     return {
       lineItems,
       warnings,
-      monthlyGrandTotal: lineItems.reduce(
-        (sum, item) => sum + item.monthlyTotal,
-        0,
-      ),
-      yearlyGrandTotal: lineItems.reduce(
-        (sum, item) => sum + item.yearlyTotal,
-        0,
-      ),
+      monthlyGrandTotal: totals.monthlyTotal,
+      yearlyGrandTotal: totals.yearlyTotal,
       existingQuote: existingQuote
         ? {
             id: existingQuote._id,
@@ -345,7 +391,12 @@ export const buildQuotePreviewFromAdvisor = query({
     } else if (matchedCatalogItem) {
       if (isSafeQuantityOneRecommendation(recommendation, matchedCatalogItem)) {
         const quantity = 1;
-        const monthlyTotal = quantity * matchedCatalogItem.monthlyPrice;
+        const [calculated] = calculateLineItems([
+          {
+            quantity,
+            monthlyUnitPrice: matchedCatalogItem.monthlyPrice,
+          },
+        ]);
         lineItemPreview = {
           catalogItemId: matchedCatalogItem._id,
           itemName: matchedCatalogItem.itemName,
@@ -353,10 +404,14 @@ export const buildQuotePreviewFromAdvisor = query({
           billingUnit: matchedCatalogItem.billingUnit,
           quantity,
           monthlyUnitPrice: matchedCatalogItem.monthlyPrice,
-          monthlyTotal,
+          monthlyTotal: calculated.monthlyTotal,
           yearlyTotal: matchedCatalogItem.yearlyPrice
-            ? quantity * matchedCatalogItem.yearlyPrice
-            : monthlyTotal * 12,
+            ? multiplyMoney(
+                matchedCatalogItem.yearlyPrice,
+                quantity,
+                "Advisor preview yearly total",
+              )
+            : calculated.yearlyTotal,
         };
       } else {
         warnings.push(
@@ -394,8 +449,6 @@ export const create = mutation({
   args: {
     companyId: v.id("companies"),
     lineItems: v.array(lineItemValidator),
-    monthlyGrandTotal: v.number(),
-    yearlyGrandTotal: v.number(),
     notes: v.optional(v.string()),
     sourceMonth: v.optional(v.string()),
   },
@@ -404,15 +457,48 @@ export const create = mutation({
     const company = await getCompanyOrThrow(ctx, args.companyId);
     assertCanManageCompany(user, company);
     const now = new Date();
+    const lineItems = await Promise.all(
+      args.lineItems.map(async (line, index) => {
+        const catalogItem = await ctx.db.get(line.catalogItemId);
+        if (!catalogItem) {
+          throw new ConvexError({
+            code: "NOT_FOUND",
+            message: `Line item ${index + 1} catalog item not found`,
+          });
+        }
+        const [calculated] = calculateLineItems([
+          {
+            ...line,
+            itemName: catalogItem.itemName,
+            serviceCategory: catalogItem.serviceCategory,
+            billingUnit: catalogItem.billingUnit,
+            monthlyUnitPrice: catalogItem.monthlyPrice,
+          },
+        ]);
+        return {
+          ...calculated,
+          yearlyTotal: catalogItem.yearlyPrice
+            ? multiplyMoney(
+                catalogItem.yearlyPrice,
+                line.quantity,
+                `Line item ${index + 1} yearly total`,
+              )
+            : calculated.yearlyTotal,
+        };
+      }),
+    );
+    const totals = calculateInvoiceTotals(lineItems);
     return await ctx.db.insert("quotes", {
       companyId: args.companyId,
       createdBy: user._id,
       quoteNumber: await nextQuoteNumber(ctx, now),
       date: now.toISOString().slice(0, 10),
       status: "draft",
-      lineItems: args.lineItems,
-      monthlyGrandTotal: args.monthlyGrandTotal,
-      yearlyGrandTotal: args.yearlyGrandTotal,
+      lineItems: lineItems.map(withLineMoneyCents),
+      monthlyGrandTotal: totals.monthlyTotal,
+      yearlyGrandTotal: totals.yearlyTotal,
+      monthlyGrandTotalCents: toCents(totals.monthlyTotal),
+      yearlyGrandTotalCents: toCents(totals.yearlyTotal),
       notes: args.notes,
       sourceMonth: args.sourceMonth,
     });

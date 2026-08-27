@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
+import { assertSupportedCurrency, roundMoney } from "./money";
 import {
   assertCanManageCompany,
   assertNotMonitoring,
@@ -114,7 +115,7 @@ function normalizeCurrency(value: string | undefined) {
       message: "Currency is required",
     });
   }
-  return normalized;
+  return assertSupportedCurrency(normalized);
 }
 
 function normalizeFinanceSettings(args: {
@@ -137,7 +138,8 @@ function normalizeFinanceSettings(args: {
   ) {
     throw new ConvexError({
       code: "BAD_REQUEST",
-      message: "Business approval limit must be greater than country approval limit",
+      message:
+        "Business approval limit must be greater than country approval limit",
     });
   }
   return {
@@ -156,7 +158,10 @@ function assertPositiveAmount(amount: number) {
   }
 }
 
-async function getCategoryOrThrow(ctx: Ctx, categoryId: Id<"expenseCategories">) {
+async function getCategoryOrThrow(
+  ctx: Ctx,
+  categoryId: Id<"expenseCategories">,
+) {
   const category = await ctx.db.get(categoryId);
   if (!category) {
     throw new ConvexError({
@@ -286,7 +291,11 @@ async function normalizeExpenseScope(
   };
 }
 
-async function canViewExpense(ctx: Ctx, user: Doc<"users">, expense: Doc<"expenseRequests">) {
+async function canViewExpense(
+  ctx: Ctx,
+  user: Doc<"users">,
+  expense: Doc<"expenseRequests">,
+) {
   if (isCeoOrHob(user) || expense.requestedBy === user._id) {
     return true;
   }
@@ -387,7 +396,8 @@ function assertCanArchiveReceipt(
   }
   throw new ConvexError({
     code: "FORBIDDEN",
-    message: "Only the uploader, CEO, or Head of Business can remove this receipt",
+    message:
+      "Only the uploader, CEO, or Head of Business can remove this receipt",
   });
 }
 
@@ -636,7 +646,7 @@ export const createExpenseRequest = mutation({
       title: normalizeRequiredText(args.title, "Expense title"),
       description: normalizeOptionalText(args.description),
       categoryId: args.categoryId,
-      amount: args.amount,
+      amount: roundMoney(args.amount),
       currency: normalizeCurrency(args.currency),
       expenseDate: args.expenseDate,
       vendor: normalizeOptionalText(args.vendor),
@@ -689,7 +699,7 @@ export const updateDraftExpenseRequest = mutation({
       title: normalizeRequiredText(args.title, "Expense title"),
       description: normalizeOptionalText(args.description),
       categoryId: args.categoryId,
-      amount: args.amount,
+      amount: roundMoney(args.amount),
       currency: normalizeCurrency(args.currency),
       expenseDate: args.expenseDate,
       vendor: normalizeOptionalText(args.vendor),
@@ -853,7 +863,8 @@ export const cancelExpenseRequest = mutation({
     if (expense.requestedBy !== user._id && !isCeoOrHob(user)) {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only the requester, CEO, or Head of Business can cancel this expense",
+        message:
+          "Only the requester, CEO, or Head of Business can cancel this expense",
       });
     }
     const reason = normalizeRequiredText(args.reason, "Cancellation reason");

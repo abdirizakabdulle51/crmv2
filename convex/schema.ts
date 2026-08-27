@@ -741,6 +741,7 @@ export default defineSchema({
   consumption: defineTable({
     companyId: v.id("companies"),
     month: v.string(), // YYYY-MM format
+    usageDate: v.optional(v.string()),
     serviceType: v.string(),
     amount: v.number(),
     quantity: v.optional(v.number()),
@@ -819,9 +820,27 @@ export default defineSchema({
 
   invoices: defineTable({
     companyId: v.id("companies"),
+    contractId: v.optional(v.id("customerContracts")),
     sourceQuoteId: v.optional(v.id("quotes")),
     sourceMonth: v.optional(v.string()),
     sourceReference: v.optional(v.string()),
+    cycleStartMonth: v.optional(v.string()),
+    cycleEndMonth: v.optional(v.string()),
+    billingTiming: v.optional(
+      v.union(v.literal("prepaid"), v.literal("postpaid")),
+    ),
+    contractInvoiceKind: v.optional(
+      v.union(v.literal("cycle"), v.literal("overage_settlement")),
+    ),
+    revenueAllocations: v.optional(
+      v.array(v.object({ month: v.string(), amount: v.number() })),
+    ),
+    receivableAllocations: v.optional(
+      v.array(v.object({ month: v.string(), amount: v.number() })),
+    ),
+    grossBeforeCredit: v.optional(v.number()),
+    onboardingCreditId: v.optional(v.id("customerCredits")),
+    onboardingCreditApplied: v.optional(v.number()),
     invoiceProfileId: v.optional(v.id("invoiceProfiles")),
     createdBy: v.id("users"),
     invoiceNumber: v.optional(v.string()),
@@ -879,6 +898,9 @@ export default defineSchema({
         monthlyUnitPrice: v.number(),
         monthlyTotal: v.number(),
         yearlyTotal: v.number(),
+        monthlyUnitPriceCents: v.optional(v.number()),
+        monthlyTotalCents: v.optional(v.number()),
+        yearlyTotalCents: v.optional(v.number()),
         regionId: v.optional(v.string()),
         regionName: v.optional(v.string()),
         dataCenterName: v.optional(v.string()),
@@ -890,6 +912,12 @@ export default defineSchema({
     grandTotal: v.number(),
     amountPaid: v.number(),
     balanceDue: v.number(),
+    subtotalCents: v.optional(v.number()),
+    monthlyTotalCents: v.optional(v.number()),
+    yearlyTotalCents: v.optional(v.number()),
+    grandTotalCents: v.optional(v.number()),
+    amountPaidCents: v.optional(v.number()),
+    balanceDueCents: v.optional(v.number()),
     notes: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -898,11 +926,13 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_created_by", ["createdBy"])
     .index("by_source_quote", ["sourceQuoteId"])
+    .index("by_contract", ["contractId"])
     .index("by_invoice_number", ["invoiceNumber"]),
 
   invoicePayments: defineTable({
     invoiceId: v.id("invoices"),
     amount: v.number(),
+    amountCents: v.optional(v.number()),
     paidAt: v.number(),
     method: v.optional(v.string()),
     reference: v.optional(v.string()),
@@ -982,6 +1012,7 @@ export default defineSchema({
     paidBy: v.optional(v.id("users")),
     paymentMethod: v.optional(v.string()),
     paymentReference: v.optional(v.string()),
+    onboardingCreditId: v.optional(v.id("customerCredits")),
     createdAt: v.number(),
     updatedAt: v.number(),
     archivedAt: v.optional(v.number()),
@@ -1087,7 +1118,26 @@ export default defineSchema({
       v.literal("monthly"),
       v.literal("quarterly"),
       v.literal("every_3_months"),
+      v.literal("semiannual"),
       v.literal("yearly"),
+    ),
+    billingTiming: v.optional(
+      v.union(v.literal("prepaid"), v.literal("postpaid")),
+    ),
+    pricingBasis: v.optional(
+      v.union(v.literal("service_lines"), v.literal("total_contract")),
+    ),
+    contractValue: v.optional(v.number()),
+    defaultDiscountType: v.optional(
+      v.union(v.literal("percentage"), v.literal("amount")),
+    ),
+    defaultDiscountValue: v.optional(v.number()),
+    overagePricingPolicy: v.optional(
+      v.union(
+        v.literal("current_catalog"),
+        v.literal("frozen_catalog"),
+        v.literal("custom"),
+      ),
     ),
     paymentTermDays: v.optional(v.number()),
     signedDocumentUrl: v.optional(v.string()),
@@ -1179,6 +1229,59 @@ export default defineSchema({
     .index("by_catalog_item", ["catalogItemId"])
     .index("by_service_category", ["serviceCategory"]),
 
+  customerCredits: defineTable({
+    companyId: v.id("companies"),
+    originalAmount: v.number(),
+    remainingAmount: v.number(),
+    reservedAmount: v.number(),
+    currency: v.string(),
+    policy: v.union(
+      v.literal("first_invoice_only"),
+      v.literal("carry_forward"),
+    ),
+    appliesTo: v.union(
+      v.literal("all"),
+      v.literal("contract"),
+      v.literal("non_contract"),
+    ),
+    status: v.union(
+      v.literal("available"),
+      v.literal("reserved"),
+      v.literal("consumed"),
+      v.literal("expired"),
+    ),
+    expiresAt: v.optional(v.number()),
+    description: v.optional(v.string()),
+    expenseId: v.optional(v.id("expenseRequests")),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_company", ["companyId"])
+    .index("by_status", ["status"]),
+
+  customerCreditLedger: defineTable({
+    creditId: v.id("customerCredits"),
+    companyId: v.id("companies"),
+    invoiceId: v.optional(v.id("invoices")),
+    type: v.union(
+      v.literal("granted"),
+      v.literal("reserved"),
+      v.literal("released"),
+      v.literal("consumed"),
+      v.literal("restored"),
+      v.literal("expired"),
+    ),
+    amount: v.number(),
+    balanceAfter: v.number(),
+    actorId: v.optional(v.id("users")),
+    reason: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_credit", ["creditId"])
+    .index("by_company", ["companyId"])
+    .index("by_invoice", ["invoiceId"]),
+
   quotes: defineTable({
     companyId: v.id("companies"),
     createdBy: v.id("users"),
@@ -1199,6 +1302,9 @@ export default defineSchema({
         monthlyUnitPrice: v.number(),
         monthlyTotal: v.number(),
         yearlyTotal: v.number(),
+        monthlyUnitPriceCents: v.optional(v.number()),
+        monthlyTotalCents: v.optional(v.number()),
+        yearlyTotalCents: v.optional(v.number()),
         regionId: v.optional(v.string()),
         regionName: v.optional(v.string()),
         dataCenterName: v.optional(v.string()),
@@ -1206,6 +1312,8 @@ export default defineSchema({
     ),
     monthlyGrandTotal: v.number(),
     yearlyGrandTotal: v.number(),
+    monthlyGrandTotalCents: v.optional(v.number()),
+    yearlyGrandTotalCents: v.optional(v.number()),
     notes: v.optional(v.string()),
     sourceMonth: v.optional(v.string()),
   })

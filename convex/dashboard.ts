@@ -9,6 +9,8 @@ import {
 } from "./authorization";
 import { buildCollectedRevenueAchievement } from "./targetAchievement";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
+import { roundMoney, sumMoney } from "./money";
+import { allocateMoney } from "./money";
 
 type LeadStage = Doc<"leads">["stage"];
 type Task = Doc<"tasks">;
@@ -22,10 +24,6 @@ const LEAD_STAGES: LeadStage[] = [
   "won",
   "lost",
 ];
-
-function roundMoney(value: number) {
-  return Math.round(value * 100) / 100;
-}
 
 function isRevenueInvoice(invoice: Doc<"invoices">) {
   return (
@@ -202,6 +200,11 @@ function monthLabel(key: string) {
   }).format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
+function monthStartTimestamp(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return Date.UTC(year, monthNumber - 1, 1);
+}
+
 function dayLabel(key: string) {
   const [year, month, day] = key.split("-").map(Number);
   return new Intl.DateTimeFormat("en-US", {
@@ -217,6 +220,9 @@ function emptyFinancePeriod(period: string, label: string) {
     label,
     invoicesSent: 0,
     invoicesPaid: 0,
+    recognizedRevenue: 0,
+    preCollected: 0,
+    expectedCollections: 0,
     expenses: 0,
   };
 }
@@ -229,16 +235,25 @@ function addFinanceAmount(
       label: string;
       invoicesSent: number;
       invoicesPaid: number;
+      recognizedRevenue: number;
+      preCollected: number;
+      expectedCollections: number;
       expenses: number;
     }
   >,
   period: string,
   label: string,
-  field: "invoicesSent" | "invoicesPaid" | "expenses",
+  field:
+    | "invoicesSent"
+    | "invoicesPaid"
+    | "recognizedRevenue"
+    | "preCollected"
+    | "expectedCollections"
+    | "expenses",
   amount: number,
 ) {
   const row = rows.get(period) ?? emptyFinancePeriod(period, label);
-  row[field] = Math.round((row[field] + amount) * 100) / 100;
+  row[field] = sumMoney([row[field], amount]);
   rows.set(period, row);
 }
 
@@ -259,6 +274,9 @@ function rowsFromMap(
       label: string;
       invoicesSent: number;
       invoicesPaid: number;
+      recognizedRevenue: number;
+      preCollected: number;
+      expectedCollections: number;
       expenses: number;
     }
   >,
@@ -426,10 +444,20 @@ async function buildFinanceActivity(
   const addActivity = (
     timestamp: number | undefined,
     countryId: Id<"countries"> | undefined,
-    field: "invoicesSent" | "invoicesPaid" | "expenses",
+    field:
+      | "invoicesSent"
+      | "invoicesPaid"
+      | "recognizedRevenue"
+      | "preCollected"
+      | "expectedCollections"
+      | "expenses",
     amount: number,
   ) => {
-    if (timestamp === undefined || timestamp < yearStart || timestamp > yearEnd) {
+    if (
+      timestamp === undefined ||
+      timestamp < yearStart ||
+      timestamp > yearEnd
+    ) {
       return;
     }
 
@@ -472,21 +500,94 @@ async function buildFinanceActivity(
 
   const invoices = (await ctx.db.query("invoices").collect()).filter(
     (invoice) =>
-      visibleCompanyIds.has(invoice.companyId) &&
-      isRevenueInvoice(invoice),
+      visibleCompanyIds.has(invoice.companyId) && isRevenueInvoice(invoice),
   );
-  const invoicesById = new Map(invoices.map((invoice) => [invoice._id, invoice]));
+  const invoicesById = new Map(
+    invoices.map((invoice) => [invoice._id, invoice]),
+  );
+  const payments = await ctx.db.query("invoicePayments").collect();
+  const paymentsByInvoice = new Map<Id<"invoices">, typeof payments>();
+  for (const payment of payments) {
+    const rows = paymentsByInvoice.get(payment.invoiceId) ?? [];
+    rows.push(payment);
+    paymentsByInvoice.set(payment.invoiceId, rows);
+  }
   const paidByInvoiceId = new Map<Id<"invoices">, number>();
   for (const invoice of invoices) {
-    addActivity(
-      invoice.sentAt ?? invoice.issueDate ?? invoice.lockedAt ?? invoice.createdAt,
-      companyCountryIds.get(invoice.companyId),
-      "invoicesSent",
-      invoice.grandTotal,
-    );
+    const invoiceTimestamp =
+      invoice.sentAt ??
+      invoice.issueDate ??
+      invoice.lockedAt ??
+      invoice.createdAt;
+    const countryId = companyCountryIds.get(invoice.companyId);
+    if (invoice.revenueAllocations?.length) {
+      const receivableAllocations =
+        invoice.receivableAllocations ?? invoice.revenueAllocations;
+      const paidAllocations = allocateMoney(
+        Math.min(invoice.amountPaid, invoice.grandTotal),
+        receivableAllocations.map((allocation) => ({
+          month: allocation.month,
+          weight: allocation.amount,
+        })),
+      );
+      const paidByMonth = new Map(
+        paidAllocations.map((allocation) => [
+          allocation.month,
+          allocation.amount,
+        ]),
+      );
+      const preCollectedByMonth = new Map<string, number>();
+      for (const payment of paymentsByInvoice.get(invoice._id) ?? []) {
+        for (const allocated of allocateMoney(
+          payment.amount,
+          receivableAllocations.map((row) => ({
+            month: row.month,
+            weight: row.amount,
+          })),
+        )) {
+          if (payment.paidAt < monthStartTimestamp(allocated.month)) {
+            preCollectedByMonth.set(
+              allocated.month,
+              sumMoney([
+                preCollectedByMonth.get(allocated.month) ?? 0,
+                allocated.amount,
+              ]),
+            );
+          }
+        }
+      }
+      for (const allocation of invoice.revenueAllocations) {
+        const timestamp = monthStartTimestamp(allocation.month);
+        const receivable =
+          receivableAllocations.find((row) => row.month === allocation.month)
+            ?.amount ?? allocation.amount;
+        addActivity(timestamp, countryId, "invoicesSent", receivable);
+        addActivity(
+          timestamp,
+          countryId,
+          "recognizedRevenue",
+          allocation.amount,
+        );
+        const allocatedPaid = paidByMonth.get(allocation.month) ?? 0;
+        const preCollected = preCollectedByMonth.get(allocation.month) ?? 0;
+        if (invoice.billingTiming === "prepaid" && preCollected > 0) {
+          addActivity(timestamp, countryId, "preCollected", preCollected);
+        }
+        const expected = sumMoney([receivable, -allocatedPaid]);
+        if (invoice.billingTiming !== "prepaid" && expected > 0) {
+          addActivity(timestamp, countryId, "expectedCollections", expected);
+        }
+      }
+    } else {
+      addActivity(
+        invoiceTimestamp,
+        countryId,
+        "invoicesSent",
+        invoice.grandTotal,
+      );
+    }
   }
 
-  const payments = await ctx.db.query("invoicePayments").collect();
   for (const payment of payments) {
     const invoice = invoicesById.get(payment.invoiceId);
     if (!invoice) {
@@ -494,8 +595,7 @@ async function buildFinanceActivity(
     }
     paidByInvoiceId.set(
       invoice._id,
-      Math.round(((paidByInvoiceId.get(invoice._id) ?? 0) + payment.amount) * 100) /
-        100,
+      sumMoney([paidByInvoiceId.get(invoice._id) ?? 0, payment.amount]),
     );
     addActivity(
       payment.paidAt,
@@ -506,7 +606,10 @@ async function buildFinanceActivity(
   }
   for (const invoice of invoices) {
     const recordedPayments = paidByInvoiceId.get(invoice._id) ?? 0;
-    const unrecordedPaidAmount = Math.round((invoice.amountPaid - recordedPayments) * 100) / 100;
+    const unrecordedPaidAmount = sumMoney([
+      invoice.amountPaid,
+      -recordedPayments,
+    ]);
     if (unrecordedPaidAmount <= 0) {
       continue;
     }
@@ -519,15 +622,20 @@ async function buildFinanceActivity(
   }
 
   const expenses = (await ctx.db.query("expenseRequests").collect()).filter(
-    (expense) =>
-      expense.status === "paid" &&
-      expense.archivedAt === undefined,
+    (expense) => expense.status === "paid" && expense.archivedAt === undefined,
   );
   for (const expense of expenses) {
     const countryId =
       expense.countryId ??
-      (expense.companyId ? companyCountryIds.get(expense.companyId) : undefined);
-    addActivity(expense.paidAt ?? expense.expenseDate, countryId, "expenses", expense.amount);
+      (expense.companyId
+        ? companyCountryIds.get(expense.companyId)
+        : undefined);
+    addActivity(
+      expense.paidAt ?? expense.expenseDate,
+      countryId,
+      "expenses",
+      expense.amount,
+    );
   }
 
   const countryOptions = countries
@@ -572,17 +680,12 @@ async function buildExecutiveCollectionSummary(
 ) {
   const invoices = (await ctx.db.query("invoices").collect()).filter(
     (invoice) =>
-      visibleCompanyIds.has(invoice.companyId) &&
-      isRevenueInvoice(invoice),
+      visibleCompanyIds.has(invoice.companyId) && isRevenueInvoice(invoice),
   );
-  const totalInvoiced = roundMoney(
-    invoices.reduce((sum, invoice) => sum + invoice.grandTotal, 0),
-  );
-  const outstanding = roundMoney(
-    invoices.reduce(
-      (sum, invoice) =>
-        sum + Math.max(0, invoice.grandTotal - invoice.amountPaid),
-      0,
+  const totalInvoiced = sumMoney(invoices.map((invoice) => invoice.grandTotal));
+  const outstanding = sumMoney(
+    invoices.map((invoice) =>
+      Math.max(0, sumMoney([invoice.grandTotal, -invoice.amountPaid])),
     ),
   );
   const remaining = roundMoney(Math.max(0, target - collected));
@@ -591,8 +694,7 @@ async function buildExecutiveCollectionSummary(
     target: roundMoney(target),
     collected: roundMoney(collected),
     remaining,
-    achievementPercent:
-      target > 0 ? Math.round((collected / target) * 100) : 0,
+    achievementPercent: target > 0 ? Math.round((collected / target) * 100) : 0,
     outstanding,
     totalInvoiced,
   };
@@ -635,20 +737,14 @@ export const summary = query({
       (lead) => lead.stage !== "won" && lead.stage !== "lost",
     ).length;
     const wonLeads = leads.filter((lead) => lead.stage === "won");
-    const totalWonValue = wonLeads.reduce(
-      (sum, lead) => sum + lead.potentialValue,
-      0,
-    );
+    const totalWonValue = sumMoney(wonLeads.map((lead) => lead.potentialValue));
     const achievement = await buildCollectedRevenueAchievement(
       ctx,
       args.year,
       companies,
     );
     const totalAchievedValue = achievement.total;
-    const companyWideTarget = targets.reduce(
-      (sum, target) => sum + target.target,
-      0,
-    );
+    const companyWideTarget = sumMoney(targets.map((target) => target.target));
     const targetAchievementPercent =
       companyWideTarget > 0
         ? Math.round((totalAchievedValue / companyWideTarget) * 100)
@@ -666,16 +762,17 @@ export const summary = query({
         leads.filter((lead) => lead.stage === stage).length,
       ]),
     ) as Record<LeadStage, number>;
-    const pipelineValue = leads
-      .filter((lead) => lead.stage !== "won" && lead.stage !== "lost")
-      .reduce((sum, lead) => sum + lead.potentialValue, 0);
+    const pipelineValue = sumMoney(
+      leads
+        .filter((lead) => lead.stage !== "won" && lead.stage !== "lost")
+        .map((lead) => lead.potentialValue),
+    );
 
     const usageEntriesForMonth = consumption.filter(
       (entry) => entry.month === month,
     );
-    const thisMonthUsageTotal = usageEntriesForMonth.reduce(
-      (sum, entry) => sum + entry.amount,
-      0,
+    const thisMonthUsageTotal = sumMoney(
+      usageEntriesForMonth.map((entry) => entry.amount),
     );
 
     const quotesSummary = {
@@ -683,13 +780,12 @@ export const summary = query({
       draft: quotes.filter((quote) => quote.status === "draft").length,
       sent: quotes.filter((quote) => quote.status === "sent").length,
       accepted: quotes.filter((quote) => quote.status === "accepted").length,
-      monthlyValue: quotes.reduce(
-        (sum, quote) => sum + quote.monthlyGrandTotal,
-        0,
+      monthlyValue: sumMoney(quotes.map((quote) => quote.monthlyGrandTotal)),
+      acceptedMonthlyValue: sumMoney(
+        quotes
+          .filter((quote) => quote.status === "accepted")
+          .map((quote) => quote.monthlyGrandTotal),
       ),
-      acceptedMonthlyValue: quotes
-        .filter((quote) => quote.status === "accepted")
-        .reduce((sum, quote) => sum + quote.monthlyGrandTotal, 0),
     };
 
     const aiRecommendationsSummary = {
@@ -697,10 +793,10 @@ export const summary = query({
       highPriorityCount: recommendations.filter(
         (recommendation) => recommendation.priority === "high",
       ).length,
-      estimatedMonthlyValue: recommendations.reduce(
-        (sum, recommendation) =>
-          sum + (recommendation.estimatedMonthlyValue ?? 0),
-        0,
+      estimatedMonthlyValue: sumMoney(
+        recommendations.map(
+          (recommendation) => recommendation.estimatedMonthlyValue ?? 0,
+        ),
       ),
       companiesWithOpportunities: new Set(
         recommendations.map((recommendation) => recommendation.companyId),
@@ -722,10 +818,7 @@ export const summary = query({
       const amTargets = targets.filter(
         (target) => target.accountManagerId === accountManager._id,
       );
-      const totalTarget = amTargets.reduce(
-        (sum, target) => sum + target.target,
-        0,
-      );
+      const totalTarget = sumMoney(amTargets.map((target) => target.target));
       const achieved = achievement.byAccountManager[accountManager._id] ?? 0;
       return {
         name: accountManager.name?.split(" ")[0] || "Unknown",

@@ -53,6 +53,9 @@ type FinanceActivityPoint = {
   label: string;
   invoicesSent: number;
   invoicesPaid: number;
+  recognizedRevenue: number;
+  preCollected: number;
+  expectedCollections: number;
   expenses: number;
 };
 
@@ -366,7 +369,12 @@ function FinanceActivityChart({
       ? rows
       : rows.filter(
           (row) =>
-            row.invoicesSent > 0 || row.invoicesPaid > 0 || row.expenses > 0,
+            row.invoicesSent > 0 ||
+            row.invoicesPaid > 0 ||
+            row.recognizedRevenue > 0 ||
+            row.preCollected > 0 ||
+            row.expectedCollections > 0 ||
+            row.expenses > 0,
         );
 
   return (
@@ -435,6 +443,18 @@ function FinanceActivityChart({
                   radius={[4, 4, 0, 0]}
                 />
                 <Bar
+                  dataKey="preCollected"
+                  name="Pre-collected allocation"
+                  fill="oklch(0.68 0.14 145)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="expectedCollections"
+                  name="Expected collections"
+                  fill="oklch(0.72 0.14 80)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
                   dataKey="expenses"
                   name="Expenses"
                   fill="oklch(0.65 0.18 45)"
@@ -470,8 +490,10 @@ export default function DashboardPage() {
   const companyWideTarget = summary?.targets.target ?? 0;
   const companyWideAchieved = summary?.targets.achieved ?? 0;
   const companyWidePercentage = summary?.targets.achievementPercent ?? 0;
-  const pipelineStageCounts = (summary?.pipeline.stageCounts ??
-    {}) as Record<string, number>;
+  const pipelineStageCounts = (summary?.pipeline.stageCounts ?? {}) as Record<
+    string,
+    number
+  >;
   const openPipelineStages = Object.entries(pipelineStageCounts).filter(
     ([stage]) => stage !== "won" && stage !== "lost",
   );
@@ -755,19 +777,17 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-                  {Object.entries(pipelineStageCounts).map(
-                    ([stage, count]) => (
-                      <div
-                        key={stage}
-                        className="rounded-md border bg-background/50 p-3"
-                      >
-                        <p className="text-xs text-muted-foreground">
-                          {stageLabel(stage)}
-                        </p>
-                        <p className="mt-1 text-xl font-semibold">{count}</p>
-                      </div>
-                    ),
-                  )}
+                  {Object.entries(pipelineStageCounts).map(([stage, count]) => (
+                    <div
+                      key={stage}
+                      className="rounded-md border bg-background/50 p-3"
+                    >
+                      <p className="text-xs text-muted-foreground">
+                        {stageLabel(stage)}
+                      </p>
+                      <p className="mt-1 text-xl font-semibold">{count}</p>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </ClickableCard>

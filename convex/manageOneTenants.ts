@@ -3,6 +3,7 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { assertCanManageUsage, assertNotMonitoring } from "./authorization";
+import { multiplyMoney } from "./money";
 
 type UsageHintPricing = "auto" | "manual";
 
@@ -97,7 +98,7 @@ type UsageHintTenant = {
       id: string;
       name: string;
       resourceTypeName: string;
-      }[];
+    }[];
   };
   cloudBastionHosts?: {
     count: number;
@@ -289,7 +290,8 @@ function findCatalogItemForHint(
     return catalog.find(
       (item) =>
         item.serviceCategory === "VPN Gateway" &&
-        normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("VPN Gateway"),
+        normalizeCatalogMatch(item.itemName) ===
+          normalizeCatalogMatch("VPN Gateway"),
     );
   }
 
@@ -297,15 +299,18 @@ function findCatalogItemForHint(
     return catalog.find(
       (item) =>
         item.serviceCategory === "EVS" &&
-        normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("EVS - Disk Managed Fee"),
+        normalizeCatalogMatch(item.itemName) ===
+          normalizeCatalogMatch("EVS - Disk Managed Fee"),
     );
   }
 
   if (hint.serviceCategory === "CBH") {
     const matches = catalog.filter(
       (item) =>
-        normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("Cloud Bastion Host") &&
-        (item.serviceCategory === "CBH" || normalizeCatalogMatch(item.serviceCategory).includes("bastion")),
+        normalizeCatalogMatch(item.itemName) ===
+          normalizeCatalogMatch("Cloud Bastion Host") &&
+        (item.serviceCategory === "CBH" ||
+          normalizeCatalogMatch(item.serviceCategory).includes("bastion")),
     );
     return matches.length === 1 ? matches[0] : undefined;
   }
@@ -478,7 +483,9 @@ function optionalSnapshotNumber(
   key: string,
 ): number | undefined {
   const value = (snapshot as unknown as Record<string, unknown>)[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function resourcesWithHourlyOverlay(
@@ -493,8 +500,12 @@ function resourcesWithHourlyOverlay(
   const hasStructuredEvsBreakdown = (tenant.evsVolumeTypes ?? []).length > 0;
   const hasStructuredObsBreakdown = (tenant.obsBuckets ?? []).length > 0;
   const hasStructuredVpnBreakdown = (tenant.vpnGateways?.count ?? 0) > 0;
-  const hasStructuredNatBreakdown = (tenant.natGateways?.items ?? []).length > 0;
-  const wafBasicInstances = optionalSnapshotNumber(snapshot, "wafBasicInstances");
+  const hasStructuredNatBreakdown =
+    (tenant.natGateways?.items ?? []).length > 0;
+  const wafBasicInstances = optionalSnapshotNumber(
+    snapshot,
+    "wafBasicInstances",
+  );
   const wafEnterpriseInstances = optionalSnapshotNumber(
     snapshot,
     "wafEnterpriseInstances",
@@ -510,18 +521,38 @@ function resourcesWithHourlyOverlay(
       "hybrid.resource.type.cce.cluster",
       optionalSnapshotNumber(snapshot, "cceNodes"),
     ),
-    hourlyResource("bms", "instances", optionalSnapshotNumber(snapshot, "bmsInstances")),
+    hourlyResource(
+      "bms",
+      "instances",
+      optionalSnapshotNumber(snapshot, "bmsInstances"),
+    ),
     options.forBilling && hasStructuredEvsBreakdown
       ? undefined
       : hourlyResource("evs", "gigabytes", snapshot.evsGb),
-    hourlyResource("sfs", "gigabytes", optionalSnapshotNumber(snapshot, "sfsGb")),
-    hourlyResource("csbs", "backup_capacity", optionalSnapshotNumber(snapshot, "csbsGb")),
-    hourlyResource("vbs", "volume_backup_capacity", optionalSnapshotNumber(snapshot, "vbsGb")),
+    hourlyResource(
+      "sfs",
+      "gigabytes",
+      optionalSnapshotNumber(snapshot, "sfsGb"),
+    ),
+    hourlyResource(
+      "csbs",
+      "backup_capacity",
+      optionalSnapshotNumber(snapshot, "csbsGb"),
+    ),
+    hourlyResource(
+      "vbs",
+      "volume_backup_capacity",
+      optionalSnapshotNumber(snapshot, "vbsGb"),
+    ),
     options.forBilling && hasStructuredObsBreakdown
       ? undefined
       : hourlyResource("obsv3", "capacity", snapshot.obsGb),
     hourlyResource("vpc", "publicIp", snapshot.publicIps),
-    hourlyResource("vpc", "endpoint", optionalSnapshotNumber(snapshot, "vpcepEndpoints")),
+    hourlyResource(
+      "vpc",
+      "endpoint",
+      optionalSnapshotNumber(snapshot, "vpcepEndpoints"),
+    ),
     hourlyResource("vpc", "loadbalancer", snapshot.loadBalancers),
     options.forBilling && hasStructuredVpnBreakdown
       ? undefined
@@ -586,8 +617,7 @@ function aggregateHourlySnapshots(
       capturedAt: Math.max(aggregate.capturedAt, row.capturedAt),
       ecsInstances: aggregate.ecsInstances + row.ecsInstances,
       cceNodes: (aggregate.cceNodes ?? 0) + (row.cceNodes ?? 0),
-      bmsInstances:
-        (aggregate.bmsInstances ?? 0) + (row.bmsInstances ?? 0),
+      bmsInstances: (aggregate.bmsInstances ?? 0) + (row.bmsInstances ?? 0),
       ecsCores: aggregate.ecsCores + row.ecsCores,
       ecsRamGb: aggregate.ecsRamGb + row.ecsRamGb,
       evsGb: aggregate.evsGb + row.evsGb,
@@ -819,7 +849,10 @@ export function buildUsageHintsForCompany(
         continue;
       }
 
-      const catalogItem = findEcsCatalogItemForFlavor(flavor.flavorName, catalog);
+      const catalogItem = findEcsCatalogItemForFlavor(
+        flavor.flavorName,
+        catalog,
+      );
       const serviceCategory = catalogItem?.serviceCategory ?? "ECS";
 
       ecsLineItems.push({
@@ -1182,7 +1215,11 @@ export function buildBulkUsagePreview(
         catalogItemId: catalogItem._id,
         catalogItemName: catalogItem.itemName,
         quantity: lineItem.quantity,
-        amount: lineItem.quantity * catalogItem.monthlyPrice,
+        amount: multiplyMoney(
+          catalogItem.monthlyPrice,
+          lineItem.quantity,
+          `${catalogItem.itemName} usage preview`,
+        ),
         alreadyLogged: existingKeys.has(
           usagePreviewKey({
             serviceType,

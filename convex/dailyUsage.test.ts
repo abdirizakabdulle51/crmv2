@@ -241,4 +241,69 @@ describe("daily usage capture helpers", () => {
     expect(row.monthlyUnitPrice).toBe(200);
     expect(row.estimatedAmount).toBe(6.45);
   });
+
+  it("keeps pre-contract usage at catalog price when a customer converts mid-month", () => {
+    const companyId = "company1" as Id<"companies">;
+    const catalogId = "obs-fusion" as Id<"serviceCatalog">;
+    const activeContract = contract({
+      companyId,
+      startDate: Date.UTC(2026, 7, 16),
+    });
+    const rows = buildMonthlyRollupRows({
+      rows: [
+        dailySnapshot({
+          _id: "before" as Id<"dailyUsageSnapshots">,
+          companyId,
+          catalogItemId: catalogId,
+          usageDate: "2026-08-10",
+          quantity: 310,
+        }),
+        dailySnapshot({
+          _id: "after" as Id<"dailyUsageSnapshots">,
+          companyId,
+          catalogItemId: catalogId,
+          usageDate: "2026-08-20",
+          quantity: 620,
+        }),
+      ],
+      catalogById: new Map([
+        [
+          catalogId,
+          {
+            ...catalogItem(catalogId, "OBS", "Fusion bucket", "per GB/month"),
+            monthlyPrice: 0.011,
+          },
+        ],
+      ]),
+      companyNameById: new Map([[companyId, "Mizan-Geomatic"]]),
+      month: "2026-08",
+      contractPricingByCompany: new Map([
+        [
+          companyId,
+          {
+            contract: activeContract,
+            lines: [
+              contractLine({
+                contractId: activeContract._id,
+                catalogItemId: catalogId,
+              }),
+            ],
+          },
+        ],
+      ]),
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.pricingSource === "catalog")).toMatchObject({
+      itemName: "Fusion bucket (pre-contract)",
+      pricingSource: "catalog",
+      dailyQuantityTotal: 310,
+      estimatedAmount: 0.11,
+    });
+    expect(rows.find((row) => row.pricingSource === "contract")).toMatchObject({
+      itemName: "Fusion bucket",
+      pricingSource: "contract",
+      dailyQuantityTotal: 620,
+    });
+  });
 });

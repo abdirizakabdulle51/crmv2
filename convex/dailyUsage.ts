@@ -8,6 +8,19 @@ import {
   canViewCompany,
 } from "./authorization";
 import { buildUsageHintsForCompany } from "./manageOneTenants";
+import {
+  assertSupportedCurrency,
+  calculateContractCharges,
+  calculateInvoiceTotals,
+  calculateMonthProration,
+  roundMoney,
+  roundQuantity,
+  sumMoney,
+  withInvoiceMoneyCents,
+  withLineMoneyCents,
+} from "./money";
+import { findApplicableCredit, reserveCredit } from "./customerCredits";
+import { contractDiscount, contractOveragePrice } from "./contractPricing";
 
 type CatalogItem = Doc<"serviceCatalog">;
 type ManageOneTenant = Doc<"manageOneTenants">;
@@ -31,6 +44,11 @@ type RollupRow = {
   contractId?: Id<"customerContracts">;
   contractNumber?: string;
   contractLineItemId?: Id<"customerContractLineItems">;
+  contractGrossBaseAmount?: number;
+  contractDiscountAmount?: number;
+  overageQuantity?: number;
+  overageUnitPrice?: number;
+  contractGrossMonthlyPrice?: number;
 };
 
 export type DailyUsageSnapshotInput = {
@@ -60,10 +78,6 @@ const BUSINESS_TIME_ZONE = "Africa/Mogadishu";
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const HOURLY_STALE_MS = 2 * 60 * 60 * 1000;
-
-function roundMoney(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
 
 function getCurrentUserOrThrow(ctx: QueryCtx | MutationCtx) {
   return ctx.auth.getUserIdentity().then(async (identity) => {
@@ -200,40 +214,13 @@ function contractCoversMonth(
   return contract.startDate <= end && contract.endDate >= start;
 }
 
-function normalizedKey(value: string | undefined) {
-  return (value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-function discountAmount(line: ContractLineItem, gross: number) {
-  if (!line.discountType || line.discountValue === undefined) return 0;
-  if (line.discountType === "percentage") {
-    return Math.min(gross, gross * (line.discountValue / 100));
-  }
-  return Math.min(gross, line.discountValue);
-}
-
-function contractLineBaseAmount(line: ContractLineItem) {
-  const gross = line.includedQuantity * line.contractUnitPrice;
-  return Math.max(0, roundMoney(gross - discountAmount(line, gross)));
-}
-
 function contractLineMatchesUsage(
   row: Pick<RollupRow, "catalogItemId" | "itemName" | "serviceType" | "unit">,
   line: ContractLineItem,
 ) {
-  if (line.catalogItemId && row.catalogItemId === line.catalogItemId) {
-    return true;
-  }
-
-  const itemMatches =
-    normalizedKey(row.itemName) === normalizedKey(line.itemName);
-  const categoryMatches =
-    normalizedKey(row.serviceType) === normalizedKey(line.serviceCategory);
-  const unitMatches =
-    normalizedKey(row.unit) === normalizedKey(line.unit) ||
-    normalizedKey(row.unit) === normalizedKey(line.billingUnit);
-
-  return itemMatches && categoryMatches && unitMatches;
+  return Boolean(
+    line.catalogItemId && row.catalogItemId === line.catalogItemId,
+  );
 }
 
 type ContractPricingContext = Map<
@@ -253,11 +240,11 @@ function findContractLineForRollupRow(
 ) {
   const context = contractPricingByCompany?.get(row.companyId);
   if (!context) return null;
-  const line = context.lines.find((candidate) =>
+  const lineIndex = context.lines.findIndex((candidate) =>
     contractLineMatchesUsage(row, candidate),
   );
-  if (!line) return null;
-  return { contract: context.contract, line };
+  if (lineIndex < 0) return null;
+  return { contract: context.contract, line: context.lines[lineIndex], lineIndex };
 }
 
 async function loadActiveContractPricingForMonth(
@@ -286,7 +273,10 @@ async function loadActiveContractPricingForMonth(
       .query("customerContractLineItems")
       .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
       .collect();
-    context.set(companyId, { contract, lines });
+    context.set(companyId, {
+      contract,
+      lines: lines.sort((a, b) => a.createdAt - b.createdAt),
+    });
   }
 
   return context;
@@ -344,6 +334,7 @@ export function buildMonthlyRollupRows(args: {
     string,
     Omit<RollupRow, "capturedDays" | "billableQuantity" | "estimatedAmount"> & {
       capturedDays: Set<string>;
+      quantityByDate: Map<string, number>;
     }
   >();
 
@@ -367,6 +358,7 @@ export function buildMonthlyRollupRows(args: {
       ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
       dailyQuantityTotal: 0,
       capturedDays: new Set<string>(),
+      quantityByDate: new Map<string, number>(),
       monthlyUnitPrice: row.catalogItemId
         ? args.catalogById.get(row.catalogItemId)?.monthlyPrice
         : undefined,
@@ -378,43 +370,91 @@ export function buildMonthlyRollupRows(args: {
 
     existing.dailyQuantityTotal += row.quantity;
     existing.capturedDays.add(row.usageDate);
+    existing.quantityByDate.set(
+      row.usageDate,
+      (existing.quantityByDate.get(row.usageDate) ?? 0) + row.quantity,
+    );
     rollupByKey.set(groupKey, existing);
   }
 
   return [...rollupByKey.values()]
-    .map((row) => {
+    .flatMap((row) => {
       const capturedDayCount = row.capturedDays.size;
       const contractMatch = findContractLineForRollupRow(
         row,
         args.contractPricingByCompany,
       );
       const contractLine = contractMatch?.line;
-      const proratedMonthFraction = capturedDayCount / monthDayCount;
-      const usageBillableQuantity = row.dailyQuantityTotal / monthDayCount;
-      const proratedIncludedQuantity = contractLine
-        ? contractLine.includedQuantity * proratedMonthFraction
-        : 0;
-      const overageQuantity = contractLine
-        ? Math.max(0, usageBillableQuantity - proratedIncludedQuantity)
-        : 0;
-
-      const contractBaseAmount = contractLine
-        ? contractLineBaseAmount(contractLine)
+      const activeEntries = contractMatch
+        ? [...row.quantityByDate.entries()].filter(([date]) => {
+            const timestamp = Date.parse(`${date}T00:00:00.000Z`);
+            return (
+              timestamp >= contractMatch.contract.startDate &&
+              timestamp <= contractMatch.contract.endDate
+            );
+          })
+        : [...row.quantityByDate.entries()];
+      const activeUsageQuantity = contractMatch
+        ? activeEntries.reduce((sum, [, quantity]) => sum + quantity, 0)
+        : row.dailyQuantityTotal;
+      const activeCapturedDayCount = contractMatch
+        ? new Set(activeEntries.map(([date]) => date)).size
+        : capturedDayCount;
+      const capturedMonthFraction = activeCapturedDayCount / monthDayCount;
+      const proratedMonthFraction = contractMatch
+        ? Math.min(
+            capturedMonthFraction,
+            calculateMonthProration({
+              startDate: contractMatch.contract.startDate,
+              endDate: contractMatch.contract.endDate,
+              month: args.month,
+            }).fraction,
+          )
+        : capturedMonthFraction;
+      const usageBillableQuantity = activeUsageQuantity / monthDayCount;
+      const discount = contractMatch
+        ? contractDiscount(
+            contractMatch.contract,
+            contractMatch.line,
+            contractMatch.lineIndex,
+            args.contractPricingByCompany?.get(row.companyId)?.lines,
+          )
         : undefined;
-      const contractEstimatedAmount =
-        contractLine && contractBaseAmount !== undefined
-          ? roundMoney(
-              contractBaseAmount * proratedMonthFraction +
-                overageQuantity *
-                  (contractLine.overageUnitPrice ??
-                    contractLine.contractUnitPrice),
-            )
-          : undefined;
+      const currentCatalogPrice = contractLine?.catalogItemId
+        ? args.catalogById.get(contractLine.catalogItemId)?.monthlyPrice
+        : undefined;
+      const contractCharges = contractLine
+        ? calculateContractCharges({
+            includedQuantity: contractLine.includedQuantity,
+            contractUnitPrice: contractLine.contractUnitPrice,
+            discountType: discount?.type,
+            discountValue: discount?.value,
+            overageUnitPrice: contractOveragePrice(
+              contractMatch!.contract,
+              contractLine,
+              currentCatalogPrice,
+            ),
+            actualQuantity: usageBillableQuantity,
+            monthFraction: proratedMonthFraction,
+          })
+        : undefined;
+      const contractGrossBaseAmount = contractCharges?.grossBaseAmount;
+      const contractDiscountAmount = contractCharges?.discountAmount;
+      const contractEstimatedAmount = contractCharges?.total;
+      const overageQuantity = contractCharges?.overageQuantity ?? 0;
       const billableQuantity = contractLine
         ? proratedMonthFraction
         : usageBillableQuantity;
       const monthlyUnitPrice = contractLine
-        ? contractBaseAmount
+        ? calculateContractCharges({
+            includedQuantity: contractLine.includedQuantity,
+            contractUnitPrice: contractLine.contractUnitPrice,
+            discountType: contractLine.discountType,
+            discountValue: contractLine.discountValue,
+            overageUnitPrice: contractLine.overageUnitPrice,
+            actualQuantity: 0,
+            monthFraction: 1,
+          }).total
         : row.monthlyUnitPrice;
       const estimatedAmount =
         contractEstimatedAmount ??
@@ -422,7 +462,7 @@ export function buildMonthlyRollupRows(args: {
           ? undefined
           : roundMoney(billableQuantity * monthlyUnitPrice));
 
-      return {
+      const contractRow = {
         companyId: row.companyId,
         companyName: row.companyName,
         serviceType: row.serviceType,
@@ -432,8 +472,8 @@ export function buildMonthlyRollupRows(args: {
         ...(row.regionId ? { regionId: row.regionId } : {}),
         ...(row.regionName ? { regionName: row.regionName } : {}),
         ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
-        capturedDays: capturedDayCount,
-        dailyQuantityTotal: row.dailyQuantityTotal,
+        capturedDays: activeCapturedDayCount,
+        dailyQuantityTotal: activeUsageQuantity,
         billableQuantity,
         monthlyUnitPrice,
         estimatedAmount,
@@ -443,9 +483,62 @@ export function buildMonthlyRollupRows(args: {
               contractId: contractMatch.contract._id,
               contractNumber: contractMatch.contract.contractNumber,
               contractLineItemId: contractMatch.line._id,
+              contractGrossBaseAmount,
+              contractDiscountAmount,
+              contractGrossMonthlyPrice: calculateContractCharges({
+                includedQuantity: contractMatch.line.includedQuantity,
+                contractUnitPrice: contractMatch.line.contractUnitPrice,
+                actualQuantity: 0,
+                monthFraction: 1,
+              }).grossBaseAmount,
+              overageQuantity: roundQuantity(overageQuantity),
+              overageUnitPrice:
+                contractOveragePrice(
+                  contractMatch.contract,
+                  contractMatch.line,
+                  currentCatalogPrice,
+                ),
             }
           : {}),
       } satisfies RollupRow;
+      if (!contractMatch) return [contractRow];
+
+      const preContractEntries = [...row.quantityByDate.entries()].filter(
+        ([date]) => {
+          const timestamp = Date.parse(`${date}T00:00:00.000Z`);
+          return timestamp < contractMatch.contract.startDate;
+        },
+      );
+      const preContractQuantity = preContractEntries.reduce(
+        (sum, [, quantity]) => sum + quantity,
+        0,
+      );
+      if (preContractQuantity <= 0) return [contractRow];
+      const catalogPrice = row.catalogItemId
+        ? args.catalogById.get(row.catalogItemId)?.monthlyPrice
+        : undefined;
+      const preContractBillableQuantity = preContractQuantity / monthDayCount;
+      const preContractRow: RollupRow = {
+        companyId: row.companyId,
+        companyName: row.companyName,
+        serviceType: row.serviceType,
+        itemName: `${row.itemName} (pre-contract)`,
+        unit: row.unit,
+        ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
+        ...(row.regionId ? { regionId: row.regionId } : {}),
+        ...(row.regionName ? { regionName: row.regionName } : {}),
+        ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
+        capturedDays: new Set(preContractEntries.map(([date]) => date)).size,
+        dailyQuantityTotal: preContractQuantity,
+        billableQuantity: preContractBillableQuantity,
+        monthlyUnitPrice: catalogPrice,
+        estimatedAmount:
+          catalogPrice === undefined
+            ? undefined
+            : roundMoney(preContractBillableQuantity * catalogPrice),
+        pricingSource: catalogPrice === undefined ? undefined : "catalog",
+      };
+      return [preContractRow, contractRow];
     })
     .sort((a, b) => {
       const companyCompare = a.companyName.localeCompare(b.companyName);
@@ -724,26 +817,95 @@ export const createDraftInvoiceFromRollup = mutation({
       });
     }
 
-    const lineItems = rollupRows.map((row) => {
+    let lineItems = rollupRows.flatMap((row) => {
       const monthlyTotal = roundMoney(row.estimatedAmount ?? 0);
-      return {
+      const common = {
         ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
-        itemName: row.itemName,
         serviceCategory: row.serviceType,
         billingUnit: row.unit,
-        quantity: roundMoney(row.billableQuantity),
-        monthlyUnitPrice: row.monthlyUnitPrice ?? 0,
-        monthlyTotal,
-        yearlyTotal: roundMoney(monthlyTotal * 12),
         ...(row.regionId ? { regionId: row.regionId } : {}),
         ...(row.regionName ? { regionName: row.regionName } : {}),
         ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
       };
+      if (row.pricingSource !== "contract") {
+        return [
+          {
+            ...common,
+            itemName: row.itemName,
+            quantity: roundQuantity(row.billableQuantity),
+            monthlyUnitPrice: row.monthlyUnitPrice ?? 0,
+            monthlyTotal,
+            yearlyTotal: roundMoney(monthlyTotal * 12),
+          },
+        ];
+      }
+
+      const lines = [
+        {
+          ...common,
+          itemName: `${row.itemName} base`,
+          quantity:
+            (row.contractGrossMonthlyPrice ?? 0) > 0
+              ? roundQuantity(
+                  (row.contractGrossBaseAmount ?? 0) /
+                    (row.contractGrossMonthlyPrice ?? 1),
+                )
+              : 0,
+          monthlyUnitPrice: row.contractGrossMonthlyPrice ?? 0,
+          monthlyTotal: row.contractGrossBaseAmount ?? 0,
+          yearlyTotal: roundMoney((row.contractGrossBaseAmount ?? 0) * 12),
+        },
+      ];
+      if ((row.contractDiscountAmount ?? 0) > 0) {
+        lines.push({
+          ...common,
+          itemName: `${row.itemName} contract discount`,
+          quantity: 1,
+          monthlyUnitPrice: -(row.contractDiscountAmount ?? 0),
+          monthlyTotal: -(row.contractDiscountAmount ?? 0),
+          yearlyTotal: -roundMoney((row.contractDiscountAmount ?? 0) * 12),
+        });
+      }
+      if ((row.overageQuantity ?? 0) > 0) {
+        const overageTotal = roundMoney(
+          (row.overageQuantity ?? 0) * (row.overageUnitPrice ?? 0),
+        );
+        lines.push({
+          ...common,
+          itemName: `${row.itemName} overage`,
+          quantity: roundQuantity(row.overageQuantity ?? 0),
+          monthlyUnitPrice: row.overageUnitPrice ?? 0,
+          monthlyTotal: overageTotal,
+          yearlyTotal: roundMoney(overageTotal * 12),
+        });
+      }
+      return lines;
     });
-    const grandTotal = roundMoney(
-      lineItems.reduce((total, line) => total + line.monthlyTotal, 0),
+    const grossTotals = calculateInvoiceTotals(lineItems);
+    const applicableCredit = await findApplicableCredit(
+      ctx,
+      company._id,
+      rollupRows.some((row) => row.pricingSource === "contract"),
+      grossTotals.grandTotal,
     );
+    if (applicableCredit) {
+      lineItems = [
+        ...lineItems,
+        {
+          itemName: "Onboarding credit",
+          serviceCategory: "Credit",
+          billingUnit: "one-time credit",
+          quantity: 1,
+          monthlyUnitPrice: -applicableCredit.amount,
+          monthlyTotal: -applicableCredit.amount,
+          yearlyTotal: -applicableCredit.amount,
+        },
+      ];
+    }
+    const totals = calculateInvoiceTotals(lineItems);
+    const grandTotal = totals.grandTotal;
     const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
+    assertSupportedCurrency(invoiceProfile?.currency);
     const sellerSnapshot = invoiceProfile
       ? sellerSnapshotFromProfile(invoiceProfile)
       : {};
@@ -766,17 +928,25 @@ export const createDraftInvoiceFromRollup = mutation({
       contactName: company.contactName,
       contactEmail: company.contactEmail,
       billingEmail: company.contactEmail,
-      lineItems,
-      subtotal: grandTotal,
-      monthlyTotal: grandTotal,
-      yearlyTotal: roundMoney(grandTotal * 12),
-      grandTotal,
-      amountPaid: 0,
-      balanceDue: grandTotal,
+      lineItems: lineItems.map(withLineMoneyCents),
+      ...withInvoiceMoneyCents(totals),
+      grossBeforeCredit: grossTotals.grandTotal,
+      onboardingCreditId: applicableCredit?.credit._id,
+      onboardingCreditApplied: applicableCredit?.amount,
       notes: `Draft invoice from daily usage snapshots for ${args.month}. Review before issuing.`,
       createdAt: now,
       updatedAt: now,
     });
+
+    if (applicableCredit) {
+      await reserveCredit(
+        ctx,
+        applicableCredit.credit,
+        invoiceId,
+        applicableCredit.amount,
+        user._id,
+      );
+    }
 
     for (const row of rows) {
       await ctx.db.patch(row._id, { invoiceId });
@@ -878,9 +1048,8 @@ export const review = query({
         daysInMonth: monthDayCount,
         rows: rollupRows,
         totals: {
-          estimatedAmount: rollupRows.reduce(
-            (total, row) => total + (row.estimatedAmount ?? 0),
-            0,
+          estimatedAmount: sumMoney(
+            rollupRows.map((row) => row.estimatedAmount ?? 0),
           ),
           unpricedCount: rollupRows.filter(
             (row) => row.estimatedAmount === undefined,
@@ -907,7 +1076,9 @@ export const review = query({
   },
 });
 
-function latestSnapshotsByTenantRegion(rows: Doc<"manageOneHourlySnapshots">[]) {
+function latestSnapshotsByTenantRegion(
+  rows: Doc<"manageOneHourlySnapshots">[],
+) {
   const latest = new Map<string, Doc<"manageOneHourlySnapshots">>();
 
   for (const row of rows) {

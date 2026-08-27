@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   CartesianGrid,
@@ -21,6 +21,16 @@ import {
 } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import { Input } from "@/components/ui/input.tsx";
+import { Label } from "@/components/ui/label.tsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.tsx";
+import { toast } from "sonner";
 import {
   Tabs,
   TabsContent,
@@ -565,6 +575,130 @@ function DetailItem({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+function OnboardingCreditCard({
+  companyId,
+  canManage,
+}: {
+  companyId: Id<"companies">;
+  canManage: boolean;
+}) {
+  const credits = useQuery(api.customerCredits.listByCompany, { companyId });
+  const grant = useMutation(api.customerCredits.grant);
+  const [amount, setAmount] = useState("");
+  const [policy, setPolicy] = useState<"first_invoice_only" | "carry_forward">(
+    "first_invoice_only",
+  );
+  const [appliesTo, setAppliesTo] = useState<
+    "all" | "contract" | "non_contract"
+  >("all");
+  const [pending, setPending] = useState(false);
+
+  return (
+    <Card className="mt-4 max-w-3xl">
+      <CardHeader>
+        <CardTitle>Onboarding Credit</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Customer-level credit that can apply with or without a contract.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-3">
+          {(credits ?? []).map((credit) => (
+            <div key={credit._id} className="rounded-md border p-3 text-sm">
+              <div className="font-medium">
+                {credit.description ?? "Onboarding credit"}
+              </div>
+              <div className="mt-1 text-muted-foreground">
+                ${credit.remainingAmount.toFixed(2)} remaining · {credit.status}
+              </div>
+            </div>
+          ))}
+        </div>
+        {canManage && (
+          <div className="grid gap-3 sm:grid-cols-4">
+            <div className="space-y-2">
+              <Label>Credit amount</Label>
+              <Input
+                type="number"
+                min={0.01}
+                step="0.01"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Unused balance</Label>
+              <Select
+                value={policy}
+                onValueChange={(value) => setPolicy(value as typeof policy)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="first_invoice_only">
+                    First invoice only
+                  </SelectItem>
+                  <SelectItem value="carry_forward">Carry forward</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Applies to</Label>
+              <Select
+                value={appliesTo}
+                onValueChange={(value) =>
+                  setAppliesTo(value as typeof appliesTo)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All invoices</SelectItem>
+                  <SelectItem value="contract">Contract invoices</SelectItem>
+                  <SelectItem value="non_contract">
+                    Non-contract invoices
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-end">
+              <Button
+                disabled={pending || !amount || Number(amount) <= 0}
+                onClick={async () => {
+                  setPending(true);
+                  try {
+                    await grant({
+                      companyId,
+                      amount: Number(amount),
+                      policy,
+                      appliesTo,
+                      description: "Onboarding credit",
+                    });
+                    setAmount("");
+                    toast.success("Onboarding credit granted");
+                  } catch (error) {
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Could not grant credit",
+                    );
+                  } finally {
+                    setPending(false);
+                  }
+                }}
+              >
+                Grant credit
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function CompanyDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -704,18 +838,27 @@ export default function CompanyDetailPage() {
               </CardContent>
             </Card>
           ) : (
-            <Card className="max-w-3xl">
-              <CardContent className="pt-6">
-                <CompanyForm
-                  company={company}
-                  countries={countries}
-                  sectors={sectors}
-                  users={users}
-                  onFinished={goBack}
-                  showManageOneUsage={false}
-                />
-              </CardContent>
-            </Card>
+            <>
+              <Card className="max-w-3xl">
+                <CardContent className="pt-6">
+                  <CompanyForm
+                    company={company}
+                    countries={countries}
+                    sectors={sectors}
+                    users={users}
+                    onFinished={goBack}
+                    showManageOneUsage={false}
+                  />
+                </CardContent>
+              </Card>
+              <OnboardingCreditCard
+                companyId={company._id}
+                canManage={
+                  currentUser?.role === "ceo" ||
+                  currentUser?.role === "head_of_business"
+                }
+              />
+            </>
           )}
         </TabsContent>
 

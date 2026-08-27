@@ -46,6 +46,17 @@ async function seedQuoteCreateScope(ctx: ConvexTestCtx) {
   return { companyId, lineItem };
 }
 
+function quoteLineInput(
+  line: Awaited<ReturnType<typeof seedQuoteCreateScope>>["lineItem"],
+) {
+  const {
+    monthlyTotal: _monthlyTotal,
+    yearlyTotal: _yearlyTotal,
+    ...input
+  } = line;
+  return input;
+}
+
 describe("create", () => {
   it("assigns friendly quote numbers to manual, usage, and advisor-created quotes", async () => {
     const t = convexTest({ schema, modules });
@@ -54,24 +65,18 @@ describe("create", () => {
 
     const manualQuoteId = await authed.mutation(api.quotes.create, {
       companyId: seed.companyId,
-      lineItems: [seed.lineItem],
-      monthlyGrandTotal: 10,
-      yearlyGrandTotal: 120,
+      lineItems: [quoteLineInput(seed.lineItem)],
       notes: "Manual quote",
     });
     const usageQuoteId = await authed.mutation(api.quotes.create, {
       companyId: seed.companyId,
-      lineItems: [seed.lineItem],
-      monthlyGrandTotal: 10,
-      yearlyGrandTotal: 120,
+      lineItems: [quoteLineInput(seed.lineItem)],
       notes: "Generated from Usage Tracking for 2026-08",
       sourceMonth: "2026-08",
     });
     const advisorQuoteId = await authed.mutation(api.quotes.create, {
       companyId: seed.companyId,
-      lineItems: [seed.lineItem],
-      monthlyGrandTotal: 10,
-      yearlyGrandTotal: 120,
+      lineItems: [quoteLineInput(seed.lineItem)],
       notes: "Cloud Advisor recommendation",
     });
 
@@ -197,8 +202,8 @@ describe("buildQuotePreviewFromUsage", () => {
         billingUnit: "per GB",
         quantity: 100,
         monthlyUnitPrice: 0.072,
-        monthlyTotal: 7.199999999999999,
-        yearlyTotal: 86.39999999999999,
+        monthlyTotal: 7.2,
+        yearlyTotal: 86.4,
       },
     ]);
     expect(preview.warnings).toEqual([
@@ -214,7 +219,7 @@ describe("buildQuotePreviewFromUsage", () => {
       },
     ]);
     expect(preview.monthlyGrandTotal).toBe(13.2);
-    expect(preview.yearlyGrandTotal).toBe(146.39999999999998);
+    expect(preview.yearlyGrandTotal).toBe(146.4);
   });
 
   it("stores region metadata on created quote line items", async () => {
@@ -225,15 +230,13 @@ describe("buildQuotePreviewFromUsage", () => {
       .mutation(api.quotes.create, {
         companyId: seed.companyId,
         lineItems: [
-          {
+          quoteLineInput({
             ...seed.lineItem,
             regionId: "mog-hq3",
             regionName: "Mogadishu-region-hq3",
             dataCenterName: "HQ3",
-          },
+          }),
         ],
-        monthlyGrandTotal: 10,
-        yearlyGrandTotal: 120,
       });
 
     const quote = await t.run(async (ctx) => await ctx.db.get(quoteId));

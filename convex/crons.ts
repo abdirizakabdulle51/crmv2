@@ -26,4 +26,32 @@ crons.daily(
   {},
 );
 
+crons.daily(
+  "reconcile invoice calculations",
+  { hourUTC: 3, minuteUTC: 45 },
+  internal.invoices.reconcileInvoices,
+  {},
+);
+
+crons.daily(
+  "expire onboarding credits",
+  { hourUTC: 2, minuteUTC: 30 },
+  internal.customerCredits.expireCredits,
+  {},
+);
+
+crons.daily(
+  "backfill contract revenue allocations",
+  { hourUTC: 2, minuteUTC: 45 },
+  internal.invoices.backfillContractAllocations,
+  {},
+);
+
+crons.daily(
+  "create due contract invoice drafts",
+  { hourUTC: 2, minuteUTC: 50 },
+  internal.invoices.createDueContractDrafts,
+  {},
+);
+
 export default crons;

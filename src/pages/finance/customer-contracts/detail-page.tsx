@@ -427,6 +427,9 @@ export default function CustomerContractDetailPage() {
     api.customerContracts.saveSignedDocument,
   );
   const createDraftInvoice = useMutation(api.invoices.createDraftFromContract);
+  const createOverageInvoice = useMutation(
+    api.invoices.createOverageDraftFromContract,
+  );
   const signedDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const [editingLine, setEditingLine] = useState<ContractLineItem | null>(null);
   const [form, setForm] = useState<LineItemFormState>(emptyLineItemForm);
@@ -504,6 +507,12 @@ export default function CustomerContractDetailPage() {
     const paymentTermDays = contractForm.paymentTermDays.trim()
       ? Number(contractForm.paymentTermDays)
       : undefined;
+    const contractValue = contractForm.contractValue.trim()
+      ? Number(contractForm.contractValue)
+      : undefined;
+    const defaultDiscountValue = contractForm.defaultDiscountValue.trim()
+      ? Number(contractForm.defaultDiscountValue)
+      : undefined;
     if (
       paymentTermDays !== undefined &&
       (!Number.isFinite(paymentTermDays) || paymentTermDays < 0)
@@ -526,6 +535,15 @@ export default function CustomerContractDetailPage() {
           : undefined,
         currency: contractForm.currency.trim().toUpperCase(),
         billingFrequency: contractForm.billingFrequency,
+        billingTiming: contractForm.billingTiming,
+        pricingBasis: contractForm.pricingBasis,
+        contractValue,
+        defaultDiscountType:
+          contractForm.defaultDiscountType === "none"
+            ? undefined
+            : contractForm.defaultDiscountType,
+        defaultDiscountValue,
+        overagePricingPolicy: contractForm.overagePricingPolicy,
         paymentTermDays,
         signedDocumentUrl: optionalText(contractForm.signedDocumentUrl),
         notes: optionalText(contractForm.notes),
@@ -758,6 +776,27 @@ export default function CustomerContractDetailPage() {
     }
   };
 
+  const handleCreateOverageInvoice = async () => {
+    if (!parsedContractId || !activeComparisonMonth) return;
+    setInvoicePending(true);
+    try {
+      const invoiceId = await createOverageInvoice({
+        contractId: parsedContractId,
+        cycleStartMonth: activeComparisonMonth,
+      });
+      toast.success("Overage settlement draft created");
+      navigate(`/invoices/${invoiceId}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not create overage settlement",
+      );
+    } finally {
+      setInvoicePending(false);
+    }
+  };
+
   if (
     contract === undefined ||
     companies === undefined ||
@@ -850,6 +889,15 @@ export default function CustomerContractDetailPage() {
                 )}
                 Create Draft Invoice
               </Button>
+              {contract.billingTiming === "prepaid" ? (
+                <Button
+                  variant="outline"
+                  disabled={invoicePending || !canCreateInvoice}
+                  onClick={() => void handleCreateOverageInvoice()}
+                >
+                  Create Overage Settlement
+                </Button>
+              ) : null}
               {canEditOriginal ? (
                 <Button
                   variant="outline"
@@ -885,11 +933,20 @@ export default function CustomerContractDetailPage() {
         />
         <InfoCard
           label="Billing"
-          value={FREQUENCY_LABELS[contract.billingFrequency]}
+          value={`${FREQUENCY_LABELS[contract.billingFrequency]} · ${contract.billingTiming === "prepaid" ? "Prepaid" : "Postpaid"}`}
         />
         <InfoCard
-          label="Monthly contract total"
-          value={formatMoney(lineTotal, contract.currency)}
+          label={
+            contract.pricingBasis === "total_contract"
+              ? "Total contract value"
+              : "Monthly contract total"
+          }
+          value={formatMoney(
+            contract.pricingBasis === "total_contract"
+              ? contract.contractValue
+              : lineTotal,
+            contract.currency,
+          )}
         />
       </div>
 
@@ -1281,7 +1338,9 @@ export default function CustomerContractDetailPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">No discount</SelectItem>
+                        <SelectItem value="none">
+                          Use contract default
+                        </SelectItem>
                         <SelectItem value="percentage">Percentage</SelectItem>
                         <SelectItem value="amount">Amount</SelectItem>
                       </SelectContent>

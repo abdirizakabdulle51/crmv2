@@ -3,6 +3,7 @@ import { mutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
 import { assertNotMonitoring } from "./authorization";
+import { normalizeRate } from "./money";
 
 async function assertSnapshotImportAllowed(ctx: MutationCtx) {
   const identity = await ctx.auth.getUserIdentity();
@@ -168,7 +169,18 @@ export const insertServiceCatalog = mutation({
     await assertSnapshotImportAllowed(ctx);
     const ids: Record<string, string> = {};
     for (const { oldId, doc } of args.rows) {
-      ids[oldId] = await ctx.db.insert("serviceCatalog", doc);
+      ids[oldId] = await ctx.db.insert("serviceCatalog", {
+        ...doc,
+        monthlyPrice: normalizeRate(doc.monthlyPrice, "Monthly price"),
+        yearlyPrice:
+          doc.yearlyPrice === undefined
+            ? undefined
+            : normalizeRate(doc.yearlyPrice, "Yearly price"),
+        hourlyPrice:
+          doc.hourlyPrice === undefined
+            ? undefined
+            : normalizeRate(doc.hourlyPrice, "Hourly price"),
+      });
     }
     return ids;
   },

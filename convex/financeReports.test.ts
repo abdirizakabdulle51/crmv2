@@ -259,6 +259,9 @@ describe("finance reports", () => {
       {
         month: "2026-08",
         income: 300,
+        recognizedRevenue: 0,
+        preCollected: 0,
+        expectedCollections: 0,
         expenses: 125,
         net: 175,
         paymentCount: 1,
@@ -464,8 +467,9 @@ describe("finance reports", () => {
       total: 125,
       count: 2,
     });
-    expect(report.expenseStatusSummary.find((row) => row.status === "paid"))
-      .toMatchObject({ count: 3, total: 150 });
+    expect(
+      report.expenseStatusSummary.find((row) => row.status === "paid"),
+    ).toMatchObject({ count: 3, total: 150 });
     expect(
       report.expenseStatusSummary.find((row) => row.status === "submitted"),
     ).toMatchObject({ count: 1, total: 40 });

@@ -118,9 +118,14 @@ export default function QuoteCreateDialog({
     try {
       await createQuote({
         companyId: companyId as Id<"companies">,
-        lineItems,
-        monthlyGrandTotal,
-        yearlyGrandTotal,
+        lineItems: lineItems.map((line) => ({
+          catalogItemId: line.catalogItemId,
+          itemName: line.itemName,
+          serviceCategory: line.serviceCategory,
+          billingUnit: line.billingUnit,
+          quantity: line.quantity,
+          monthlyUnitPrice: line.monthlyUnitPrice,
+        })),
         notes: notes.trim() || undefined,
       });
       toast.success("Quote created");

@@ -2,6 +2,7 @@ import { ConvexError } from "convex/values";
 import { internalQuery, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
+import { sumMoney } from "./money";
 import { assertNotMonitoring, isCeoOrHob } from "./authorization";
 import { buildCloudAdvisorRecommendationKey } from "./cloudAdvisorKeys";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
@@ -95,8 +96,7 @@ export const listComputed = query({
         recommendationKey,
         status: overlay?.status ?? "open",
         ...(overlay ? { statusUpdatedAt: overlay.updatedAt } : {}),
-        ...(overlay?.status === "snoozed" &&
-        overlay.snoozedUntil !== undefined
+        ...(overlay?.status === "snoozed" && overlay.snoozedUntil !== undefined
           ? { snoozedUntil: overlay.snoozedUntil }
           : {}),
         ...(overlay?.note ? { note: overlay.note } : {}),
@@ -150,7 +150,7 @@ export const listContextForSync = internalQuery({
       existing.serviceTypes.add(entry.serviceType);
       existing.monthlyTotals.set(
         entry.month,
-        (existing.monthlyTotals.get(entry.month) ?? 0) + entry.amount,
+        sumMoney([existing.monthlyTotals.get(entry.month) ?? 0, entry.amount]),
       );
       usageByCompany.set(entry.companyId, existing);
     }

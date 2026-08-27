@@ -7,6 +7,13 @@ import {
   canViewCompany,
   isCeoOrHob,
 } from "./authorization";
+import {
+  assertSupportedCurrency,
+  calculateContractCharges,
+  calculateMonthProration,
+  sumMoney,
+} from "./money";
+import { contractDiscount, contractOveragePrice } from "./contractPricing";
 
 type Ctx = QueryCtx | MutationCtx;
 type ContractStatus = "draft" | "active" | "expired" | "terminated" | "renewed";
@@ -27,7 +34,18 @@ type ContractInput = {
   endDate: number;
   signedDate?: number;
   currency: string;
-  billingFrequency: "monthly" | "quarterly" | "every_3_months" | "yearly";
+  billingFrequency:
+    | "monthly"
+    | "quarterly"
+    | "every_3_months"
+    | "semiannual"
+    | "yearly";
+  billingTiming?: "prepaid" | "postpaid";
+  pricingBasis?: "service_lines" | "total_contract";
+  contractValue?: number;
+  defaultDiscountType?: "percentage" | "amount";
+  defaultDiscountValue?: number;
+  overagePricingPolicy?: "current_catalog" | "frozen_catalog" | "custom";
   paymentTermDays?: number;
   signedDocumentUrl?: string;
   notes?: string;
@@ -99,7 +117,26 @@ const contractFieldsValidator = {
     v.literal("monthly"),
     v.literal("quarterly"),
     v.literal("every_3_months"),
+    v.literal("semiannual"),
     v.literal("yearly"),
+  ),
+  billingTiming: v.optional(
+    v.union(v.literal("prepaid"), v.literal("postpaid")),
+  ),
+  pricingBasis: v.optional(
+    v.union(v.literal("service_lines"), v.literal("total_contract")),
+  ),
+  contractValue: v.optional(v.number()),
+  defaultDiscountType: v.optional(
+    v.union(v.literal("percentage"), v.literal("amount")),
+  ),
+  defaultDiscountValue: v.optional(v.number()),
+  overagePricingPolicy: v.optional(
+    v.union(
+      v.literal("current_catalog"),
+      v.literal("frozen_catalog"),
+      v.literal("custom"),
+    ),
   ),
   paymentTermDays: v.optional(v.number()),
   signedDocumentUrl: v.optional(v.string()),
@@ -243,6 +280,28 @@ function normalizeFields(args: ContractInput) {
       message: "Contract end date must be after the start date",
     });
   }
+  const contractValue = assertNonNegative(args.contractValue, "Contract value");
+  if (args.pricingBasis === "total_contract" && !contractValue) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "A positive contract value is required for total-value contracts",
+    });
+  }
+  const defaultDiscountValue = assertNonNegative(
+    args.defaultDiscountValue,
+    "Default discount",
+  );
+  if (
+    args.defaultDiscountType === "percentage" &&
+    defaultDiscountValue !== undefined &&
+    defaultDiscountValue > 100
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Default percentage discount must be between 0 and 100",
+    });
+  }
 
   return {
     companyId: args.companyId,
@@ -252,8 +311,16 @@ function normalizeFields(args: ContractInput) {
     startDate: args.startDate,
     endDate: args.endDate,
     signedDate: args.signedDate,
-    currency: requiredText(args.currency, "Currency").toUpperCase(),
+    currency: assertSupportedCurrency(
+      requiredText(args.currency, "Currency").toUpperCase(),
+    ),
     billingFrequency: args.billingFrequency,
+    billingTiming: args.billingTiming ?? "postpaid",
+    pricingBasis: args.pricingBasis ?? "service_lines",
+    contractValue,
+    defaultDiscountType: args.defaultDiscountType,
+    defaultDiscountValue,
+    overagePricingPolicy: args.overagePricingPolicy ?? "current_catalog",
     paymentTermDays: args.paymentTermDays,
     signedDocumentUrl: optionalText(args.signedDocumentUrl),
     notes: optionalText(args.notes),
@@ -283,6 +350,16 @@ function optionalFiniteNumber(value: number | undefined, fieldName: string) {
 }
 
 function normalizeLineItemFields(args: LineItemInput) {
+  if (
+    args.discountType === "percentage" &&
+    args.discountValue !== undefined &&
+    args.discountValue > 100
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Percentage discount must be between 0 and 100",
+    });
+  }
   return {
     contractId: args.contractId,
     catalogItemId: args.catalogItemId,
@@ -323,6 +400,79 @@ async function insertEvent(
   });
 }
 
+async function assertNoOverlappingActiveContract(
+  ctx: MutationCtx,
+  contract: Pick<
+    Doc<"customerContracts">,
+    "companyId" | "startDate" | "endDate"
+  >,
+  excludeId?: Id<"customerContracts">,
+) {
+  const contracts = await ctx.db
+    .query("customerContracts")
+    .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
+    .collect();
+  const overlap = contracts.find(
+    (candidate) =>
+      candidate._id !== excludeId &&
+      candidate.status === "active" &&
+      candidate.startDate <= contract.endDate &&
+      candidate.endDate >= contract.startDate,
+  );
+  if (overlap) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `Customer already has overlapping active contract ${overlap.contractNumber}`,
+    });
+  }
+}
+
+function assertContractValueMatchesServices(
+  contract: Doc<"customerContracts">,
+  lines: Doc<"customerContractLineItems">[],
+) {
+  if (contract.pricingBasis !== "total_contract" || !contract.contractValue) {
+    return;
+  }
+  const sorted = [...lines].sort((a, b) => a.createdAt - b.createdAt);
+  const start = new Date(contract.startDate);
+  const end = new Date(contract.endDate);
+  const months: string[] = [];
+  for (
+    let cursor = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1);
+    cursor <= Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1);
+    cursor = new Date(cursor).setUTCMonth(new Date(cursor).getUTCMonth() + 1)
+  ) {
+    months.push(new Date(cursor).toISOString().slice(0, 7));
+  }
+  const serviceValue = sumMoney(
+    months.flatMap((month) => {
+      const fraction = calculateMonthProration({
+        startDate: contract.startDate,
+        endDate: contract.endDate,
+        month,
+      }).fraction;
+      return sorted.map((line, index) => {
+        const discount = contractDiscount(contract, line, index, sorted);
+        return calculateContractCharges({
+          includedQuantity: line.includedQuantity,
+          contractUnitPrice: line.contractUnitPrice,
+          discountType: discount.type,
+          discountValue: discount.value,
+          actualQuantity: 0,
+          monthFraction: fraction,
+        }).total;
+      });
+    }),
+  );
+  if (Math.abs(serviceValue - contract.contractValue) > 0.01) {
+    throw new ConvexError({
+      code: "CONTRACT_VALUE_MISMATCH",
+      message: `Service pricing after discounts totals $${serviceValue.toFixed(2)}, but contract value is $${contract.contractValue.toFixed(2)}. Adjust service prices or discounts before activation.`,
+    });
+  }
+}
+
 function statusEventType(status: ContractStatus): EventType {
   if (status === "active") return "activated";
   if (status === "terminated") return "terminated";
@@ -343,27 +493,28 @@ function amendmentTypeLabel(type: AmendmentType) {
   return labels[type];
 }
 
-function normalizeKey(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
 function usageMatchesLine(
   usage: Doc<"consumption">,
   line: Doc<"customerContractLineItems">,
 ) {
-  if (line.catalogItemId && usage.catalogItemId === line.catalogItemId) {
-    return true;
-  }
-
-  const usageKey = normalizeKey(usage.serviceType);
-  const itemKey = normalizeKey(line.itemName);
-  const categoryKey = normalizeKey(line.serviceCategory);
-  return (
-    usageKey === itemKey ||
-    usageKey.includes(itemKey) ||
-    itemKey.includes(usageKey) ||
-    (categoryKey.length > 0 && usageKey.includes(categoryKey))
+  return Boolean(
+    line.catalogItemId && usage.catalogItemId === line.catalogItemId,
   );
+}
+
+async function assertUniqueContractNumber(
+  ctx: MutationCtx,
+  companyId: Id<"companies">,
+  contractNumber: string,
+  excludeId?: Id<"customerContracts">,
+) {
+  const contracts = await ctx.db
+    .query("customerContracts")
+    .withIndex("by_contract_number", (q) => q.eq("contractNumber", contractNumber))
+    .collect();
+  if (contracts.some((row) => row.companyId === companyId && row._id !== excludeId)) {
+    throw new ConvexError({ code: "BAD_REQUEST", message: "Contract number already exists for this customer" });
+  }
 }
 
 function monthInputValue(timestamp = Date.now()) {
@@ -403,6 +554,7 @@ function addMonths(month: string, count: number) {
 function frequencyMonths(frequency: ContractInput["billingFrequency"]) {
   if (frequency === "quarterly" || frequency === "every_3_months") return 3;
   if (frequency === "yearly") return 12;
+  if (frequency === "semiannual") return 6;
   return 1;
 }
 
@@ -419,40 +571,42 @@ function contractCoversMonth(
   return contract.startDate <= end && contract.endDate >= start;
 }
 
-function discountAmount(line: Doc<"customerContractLineItems">, gross: number) {
-  if (!line.discountType || line.discountValue === undefined) return 0;
-  if (line.discountType === "percentage") {
-    return Math.min(gross, gross * (line.discountValue / 100));
-  }
-  return Math.min(gross, line.discountValue);
-}
-
-function contractLineBaseAmount(line: Doc<"customerContractLineItems">) {
-  const gross = line.includedQuantity * line.contractUnitPrice;
-  return Math.max(0, gross - discountAmount(line, gross));
-}
-
 function comparisonRow(
   line: Doc<"customerContractLineItems">,
   usageEntries: Doc<"consumption">[],
+  contract: Doc<"customerContracts">,
+  lineIndex: number,
+  allLines: Doc<"customerContractLineItems">[],
+  monthFraction: number,
+  currentCatalogPrice?: number,
 ): UsageComparisonRow {
-  const matchedUsage = usageEntries.filter((usage) =>
-    usageMatchesLine(usage, line),
-  );
+  const matchedUsage = usageEntries.filter((usage) => {
+    if (!usageMatchesLine(usage, line)) return false;
+    if (!usage.usageDate) return true;
+    const timestamp = Date.parse(`${usage.usageDate}T12:00:00Z`);
+    return timestamp >= contract.startDate && timestamp <= contract.endDate;
+  });
   const actualQuantity = matchedUsage.reduce((total, usage) => {
     if (usage.quantity !== undefined) return total + usage.quantity;
     const price = line.catalogUnitPrice ?? line.contractUnitPrice;
     if (price > 0) return total + usage.amount / price;
     return total;
   }, 0);
-  const usageAmount = matchedUsage.reduce(
-    (total, usage) => total + usage.amount,
-    0,
-  );
-  const overageQuantity = Math.max(0, actualQuantity - line.includedQuantity);
-  const baseAmount = contractLineBaseAmount(line);
-  const overageAmount =
-    overageQuantity * (line.overageUnitPrice ?? line.contractUnitPrice);
+  const usageAmount = sumMoney(matchedUsage.map((usage) => usage.amount));
+  const discount = contractDiscount(contract, line, lineIndex, allLines);
+  const charges = calculateContractCharges({
+    includedQuantity: line.includedQuantity,
+    contractUnitPrice: line.contractUnitPrice,
+    discountType: discount.type,
+    discountValue: discount.value,
+    overageUnitPrice: contractOveragePrice(contract, line, currentCatalogPrice),
+    actualQuantity,
+    monthFraction,
+  });
+  const baseAmount = sumMoney([
+    charges.grossBaseAmount,
+    -charges.discountAmount,
+  ]);
 
   return {
     lineItemId: line._id,
@@ -461,12 +615,12 @@ function comparisonRow(
     includedQuantity: line.includedQuantity,
     unit: line.unit,
     contractUnitPrice: line.contractUnitPrice,
-    overageUnitPrice: line.overageUnitPrice,
+    overageUnitPrice: charges.overageUnitPrice,
     actualQuantity,
-    overageQuantity,
+    overageQuantity: charges.overageQuantity,
     baseAmount,
-    overageAmount,
-    projectedAmount: baseAmount + overageAmount,
+    overageAmount: charges.overageAmount,
+    projectedAmount: charges.total,
     usageAmount,
     matchedEntries: matchedUsage.length,
   };
@@ -622,21 +776,39 @@ export const usageComparison = query({
         )
         .collect(),
     ]);
-    const rows = lines
+    const rows = [];
+    const monthFraction = calculateMonthProration({
+      startDate: contract.startDate,
+      endDate: contract.endDate,
+      month: args.month,
+    }).fraction;
+    for (const [lineIndex, line] of lines
       .sort((a, b) => a.createdAt - b.createdAt)
-      .map((line) => comparisonRow(line, usageEntries));
+      .entries()) {
+      const catalogItem = line.catalogItemId
+        ? await ctx.db.get(line.catalogItemId)
+        : null;
+      rows.push(
+        comparisonRow(
+          line,
+          usageEntries,
+          contract,
+          lineIndex,
+          lines,
+          monthFraction,
+          catalogItem?.monthlyPrice,
+        ),
+      );
+    }
 
     return {
       month: args.month,
       rows,
       totals: {
-        contractMinimum: rows.reduce((total, row) => total + row.baseAmount, 0),
-        overage: rows.reduce((total, row) => total + row.overageAmount, 0),
-        projected: rows.reduce((total, row) => total + row.projectedAmount, 0),
-        usageAmount: usageEntries.reduce(
-          (total, usage) => total + usage.amount,
-          0,
-        ),
+        contractMinimum: sumMoney(rows.map((row) => row.baseAmount)),
+        overage: sumMoney(rows.map((row) => row.overageAmount)),
+        projected: sumMoney(rows.map((row) => row.projectedAmount)),
+        usageAmount: sumMoney(usageEntries.map((usage) => usage.amount)),
         matchedEntries: rows.reduce(
           (total, row) => total + row.matchedEntries,
           0,
@@ -668,6 +840,7 @@ export const invoiceSchedule = query({
       .filter(
         (invoice) =>
           invoice.sourceReference === contract.contractNumber &&
+          (invoice.contractInvoiceKind ?? "cycle") === "cycle" &&
           invoiceIsOpen(invoice.status),
       )
       .sort((a, b) => (b.sourceMonth ?? "").localeCompare(a.sourceMonth ?? ""));
@@ -683,11 +856,16 @@ export const invoiceSchedule = query({
             frequencyMonths(contract.billingFrequency),
           )
         : startMonth;
-    const nextInvoiceDate = monthEndTimestamp(nextSourceMonth);
+    const nextInvoiceDate =
+      (contract.billingTiming ?? "postpaid") === "prepaid"
+        ? monthStartTimestamp(nextSourceMonth)
+        : monthEndTimestamp(nextSourceMonth);
     const nextDueDate =
-      contract.paymentTermDays === undefined
-        ? undefined
-        : nextInvoiceDate + contract.paymentTermDays * MS_PER_DAY;
+      (contract.billingTiming ?? "postpaid") === "prepaid"
+        ? nextInvoiceDate
+        : contract.paymentTermDays === undefined
+          ? undefined
+          : nextInvoiceDate + contract.paymentTermDays * MS_PER_DAY;
 
     return {
       billingFrequency: contract.billingFrequency,
@@ -795,10 +973,17 @@ export const create = mutation({
     assertCanManageContracts(user);
     await getVisibleCompany(ctx, user, args.companyId);
     const fields = normalizeFields(args);
+    if (fields.status !== "draft") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "New contracts must be saved as drafts and activated after services are added",
+      });
+    }
+    await assertUniqueContractNumber(ctx, fields.companyId, fields.contractNumber);
     const now = Date.now();
     const contractId = await ctx.db.insert("customerContracts", {
       ...fields,
-      activatedAt: fields.status === "active" ? now : undefined,
+      activatedAt: undefined,
       createdBy: user._id,
       createdAt: now,
       updatedAt: now,
@@ -807,7 +992,7 @@ export const create = mutation({
       ctx,
       contractId,
       user._id,
-      fields.status === "active" ? "activated" : "created",
+      "created",
       `Customer contract ${fields.contractNumber} created`,
     );
     return contractId;
@@ -832,14 +1017,22 @@ export const update = mutation({
     assertDraftContract(existing);
     await getVisibleCompany(ctx, user, args.companyId);
     const fields = normalizeFields(args);
-    const activatedAt =
-      existing.status !== "active" && fields.status === "active"
-        ? Date.now()
-        : existing.activatedAt;
+    if (fields.status !== "draft") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Use the Activate action after saving the draft contract",
+      });
+    }
+    await assertUniqueContractNumber(
+      ctx,
+      fields.companyId,
+      fields.contractNumber,
+      args.contractId,
+    );
 
     await ctx.db.patch(args.contractId, {
       ...fields,
-      activatedAt,
+      activatedAt: existing.activatedAt,
       updatedAt: Date.now(),
     });
     await insertEvent(
@@ -868,6 +1061,12 @@ export const activate = mutation({
     }
     assertCanActivateContract(contract);
     await getVisibleCompany(ctx, user, contract.companyId);
+    await assertUniqueContractNumber(
+      ctx,
+      contract.companyId,
+      contract.contractNumber,
+      contract._id,
+    );
     const lineItems = await ctx.db
       .query("customerContractLineItems")
       .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
@@ -878,6 +1077,10 @@ export const activate = mutation({
         message: "Add at least one contract service before activating",
       });
     }
+
+    assertContractValueMatchesServices(contract, lineItems);
+
+    await assertNoOverlappingActiveContract(ctx, contract, contract._id);
 
     const now = Date.now();
     await ctx.db.patch(args.contractId, {

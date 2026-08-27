@@ -3,6 +3,23 @@ import { mutation, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
 import { assertNotMonitoring } from "./authorization";
+import { normalizeRate } from "./money";
+
+function normalizedPrices(args: {
+  monthlyPrice: number;
+  yearlyPrice?: number;
+  hourlyPrice?: number;
+}) {
+  return {
+    monthlyPrice: normalizeRate(args.monthlyPrice, "Monthly price"),
+    ...(args.yearlyPrice === undefined
+      ? {}
+      : { yearlyPrice: normalizeRate(args.yearlyPrice, "Yearly price") }),
+    ...(args.hourlyPrice === undefined
+      ? {}
+      : { hourlyPrice: normalizeRate(args.hourlyPrice, "Hourly price") }),
+  };
+}
 
 async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
@@ -56,9 +73,7 @@ export const create = mutation({
       itemName: args.itemName,
       specs: args.specs,
       billingUnit: args.billingUnit,
-      monthlyPrice: args.monthlyPrice,
-      yearlyPrice: args.yearlyPrice,
-      hourlyPrice: args.hourlyPrice,
+      ...normalizedPrices(args),
     });
   },
 });
@@ -79,8 +94,19 @@ export const update = mutation({
     if (user.role !== "ceo" && user.role !== "head_of_business") {
       throw new ConvexError({ code: "FORBIDDEN", message: "Admin only" });
     }
-    const { id, ...fields } = args;
-    await ctx.db.patch(id, fields);
+    const { id, monthlyPrice, yearlyPrice, hourlyPrice, ...fields } = args;
+    await ctx.db.patch(id, {
+      ...fields,
+      monthlyPrice: normalizeRate(monthlyPrice, "Monthly price"),
+      yearlyPrice:
+        yearlyPrice === undefined
+          ? undefined
+          : normalizeRate(yearlyPrice, "Yearly price"),
+      hourlyPrice:
+        hourlyPrice === undefined
+          ? undefined
+          : normalizeRate(hourlyPrice, "Hourly price"),
+    });
   },
 });
 
@@ -115,7 +141,10 @@ export const bulkCreate = mutation({
       throw new ConvexError({ code: "FORBIDDEN", message: "Admin only" });
     }
     for (const item of args.items) {
-      await ctx.db.insert("serviceCatalog", item);
+      await ctx.db.insert("serviceCatalog", {
+        ...item,
+        ...normalizedPrices(item),
+      });
     }
     return { inserted: args.items.length };
   },

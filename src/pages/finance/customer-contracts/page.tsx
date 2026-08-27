@@ -74,7 +74,11 @@ function currentMonthInputValue() {
 
 function startOfDay(timestamp: number) {
   const date = new Date(timestamp);
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  ).getTime();
 }
 
 function daysUntil(timestamp: number) {
@@ -126,6 +130,12 @@ function buildPayload(form: ContractFormState) {
   const paymentTermDays = form.paymentTermDays.trim()
     ? Number(form.paymentTermDays)
     : undefined;
+  const contractValue = form.contractValue.trim()
+    ? Number(form.contractValue)
+    : undefined;
+  const defaultDiscountValue = form.defaultDiscountValue.trim()
+    ? Number(form.defaultDiscountValue)
+    : undefined;
   if (
     paymentTermDays !== undefined &&
     (!Number.isFinite(paymentTermDays) || paymentTermDays < 0)
@@ -146,6 +156,15 @@ function buildPayload(form: ContractFormState) {
       : undefined,
     currency: form.currency.trim().toUpperCase(),
     billingFrequency: form.billingFrequency,
+    billingTiming: form.billingTiming,
+    pricingBasis: form.pricingBasis,
+    contractValue,
+    defaultDiscountType:
+      form.defaultDiscountType === "none"
+        ? undefined
+        : form.defaultDiscountType,
+    defaultDiscountValue,
+    overagePricingPolicy: form.overagePricingPolicy,
     paymentTermDays,
     signedDocumentUrl: optionalText(form.signedDocumentUrl),
     notes: optionalText(form.notes),
@@ -185,8 +204,9 @@ export default function CustomerContractsPage() {
       total: rows.length,
       active: rows.filter((contract) => contract.status === "active").length,
       draft: rows.filter((contract) => contract.status === "draft").length,
-      expired: rows.filter((contract) => getRenewalState(contract) === "expired")
-        .length,
+      expired: rows.filter(
+        (contract) => getRenewalState(contract) === "expired",
+      ).length,
       endingSoon: rows.filter((contract) => {
         const daysUntilEnd =
           (contract.endDate - Date.now()) / (1000 * 60 * 60 * 24);
@@ -388,7 +408,9 @@ export default function CustomerContractsPage() {
                           type="button"
                           className="text-left font-medium hover:text-primary"
                           onClick={() =>
-                            navigate(`/finance/customer-contracts/${contract._id}`)
+                            navigate(
+                              `/finance/customer-contracts/${contract._id}`,
+                            )
                           }
                         >
                           {contract.contractNumber}
@@ -480,7 +502,10 @@ export default function CustomerContractsPage() {
                   </thead>
                   <tbody>
                     {batchPreview.map((row) => (
-                      <tr key={row.contractId} className="border-b last:border-0">
+                      <tr
+                        key={row.contractId}
+                        className="border-b last:border-0"
+                      >
                         <td className="px-3 py-2">
                           <div className="font-medium">
                             {row.contractNumber}
@@ -576,7 +601,9 @@ export default function CustomerContractsPage() {
                           size="sm"
                           variant="outline"
                           onClick={() =>
-                            navigate(`/finance/customer-contracts/${contract._id}`)
+                            navigate(
+                              `/finance/customer-contracts/${contract._id}`,
+                            )
                           }
                         >
                           Services
@@ -691,6 +718,7 @@ function BatchStatusBadge({
     | "already_invoiced"
     | "no_services"
     | "not_in_period"
+    | "not_due"
     | "inactive";
 }) {
   if (status === "ready") {

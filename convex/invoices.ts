@@ -16,6 +16,30 @@ import {
   canViewCompany,
   isCeoOrHob,
 } from "./authorization";
+import {
+  assertSupportedCurrency,
+  allocateMoney,
+  calculateContractCharges,
+  calculateInvoiceTotals,
+  calculateLineItems,
+  calculateMonthProration,
+  calculateBalance,
+  multiplySignedMoney,
+  roundMoney,
+  roundQuantity,
+  sumMoney,
+  toCents,
+  withInvoiceMoneyCents,
+  withLineMoneyCents,
+} from "./money";
+import {
+  consumeInvoiceCredit,
+  findApplicableCredit,
+  releaseInvoiceCredit,
+  reserveCredit,
+  restoreInvoiceCredit,
+} from "./customerCredits";
+import { contractDiscount, contractOveragePrice } from "./contractPricing";
 
 type Ctx = QueryCtx | MutationCtx;
 type InvoiceStatus = Doc<"invoices">["status"];
@@ -42,11 +66,56 @@ type CustomerReminderCandidateResult = {
   reminders: CustomerReminderCandidate[];
   skipped: number;
 };
+type InvoiceReconciliationIssue = {
+  field: string;
+  expected: number | string;
+  actual: number | string | undefined;
+};
 type CustomerReminderRunResult = {
   sent: number;
   skipped: number;
   failed: number;
 };
+
+async function invoiceLinesWithOnboardingCredit(
+  ctx: MutationCtx,
+  args: {
+    companyId: Id<"companies">;
+    isContract: boolean;
+    lineItems: InvoiceLineItem[];
+  },
+) {
+  const originalTotals = calculateInvoiceTotals(args.lineItems);
+  const applicable = await findApplicableCredit(
+    ctx,
+    args.companyId,
+    args.isContract,
+    originalTotals.grandTotal,
+  );
+  if (!applicable) {
+    return {
+      lineItems: args.lineItems,
+      totals: originalTotals,
+      grossBeforeCredit: originalTotals.grandTotal,
+    };
+  }
+  const creditLine: InvoiceLineItem = {
+    itemName: "Onboarding credit",
+    serviceCategory: "Credit",
+    billingUnit: "one-time credit",
+    quantity: 1,
+    monthlyUnitPrice: -applicable.amount,
+    monthlyTotal: -applicable.amount,
+    yearlyTotal: -applicable.amount,
+  };
+  const lineItems = [...args.lineItems, creditLine];
+  return {
+    lineItems,
+    totals: calculateInvoiceTotals(lineItems),
+    grossBeforeCredit: originalTotals.grandTotal,
+    credit: applicable,
+  };
+}
 
 const DEFAULT_PAYMENT_TERM_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -107,8 +176,6 @@ const invoiceLineItemValidator = v.object({
   billingUnit: v.string(),
   quantity: v.number(),
   monthlyUnitPrice: v.number(),
-  monthlyTotal: v.number(),
-  yearlyTotal: v.number(),
   regionId: v.optional(v.string()),
   regionName: v.optional(v.string()),
   dataCenterName: v.optional(v.string()),
@@ -340,10 +407,6 @@ function assertPayable(invoice: Doc<"invoices">) {
   }
 }
 
-function roundMoney(value: number) {
-  return Math.round(value * 100) / 100;
-}
-
 function escapeHtml(value: string | number | undefined) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -358,6 +421,110 @@ function formatMoney(value: number) {
     style: "currency",
     currency: "USD",
   }).format(value);
+}
+
+function reconciliationIssues(
+  invoice: Doc<"invoices">,
+  recordedPaymentTotal: number,
+) {
+  const issues: InvoiceReconciliationIssue[] = [];
+  invoice.lineItems.forEach((line, index) => {
+    const expectedMonthly = multiplySignedMoney(
+      line.monthlyUnitPrice,
+      line.quantity,
+      `Invoice line ${index + 1}`,
+    );
+    if (toCents(expectedMonthly) !== toCents(line.monthlyTotal)) {
+      issues.push({
+        field: `lineItems[${index}].monthlyTotal`,
+        expected: expectedMonthly,
+        actual: line.monthlyTotal,
+      });
+    }
+  });
+  const totals = calculateInvoiceTotals(invoice.lineItems);
+  for (const field of [
+    "subtotal",
+    "monthlyTotal",
+    "yearlyTotal",
+    "grandTotal",
+  ] as const) {
+    if (toCents(totals[field]) !== toCents(invoice[field])) {
+      issues.push({ field, expected: totals[field], actual: invoice[field] });
+    }
+  }
+  const expectedBalance = sumMoney([invoice.grandTotal, -invoice.amountPaid]);
+  if (toCents(expectedBalance) !== toCents(invoice.balanceDue)) {
+    issues.push({
+      field: "balanceDue",
+      expected: expectedBalance,
+      actual: invoice.balanceDue,
+    });
+  }
+  if (toCents(recordedPaymentTotal) !== toCents(invoice.amountPaid)) {
+    issues.push({
+      field: "amountPaid",
+      expected: recordedPaymentTotal,
+      actual: invoice.amountPaid,
+    });
+  }
+  for (const [field, expected] of [
+    ["subtotalCents", toCents(invoice.subtotal)],
+    ["monthlyTotalCents", toCents(invoice.monthlyTotal)],
+    ["yearlyTotalCents", toCents(invoice.yearlyTotal)],
+    ["grandTotalCents", toCents(invoice.grandTotal)],
+    ["amountPaidCents", toCents(invoice.amountPaid)],
+    ["balanceDueCents", toCents(invoice.balanceDue)],
+  ] as const) {
+    if (invoice[field] !== expected) {
+      issues.push({ field, expected, actual: invoice[field] });
+    }
+  }
+  try {
+    assertSupportedCurrency(invoice.sellerCurrency);
+  } catch {
+    issues.push({
+      field: "sellerCurrency",
+      expected: "USD",
+      actual: invoice.sellerCurrency,
+    });
+  }
+  return issues;
+}
+
+async function buildReconciliationReport(ctx: QueryCtx | MutationCtx) {
+  const [invoices, payments] = await Promise.all([
+    ctx.db.query("invoices").collect(),
+    ctx.db.query("invoicePayments").collect(),
+  ]);
+  const paymentsByInvoice = new Map<Id<"invoices">, number>();
+  for (const payment of payments) {
+    paymentsByInvoice.set(
+      payment.invoiceId,
+      roundMoney(
+        (paymentsByInvoice.get(payment.invoiceId) ?? 0) + payment.amount,
+      ),
+    );
+  }
+  const records = invoices
+    .map((invoice) => ({
+      invoiceId: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      companyName: invoice.companyName,
+      status: invoice.status,
+      issues: reconciliationIssues(
+        invoice,
+        paymentsByInvoice.get(invoice._id) ?? 0,
+      ),
+    }))
+    .filter((record) => record.issues.length > 0);
+  return {
+    checkedAt: Date.now(),
+    invoiceCount: invoices.length,
+    corruptedInvoiceCount: records.length,
+    issueCount: records.reduce((sum, record) => sum + record.issues.length, 0),
+    records,
+  };
 }
 
 function formatInvoiceDate(value?: number) {
@@ -481,79 +648,166 @@ function buildCustomerReminderEmail(invoice: Doc<"invoices">) {
 
 function invoiceRelaySnapshot(invoice: Doc<"invoices">) {
   const { sourceQuoteId: _sourceQuoteId, ...snapshot } = invoice;
-  return snapshot;
-}
+  const lineItems: InvoiceLineItem[] = [];
+  for (const line of snapshot.lineItems) {
+    if (line.monthlyTotal >= 0) {
+      lineItems.push({ ...line });
+      continue;
+    }
 
-function discountAmount(line: Doc<"customerContractLineItems">, gross: number) {
-  if (!line.discountType || line.discountValue === undefined) return 0;
-  if (line.discountType === "percentage") {
-    return Math.min(gross, gross * (line.discountValue / 100));
+    const base = lineItems[lineItems.length - 1];
+    if (!base) {
+      throw new ConvexError({
+        code: "INVOICE_INTEGRITY_ERROR",
+        message: "Invoice discount must follow its base charge",
+      });
+    }
+    const netMonthlyTotal = roundMoney(base.monthlyTotal + line.monthlyTotal);
+    const netYearlyTotal = roundMoney(base.yearlyTotal + line.yearlyTotal);
+    if (netMonthlyTotal < 0 || netYearlyTotal < 0) {
+      throw new ConvexError({
+        code: "INVOICE_INTEGRITY_ERROR",
+        message: "Invoice discount cannot exceed its base charge",
+      });
+    }
+    const discount = formatMoney(Math.abs(line.monthlyTotal));
+    Object.assign(base, {
+      itemName: `${base.itemName} (after ${discount} discount)`,
+      quantity: 1,
+      monthlyUnitPrice: netMonthlyTotal,
+      monthlyTotal: netMonthlyTotal,
+      yearlyTotal: netYearlyTotal,
+      monthlyUnitPriceCents: toCents(netMonthlyTotal),
+      monthlyTotalCents: toCents(netMonthlyTotal),
+      yearlyTotalCents: toCents(netYearlyTotal),
+    });
+    if (line.itemName === "Onboarding credit") {
+      lineItems.push({
+        ...line,
+        itemName: `Onboarding credit (-${discount})`,
+        quantity: 0,
+        monthlyUnitPrice: 0,
+        monthlyTotal: 0,
+        yearlyTotal: 0,
+        monthlyUnitPriceCents: 0,
+        monthlyTotalCents: 0,
+        yearlyTotalCents: 0,
+      });
+    }
   }
-  return Math.min(gross, line.discountValue);
-}
-
-function contractLineBaseAmount(line: Doc<"customerContractLineItems">) {
-  const gross = line.includedQuantity * line.contractUnitPrice;
-  return Math.max(0, roundMoney(gross - discountAmount(line, gross)));
+  return { ...snapshot, lineItems };
 }
 
 function usageMatchesContractLine(
   usage: Doc<"consumption">,
   line: Doc<"customerContractLineItems">,
 ) {
-  if (line.catalogItemId && usage.catalogItemId === line.catalogItemId) {
-    return true;
-  }
-
-  const normalize = (value: string) =>
-    value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const usageKey = normalize(usage.serviceType);
-  const itemKey = normalize(line.itemName);
-  const categoryKey = normalize(line.serviceCategory);
-  return (
-    usageKey === itemKey ||
-    usageKey.includes(itemKey) ||
-    itemKey.includes(usageKey) ||
-    (categoryKey.length > 0 && usageKey.includes(categoryKey))
+  return Boolean(
+    line.catalogItemId && usage.catalogItemId === line.catalogItemId,
   );
 }
 
-function contractInvoiceLine(
+function contractMonthFraction(
+  contract: Doc<"customerContracts">,
+  sourceMonth: string,
+) {
+  return calculateMonthProration({
+    startDate: contract.startDate,
+    endDate: contract.endDate,
+    month: sourceMonth,
+  }).fraction;
+}
+
+function contractInvoiceLines(
   line: Doc<"customerContractLineItems">,
   usageEntries: Doc<"consumption">[],
-): InvoiceLineItem {
-  const matchedUsage = usageEntries.filter((usage) =>
-    usageMatchesContractLine(usage, line),
-  );
+  monthFraction: number,
+  options?: {
+    monthLabel?: string;
+    defaultDiscountType?: "percentage" | "amount";
+    defaultDiscountValue?: number;
+    overageUnitPrice?: number;
+    activeStart?: number;
+    activeEnd?: number;
+  },
+): InvoiceLineItem[] {
+  const matchedUsage = usageEntries.filter((usage) => {
+    if (!usageMatchesContractLine(usage, line)) return false;
+    if (!usage.usageDate || options?.activeStart === undefined) return true;
+    const timestamp = Date.parse(`${usage.usageDate}T00:00:00.000Z`);
+    return (
+      timestamp >= options.activeStart &&
+      timestamp <= (options.activeEnd ?? Infinity)
+    );
+  });
   const actualQuantity = matchedUsage.reduce((total, usage) => {
     if (usage.quantity !== undefined) return total + usage.quantity;
     const price = line.catalogUnitPrice ?? line.contractUnitPrice;
     if (price > 0) return total + usage.amount / price;
     return total;
   }, 0);
-  const overageQuantity = Math.max(0, actualQuantity - line.includedQuantity);
-  const baseAmount = contractLineBaseAmount(line);
-  const overageAmount = roundMoney(
-    overageQuantity * (line.overageUnitPrice ?? line.contractUnitPrice),
-  );
-  const monthlyTotal = roundMoney(baseAmount + overageAmount);
+  const charges = calculateContractCharges({
+    includedQuantity: line.includedQuantity,
+    contractUnitPrice: line.contractUnitPrice,
+    discountType: line.discountType ?? options?.defaultDiscountType,
+    discountValue: line.discountValue ?? options?.defaultDiscountValue,
+    overageUnitPrice: options?.overageUnitPrice ?? line.overageUnitPrice,
+    actualQuantity,
+    monthFraction,
+  });
+  const {
+    proratedIncludedQuantity,
+    grossBaseAmount,
+    discountAmount: proratedDiscountAmount,
+    overageQuantity,
+    overageUnitPrice,
+    overageAmount,
+  } = charges;
 
-  return {
+  const common = {
     catalogItemId: line.catalogItemId,
-    itemName:
-      overageQuantity > 0
-        ? `${line.itemName} (${roundMoney(overageQuantity)} overage)`
-        : line.itemName,
     serviceCategory: line.serviceCategory,
     billingUnit: line.billingUnit,
-    quantity:
-      overageQuantity > 0
-        ? roundMoney(line.includedQuantity + overageQuantity)
-        : line.includedQuantity,
-    monthlyUnitPrice: line.contractUnitPrice,
-    monthlyTotal,
-    yearlyTotal: roundMoney(monthlyTotal * 12),
   };
+  const periodSuffix = options?.monthLabel ? ` — ${options.monthLabel}` : "";
+
+  const result: InvoiceLineItem[] = [
+    {
+      ...common,
+      itemName:
+        monthFraction < 1
+          ? `${line.itemName} base${periodSuffix} (${Math.round(monthFraction * 10000) / 100}% month)`
+          : `${line.itemName} base${periodSuffix}`,
+      quantity: proratedIncludedQuantity,
+      monthlyUnitPrice: line.contractUnitPrice,
+      monthlyTotal: grossBaseAmount,
+      yearlyTotal: roundMoney(grossBaseAmount * 12),
+    },
+  ];
+
+  if (proratedDiscountAmount > 0) {
+    result.push({
+      ...common,
+      itemName: `${line.itemName} contract discount${periodSuffix}`,
+      quantity: 1,
+      monthlyUnitPrice: -proratedDiscountAmount,
+      monthlyTotal: -proratedDiscountAmount,
+      yearlyTotal: -roundMoney(proratedDiscountAmount * 12),
+    });
+  }
+
+  if (overageQuantity > 0) {
+    result.push({
+      ...common,
+      itemName: `${line.itemName} overage${periodSuffix}`,
+      quantity: roundQuantity(overageQuantity),
+      monthlyUnitPrice: overageUnitPrice,
+      monthlyTotal: overageAmount,
+      yearlyTotal: roundMoney(overageAmount * 12),
+    });
+  }
+
+  return result;
 }
 
 function monthStartTimestamp(month: string) {
@@ -578,6 +832,74 @@ function monthEndTimestamp(month: string) {
   return Date.UTC(year, monthNumber, 0, 23, 59, 59, 999);
 }
 
+function monthKeyFromTimestamp(timestamp: number) {
+  const date = new Date(timestamp);
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function addMonths(month: string, count: number) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const date = new Date(Date.UTC(year, monthNumber - 1 + count, 1));
+  return monthKeyFromTimestamp(date.getTime());
+}
+
+function monthsBetweenInclusive(startMonth: string, endMonth: string) {
+  const months: string[] = [];
+  for (let month = startMonth; month <= endMonth; month = addMonths(month, 1)) {
+    months.push(month);
+  }
+  return months;
+}
+
+function contractFrequencyMonths(contract: Doc<"customerContracts">) {
+  if (contract.billingFrequency === "yearly") return 12;
+  if (contract.billingFrequency === "semiannual") return 6;
+  if (
+    contract.billingFrequency === "quarterly" ||
+    contract.billingFrequency === "every_3_months"
+  )
+    return 3;
+  return 1;
+}
+
+function contractCycleMonths(
+  contract: Doc<"customerContracts">,
+  sourceMonth: string,
+) {
+  const startMonth = monthKeyFromTimestamp(contract.startDate);
+  const endMonth = monthKeyFromTimestamp(contract.endDate);
+  const allMonths = monthsBetweenInclusive(startMonth, endMonth);
+  const startIndex = allMonths.indexOf(sourceMonth);
+  const frequency = contractFrequencyMonths(contract);
+  if (startIndex < 0 || startIndex % frequency !== 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `Invoice month must be a ${contract.billingFrequency} cycle boundary beginning ${startMonth}`,
+    });
+  }
+  return allMonths.slice(startIndex, startIndex + frequency);
+}
+
+function contractValueAllocations(contract: Doc<"customerContracts">) {
+  if (contract.pricingBasis !== "total_contract" || !contract.contractValue)
+    return null;
+  const months = monthsBetweenInclusive(
+    monthKeyFromTimestamp(contract.startDate),
+    monthKeyFromTimestamp(contract.endDate),
+  );
+  return allocateMoney(
+    contract.contractValue,
+    months.map((month) => ({
+      month,
+      weight: calculateMonthProration({
+        startDate: contract.startDate,
+        endDate: contract.endDate,
+        month,
+      }).fraction,
+    })),
+  );
+}
+
 function contractCoversMonth(
   contract: Doc<"customerContracts">,
   month: string,
@@ -591,6 +913,7 @@ async function findContractInvoiceForMonth(
   ctx: Ctx,
   contract: Doc<"customerContracts">,
   sourceMonth: string,
+  kind: "cycle" | "overage_settlement" = "cycle",
 ) {
   const invoices = await ctx.db
     .query("invoices")
@@ -601,6 +924,7 @@ async function findContractInvoiceForMonth(
       (invoice) =>
         invoice.sourceReference === contract.contractNumber &&
         invoice.sourceMonth === sourceMonth &&
+        (invoice.contractInvoiceKind ?? "cycle") === kind &&
         invoice.status !== "cancelled" &&
         invoice.status !== "void",
     ) ?? null
@@ -614,9 +938,18 @@ async function createContractDraftInvoice(
     contract: Doc<"customerContracts">;
     sourceMonth: string;
     notes?: string;
+    kind?: "cycle" | "overage_settlement";
   },
 ) {
   const { user, contract, sourceMonth } = args;
+  const kind = args.kind ?? "cycle";
+  if (kind === "overage_settlement" && contract.billingTiming !== "prepaid") {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "Overage settlement invoices are only used for prepaid contracts",
+    });
+  }
   if (contract.status !== "active") {
     throw new ConvexError({
       code: "BAD_REQUEST",
@@ -634,6 +967,7 @@ async function createContractDraftInvoice(
     ctx,
     contract,
     sourceMonth,
+    kind,
   );
   if (duplicate) {
     throw new ConvexError({
@@ -656,32 +990,192 @@ async function createContractDraftInvoice(
     });
   }
 
-  const usageEntries = await ctx.db
-    .query("consumption")
-    .withIndex("by_company_month", (q) =>
-      q.eq("companyId", contract.companyId).eq("month", sourceMonth),
-    )
-    .collect();
-  const lineItems = lines
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .map((line) => contractInvoiceLine(line, usageEntries));
-  const grandTotal = roundMoney(
-    lineItems.reduce((total, line) => total + line.monthlyTotal, 0),
-  );
+  const cycleMonths = contractCycleMonths(contract, sourceMonth);
+  const cycleEndMonth = cycleMonths[cycleMonths.length - 1];
+  if (
+    ((contract.billingTiming ?? "postpaid") === "postpaid" ||
+      kind === "overage_settlement") &&
+    Date.now() < monthEndTimestamp(cycleEndMonth)
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "Postpaid and overage settlement invoices can only be created after the billing cycle ends",
+    });
+  }
+  const catalogById = new Map<Id<"serviceCatalog">, Doc<"serviceCatalog">>();
+  for (const line of lines) {
+    if (!line.catalogItemId || catalogById.has(line.catalogItemId)) continue;
+    const catalogItem = await ctx.db.get(line.catalogItemId);
+    if (catalogItem) catalogById.set(line.catalogItemId, catalogItem);
+  }
+  const monthlyLineGroups: Array<{
+    month: string;
+    lineItems: InvoiceLineItem[];
+  }> = [];
+  for (const month of cycleMonths) {
+    const recordedUsageEntries = await ctx.db
+      .query("consumption")
+      .withIndex("by_company_month", (q) =>
+        q.eq("companyId", contract.companyId).eq("month", month),
+      )
+      .collect();
+    const usageEntries =
+      (contract.billingTiming ?? "postpaid") === "prepaid" && kind === "cycle"
+        ? []
+        : recordedUsageEntries;
+    const monthFraction = contractMonthFraction(contract, month);
+    if (
+      monthFraction < 1 &&
+      usageEntries.some((entry) =>
+        lines.some(
+          (line) => usageMatchesContractLine(entry, line) && !entry.usageDate,
+        ),
+      )
+    ) {
+      throw new ConvexError({
+        code: "USAGE_PERIOD_REQUIRED",
+        message:
+          "Mid-month contract conversion requires dated usage entries so pre-contract and contract usage can be separated",
+      });
+    }
+    monthlyLineGroups.push({
+      month,
+      lineItems: lines
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .flatMap((line, lineIndex) => {
+          const catalogPrice = line.catalogItemId
+            ? catalogById.get(line.catalogItemId)?.monthlyPrice
+            : undefined;
+          const discount = contractDiscount(contract, line, lineIndex, lines);
+          return contractInvoiceLines(line, usageEntries, monthFraction, {
+            monthLabel: cycleMonths.length > 1 ? month : undefined,
+            defaultDiscountType: discount.type,
+            defaultDiscountValue: discount.value,
+            overageUnitPrice: contractOveragePrice(
+              contract,
+              line,
+              catalogPrice,
+            ),
+            activeStart: contract.startDate,
+            activeEnd: contract.endDate,
+          });
+        }),
+    });
+  }
+  let lineItems = monthlyLineGroups.flatMap((group) => group.lineItems);
+  if ((contract.billingTiming ?? "postpaid") === "prepaid") {
+    lineItems = lineItems.filter((line) =>
+      kind === "overage_settlement"
+        ? line.itemName.includes(" overage")
+        : !line.itemName.includes(" overage"),
+    );
+  }
+  if (kind === "overage_settlement" && lineItems.length === 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "No overage is available for this prepaid billing cycle",
+    });
+  }
+  const valueAllocations = contractValueAllocations(contract);
+  if (valueAllocations && kind === "cycle") {
+    const desiredBase = sumMoney(
+      valueAllocations
+        .filter((allocation) => cycleMonths.includes(allocation.month))
+        .map((allocation) => allocation.amount),
+    );
+    const calculatedBase = sumMoney(
+      lineItems
+        .filter((line) => !line.itemName.includes(" overage"))
+        .map((line) => line.monthlyTotal),
+    );
+    const adjustment = sumMoney([desiredBase, -calculatedBase]);
+    if (adjustment !== 0) {
+      lineItems = [
+        ...lineItems,
+        {
+          itemName: "Contract value reconciliation",
+          serviceCategory: "Contract",
+          billingUnit: "billing cycle",
+          quantity: 1,
+          monthlyUnitPrice: adjustment,
+          monthlyTotal: adjustment,
+          yearlyTotal: adjustment,
+        },
+      ];
+    }
+  }
+  const pricedInvoice = await invoiceLinesWithOnboardingCredit(ctx, {
+    companyId: contract.companyId,
+    isContract: true,
+    lineItems,
+  });
+  const grandTotal = pricedInvoice.totals.grandTotal;
   const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
   const sellerSnapshot = invoiceProfile
     ? sellerSnapshotFromProfile(invoiceProfile)
     : {};
   const now = Date.now();
+  const billingPoint =
+    (contract.billingTiming ?? "postpaid") === "prepaid"
+      ? monthStartTimestamp(sourceMonth)
+      : monthEndTimestamp(cycleEndMonth);
   const dueDate =
-    contract.paymentTermDays === undefined
-      ? undefined
-      : monthEndTimestamp(sourceMonth) + contract.paymentTermDays * MS_PER_DAY;
+    (contract.billingTiming ?? "postpaid") === "prepaid"
+      ? billingPoint
+      : contract.paymentTermDays === undefined
+        ? undefined
+        : billingPoint + contract.paymentTermDays * MS_PER_DAY;
+
+  const monthlyWeights = monthlyLineGroups.map((group) => {
+    const committedAmount = valueAllocations?.find(
+      (allocation) => allocation.month === group.month,
+    )?.amount;
+    if (kind === "cycle" && committedAmount !== undefined) {
+      return { month: group.month, weight: committedAmount };
+    }
+    const allocationLines =
+      (contract.billingTiming ?? "postpaid") === "prepaid"
+        ? group.lineItems.filter((line) =>
+            kind === "overage_settlement"
+              ? line.itemName.includes(" overage")
+              : !line.itemName.includes(" overage"),
+          )
+        : group.lineItems;
+    return {
+      month: group.month,
+      weight: Math.max(
+        0,
+        allocationLines.length
+          ? calculateInvoiceTotals(allocationLines).grandTotal
+          : 0,
+      ),
+    };
+  });
+  const allocationRecipients =
+    monthlyWeights.some((row) => row.weight > 0)
+      ? monthlyWeights
+      : cycleMonths.map((month) => ({ month, weight: 1 }));
+  const revenueAllocations = allocateMoney(
+    pricedInvoice.grossBeforeCredit,
+    allocationRecipients,
+  ).map(({ month, amount }) => ({ month, amount }));
+  const receivableAllocations = allocateMoney(
+    pricedInvoice.totals.grandTotal,
+    allocationRecipients,
+  ).map(({ month, amount }) => ({ month, amount }));
 
   const invoiceId = await ctx.db.insert("invoices", {
     companyId: contract.companyId,
+    contractId: contract._id,
     sourceMonth,
     sourceReference: contract.contractNumber,
+    cycleStartMonth: sourceMonth,
+    cycleEndMonth,
+    billingTiming: contract.billingTiming ?? "postpaid",
+    contractInvoiceKind: kind,
+    revenueAllocations,
+    receivableAllocations,
     invoiceProfileId: invoiceProfile?._id,
     ...sellerSnapshot,
     createdBy: user._id,
@@ -691,19 +1185,27 @@ async function createContractDraftInvoice(
     contactName: company.contactName,
     contactEmail: company.contactEmail,
     billingEmail: company.contactEmail,
-    lineItems,
-    subtotal: grandTotal,
-    monthlyTotal: grandTotal,
-    yearlyTotal: roundMoney(grandTotal * 12),
-    grandTotal,
-    amountPaid: 0,
-    balanceDue: grandTotal,
+    lineItems: pricedInvoice.lineItems.map(withLineMoneyCents),
+    ...withInvoiceMoneyCents(pricedInvoice.totals),
+    grossBeforeCredit: pricedInvoice.grossBeforeCredit,
+    onboardingCreditId: pricedInvoice.credit?.credit._id,
+    onboardingCreditApplied: pricedInvoice.credit?.amount,
     notes:
       trimOptional(args.notes) ??
       `Draft invoice from customer contract ${contract.contractNumber}. Review before issuing.`,
     createdAt: now,
     updatedAt: now,
   });
+
+  if (pricedInvoice.credit) {
+    await reserveCredit(
+      ctx,
+      pricedInvoice.credit.credit,
+      invoiceId,
+      pricedInvoice.credit.amount,
+      user._id,
+    );
+  }
 
   await insertEvent(ctx, {
     invoiceId,
@@ -838,6 +1340,75 @@ export const list = query({
   },
 });
 
+export const reconciliationReport = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (!isCeoOrHob(user)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can reconcile invoices",
+      });
+    }
+    return await buildReconciliationReport(ctx);
+  },
+});
+
+export const reconcileInvoices = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const report = await buildReconciliationReport(ctx);
+    if (report.corruptedInvoiceCount > 0) {
+      console.warn(
+        `[INVOICE RECONCILIATION] ${report.corruptedInvoiceCount}/${report.invoiceCount} invoices have ${report.issueCount} integrity issues.`,
+      );
+    }
+    return report;
+  },
+});
+
+export const backfillContractAllocations = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const invoices = await ctx.db.query("invoices").collect();
+    let updated = 0;
+    for (const invoice of invoices) {
+      if (!invoice.contractId || invoice.revenueAllocations?.length) continue;
+      const contract = await ctx.db.get(invoice.contractId);
+      if (!contract || !invoice.sourceMonth) continue;
+      let months: string[];
+      try {
+        months = contractCycleMonths(contract, invoice.sourceMonth);
+      } catch {
+        continue;
+      }
+      const recipients = months.map((month) => ({
+        month,
+        weight: calculateMonthProration({
+          startDate: contract.startDate,
+          endDate: contract.endDate,
+          month,
+        }).fraction,
+      }));
+      const gross =
+        invoice.grossBeforeCredit ??
+        sumMoney([invoice.grandTotal, invoice.onboardingCreditApplied ?? 0]);
+      await ctx.db.patch(invoice._id, {
+        revenueAllocations: allocateMoney(gross, recipients).map(
+          ({ month, amount }) => ({ month, amount }),
+        ),
+        receivableAllocations: allocateMoney(
+          invoice.grandTotal,
+          recipients,
+        ).map(({ month, amount }) => ({ month, amount })),
+        updatedAt: Date.now(),
+      });
+      updated += 1;
+    }
+    return { updated };
+  },
+});
+
 export const getById = query({
   args: { invoiceId: v.id("invoices") },
   handler: async (ctx, args) => {
@@ -893,7 +1464,18 @@ export const createDraftFromQuote = mutation({
       : {};
 
     const now = Date.now();
-    const grandTotal = quote.monthlyGrandTotal;
+    const lineItems = calculateLineItems(
+      quote.lineItems.map((lineItem) => ({ ...lineItem })),
+    ).map((lineItem, index) => ({
+      ...lineItem,
+      yearlyTotal: roundMoney(quote.lineItems[index].yearlyTotal),
+    }));
+    const pricedInvoice = await invoiceLinesWithOnboardingCredit(ctx, {
+      companyId: quote.companyId,
+      isContract: false,
+      lineItems,
+    });
+    assertSupportedCurrency(invoiceProfile?.currency);
     const invoiceId = await ctx.db.insert("invoices", {
       companyId: quote.companyId,
       sourceQuoteId: quote._id,
@@ -908,17 +1490,25 @@ export const createDraftFromQuote = mutation({
       contactName: company.contactName,
       contactEmail: company.contactEmail,
       billingEmail: company.contactEmail,
-      lineItems: quote.lineItems.map((lineItem) => ({ ...lineItem })),
-      subtotal: quote.monthlyGrandTotal,
-      monthlyTotal: quote.monthlyGrandTotal,
-      yearlyTotal: quote.yearlyGrandTotal,
-      grandTotal,
-      amountPaid: 0,
-      balanceDue: grandTotal,
+      lineItems: pricedInvoice.lineItems.map(withLineMoneyCents),
+      ...withInvoiceMoneyCents(pricedInvoice.totals),
+      grossBeforeCredit: pricedInvoice.grossBeforeCredit,
+      onboardingCreditId: pricedInvoice.credit?.credit._id,
+      onboardingCreditApplied: pricedInvoice.credit?.amount,
       notes: trimOptional(args.notes ?? quote.notes),
       createdAt: now,
       updatedAt: now,
     });
+
+    if (pricedInvoice.credit) {
+      await reserveCredit(
+        ctx,
+        pricedInvoice.credit.credit,
+        invoiceId,
+        pricedInvoice.credit.amount,
+        user._id,
+      );
+    }
 
     await insertEvent(ctx, {
       invoiceId,
@@ -959,6 +1549,32 @@ export const createDraftFromContract = mutation({
   },
 });
 
+export const createOverageDraftFromContract = mutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    cycleStartMonth: v.string(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    const result = await createContractDraftInvoice(ctx, {
+      user,
+      contract,
+      sourceMonth: args.cycleStartMonth,
+      notes: args.notes,
+      kind: "overage_settlement",
+    });
+    return result.invoiceId;
+  },
+});
+
 export const previewContractInvoiceBatch = query({
   args: { sourceMonth: v.string() },
   handler: async (ctx, args) => {
@@ -983,6 +1599,7 @@ export const previewContractInvoiceBatch = query({
           | "already_invoiced"
           | "no_services"
           | "not_in_period"
+          | "not_due"
           | "inactive" = "ready";
         let reason = "Ready to create draft";
 
@@ -995,7 +1612,23 @@ export const previewContractInvoiceBatch = query({
         } else if (lineItems.length === 0) {
           status = "no_services";
           reason = "No contract services";
-        } else if (existingInvoice) {
+        } else {
+          try {
+            const cycleMonths = contractCycleMonths(contract, args.sourceMonth);
+            if (
+              (contract.billingTiming ?? "postpaid") === "postpaid" &&
+              Date.now() <
+                monthEndTimestamp(cycleMonths[cycleMonths.length - 1])
+            ) {
+              status = "not_due";
+              reason = "Postpaid billing cycle has not ended";
+            }
+          } catch {
+            status = "not_due";
+            reason = "Not a billing-cycle boundary";
+          }
+        }
+        if (status === "ready" && existingInvoice) {
           status = "already_invoiced";
           reason = existingInvoice.invoiceNumber
             ? `Already has ${existingInvoice.invoiceNumber}`
@@ -1083,6 +1716,63 @@ export const createDraftsFromContracts = mutation({
   },
 });
 
+export const createDueContractDrafts = internalMutation({
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const users = await ctx.db.query("users").collect();
+    const actor = users.find((user) => isCeoOrHob(user));
+    if (!actor) return { created: 0, skipped: 0, reason: "No CEO or HOB user" };
+    const contracts = (await ctx.db.query("customerContracts").collect()).filter(
+      (contract) => contract.status === "active",
+    );
+    let created = 0;
+    let skipped = 0;
+    for (const contract of contracts) {
+      const startMonth = monthKeyFromTimestamp(contract.startDate);
+      const endMonth = monthKeyFromTimestamp(contract.endDate);
+      const frequency = contractFrequencyMonths(contract);
+      for (
+        let sourceMonth = startMonth;
+        sourceMonth <= endMonth;
+        sourceMonth = addMonths(sourceMonth, frequency)
+      ) {
+        const cycleMonths = contractCycleMonths(contract, sourceMonth);
+        const cycleEnd = monthEndTimestamp(cycleMonths.at(-1)!);
+        const due =
+          (contract.billingTiming ?? "postpaid") === "prepaid"
+            ? monthStartTimestamp(sourceMonth) <= now
+            : cycleEnd <= now;
+        if (!due) continue;
+        try {
+          await createContractDraftInvoice(ctx, {
+            user: actor,
+            contract,
+            sourceMonth,
+          });
+          created += 1;
+        } catch {
+          skipped += 1;
+        }
+        if ((contract.billingTiming ?? "postpaid") === "prepaid" && cycleEnd <= now) {
+          try {
+            await createContractDraftInvoice(ctx, {
+              user: actor,
+              contract,
+              sourceMonth,
+              kind: "overage_settlement",
+            });
+            created += 1;
+          } catch {
+            skipped += 1;
+          }
+        }
+      }
+    }
+    return { created, skipped };
+  },
+});
+
 export const updateDraft = mutation({
   args: {
     invoiceId: v.id("invoices"),
@@ -1094,10 +1784,6 @@ export const updateDraft = mutation({
     billingAddress: v.optional(v.string()),
     taxId: v.optional(v.string()),
     lineItems: v.optional(v.array(invoiceLineItemValidator)),
-    subtotal: v.optional(v.number()),
-    monthlyTotal: v.optional(v.number()),
-    yearlyTotal: v.optional(v.number()),
-    grandTotal: v.optional(v.number()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -1138,14 +1824,17 @@ export const updateDraft = mutation({
       patch.taxId = trimOptional(args.taxId);
     }
     if (args.lineItems !== undefined) {
-      patch.lineItems = args.lineItems;
-    }
-    if (args.subtotal !== undefined) patch.subtotal = args.subtotal;
-    if (args.monthlyTotal !== undefined) patch.monthlyTotal = args.monthlyTotal;
-    if (args.yearlyTotal !== undefined) patch.yearlyTotal = args.yearlyTotal;
-    if (args.grandTotal !== undefined) {
-      patch.grandTotal = args.grandTotal;
-      patch.balanceDue = args.grandTotal - invoice.amountPaid;
+      if (invoice.onboardingCreditApplied) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message:
+            "Cancel and recreate a credited draft to change its line items so the onboarding credit can be recalculated safely",
+        });
+      }
+      const lineItems = calculateLineItems(args.lineItems);
+      const totals = calculateInvoiceTotals(lineItems);
+      patch.lineItems = lineItems.map(withLineMoneyCents);
+      Object.assign(patch, withInvoiceMoneyCents(totals, invoice.amountPaid));
     }
     if (args.notes !== undefined) {
       patch.notes = trimOptional(args.notes);
@@ -1179,22 +1868,38 @@ export const issueInvoice = mutation({
       invoice,
       company,
     );
+    assertSupportedCurrency(invoiceProfile?.currency ?? invoice.sellerCurrency);
     const profilePatch = invoiceProfile
       ? {
           invoiceProfileId: invoice.invoiceProfileId ?? invoiceProfile._id,
           ...sellerSnapshotFromProfile(invoiceProfile),
         }
       : {};
+    const invariantIssues = reconciliationIssues(
+      invoice,
+      invoice.amountPaid,
+    ).filter((issue) => !issue.field.endsWith("Cents"));
+    if (invariantIssues.length > 0) {
+      throw new ConvexError({
+        code: "INVOICE_INTEGRITY_ERROR",
+        message: `Invoice has ${invariantIssues.length} calculation issue(s); reconcile the draft before issuing`,
+        issues: invariantIssues,
+      });
+    }
+    const canonicalTotals = calculateInvoiceTotals(invoice.lineItems);
     await ctx.db.patch(args.invoiceId, {
       status: "issued",
       invoiceNumber,
       ...profilePatch,
+      lineItems: invoice.lineItems.map(withLineMoneyCents),
+      ...withInvoiceMoneyCents(canonicalTotals, invoice.amountPaid),
       issueDate: now,
       dueDate:
         invoice.dueDate ?? defaultDueDateForIssue(now, company.paymentTermDays),
       lockedAt: now,
       updatedAt: now,
     });
+    await consumeInvoiceCredit(ctx, invoice, user._id);
     await insertEvent(ctx, {
       invoiceId: args.invoiceId,
       type: "issued",
@@ -1668,6 +2373,7 @@ export const voidInvoice = mutation({
       status: "void" satisfies InvoiceStatus,
       updatedAt: now,
     });
+    await restoreInvoiceCredit(ctx, invoice, user._id);
     await insertEvent(ctx, {
       invoiceId: args.invoiceId,
       type: "voided",
@@ -1701,6 +2407,7 @@ export const cancelDraftInvoice = mutation({
       status: "cancelled" satisfies InvoiceStatus,
       updatedAt: now,
     });
+    await releaseInvoiceCredit(ctx, invoice, user._id);
     await insertEvent(ctx, {
       invoiceId: args.invoiceId,
       type: "cancelled",
@@ -1816,8 +2523,8 @@ export const recordPayment = mutation({
 
     const now = Date.now();
     const paidAt = args.paidAt ?? now;
-    const nextAmountPaid = roundMoney(invoice.amountPaid + amount);
-    const nextBalanceDue = roundMoney(invoice.balanceDue - amount);
+    const nextAmountPaid = sumMoney([invoice.amountPaid, amount]);
+    const nextBalanceDue = calculateBalance(invoice.grandTotal, nextAmountPaid);
     const nextStatus: InvoiceStatus =
       nextBalanceDue === 0 ? "paid" : "partially_paid";
     const method = trimOptional(args.method) ?? PAYMENT_METHOD_BANK_TRANSFER;
@@ -1836,6 +2543,7 @@ export const recordPayment = mutation({
     await ctx.db.insert("invoicePayments", {
       invoiceId: args.invoiceId,
       amount,
+      amountCents: toCents(amount),
       paidAt,
       method,
       reference,
@@ -1847,6 +2555,8 @@ export const recordPayment = mutation({
     await ctx.db.patch(args.invoiceId, {
       amountPaid: nextAmountPaid,
       balanceDue: nextBalanceDue,
+      amountPaidCents: toCents(nextAmountPaid),
+      balanceDueCents: toCents(nextBalanceDue),
       status: nextStatus,
       updatedAt: now,
     });

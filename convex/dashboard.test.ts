@@ -337,8 +337,8 @@ describe("dashboard.summary", () => {
     });
     expect(summary.targets).toMatchObject({
       target: 30000,
-      achieved: 18000,
-      achievementPercent: 60,
+      achieved: 0,
+      achievementPercent: 0,
     });
     expect(summary.pipeline.stageCounts).toMatchObject({
       proposal: 1,
@@ -388,8 +388,8 @@ describe("dashboard.summary", () => {
     });
     expect(summary.targets).toMatchObject({
       target: 10000,
-      achieved: 7000,
-      achievementPercent: 70,
+      achieved: 0,
+      achievementPercent: 0,
     });
     expect(summary.pipeline.value).toBe(5000);
     expect(summary.usage.total).toBe(100);
@@ -419,8 +419,8 @@ describe("dashboard.summary", () => {
     });
     expect(summary.targets).toMatchObject({
       target: 10000,
-      achieved: 7000,
-      achievementPercent: 70,
+      achieved: 0,
+      achievementPercent: 0,
     });
     expect(summary.pipeline.value).toBe(5000);
     expect(summary.usage.total).toBe(100);

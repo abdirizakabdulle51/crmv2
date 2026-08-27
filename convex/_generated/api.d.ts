@@ -25,6 +25,7 @@ import type * as consumption from "../consumption.js";
 import type * as countries from "../countries.js";
 import type * as crons from "../crons.js";
 import type * as customerContracts from "../customerContracts.js";
+import type * as customerCredits from "../customerCredits.js";
 import type * as dailyUsage from "../dailyUsage.js";
 import type * as dashboard from "../dashboard.js";
 import type * as documentation from "../documentation.js";
@@ -78,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   countries: typeof countries;
   crons: typeof crons;
   customerContracts: typeof customerContracts;
+  customerCredits: typeof customerCredits;
   dailyUsage: typeof dailyUsage;
   dashboard: typeof dashboard;
   documentation: typeof documentation;

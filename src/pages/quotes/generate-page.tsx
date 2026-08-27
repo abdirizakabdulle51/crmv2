@@ -64,9 +64,19 @@ export default function QuoteGenerateFromUsagePage() {
     try {
       await createQuote({
         companyId: companyId as Id<"companies">,
-        lineItems: preview.lineItems,
-        monthlyGrandTotal: preview.monthlyGrandTotal,
-        yearlyGrandTotal: preview.yearlyGrandTotal,
+        lineItems: preview.lineItems.map((line) => ({
+          catalogItemId: line.catalogItemId,
+          itemName: line.itemName,
+          serviceCategory: line.serviceCategory,
+          billingUnit: line.billingUnit,
+          quantity: line.quantity,
+          monthlyUnitPrice: line.monthlyUnitPrice,
+          ...(line.regionId ? { regionId: line.regionId } : {}),
+          ...(line.regionName ? { regionName: line.regionName } : {}),
+          ...(line.dataCenterName
+            ? { dataCenterName: line.dataCenterName }
+            : {}),
+        })),
         notes: `Generated from Usage Tracking for ${month}`,
         sourceMonth: month,
       });

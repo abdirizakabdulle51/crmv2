@@ -79,6 +79,7 @@ export default function UsageEntryDialog({
 
   const [companyId, setCompanyId] = useState<string>("");
   const [month, setMonth] = useState(getCurrentMonth());
+  const [usageDate, setUsageDate] = useState("");
   const [serviceType, setServiceType] = useState<string>("");
   const [catalogItemId, setCatalogItemId] = useState<string>("");
   const [quantity, setQuantity] = useState("");
@@ -299,6 +300,7 @@ export default function UsageEntryDialog({
           await createConsumption({
             companyId: companyId as Id<"companies">,
             month,
+            usageDate: usageDate || undefined,
             serviceType,
             amount: parseFloat(lineItem.amount),
             quantity: parseFloat(lineItem.quantity),
@@ -336,6 +338,7 @@ export default function UsageEntryDialog({
       await createConsumption({
         companyId: companyId as Id<"companies">,
         month,
+        usageDate: usageDate || undefined,
         serviceType,
         amount: numAmount,
         quantity: numQuantity && !isNaN(numQuantity) ? numQuantity : undefined,
@@ -465,6 +468,23 @@ export default function UsageEntryDialog({
                 value={month}
                 onChange={(e) => setMonth(e.target.value)}
               />
+            </div>
+            <div className="space-y-2">
+              <Label>Exact usage date</Label>
+              <Input
+                type="date"
+                value={usageDate}
+                onChange={(event) => {
+                  setUsageDate(event.target.value);
+                  if (event.target.value) {
+                    setMonth(event.target.value.slice(0, 7));
+                  }
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                Required when usage must be split around a mid-month contract
+                start.
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Service Type *</Label>

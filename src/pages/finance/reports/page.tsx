@@ -178,15 +178,24 @@ const INVOICE_PAYMENT_EXPORT_COLUMNS: CsvColumn<InvoicePaymentExportRow>[] = [
     header: "Receiving Account Number",
     value: (row) => row.receivingAccountNumber,
   },
-  { header: "Receiving Account Name", value: (row) => row.receivingAccountName },
+  {
+    header: "Receiving Account Name",
+    value: (row) => row.receivingAccountName,
+  },
   {
     header: "Receiving Bank Location",
     value: (row) => row.receivingBankLocation,
   },
-  { header: "Receiving Currency Note", value: (row) => row.receivingCurrencyNote },
+  {
+    header: "Receiving Currency Note",
+    value: (row) => row.receivingCurrencyNote,
+  },
   { header: "Recorded By Name", value: (row) => row.recordedByName },
   { header: "Recorded By Email", value: (row) => row.recordedByEmail },
-  { header: "Recorded At", value: (row) => formatDateTimeForCsv(row.recordedAt) },
+  {
+    header: "Recorded At",
+    value: (row) => formatDateTimeForCsv(row.recordedAt),
+  },
   { header: "Invoice Status", value: (row) => row.invoiceStatus },
   { header: "Source Reference", value: (row) => row.sourceReference },
 ];
@@ -197,7 +206,10 @@ const REGION_INCOME_EXPORT_COLUMNS: CsvColumn<RegionIncomeExportRow>[] = [
   { header: "Customer / Company", value: (row) => row.customerCompany },
   { header: "Country", value: (row) => row.country },
   { header: "Region / Data Center", value: (row) => row.region },
-  { header: "Allocated Amount", value: (row) => row.allocatedAmount.toFixed(2) },
+  {
+    header: "Allocated Amount",
+    value: (row) => row.allocatedAmount.toFixed(2),
+  },
   {
     header: "Original Payment Amount",
     value: (row) => row.originalPaymentAmount.toFixed(2),
@@ -206,7 +218,10 @@ const REGION_INCOME_EXPORT_COLUMNS: CsvColumn<RegionIncomeExportRow>[] = [
   { header: "Customer Reference", value: (row) => row.customerReference },
   { header: "Recorded By Name", value: (row) => row.recordedByName },
   { header: "Recorded By Email", value: (row) => row.recordedByEmail },
-  { header: "Recorded At", value: (row) => formatDateTimeForCsv(row.recordedAt) },
+  {
+    header: "Recorded At",
+    value: (row) => formatDateTimeForCsv(row.recordedAt),
+  },
   { header: "Invoice Status", value: (row) => row.invoiceStatus },
   { header: "Source Reference", value: (row) => row.sourceReference },
 ];
@@ -251,7 +266,10 @@ export default function FinanceReportsPage() {
   >(null);
   const canView = canViewReports(currentUser?.role);
   const canFilterCountry = isAdminRole(currentUser?.role);
-  const countries = useQuery(api.countries.list, canFilterCountry ? {} : "skip");
+  const countries = useQuery(
+    api.countries.list,
+    canFilterCountry ? {} : "skip",
+  );
   const report = useQuery(
     api.financeReports.summary,
     canView
@@ -276,6 +294,7 @@ export default function FinanceReportsPage() {
   );
   const hasData =
     (report?.totals.income ?? 0) > 0 ||
+    (report?.totals.recognizedRevenue ?? 0) > 0 ||
     (report?.totals.expenses ?? 0) > 0 ||
     (report?.expenseStatusSummary ?? []).some((row) => row.count > 0);
   const exportArgs = {
@@ -324,7 +343,9 @@ export default function FinanceReportsPage() {
       toast.success("Paid expenses CSV exported");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to export paid expenses",
+        error instanceof Error
+          ? error.message
+          : "Failed to export paid expenses",
       );
     } finally {
       setExporting(null);
@@ -345,7 +366,9 @@ export default function FinanceReportsPage() {
       toast.success("Region income CSV exported");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to export region income",
+        error instanceof Error
+          ? error.message
+          : "Failed to export region income",
       );
     } finally {
       setExporting(null);
@@ -365,16 +388,16 @@ export default function FinanceReportsPage() {
     return (
       <div className="space-y-6 p-6 md:p-8">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Finance Reports
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight">Finance Reports</h1>
           <p className="mt-1 text-muted-foreground">
             Operational income and expense reporting for finance leadership.
           </p>
         </div>
         <Card>
           <CardContent className="p-8">
-            <h2 className="text-lg font-semibold">Finance reports unavailable</h2>
+            <h2 className="text-lg font-semibold">
+              Finance reports unavailable
+            </h2>
             <p className="mt-2 text-sm text-muted-foreground">
               Finance reports are available to CEO, Head of Business, and
               Country GM roles.
@@ -472,7 +495,10 @@ export default function FinanceReportsPage() {
           <div className="space-y-2">
             <Label>Country</Label>
             <Select value={countryFilter} onValueChange={setCountryFilter}>
-              <SelectTrigger className="w-[220px]" aria-label="Filter by country">
+              <SelectTrigger
+                className="w-[220px]"
+                aria-label="Filter by country"
+              >
                 <SelectValue placeholder="All Countries" />
               </SelectTrigger>
               <SelectContent>
@@ -489,7 +515,22 @@ export default function FinanceReportsPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard title="Income" value={formatCurrency(report.totals.income)} />
+        <SummaryCard
+          title="Income"
+          value={formatCurrency(report.totals.income)}
+        />
+        <SummaryCard
+          title="Recognized contract revenue"
+          value={formatCurrency(report.totals.recognizedRevenue ?? 0)}
+        />
+        <SummaryCard
+          title="Pre-collected allocation"
+          value={formatCurrency(report.totals.preCollected ?? 0)}
+        />
+        <SummaryCard
+          title="Expected collections"
+          value={formatCurrency(report.totals.expectedCollections ?? 0)}
+        />
         <SummaryCard
           title="Expenses"
           value={formatCurrency(report.totals.expenses)}
@@ -523,7 +564,10 @@ export default function FinanceReportsPage() {
         <CardContent className="space-y-6">
           <div className="h-[320px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <BarChart
+                data={chartData}
+                margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+              >
                 <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
                 <XAxis dataKey="label" className="text-xs" />
                 <YAxis tickFormatter={formatCompact} className="text-xs" />
@@ -532,17 +576,30 @@ export default function FinanceReportsPage() {
                   labelFormatter={(label) => String(label)}
                 />
                 <Legend />
-                <Bar dataKey="income" name="Income" fill="oklch(0.6 0.18 170)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="expenses" name="Expenses" fill="oklch(0.65 0.18 35)" radius={[4, 4, 0, 0]} />
+                <Bar
+                  dataKey="income"
+                  name="Income"
+                  fill="oklch(0.6 0.18 170)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="expenses"
+                  name="Expenses"
+                  fill="oklch(0.65 0.18 35)"
+                  radius={[4, 4, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
+            <table className="w-full min-w-[1050px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-3 py-3">Month</th>
                   <th className="px-3 py-3 text-right">Income</th>
+                  <th className="px-3 py-3 text-right">Recognized</th>
+                  <th className="px-3 py-3 text-right">Pre-collected</th>
+                  <th className="px-3 py-3 text-right">Expected</th>
                   <th className="px-3 py-3 text-right">Expenses</th>
                   <th className="px-3 py-3 text-right">Net</th>
                   <th className="px-3 py-3 text-right">Payments</th>
@@ -559,14 +616,21 @@ export default function FinanceReportsPage() {
                       {formatCurrency(row.income)}
                     </td>
                     <td className="px-3 py-3 text-right">
+                      {formatCurrency(row.recognizedRevenue ?? 0)}
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      {formatCurrency(row.preCollected ?? 0)}
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      {formatCurrency(row.expectedCollections ?? 0)}
+                    </td>
+                    <td className="px-3 py-3 text-right">
                       {formatCurrency(row.expenses)}
                     </td>
                     <td className="px-3 py-3 text-right font-medium">
                       {formatCurrency(row.net)}
                     </td>
-                    <td className="px-3 py-3 text-right">
-                      {row.paymentCount}
-                    </td>
+                    <td className="px-3 py-3 text-right">{row.paymentCount}</td>
                     <td className="px-3 py-3 text-right">
                       {row.paidExpenseCount}
                     </td>
@@ -645,7 +709,10 @@ export default function FinanceReportsPage() {
                 </thead>
                 <tbody>
                   {report.topExpenseCategories.map((category) => (
-                    <tr key={category.categoryId} className="border-b last:border-0">
+                    <tr
+                      key={category.categoryId}
+                      className="border-b last:border-0"
+                    >
                       <td className="px-3 py-3 font-medium">
                         {category.categoryName}
                       </td>
@@ -673,7 +740,9 @@ export default function FinanceReportsPage() {
                   className="flex items-center justify-between rounded-lg border p-3"
                 >
                   <div className="flex items-center gap-3">
-                    <Badge variant="secondary">{STATUS_LABELS[row.status]}</Badge>
+                    <Badge variant="secondary">
+                      {STATUS_LABELS[row.status]}
+                    </Badge>
                     <span className="text-sm text-muted-foreground">
                       {row.count} request{row.count === 1 ? "" : "s"}
                     </span>

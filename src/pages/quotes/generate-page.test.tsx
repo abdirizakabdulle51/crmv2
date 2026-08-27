@@ -198,9 +198,16 @@ describe("QuoteGenerateFromUsagePage", () => {
     await waitFor(() => {
       expect(mocks.createQuote).toHaveBeenCalledWith({
         companyId: "company-1",
-        lineItems: mocks.preview?.lineItems,
-        monthlyGrandTotal: 6,
-        yearlyGrandTotal: 72,
+        lineItems: [
+          {
+            catalogItemId: "catalog-1",
+            itemName: "EIP - Active",
+            serviceCategory: "EIP",
+            billingUnit: "per IP",
+            quantity: 2,
+            monthlyUnitPrice: 3,
+          },
+        ],
         notes: "Generated from Usage Tracking for 2026-07",
         sourceMonth: "2026-07",
       });
