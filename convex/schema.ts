@@ -1130,6 +1130,7 @@ export default defineSchema({
     pricingBasis: v.optional(
       v.union(v.literal("service_lines"), v.literal("total_contract")),
     ),
+    commitmentModel: v.optional(v.literal("flexible_value")),
     contractValue: v.optional(v.number()),
     defaultDiscountType: v.optional(
       v.union(v.literal("percentage"), v.literal("amount")),

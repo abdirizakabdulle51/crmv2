@@ -2386,4 +2386,85 @@ describe("invoices", () => {
     ]);
     expect(invoice.grandTotal).toBe(140);
   });
+
+  it("lets flexible contracts use any service and bills only undiscounted overage", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "FLEX-1",
+        title: "Flexible cloud commitment",
+        status: "draft",
+        startDate: Date.UTC(2026, 6, 1),
+        endDate: Date.UTC(2026, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "total_contract",
+        commitmentModel: "flexible_value",
+        contractValue: 100,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 20 }],
+        services: [],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.activate, {
+      contractId,
+    });
+    await t.run((ctx) =>
+      ctx.db.insert("consumption", {
+        companyId: s.companyA,
+        month: "2026-07",
+        usageDate: "2026-07-15",
+        serviceType: "ECS",
+        amount: 200,
+        catalogItemId: s.catalogItemId,
+      }),
+    );
+
+    const cycleId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-07" },
+    );
+    const cycle = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId: cycleId,
+    });
+    expect(cycle.grandTotal).toBe(100);
+    expect(cycle.lineItems).toEqual([
+      expect.objectContaining({
+        itemName: "Contract commitment — 2026-07",
+        monthlyTotal: 100,
+      }),
+    ]);
+
+    const settlementId = await asUser(t, s.amA).mutation(
+      api.invoices.createOverageDraftFromContract,
+      { contractId, cycleStartMonth: "2026-07" },
+    );
+    const settlement = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId: settlementId,
+    });
+    expect(settlement.grandTotal).toBe(75);
+    expect(settlement.lineItems[0]).toMatchObject({
+      serviceCategory: "Contract Overage",
+      monthlyTotal: 75,
+    });
+
+    const comparison = await asUser(t, s.ceo).query(
+      api.customerContracts.usageComparison,
+      { contractId, month: "2026-07" },
+    );
+    expect(comparison).toMatchObject({
+      flexible: {
+        commitmentValue: 100,
+        consumed: 100,
+        remaining: 0,
+        discountedUsage: 160,
+        catalogueUsage: 200,
+        overage: 75,
+      },
+    });
+  });
 });

@@ -1080,6 +1080,13 @@ export default function CustomerContractDetailPage() {
                   Open
                 </Button>
               </div>
+            ) : contract.commitmentModel === "flexible_value" ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead><tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Service</th><th className="px-3 py-3">Group</th><th className="px-3 py-3">Override</th>{canEditOriginal ? <th className="px-3 py-3">Actions</th> : null}</tr></thead>
+                  <tbody>{lineItems.map((line) => <tr key={line._id} className="border-b last:border-0"><td className="px-3 py-3"><div className="font-medium">{line.itemName}</div><div className="text-muted-foreground">{line.serviceCode ?? line.serviceCategory}</div></td><td className="px-3 py-3">{productGroupLabel(line.productGroup)}</td><td className="px-3 py-3">{formatDiscount(line, groupDiscountByKey)}</td>{canEditOriginal ? <td className="px-3 py-3"><Button size="sm" variant="outline" onClick={() => void handleRemove(line)}><Trash2 className="h-4 w-4" /></Button></td> : null}</tr>)}</tbody>
+                </table>
+              </div>
             ) : (
               <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
                 No signed document uploaded yet.
@@ -1175,7 +1182,7 @@ export default function CustomerContractDetailPage() {
         )}
         <Card>
           <CardHeader>
-            <CardTitle>Contract Services</CardTitle>
+            <CardTitle>{contract.commitmentModel === "flexible_value" ? "Service Discount Overrides" : "Contract Services"}</CardTitle>
           </CardHeader>
           <CardContent>
             {lineItems.length === 0 ? (
@@ -1184,10 +1191,11 @@ export default function CustomerContractDetailPage() {
                   <EmptyMedia variant="icon">
                     <FileSignature className="h-6 w-6" />
                   </EmptyMedia>
-                  <EmptyTitle>No services added yet.</EmptyTitle>
+                  <EmptyTitle>{contract.commitmentModel === "flexible_value" ? "All services use their group discount." : "No services added yet."}</EmptyTitle>
                   <EmptyDescription>
-                    Add agreed services, limits, contract prices, discounts, and
-                    overage prices.
+                    {contract.commitmentModel === "flexible_value"
+                      ? "Every catalogue service is eligible. Add an override only when a specific service needs a different discount."
+                      : "Add agreed services, limits, contract prices, discounts, and overage prices."}
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -1276,7 +1284,7 @@ export default function CustomerContractDetailPage() {
           </CardContent>
         </Card>
 
-        {canEditOriginal ? (
+        {canEditOriginal && contract.commitmentModel !== "flexible_value" ? (
           <Card>
             <CardHeader>
               <CardTitle>
@@ -1622,6 +1630,20 @@ export default function CustomerContractDetailPage() {
         <CardContent>
           {usageComparison === undefined ? (
             <Skeleton className="h-36 w-full" />
+          ) : usageComparison.flexible ? (
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+                <UsageSummaryCard label="Commitment" value={formatMoney(usageComparison.flexible.commitmentValue, contract.currency)} />
+                <UsageSummaryCard label="Catalogue usage" value={formatMoney(usageComparison.flexible.catalogueUsage, contract.currency)} />
+                <UsageSummaryCard label="Discounted usage" value={formatMoney(usageComparison.flexible.discountedUsage, contract.currency)} />
+                <UsageSummaryCard label="Consumed" value={formatMoney(usageComparison.flexible.consumed, contract.currency)} />
+                <UsageSummaryCard label="Remaining" value={formatMoney(usageComparison.flexible.remaining, contract.currency)} />
+                <UsageSummaryCard label="Overage" value={formatMoney(usageComparison.flexible.overage, contract.currency)} />
+              </div>
+              <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                All catalogue services are eligible. Discounted usage consumes one shared contract balance in chronological order; usage beyond it is charged at catalogue price.
+              </p>
+            </div>
           ) : usageComparison.rows.length === 0 ? (
             <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
               Add contract services first, then this table will compare them to

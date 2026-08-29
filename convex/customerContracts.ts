@@ -14,6 +14,7 @@ import {
   sumMoney,
 } from "./money";
 import { contractDiscount, contractOveragePrice } from "./contractPricing";
+import { allocateFlexibleCommitment } from "./flexibleCommitment";
 import { PRODUCT_GROUPS } from "../src/lib/product-groups";
 
 type Ctx = QueryCtx | MutationCtx;
@@ -43,6 +44,7 @@ type ContractInput = {
     | "yearly";
   billingTiming?: "prepaid" | "postpaid";
   pricingBasis?: "service_lines" | "total_contract";
+  commitmentModel?: "flexible_value";
   contractValue?: number;
   defaultDiscountType?: "percentage" | "amount";
   defaultDiscountValue?: number;
@@ -129,6 +131,7 @@ const contractFieldsValidator = {
   pricingBasis: v.optional(
     v.union(v.literal("service_lines"), v.literal("total_contract")),
   ),
+  commitmentModel: v.optional(v.literal("flexible_value")),
   contractValue: v.optional(v.number()),
   defaultDiscountType: v.optional(
     v.union(v.literal("percentage"), v.literal("amount")),
@@ -319,6 +322,15 @@ function normalizeFields(args: ContractInput) {
         "A positive contract value is required for total-value contracts",
     });
   }
+  if (
+    args.commitmentModel === "flexible_value" &&
+    args.pricingBasis !== "total_contract"
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Flexible commitments require a total contract value",
+    });
+  }
   const defaultDiscountValue = assertNonNegative(
     args.defaultDiscountValue,
     "Default discount",
@@ -348,6 +360,7 @@ function normalizeFields(args: ContractInput) {
     billingFrequency: args.billingFrequency,
     billingTiming: args.billingTiming ?? "postpaid",
     pricingBasis: args.pricingBasis ?? "service_lines",
+    commitmentModel: args.commitmentModel,
     contractValue,
     defaultDiscountType: args.defaultDiscountType,
     defaultDiscountValue,
@@ -832,6 +845,99 @@ export const usageComparison = query({
     const groupDiscountByKey = new Map(
       groupDiscounts.map((rule) => [rule.productGroup, rule.discountPercent]),
     );
+    if (contract.commitmentModel === "flexible_value") {
+      const allUsage = await ctx.db
+        .query("consumption")
+        .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
+        .collect();
+      const through = monthEndTimestamp(args.month);
+      const eligibleUsage = allUsage
+        .map((entry) => ({
+          entry,
+          timestamp: entry.usageDate
+            ? Date.parse(`${entry.usageDate}T12:00:00.000Z`)
+            : monthEndTimestamp(entry.month),
+        }))
+        .filter(
+          ({ timestamp }) =>
+            timestamp >= contract.startDate &&
+            timestamp <= contract.endDate &&
+            timestamp <= through,
+        )
+        .sort(
+          (a, b) =>
+            a.timestamp - b.timestamp || a.entry._id.localeCompare(b.entry._id),
+        );
+      const catalogIds = new Set(
+        eligibleUsage.flatMap(({ entry }) =>
+          entry.catalogItemId ? [entry.catalogItemId] : [],
+        ),
+      );
+      const catalogs = await Promise.all(
+        [...catalogIds].map(async (id) => [id, await ctx.db.get(id)] as const),
+      );
+      const catalogById = new Map(catalogs);
+      const overrideByService = new Map(
+        lines
+          .filter(
+            (line) =>
+              line.serviceCode &&
+              line.discountType === "percentage" &&
+              line.discountValue !== undefined,
+          )
+          .map((line) => [line.serviceCode!, line.discountValue!]),
+      );
+      const allocations = allocateFlexibleCommitment(
+        contract.contractValue ?? 0,
+        eligibleUsage.map(({ entry }) => {
+          const catalog = entry.catalogItemId
+            ? catalogById.get(entry.catalogItemId)
+            : null;
+          const serviceCode = catalog?.serviceCode ?? catalog?.serviceCategory;
+          return {
+            key: entry._id,
+            grossAmount: entry.amount,
+            discountPercent:
+              (serviceCode ? overrideByService.get(serviceCode) : undefined) ??
+              (catalog?.productGroup
+                ? groupDiscountByKey.get(catalog.productGroup)
+                : undefined) ??
+              0,
+          };
+        }),
+      );
+      const remainingCommitment =
+        allocations.at(-1)?.remainingCommitment ?? contract.contractValue ?? 0;
+      return {
+        month: args.month,
+        rows: [],
+        totals: {
+          contractMinimum: contract.contractValue ?? 0,
+          overage: sumMoney(allocations.map((row) => row.overageAmount)),
+          projected: sumMoney([
+            contract.contractValue ?? 0,
+            ...allocations.map((row) => row.overageAmount),
+          ]),
+          usageAmount: sumMoney(allocations.map((row) => row.grossAmount)),
+          matchedEntries: allocations.length,
+          totalUsageEntries: allocations.length,
+        },
+        flexible: {
+          commitmentValue: contract.contractValue ?? 0,
+          consumed: sumMoney(
+            allocations.map((row) => row.commitmentConsumed),
+          ),
+          remaining: remainingCommitment,
+          discountedUsage: sumMoney(
+            allocations.map((row) => row.discountedAmount),
+          ),
+          catalogueUsage: sumMoney(
+            allocations.map((row) => row.grossAmount),
+          ),
+          overage: sumMoney(allocations.map((row) => row.overageAmount)),
+        },
+      };
+    }
     const rows = [];
     const monthFraction = calculateMonthProration({
       startDate: contract.startDate,
@@ -1086,7 +1192,8 @@ export const createConfigured = mutation({
         message: "Configured contracts must be created as drafts",
       });
     }
-    if (services.length === 0) {
+    const isFlexible = fields.commitmentModel === "flexible_value";
+    if (!isFlexible && services.length === 0) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Select at least one contract service",
@@ -1108,10 +1215,12 @@ export const createConfigured = mutation({
     const catalogs = [];
     const seenCatalogIds = new Set<string>();
     for (const service of services) {
-      if (!Number.isFinite(service.includedQuantity) || service.includedQuantity <= 0) {
+      if (!Number.isFinite(service.includedQuantity) || (!isFlexible && service.includedQuantity <= 0) || service.includedQuantity < 0) {
         throw new ConvexError({
           code: "BAD_REQUEST",
-          message: "Included quantity must be greater than zero",
+          message: isFlexible
+            ? "Service override quantity must be zero or greater"
+            : "Included quantity must be greater than zero",
         });
       }
       if (seenCatalogIds.has(service.catalogItemId)) {
@@ -1192,7 +1301,9 @@ export const createConfigured = mutation({
       contractId,
       user._id,
       "created",
-      `Customer contract ${fields.contractNumber} created with ${services.length} services`,
+      isFlexible
+        ? `Flexible customer contract ${fields.contractNumber} created with ${services.length} service overrides`
+        : `Customer contract ${fields.contractNumber} created with ${services.length} services`,
     );
     return contractId;
   },
@@ -1328,23 +1439,25 @@ export const activate = mutation({
       .query("customerContractGroupDiscounts")
       .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
       .collect();
-    if (lineItems.length === 0) {
+    if (contract.commitmentModel !== "flexible_value" && lineItems.length === 0) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Add at least one contract service before activating",
       });
     }
 
-    assertContractValueMatchesServices(
-      contract,
-      lineItems,
-      new Map(
-        groupDiscounts.map((rule) => [
-          rule.productGroup,
-          rule.discountPercent,
-        ]),
-      ),
-    );
+    if (contract.commitmentModel !== "flexible_value") {
+      assertContractValueMatchesServices(
+        contract,
+        lineItems,
+        new Map(
+          groupDiscounts.map((rule) => [
+            rule.productGroup,
+            rule.discountPercent,
+          ]),
+        ),
+      );
+    }
 
     await assertNoOverlappingActiveContract(ctx, contract, contract._id);
 

@@ -40,6 +40,7 @@ import {
   restoreInvoiceCredit,
 } from "./customerCredits";
 import { contractDiscount, contractOveragePrice } from "./contractPricing";
+import { allocateFlexibleCommitment } from "./flexibleCommitment";
 
 type Ctx = QueryCtx | MutationCtx;
 type InvoiceStatus = Doc<"invoices">["status"];
@@ -900,6 +901,122 @@ function contractValueAllocations(contract: Doc<"customerContracts">) {
   );
 }
 
+async function flexibleCommitmentUsage(
+  ctx: Ctx,
+  contract: Doc<"customerContracts">,
+  through: number,
+) {
+  const [usage, rules, overrides] = await Promise.all([
+    ctx.db
+      .query("consumption")
+      .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
+      .collect(),
+    ctx.db
+      .query("customerContractGroupDiscounts")
+      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+      .collect(),
+    ctx.db
+      .query("customerContractLineItems")
+      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+      .collect(),
+  ]);
+  const groupDiscount = new Map(
+    rules.map((rule) => [rule.productGroup, rule.discountPercent]),
+  );
+  const boundaryMonths = new Set([
+    monthKeyFromTimestamp(contract.startDate),
+    monthKeyFromTimestamp(contract.endDate),
+  ]);
+  if (
+    usage.some(
+      (entry) =>
+        boundaryMonths.has(entry.month) &&
+        contractMonthFraction(contract, entry.month) < 1 &&
+        !entry.usageDate,
+    )
+  ) {
+    throw new ConvexError({
+      code: "USAGE_PERIOD_REQUIRED",
+      message:
+        "Partial-month flexible commitments require dated usage so pre-contract and post-contract usage remain separate",
+    });
+  }
+  const catalogIds = new Set(
+    usage.flatMap((entry) => (entry.catalogItemId ? [entry.catalogItemId] : [])),
+  );
+  const catalogs = await Promise.all(
+    [...catalogIds].map(async (id) => [id, await ctx.db.get(id)] as const),
+  );
+  const catalogById = new Map(catalogs);
+  const overrideByService = new Map(
+    overrides
+      .filter(
+        (line) =>
+          line.serviceCode &&
+          line.discountType === "percentage" &&
+          line.discountValue !== undefined,
+      )
+      .map((line) => [line.serviceCode!, line.discountValue!]),
+  );
+  const dated = usage
+    .map((entry) => {
+      const timestamp = entry.usageDate
+        ? Date.parse(`${entry.usageDate}T12:00:00.000Z`)
+        : monthEndTimestamp(entry.month);
+      return { entry, timestamp };
+    })
+    .filter(
+      ({ timestamp }) =>
+        timestamp >= contract.startDate &&
+        timestamp <= contract.endDate &&
+        timestamp <= through,
+    )
+    .sort(
+      (a, b) =>
+        a.timestamp - b.timestamp || a.entry._id.localeCompare(b.entry._id),
+    );
+  return allocateFlexibleCommitment(
+    contract.contractValue ?? 0,
+    dated.map(({ entry }) => {
+      const catalog = entry.catalogItemId
+        ? catalogById.get(entry.catalogItemId)
+        : null;
+      const serviceCode = catalog?.serviceCode ?? catalog?.serviceCategory;
+      const discountPercent =
+        (serviceCode ? overrideByService.get(serviceCode) : undefined) ??
+        (catalog?.productGroup
+          ? groupDiscount.get(catalog.productGroup)
+          : undefined) ??
+        0;
+      return {
+        key: entry._id,
+        grossAmount: entry.amount,
+        discountPercent,
+      };
+    }),
+  );
+}
+
+async function previouslyBilledFlexibleOverage(
+  ctx: Ctx,
+  contract: Doc<"customerContracts">,
+) {
+  const invoices = await ctx.db
+    .query("invoices")
+    .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+    .collect();
+  return sumMoney(
+    invoices
+      .filter(
+        (invoice) =>
+          invoice.status !== "void" && invoice.status !== "cancelled",
+      )
+      .flatMap((invoice) => invoice.lineItems)
+      .filter((line) => line.serviceCategory === "Contract Overage")
+      .map((line) => line.monthlyTotal),
+  );
+}
+
 function contractCoversMonth(
   contract: Doc<"customerContracts">,
   month: string,
@@ -990,7 +1107,8 @@ async function createContractDraftInvoice(
   const groupDiscountByKey = new Map(
     groupDiscounts.map((rule) => [rule.productGroup, rule.discountPercent]),
   );
-  if (lines.length === 0) {
+  const isFlexible = contract.commitmentModel === "flexible_value";
+  if (!isFlexible && lines.length === 0) {
     throw new ConvexError({
       code: "BAD_REQUEST",
       message: "Add at least one contract service before creating an invoice",
@@ -1016,11 +1134,61 @@ async function createContractDraftInvoice(
     const catalogItem = await ctx.db.get(line.catalogItemId);
     if (catalogItem) catalogById.set(line.catalogItemId, catalogItem);
   }
-  const monthlyLineGroups: Array<{
+  let monthlyLineGroups: Array<{
     month: string;
     lineItems: InvoiceLineItem[];
   }> = [];
-  for (const month of cycleMonths) {
+  if (isFlexible) {
+    const valueAllocations = contractValueAllocations(contract) ?? [];
+    monthlyLineGroups = cycleMonths.map((month) => {
+      const amount =
+        valueAllocations.find((allocation) => allocation.month === month)
+          ?.amount ?? 0;
+      return {
+        month,
+        lineItems:
+          kind === "cycle"
+            ? [
+                {
+                  itemName: `Contract commitment — ${month}`,
+                  serviceCategory: "Contract",
+                  billingUnit: "month",
+                  quantity: 1,
+                  monthlyUnitPrice: amount,
+                  monthlyTotal: amount,
+                  yearlyTotal: amount,
+                },
+              ]
+            : [],
+      };
+    });
+    if (
+      kind === "overage_settlement" ||
+      (contract.billingTiming ?? "postpaid") === "postpaid"
+    ) {
+      const allocations = await flexibleCommitmentUsage(
+        ctx,
+        contract,
+        monthEndTimestamp(cycleEndMonth),
+      );
+      const expectedOverage = sumMoney(
+        allocations.map((allocation) => allocation.overageAmount),
+      );
+      const alreadyBilled = await previouslyBilledFlexibleOverage(ctx, contract);
+      const overageDue = Math.max(0, sumMoney([expectedOverage, -alreadyBilled]));
+      if (overageDue > 0) {
+        monthlyLineGroups.at(-1)!.lineItems.push({
+          itemName: `Flexible contract overage through ${cycleEndMonth}`,
+          serviceCategory: "Contract Overage",
+          billingUnit: "usage",
+          quantity: 1,
+          monthlyUnitPrice: overageDue,
+          monthlyTotal: overageDue,
+          yearlyTotal: overageDue,
+        });
+      }
+    }
+  } else for (const month of cycleMonths) {
     const recordedUsageEntries = await ctx.db
       .query("consumption")
       .withIndex("by_company_month", (q) =>
@@ -1093,7 +1261,7 @@ async function createContractDraftInvoice(
     });
   }
   const valueAllocations = contractValueAllocations(contract);
-  if (valueAllocations && kind === "cycle") {
+  if (!isFlexible && valueAllocations && kind === "cycle") {
     const desiredBase = sumMoney(
       valueAllocations
         .filter((allocation) => cycleMonths.includes(allocation.month))
