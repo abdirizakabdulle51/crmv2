@@ -21,9 +21,13 @@ export function contractDiscount(
   line: Line,
   lineIndex: number,
   allLines?: Line[],
+  groupDiscountPercent?: number,
 ) {
   if (line.discountType) {
     return { type: line.discountType, value: line.discountValue };
+  }
+  if (groupDiscountPercent !== undefined) {
+    return { type: "percentage" as const, value: groupDiscountPercent };
   }
   let value = contract.defaultDiscountValue;
   if (

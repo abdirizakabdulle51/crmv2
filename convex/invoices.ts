@@ -983,6 +983,13 @@ async function createContractDraftInvoice(
     .query("customerContractLineItems")
     .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
     .collect();
+  const groupDiscounts = await ctx.db
+    .query("customerContractGroupDiscounts")
+    .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+    .collect();
+  const groupDiscountByKey = new Map(
+    groupDiscounts.map((rule) => [rule.productGroup, rule.discountPercent]),
+  );
   if (lines.length === 0) {
     throw new ConvexError({
       code: "BAD_REQUEST",
@@ -1047,7 +1054,15 @@ async function createContractDraftInvoice(
           const catalogPrice = line.catalogItemId
             ? catalogById.get(line.catalogItemId)?.monthlyPrice
             : undefined;
-          const discount = contractDiscount(contract, line, lineIndex, lines);
+          const discount = contractDiscount(
+            contract,
+            line,
+            lineIndex,
+            lines,
+            line.productGroup
+              ? groupDiscountByKey.get(line.productGroup)
+              : undefined,
+          );
           return contractInvoiceLines(line, usageEntries, monthFraction, {
             monthLabel: cycleMonths.length > 1 ? month : undefined,
             defaultDiscountType: discount.type,

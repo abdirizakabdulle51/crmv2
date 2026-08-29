@@ -47,4 +47,29 @@ describe("contract pricing policy", () => {
       ),
     ).toEqual({ type: "percentage", value: 10 });
   });
+
+  it("uses a service override before its product-group discount", () => {
+    expect(contractDiscount(contract, line, 0, undefined, 15)).toEqual({
+      type: "percentage",
+      value: 15,
+    });
+    expect(
+      contractDiscount(
+        contract,
+        { ...line, discountType: "percentage", discountValue: 22 },
+        0,
+        undefined,
+        15,
+      ),
+    ).toEqual({ type: "percentage", value: 22 });
+    expect(
+      contractDiscount(
+        contract,
+        { ...line, discountType: "percentage", discountValue: 0 },
+        0,
+        undefined,
+        15,
+      ),
+    ).toEqual({ type: "percentage", value: 0 });
+  });
 });

@@ -228,6 +228,7 @@ type ContractPricingContext = Map<
   {
     contract: Doc<"customerContracts">;
     lines: ContractLineItem[];
+    groupDiscountByKey: Map<string, number>;
   }
 >;
 
@@ -273,9 +274,19 @@ async function loadActiveContractPricingForMonth(
       .query("customerContractLineItems")
       .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
       .collect();
+    const groupDiscounts = await ctx.db
+      .query("customerContractGroupDiscounts")
+      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+      .collect();
     context.set(companyId, {
       contract,
       lines: lines.sort((a, b) => a.createdAt - b.createdAt),
+      groupDiscountByKey: new Map(
+        groupDiscounts.map((rule) => [
+          rule.productGroup,
+          rule.discountPercent,
+        ]),
+      ),
     });
   }
 
@@ -418,6 +429,11 @@ export function buildMonthlyRollupRows(args: {
             contractMatch.line,
             contractMatch.lineIndex,
             args.contractPricingByCompany?.get(row.companyId)?.lines,
+            contractMatch.line.productGroup
+              ? args.contractPricingByCompany
+                  ?.get(row.companyId)
+                  ?.groupDiscountByKey.get(contractMatch.line.productGroup)
+              : undefined,
           )
         : undefined;
       const currentCatalogPrice = contractLine?.catalogItemId

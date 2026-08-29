@@ -756,6 +756,8 @@ export default defineSchema({
     .index("by_month", ["month"]),
 
   serviceCatalog: defineTable({
+    productGroup: v.optional(v.string()),
+    serviceCode: v.optional(v.string()),
     serviceCategory: v.string(),
     itemName: v.string(),
     specs: v.optional(v.string()),
@@ -765,6 +767,7 @@ export default defineSchema({
     hourlyPrice: v.optional(v.number()),
   })
     .index("by_category", ["serviceCategory"])
+    .index("by_product_group", ["productGroup"])
     .index("by_name", ["itemName"]),
 
   aiRecommendations: defineTable({
@@ -1209,6 +1212,8 @@ export default defineSchema({
     catalogItemId: v.optional(v.id("serviceCatalog")),
     itemName: v.string(),
     serviceCategory: v.string(),
+    productGroup: v.optional(v.string()),
+    serviceCode: v.optional(v.string()),
     description: v.optional(v.string()),
     includedQuantity: v.number(),
     unit: v.string(),
@@ -1228,6 +1233,17 @@ export default defineSchema({
     .index("by_contract", ["contractId"])
     .index("by_catalog_item", ["catalogItemId"])
     .index("by_service_category", ["serviceCategory"]),
+
+  customerContractGroupDiscounts: defineTable({
+    contractId: v.id("customerContracts"),
+    productGroup: v.string(),
+    discountPercent: v.number(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_contract", ["contractId"])
+    .index("by_contract_group", ["contractId", "productGroup"]),
 
   customerCredits: defineTable({
     companyId: v.id("companies"),

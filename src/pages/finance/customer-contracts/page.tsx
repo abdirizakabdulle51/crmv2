@@ -247,9 +247,7 @@ export default function CustomerContractsPage() {
   );
 
   const openCreate = () => {
-    setEditingContract(null);
-    setForm(emptyContractForm());
-    setDialogOpen(true);
+    navigate("/finance/customer-contracts/new");
   };
 
   const openEdit = (contract: CustomerContract) => {

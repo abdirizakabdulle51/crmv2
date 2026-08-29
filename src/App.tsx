@@ -64,6 +64,9 @@ const CustomerContractsPage = lazy(
 const CustomerContractDetailPage = lazy(
   () => import("./pages/finance/customer-contracts/detail-page.tsx"),
 );
+const NewCustomerContractPage = lazy(
+  () => import("./pages/finance/customer-contracts/new-page.tsx"),
+);
 const RecommendationsPage = lazy(
   () => import("./pages/recommendations/page.tsx"),
 );
@@ -169,6 +172,10 @@ export default function App() {
             <Route
               path="/finance/customer-contracts/:contractId"
               element={lazyPage(<CustomerContractDetailPage />)}
+            />
+            <Route
+              path="/finance/customer-contracts/new"
+              element={lazyPage(<NewCustomerContractPage />)}
             />
             <Route
               path="/finance/settings"

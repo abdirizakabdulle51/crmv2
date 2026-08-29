@@ -94,6 +94,8 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       contactEmail: "billing-b@example.com",
     });
     const catalogItemId = await ctx.db.insert("serviceCatalog", {
+      productGroup: "compute",
+      serviceCode: "ECS",
       serviceCategory: "ECS",
       itemName: "ECS Small",
       billingUnit: "per instance",
@@ -2323,5 +2325,65 @@ describe("invoices", () => {
         sourceMonth: "2026-02",
       }),
     ).rejects.toThrow(/cycle boundary/i);
+  });
+
+  it("applies a service discount override before the product-group discount", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const storageId = await t.run((ctx) =>
+      ctx.db.insert("serviceCatalog", {
+        productGroup: "storage",
+        serviceCode: "EVS",
+        serviceCategory: "EVS",
+        itemName: "EVS SSD",
+        billingUnit: "GB/month",
+        monthlyPrice: 10,
+      }),
+    );
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "GROUP-DISCOUNT-1",
+        title: "Grouped cloud commitment",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2026, 7, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "service_lines",
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [
+          { productGroup: "compute", discountPercent: 15 },
+          { productGroup: "storage", discountPercent: 40 },
+        ],
+        services: [
+          {
+            catalogItemId: s.catalogItemId,
+            includedQuantity: 10,
+            serviceDiscountPercent: 20,
+          },
+          { catalogItemId: storageId, includedQuantity: 10 },
+        ],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.activate, {
+      contractId,
+    });
+    const invoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-08" },
+    );
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lineItems.map((line) => line.monthlyTotal)).toEqual([
+      100,
+      -20,
+      100,
+      -40,
+    ]);
+    expect(invoice.grandTotal).toBe(140);
   });
 });

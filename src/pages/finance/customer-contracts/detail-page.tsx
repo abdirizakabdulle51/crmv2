@@ -63,6 +63,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
+import { productGroupLabel } from "@/lib/product-groups.ts";
 import { cn } from "@/lib/utils.ts";
 import { ContractDialog, type ContractFormState } from "./contract-form.tsx";
 import {
@@ -271,17 +272,28 @@ function formatMoney(value: number | undefined, currency = "USD") {
   }).format(value);
 }
 
-function getLineDiscountAmount(line: ContractLineItem, gross: number) {
-  if (!line.discountType || line.discountValue === undefined) return 0;
-  if (line.discountType === "percentage") {
-    return Math.min(gross, gross * (line.discountValue / 100));
+function resolvedDiscountPercent(
+  line: ContractLineItem,
+  groupDiscountByKey: Map<string, number>,
+) {
+  if (line.discountType === "percentage" && line.discountValue !== undefined) {
+    return line.discountValue;
   }
-  return Math.min(gross, line.discountValue);
+  return line.productGroup
+    ? groupDiscountByKey.get(line.productGroup)
+    : undefined;
 }
 
-function getContractLineAmount(line: ContractLineItem) {
+function getContractLineAmount(
+  line: ContractLineItem,
+  groupDiscountByKey: Map<string, number>,
+) {
   const gross = line.includedQuantity * line.contractUnitPrice;
-  return Math.max(0, gross - getLineDiscountAmount(line, gross));
+  if (line.discountType === "amount" && line.discountValue !== undefined) {
+    return Math.max(0, gross - Math.min(gross, line.discountValue));
+  }
+  const percent = resolvedDiscountPercent(line, groupDiscountByKey) ?? 0;
+  return Math.max(0, gross * (1 - percent / 100));
 }
 
 function validateSignedDocumentFile(file: File) {
@@ -405,6 +417,10 @@ export default function CustomerContractDetailPage() {
     api.customerContracts.listLineItems,
     parsedContractId ? { contractId: parsedContractId } : "skip",
   );
+  const groupDiscounts = useQuery(
+    api.customerContracts.listGroupDiscounts,
+    parsedContractId ? { contractId: parsedContractId } : "skip",
+  );
   const amendments = useQuery(
     api.customerContracts.listAmendments,
     parsedContractId ? { contractId: parsedContractId } : "skip",
@@ -459,13 +475,24 @@ export default function CustomerContractDetailPage() {
       : "skip",
   );
 
+  const groupDiscountByKey = useMemo(
+    () =>
+      new Map(
+        (groupDiscounts ?? []).map((rule) => [
+          rule.productGroup,
+          rule.discountPercent,
+        ]),
+      ),
+    [groupDiscounts],
+  );
   const lineTotal = useMemo(
     () =>
       (lineItems ?? []).reduce(
-        (total, line) => total + getContractLineAmount(line),
+        (total, line) =>
+          total + getContractLineAmount(line, groupDiscountByKey),
         0,
       ),
-    [lineItems],
+    [groupDiscountByKey, lineItems],
   );
   const sortedCompanies = useMemo(
     () => [...(companies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
@@ -1134,6 +1161,18 @@ export default function CustomerContractDetailPage() {
             : "grid gap-5"
         }
       >
+        {(groupDiscounts?.length ?? 0) > 0 && (
+          <Card className="xl:col-span-2">
+            <CardHeader><CardTitle>Product-group Discounts</CardTitle></CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              {groupDiscounts?.map((rule) => (
+                <Badge key={rule._id} variant="secondary" className="px-3 py-1.5">
+                  {productGroupLabel(rule.productGroup)} · {rule.discountPercent}%
+                </Badge>
+              ))}
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardHeader>
             <CardTitle>Contract Services</CardTitle>
@@ -1194,7 +1233,7 @@ export default function CustomerContractDetailPage() {
                           )}
                         </td>
                         <td className="px-3 py-3 text-muted-foreground">
-                          {formatDiscount(line)}
+                          {formatDiscount(line, groupDiscountByKey)}
                         </td>
                         <td className="px-3 py-3 text-muted-foreground">
                           {formatMoney(
@@ -1204,7 +1243,7 @@ export default function CustomerContractDetailPage() {
                         </td>
                         <td className="px-3 py-3 font-medium">
                           {formatMoney(
-                            getContractLineAmount(line),
+                            getContractLineAmount(line, groupDiscountByKey),
                             contract.currency,
                           )}
                         </td>
@@ -1817,9 +1856,21 @@ function Field({
   );
 }
 
-function formatDiscount(line: ContractLineItem) {
+function formatDiscount(
+  line: ContractLineItem,
+  groupDiscountByKey: Map<string, number>,
+) {
+  if (line.discountType === "percentage" && line.discountValue !== undefined) {
+    return `${line.discountValue}% service`;
+  }
+  if (line.discountType === "amount" && line.discountValue !== undefined) {
+    return formatMoney(line.discountValue);
+  }
+  const groupDiscount = line.productGroup
+    ? groupDiscountByKey.get(line.productGroup)
+    : undefined;
+  if (groupDiscount !== undefined) return `${groupDiscount}% group`;
   if (!line.discountType || line.discountValue === undefined) return "-";
-  if (line.discountType === "percentage") return `${line.discountValue}%`;
   return formatMoney(line.discountValue);
 }
 

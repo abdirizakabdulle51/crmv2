@@ -54,4 +54,11 @@ crons.daily(
   {},
 );
 
+crons.daily(
+  "classify legacy service catalogue",
+  { hourUTC: 2, minuteUTC: 20 },
+  internal.serviceCatalog.classifyLegacyItems,
+  {},
+);
+
 export default crons;

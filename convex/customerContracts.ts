@@ -14,6 +14,7 @@ import {
   sumMoney,
 } from "./money";
 import { contractDiscount, contractOveragePrice } from "./contractPricing";
+import { PRODUCT_GROUPS } from "../src/lib/product-groups";
 
 type Ctx = QueryCtx | MutationCtx;
 type ContractStatus = "draft" | "active" | "expired" | "terminated" | "renewed";
@@ -55,6 +56,8 @@ type LineItemInput = {
   catalogItemId?: Id<"serviceCatalog">;
   itemName: string;
   serviceCategory: string;
+  productGroup?: string;
+  serviceCode?: string;
   description?: string;
   includedQuantity: number;
   unit: string;
@@ -148,6 +151,8 @@ const lineItemFieldsValidator = {
   catalogItemId: v.optional(v.id("serviceCatalog")),
   itemName: v.string(),
   serviceCategory: v.string(),
+  productGroup: v.optional(v.string()),
+  serviceCode: v.optional(v.string()),
   description: v.optional(v.string()),
   includedQuantity: v.number(),
   unit: v.string(),
@@ -161,6 +166,32 @@ const lineItemFieldsValidator = {
   billingUnit: v.string(),
   notes: v.optional(v.string()),
 };
+
+const productGroupValues = new Set<string>(
+  PRODUCT_GROUPS.map((group) => group.value),
+);
+
+function normalizeProductGroup(value: string | undefined) {
+  if (value === undefined) return undefined;
+  const normalized = value.trim();
+  if (!productGroupValues.has(normalized)) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Select a valid HTGClouds product group",
+    });
+  }
+  return normalized;
+}
+
+function normalizeDiscountPercent(value: number) {
+  if (!Number.isFinite(value) || value < 0 || value > 100) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Discount percentage must be between 0 and 100",
+    });
+  }
+  return value;
+}
 
 async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
@@ -365,6 +396,8 @@ function normalizeLineItemFields(args: LineItemInput) {
     catalogItemId: args.catalogItemId,
     itemName: requiredText(args.itemName, "Service name"),
     serviceCategory: requiredText(args.serviceCategory, "Service category"),
+    productGroup: normalizeProductGroup(args.productGroup),
+    serviceCode: optionalText(args.serviceCode),
     description: optionalText(args.description),
     includedQuantity: assertNonNegative(
       args.includedQuantity,
@@ -430,6 +463,7 @@ async function assertNoOverlappingActiveContract(
 function assertContractValueMatchesServices(
   contract: Doc<"customerContracts">,
   lines: Doc<"customerContractLineItems">[],
+  groupDiscountByKey: Map<string, number>,
 ) {
   if (contract.pricingBasis !== "total_contract" || !contract.contractValue) {
     return;
@@ -453,7 +487,15 @@ function assertContractValueMatchesServices(
         month,
       }).fraction;
       return sorted.map((line, index) => {
-        const discount = contractDiscount(contract, line, index, sorted);
+        const discount = contractDiscount(
+          contract,
+          line,
+          index,
+          sorted,
+          line.productGroup
+            ? groupDiscountByKey.get(line.productGroup)
+            : undefined,
+        );
         return calculateContractCharges({
           includedQuantity: line.includedQuantity,
           contractUnitPrice: line.contractUnitPrice,
@@ -577,6 +619,7 @@ function comparisonRow(
   contract: Doc<"customerContracts">,
   lineIndex: number,
   allLines: Doc<"customerContractLineItems">[],
+  groupDiscountPercent: number | undefined,
   monthFraction: number,
   currentCatalogPrice?: number,
 ): UsageComparisonRow {
@@ -593,7 +636,13 @@ function comparisonRow(
     return total;
   }, 0);
   const usageAmount = sumMoney(matchedUsage.map((usage) => usage.amount));
-  const discount = contractDiscount(contract, line, lineIndex, allLines);
+  const discount = contractDiscount(
+    contract,
+    line,
+    lineIndex,
+    allLines,
+    groupDiscountPercent,
+  );
   const charges = calculateContractCharges({
     includedQuantity: line.includedQuantity,
     contractUnitPrice: line.contractUnitPrice,
@@ -764,7 +813,7 @@ export const usageComparison = query({
     }
     await getVisibleCompany(ctx, user, contract.companyId);
 
-    const [lines, usageEntries] = await Promise.all([
+    const [lines, usageEntries, groupDiscounts] = await Promise.all([
       ctx.db
         .query("customerContractLineItems")
         .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
@@ -775,7 +824,14 @@ export const usageComparison = query({
           q.eq("companyId", contract.companyId).eq("month", args.month),
         )
         .collect(),
+      ctx.db
+        .query("customerContractGroupDiscounts")
+        .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+        .collect(),
     ]);
+    const groupDiscountByKey = new Map(
+      groupDiscounts.map((rule) => [rule.productGroup, rule.discountPercent]),
+    );
     const rows = [];
     const monthFraction = calculateMonthProration({
       startDate: contract.startDate,
@@ -795,6 +851,9 @@ export const usageComparison = query({
           contract,
           lineIndex,
           lines,
+          line.productGroup
+            ? groupDiscountByKey.get(line.productGroup)
+            : undefined,
           monthFraction,
           catalogItem?.monthlyPrice,
         ),
@@ -999,6 +1058,200 @@ export const create = mutation({
   },
 });
 
+export const createConfigured = mutation({
+  args: {
+    ...contractFieldsValidator,
+    groupDiscounts: v.array(
+      v.object({ productGroup: v.string(), discountPercent: v.number() }),
+    ),
+    services: v.array(
+      v.object({
+        catalogItemId: v.id("serviceCatalog"),
+        includedQuantity: v.number(),
+        serviceDiscountPercent: v.optional(v.number()),
+        overageUnitPrice: v.optional(v.number()),
+        notes: v.optional(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    await getVisibleCompany(ctx, user, args.companyId);
+    const { groupDiscounts, services, ...contractArgs } = args;
+    const fields = normalizeFields(contractArgs);
+    if (fields.status !== "draft") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Configured contracts must be created as drafts",
+      });
+    }
+    if (services.length === 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select at least one contract service",
+      });
+    }
+    await assertUniqueContractNumber(ctx, fields.companyId, fields.contractNumber);
+    const discountByGroup = new Map<string, number>();
+    for (const rule of groupDiscounts) {
+      const group = normalizeProductGroup(rule.productGroup)!;
+      if (discountByGroup.has(group)) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: `Duplicate discount rule for ${group}`,
+        });
+      }
+      discountByGroup.set(group, normalizeDiscountPercent(rule.discountPercent));
+    }
+
+    const catalogs = [];
+    const seenCatalogIds = new Set<string>();
+    for (const service of services) {
+      if (!Number.isFinite(service.includedQuantity) || service.includedQuantity <= 0) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Included quantity must be greater than zero",
+        });
+      }
+      if (seenCatalogIds.has(service.catalogItemId)) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "A catalogue item can only be selected once",
+        });
+      }
+      seenCatalogIds.add(service.catalogItemId);
+      const catalog = await ctx.db.get(service.catalogItemId);
+      if (!catalog) {
+        throw new ConvexError({ code: "NOT_FOUND", message: "Catalogue item not found" });
+      }
+      const productGroup = normalizeProductGroup(catalog.productGroup);
+      if (!productGroup) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: `${catalog.itemName} must be assigned to a product group before contracting`,
+        });
+      }
+      catalogs.push({ service, catalog, productGroup });
+    }
+
+    const now = Date.now();
+    const contractId = await ctx.db.insert("customerContracts", {
+      ...fields,
+      createdBy: user._id,
+      createdAt: now,
+      updatedAt: now,
+    });
+    for (const [productGroup, discountPercent] of discountByGroup) {
+      await ctx.db.insert("customerContractGroupDiscounts", {
+        contractId,
+        productGroup,
+        discountPercent,
+        createdBy: user._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    for (const { service, catalog, productGroup } of catalogs) {
+      await ctx.db.insert("customerContractLineItems", {
+        contractId,
+        catalogItemId: catalog._id,
+        itemName: catalog.itemName,
+        serviceCategory: catalog.serviceCategory,
+        productGroup,
+        serviceCode: catalog.serviceCode ?? catalog.serviceCategory,
+        description: catalog.specs,
+        includedQuantity: assertNonNegative(
+          service.includedQuantity,
+          "Included quantity",
+        )!,
+        unit: catalog.billingUnit,
+        catalogUnitPrice: catalog.monthlyPrice,
+        contractUnitPrice: catalog.monthlyPrice,
+        discountType:
+          service.serviceDiscountPercent === undefined
+            ? undefined
+            : "percentage",
+        discountValue:
+          service.serviceDiscountPercent === undefined
+            ? undefined
+            : normalizeDiscountPercent(service.serviceDiscountPercent),
+        overageUnitPrice: assertNonNegative(
+          service.overageUnitPrice,
+          "Overage price",
+        ),
+        billingUnit: catalog.billingUnit,
+        notes: optionalText(service.notes),
+        createdBy: user._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    await insertEvent(
+      ctx,
+      contractId,
+      user._id,
+      "created",
+      `Customer contract ${fields.contractNumber} created with ${services.length} services`,
+    );
+    return contractId;
+  },
+});
+
+export const listGroupDiscounts = query({
+  args: { contractId: v.id("customerContracts") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) return [];
+    await getVisibleCompany(ctx, user, contract.companyId);
+    return await ctx.db
+      .query("customerContractGroupDiscounts")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+  },
+});
+
+export const setGroupDiscounts = mutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    discounts: v.array(
+      v.object({ productGroup: v.string(), discountPercent: v.number() }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) throw new ConvexError({ code: "NOT_FOUND", message: "Contract not found" });
+    assertDraftContract(contract);
+    await getVisibleCompany(ctx, user, contract.companyId);
+    const normalized = new Map<string, number>();
+    for (const rule of args.discounts) {
+      const group = normalizeProductGroup(rule.productGroup)!;
+      if (normalized.has(group)) throw new ConvexError({ code: "BAD_REQUEST", message: `Duplicate discount rule for ${group}` });
+      normalized.set(group, normalizeDiscountPercent(rule.discountPercent));
+    }
+    const existing = await ctx.db
+      .query("customerContractGroupDiscounts")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    for (const row of existing) await ctx.db.delete(row._id);
+    const now = Date.now();
+    for (const [productGroup, discountPercent] of normalized) {
+      await ctx.db.insert("customerContractGroupDiscounts", {
+        contractId: args.contractId,
+        productGroup,
+        discountPercent,
+        createdBy: user._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    await ctx.db.patch(args.contractId, { updatedAt: now });
+  },
+});
+
 export const update = mutation({
   args: {
     contractId: v.id("customerContracts"),
@@ -1071,6 +1324,10 @@ export const activate = mutation({
       .query("customerContractLineItems")
       .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
       .collect();
+    const groupDiscounts = await ctx.db
+      .query("customerContractGroupDiscounts")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
     if (lineItems.length === 0) {
       throw new ConvexError({
         code: "BAD_REQUEST",
@@ -1078,7 +1335,16 @@ export const activate = mutation({
       });
     }
 
-    assertContractValueMatchesServices(contract, lineItems);
+    assertContractValueMatchesServices(
+      contract,
+      lineItems,
+      new Map(
+        groupDiscounts.map((rule) => [
+          rule.productGroup,
+          rule.discountPercent,
+        ]),
+      ),
+    );
 
     await assertNoOverlappingActiveContract(ctx, contract, contract._id);
 
@@ -1180,9 +1446,15 @@ export const createLineItem = mutation({
     assertDraftContract(contract);
     await getVisibleCompany(ctx, user, contract.companyId);
     const fields = normalizeLineItemFields(args);
+    const catalog = args.catalogItemId
+      ? await ctx.db.get(args.catalogItemId)
+      : null;
     const now = Date.now();
     const lineItemId = await ctx.db.insert("customerContractLineItems", {
       ...fields,
+      productGroup: catalog?.productGroup ?? fields.productGroup,
+      serviceCode:
+        catalog?.serviceCode ?? catalog?.serviceCategory ?? fields.serviceCode,
       createdBy: user._id,
       createdAt: now,
       updatedAt: now,
@@ -1224,9 +1496,15 @@ export const updateLineItem = mutation({
     assertDraftContract(contract);
     await getVisibleCompany(ctx, user, contract.companyId);
     const fields = normalizeLineItemFields(args);
+    const catalog = args.catalogItemId
+      ? await ctx.db.get(args.catalogItemId)
+      : null;
     const now = Date.now();
     await ctx.db.patch(args.lineItemId, {
       ...fields,
+      productGroup: catalog?.productGroup ?? fields.productGroup,
+      serviceCode:
+        catalog?.serviceCode ?? catalog?.serviceCategory ?? fields.serviceCode,
       updatedAt: now,
     });
     await ctx.db.patch(args.contractId, { updatedAt: now });

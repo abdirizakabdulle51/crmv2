@@ -13,6 +13,14 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.tsx";
+import { PRODUCT_GROUPS, productGroupLabel } from "@/lib/product-groups.ts";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -49,6 +57,8 @@ export default function ServiceCatalogSection() {
 
   // Form state
   const [serviceCategory, setServiceCategory] = useState("");
+  const [productGroup, setProductGroup] = useState("");
+  const [serviceCode, setServiceCode] = useState("");
   const [itemName, setItemName] = useState("");
   const [specs, setSpecs] = useState("");
   const [billingUnit, setBillingUnit] = useState("");
@@ -59,6 +69,8 @@ export default function ServiceCatalogSection() {
   const resetForm = () => {
     setEditingItem(null);
     setServiceCategory("");
+    setProductGroup("");
+    setServiceCode("");
     setItemName("");
     setSpecs("");
     setBillingUnit("");
@@ -70,6 +82,8 @@ export default function ServiceCatalogSection() {
   const openEdit = (item: CatalogItem) => {
     setEditingItem(item);
     setServiceCategory(item.serviceCategory);
+    setProductGroup(item.productGroup ?? "");
+    setServiceCode(item.serviceCode ?? item.serviceCategory);
     setItemName(item.itemName);
     setSpecs(item.specs || "");
     setBillingUnit(item.billingUnit);
@@ -80,8 +94,8 @@ export default function ServiceCatalogSection() {
   };
 
   const handleSave = async () => {
-    if (!serviceCategory.trim() || !itemName.trim() || !billingUnit.trim()) {
-      toast.error("Category, name, and billing unit are required");
+    if (!productGroup || !serviceCategory.trim() || !itemName.trim() || !billingUnit.trim()) {
+      toast.error("Product group, service, name, and billing unit are required");
       return;
     }
     const mp = parseFloat(monthlyPrice);
@@ -94,6 +108,8 @@ export default function ServiceCatalogSection() {
 
     try {
       const data = {
+        productGroup,
+        serviceCode: serviceCode.trim() || serviceCategory.trim(),
         serviceCategory: serviceCategory.trim(),
         itemName: itemName.trim(),
         specs: specs.trim() || undefined,
@@ -125,12 +141,13 @@ export default function ServiceCatalogSection() {
     }
   };
 
-  // Group by category
+  // Mirror the public HTGClouds product taxonomy.
   const grouped = new Map<string, CatalogItem[]>();
   for (const item of catalog || []) {
-    const arr = grouped.get(item.serviceCategory) || [];
+    const group = item.productGroup ?? "unclassified";
+    const arr = grouped.get(group) || [];
     arr.push(item);
-    grouped.set(item.serviceCategory, arr);
+    grouped.set(group, arr);
   }
 
   const toggleCategory = (category: string) => {
@@ -201,7 +218,7 @@ export default function ServiceCatalogSection() {
                             <ChevronRight className="h-4 w-4 text-muted-foreground" />
                           )}
                           <span className="text-xs font-semibold uppercase text-muted-foreground tracking-wide">
-                            {category}
+                            {productGroupLabel(category)}
                           </span>
                         </span>
                         <Badge variant="secondary" className="text-xs">
@@ -219,6 +236,9 @@ export default function ServiceCatalogSection() {
                                 <span className="font-medium text-sm">
                                   {item.itemName}
                                 </span>
+                                <Badge variant="secondary" className="text-xs">
+                                  {item.serviceCode ?? item.serviceCategory}
+                                </Badge>
                                 <Badge variant="secondary" className="text-xs">
                                   {item.billingUnit}
                                 </Badge>
@@ -275,11 +295,34 @@ export default function ServiceCatalogSection() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label>Service Category *</Label>
+                <Label>Product Group *</Label>
+                <Select value={productGroup} onValueChange={setProductGroup}>
+                  <SelectTrigger><SelectValue placeholder="Select group" /></SelectTrigger>
+                  <SelectContent>
+                    {PRODUCT_GROUPS.map((group) => (
+                      <SelectItem key={group.value} value={group.value}>
+                        {group.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Service Code *</Label>
+                <Input
+                  value={serviceCode}
+                  onChange={(e) => setServiceCode(e.target.value)}
+                  placeholder="e.g. ECS"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Service Name / Family *</Label>
                 <Input
                   value={serviceCategory}
                   onChange={(e) => setServiceCategory(e.target.value)}
-                  placeholder="e.g. Compute"
+                  placeholder="e.g. Elastic Cloud Server"
                 />
               </div>
               <div className="space-y-2">
@@ -362,6 +405,8 @@ export default function ServiceCatalogSection() {
 }
 
 type CsvRow = {
+  product_group: string;
+  service_code: string;
   service_category: string;
   item_name: string;
   specs: string;
@@ -372,6 +417,8 @@ type CsvRow = {
 };
 
 type ValidatedCatalogRow = {
+  productGroup: string;
+  serviceCode: string;
   serviceCategory: string;
   itemName: string;
   specs: string | undefined;
@@ -391,6 +438,8 @@ function CatalogImportDialog({
   onOpenChange: (v: boolean) => void;
   bulkCreate: (args: {
     items: Array<{
+      productGroup?: string;
+      serviceCode?: string;
       serviceCategory: string;
       itemName: string;
       specs?: string;
@@ -422,9 +471,15 @@ function CatalogImportDialog({
 
   const validateRow = (row: CsvRow): ValidatedCatalogRow => {
     const errors: string[] = [];
+    const productGroup = (row.product_group || "").trim();
+    const serviceCode = (row.service_code || "").trim();
     const cat = (row.service_category || "").trim();
     const name = (row.item_name || "").trim();
     const unit = (row.billing_unit || "").trim();
+    if (!PRODUCT_GROUPS.some((group) => group.value === productGroup)) {
+      errors.push("Invalid product group");
+    }
+    if (!serviceCode) errors.push("Missing service code");
     if (!cat) errors.push("Missing category");
     if (!name) errors.push("Missing item name");
     if (!unit) errors.push("Missing billing unit");
@@ -441,6 +496,8 @@ function CatalogImportDialog({
     if (hpRaw && (isNaN(hp!) || hp! < 0)) errors.push("Invalid hourly price");
 
     return {
+      productGroup,
+      serviceCode,
       serviceCategory: cat,
       itemName: name,
       specs: (row.specs || "").trim() || undefined,
@@ -460,6 +517,8 @@ function CatalogImportDialog({
     try {
       await bulkCreate({
         items: validRows.map((r) => ({
+          productGroup: r.productGroup,
+          serviceCode: r.serviceCode,
           serviceCategory: r.serviceCategory,
           itemName: r.itemName,
           specs: r.specs,
@@ -482,6 +541,8 @@ function CatalogImportDialog({
   const downloadTemplate = () => {
     const csv = Papa.unparse({
       fields: [
+        "product_group",
+        "service_code",
         "service_category",
         "item_name",
         "specs",
@@ -492,6 +553,8 @@ function CatalogImportDialog({
       ],
       data: [
         [
+          "compute",
+          "ECS",
           "Compute",
           "ECS s6.large",
           "4vCPU 8GB",
@@ -500,7 +563,7 @@ function CatalogImportDialog({
           "1200.00",
           "0.17",
         ],
-        ["Storage", "OBS Standard", "Object storage", "GB", "0.012", "", ""],
+        ["storage", "OBS", "Storage", "OBS Standard", "Object storage", "GB", "0.012", "", ""],
       ],
     });
     const blob = new Blob([csv], { type: "text/csv" });
