@@ -52,6 +52,9 @@ const FinanceSettingsPage = lazy(
 const FinanceReportsPage = lazy(
   () => import("./pages/finance/reports/page.tsx"),
 );
+const CollectionsPage = lazy(
+  () => import("./pages/finance/collections/page.tsx"),
+);
 const InvoiceProfilesPage = lazy(
   () => import("./pages/finance/invoice-profiles/page.tsx"),
 );
@@ -156,6 +159,14 @@ export default function App() {
             <Route
               path="/finance/reports"
               element={lazyPage(<FinanceReportsPage />)}
+            />
+            <Route
+              path="/finance/collections"
+              element={lazyPage(<CollectionsPage />)}
+            />
+            <Route
+              path="/finance/accounts"
+              element={lazyPage(<CollectionsPage accountsMode />)}
             />
             <Route
               path="/finance/invoice-profiles"

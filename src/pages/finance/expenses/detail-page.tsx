@@ -1,4 +1,10 @@
-import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useConvex, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -262,6 +268,9 @@ export default function ExpenseDetailPage() {
   const users = useQuery(api.users.listAll, {});
   const companies = useQuery(api.companies.list, {});
   const countries = useQuery(api.countries.list, {});
+  const fundingAccounts = useQuery(api.receivingAccounts.list, {
+    purpose: "outgoing",
+  });
 
   const updateDraft = useMutation(api.expenses.updateDraftExpenseRequest);
   const submitExpense = useMutation(api.expenses.submitExpenseRequest);
@@ -280,15 +289,18 @@ export default function ExpenseDetailPage() {
   const [reasonAction, setReasonAction] = useState<ReasonAction>(null);
   const [reason, setReason] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState("");
+  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [fundingAccountId, setFundingAccountId] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
+  const [paymentTransactionId, setPaymentTransactionId] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [pendingReceiptAction, setPendingReceiptAction] = useState<string | null>(
-    null,
-  );
+  const [pendingReceiptAction, setPendingReceiptAction] = useState<
+    string | null
+  >(null);
 
   const categoryMap = useMemo(
-    () => new Map((categories ?? []).map((category) => [category._id, category])),
+    () =>
+      new Map((categories ?? []).map((category) => [category._id, category])),
     [categories],
   );
   const userMap = useMemo(
@@ -313,6 +325,7 @@ export default function ExpenseDetailPage() {
     !users ||
     !companies ||
     !countries ||
+    !fundingAccounts ||
     currentUser === undefined
   ) {
     return (
@@ -327,13 +340,19 @@ export default function ExpenseDetailPage() {
   if (expense === null) {
     return (
       <div className="space-y-4 p-6 md:p-8">
-        <Button variant="ghost" className="-ml-2" onClick={() => navigate("/finance/expenses")}>
+        <Button
+          variant="ghost"
+          className="-ml-2"
+          onClick={() => navigate("/finance/expenses")}
+        >
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back to Expenses
         </Button>
         <Card>
           <CardContent className="p-8">
-            <h1 className="text-xl font-semibold">Expense not found or unavailable</h1>
+            <h1 className="text-xl font-semibold">
+              Expense not found or unavailable
+            </h1>
             <p className="mt-2 text-sm text-muted-foreground">
               This expense may not exist or may be outside your access scope.
             </p>
@@ -358,8 +377,18 @@ export default function ExpenseDetailPage() {
   const canDelete = isAdmin;
   const category = categoryMap.get(expense.categoryId);
   const receiptRequired = category?.requiresReceipt === true;
-  const company = expense.companyId ? companyMap.get(expense.companyId) : undefined;
-  const country = expense.countryId ? countryMap.get(expense.countryId) : undefined;
+  const company = expense.companyId
+    ? companyMap.get(expense.companyId)
+    : undefined;
+  const country = expense.countryId
+    ? countryMap.get(expense.countryId)
+    : undefined;
+  const expenseCountryId = expense.countryId ?? company?.countryId;
+  const eligibleFundingAccounts = fundingAccounts.filter(
+    (account) =>
+      account.currency === expense.currency &&
+      account.countryId === expenseCountryId,
+  );
 
   const handleSubmitExpense = async () => {
     setPendingAction("submit");
@@ -367,19 +396,32 @@ export default function ExpenseDetailPage() {
       await submitExpense({ expenseId: expense._id });
       toast.success("Expense submitted");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to submit expense");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to submit expense",
+      );
     } finally {
       setPendingAction(null);
     }
   };
 
-  const handleApprove = async () => {
+  const handleApprove = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!fundingAccountId) {
+      toast.error("Select the account that will fund this expense");
+      return;
+    }
     setPendingAction("approve");
     try {
-      await approveExpense({ expenseId: expense._id });
+      await approveExpense({
+        expenseId: expense._id,
+        fundingAccountId: fundingAccountId as Id<"receivingAccounts">,
+      });
       toast.success("Expense approved");
+      setApprovalOpen(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to approve expense");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to approve expense",
+      );
     } finally {
       setPendingAction(null);
     }
@@ -403,7 +445,9 @@ export default function ExpenseDetailPage() {
       setReasonAction(null);
       setReason("");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update expense");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update expense",
+      );
     } finally {
       setPendingAction(null);
     }
@@ -411,19 +455,32 @@ export default function ExpenseDetailPage() {
 
   const handleMarkPaid = async (event: FormEvent) => {
     event.preventDefault();
+    if (!paymentTransactionId.trim()) {
+      toast.error("Payment transaction ID is required");
+      return;
+    }
+    if (!expense.fundingAccountId && !fundingAccountId) {
+      toast.error("Select the funding account for this legacy expense");
+      return;
+    }
     setPendingAction("paid");
     try {
       await markPaid({
         expenseId: expense._id,
-        paymentMethod: paymentMethod.trim() || undefined,
         paymentReference: paymentReference.trim() || undefined,
+        paymentTransactionId: paymentTransactionId.trim(),
+        fundingAccountId: expense.fundingAccountId
+          ? undefined
+          : (fundingAccountId as Id<"receivingAccounts">),
       });
       toast.success("Expense marked paid");
       setPaymentOpen(false);
-      setPaymentMethod("");
       setPaymentReference("");
+      setPaymentTransactionId("");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to mark expense paid");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to mark expense paid",
+      );
     } finally {
       setPendingAction(null);
     }
@@ -541,7 +598,9 @@ export default function ExpenseDetailPage() {
             Back to Expenses
           </Button>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">{expense.title}</h1>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {expense.title}
+            </h1>
             {statusBadge(expense.status)}
           </div>
           <p className="mt-1 text-muted-foreground">
@@ -569,7 +628,7 @@ export default function ExpenseDetailPage() {
             <>
               <Button
                 className="bg-emerald-600 text-white hover:bg-emerald-700"
-                onClick={() => void handleApprove()}
+                onClick={() => setApprovalOpen(true)}
                 disabled={pendingAction === "approve"}
               >
                 <CheckCircle2 className="mr-2 h-4 w-4" />
@@ -657,7 +716,10 @@ export default function ExpenseDetailPage() {
             />
             <Detail label="Company" value={company?.name} />
             <Detail label="Country" value={country?.name} />
-            <Detail label="Expense Date" value={formatDate(expense.expenseDate)} />
+            <Detail
+              label="Expense Date"
+              value={formatDate(expense.expenseDate)}
+            />
             <Detail label="Vendor" value={expense.vendor} />
             <Detail label="Created" value={formatDateTime(expense.createdAt)} />
           </CardContent>
@@ -671,10 +733,17 @@ export default function ExpenseDetailPage() {
               label="Approval Level"
               value={APPROVAL_LEVEL_LABELS[approvalLevel]}
             />
-            <Detail label="Submitted" value={formatDateTime(expense.submittedAt)} />
+            <Detail
+              label="Submitted"
+              value={formatDateTime(expense.submittedAt)}
+            />
             <Detail
               label="Approved By"
               value={actionUserDisplay(expense.approvedBy, userMap)}
+            />
+            <Detail
+              label="Funding Account"
+              value={expense.fundingAccountName}
             />
             <Detail
               label="Rejected By"
@@ -685,7 +754,10 @@ export default function ExpenseDetailPage() {
               value={actionUserDisplay(expense.paidBy, userMap)}
             />
             <Detail label="Payment Method" value={expense.paymentMethod} />
-            <Detail label="Payment Reference" value={expense.paymentReference} />
+            <Detail
+              label="Payment Reference"
+              value={expense.paymentReference}
+            />
           </CardContent>
         </Card>
       </div>
@@ -696,7 +768,9 @@ export default function ExpenseDetailPage() {
             <CardTitle>Description</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">{expense.description}</p>
+            <p className="text-sm text-muted-foreground">
+              {expense.description}
+            </p>
           </CardContent>
         </Card>
       ) : null}
@@ -728,7 +802,9 @@ export default function ExpenseDetailPage() {
                 onClick={() => fileInputRef.current?.click()}
               >
                 <Upload className="mr-2 h-4 w-4" />
-                {pendingReceiptAction === "upload" ? "Uploading..." : "Upload Receipt"}
+                {pendingReceiptAction === "upload"
+                  ? "Uploading..."
+                  : "Upload Receipt"}
               </Button>
             </div>
           </CardTitle>
@@ -790,7 +866,8 @@ export default function ExpenseDetailPage() {
                               size="sm"
                               className="text-muted-foreground"
                               disabled={
-                                pendingReceiptAction === `${receipt._id}:archive`
+                                pendingReceiptAction ===
+                                `${receipt._id}:archive`
                               }
                             >
                               <Trash2 className="mr-2 h-3.5 w-3.5" />
@@ -841,16 +918,16 @@ export default function ExpenseDetailPage() {
               {events.map((event) => (
                 <div key={event._id} className="rounded-lg border p-3 text-sm">
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="font-medium">{eventLabel(event.type)}</span>
+                    <span className="font-medium">
+                      {eventLabel(event.type)}
+                    </span>
                     <span className="text-muted-foreground">
                       {formatDateTime(event.createdAt)}
                     </span>
                   </div>
                   <p className="mt-1 text-muted-foreground">
                     {event.message}{" "}
-                    <span>
-                      By {userDisplay(userMap.get(event.actorId))}.
-                    </span>
+                    <span>By {userDisplay(userMap.get(event.actorId))}.</span>
                   </p>
                 </div>
               ))}
@@ -931,6 +1008,63 @@ export default function ExpenseDetailPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={approvalOpen} onOpenChange={setApprovalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Approve Expense</DialogTitle>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleApprove}>
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              <div className="text-muted-foreground">Approved amount</div>
+              <div className="mt-1 text-xl font-bold">
+                {formatMoney(expense.amount, expense.currency)}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Pay from account</Label>
+              <Select
+                value={fundingAccountId}
+                onValueChange={setFundingAccountId}
+              >
+                <SelectTrigger aria-label="Pay from account">
+                  <SelectValue placeholder="Select funding account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {eligibleFundingAccounts.map((account) => (
+                    <SelectItem key={account._id} value={account._id}>
+                      {account.name} · {account.accountNumber} (
+                      {account.currency})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {eligibleFundingAccounts.length === 0 ? (
+                <p className="text-xs text-destructive">
+                  No active {expense.currency} expense account is configured.
+                </p>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setApprovalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={!fundingAccountId || pendingAction === "approve"}
+              >
+                {pendingAction === "approve"
+                  ? "Approving..."
+                  : "Approve Expense"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -943,13 +1077,48 @@ export default function ExpenseDetailPage() {
                 {formatMoney(expense.amount, expense.currency)}
               </div>
             </div>
+            <div className="rounded-lg border p-3 text-sm">
+              <div className="text-muted-foreground">Pay from</div>
+              <div className="mt-1 font-medium">
+                {expense.fundingAccountName}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {expense.fundingProviderName} · {expense.fundingAccountNumber}
+              </div>
+            </div>
+            {!expense.fundingAccountId ? (
+              <div className="space-y-2">
+                <Label>Pay from account</Label>
+                <Select
+                  value={fundingAccountId}
+                  onValueChange={setFundingAccountId}
+                >
+                  <SelectTrigger aria-label="Legacy funding account">
+                    <SelectValue placeholder="Select funding account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {eligibleFundingAccounts.map((account) => (
+                      <SelectItem key={account._id} value={account._id}>
+                        {account.name} · {account.accountNumber}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Required because this expense was approved before account
+                  selection was introduced.
+                </p>
+              </div>
+            ) : null}
             <div className="space-y-2">
-              <Label htmlFor="payment-method">Payment method</Label>
+              <Label htmlFor="payment-transaction-id">Transaction ID</Label>
               <Input
-                id="payment-method"
-                value={paymentMethod}
-                onChange={(event) => setPaymentMethod(event.target.value)}
-                placeholder="Bank Transfer, Mobile Money..."
+                id="payment-transaction-id"
+                value={paymentTransactionId}
+                onChange={(event) =>
+                  setPaymentTransactionId(event.target.value)
+                }
+                placeholder="Bank, wallet, or cash voucher reference"
               />
             </div>
             <div className="space-y-2">
@@ -973,7 +1142,11 @@ export default function ExpenseDetailPage() {
               <Button
                 type="submit"
                 className="bg-cyan-600 text-white hover:bg-cyan-700"
-                disabled={pendingAction === "paid"}
+                disabled={
+                  pendingAction === "paid" ||
+                  !paymentTransactionId.trim() ||
+                  (!expense.fundingAccountId && !fundingAccountId)
+                }
               >
                 {pendingAction === "paid" ? "Saving..." : "Mark Paid"}
               </Button>

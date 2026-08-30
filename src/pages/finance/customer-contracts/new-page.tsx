@@ -36,6 +36,10 @@ export default function NewCustomerContractPage() {
     ...emptyContractForm(),
     pricingBasis: "total_contract" as const,
   }));
+  const [pricingModel, setPricingModel] = useState<
+    "flexible_total_commitment" | "monthly_minimum" | "discounted_usage"
+  >("flexible_total_commitment");
+  const [monthlyMinimum, setMonthlyMinimum] = useState("");
   const [groupDiscounts, setGroupDiscounts] = useState<Record<string, string>>({});
   const [serviceDiscounts, setServiceDiscounts] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<SelectedService[]>([]);
@@ -63,8 +67,12 @@ export default function NewCustomerContractPage() {
       toast.error("Complete the customer, agreement number, title, and dates");
       return;
     }
-    if (!Number.isFinite(contractValue) || contractValue <= 0) {
+    if (pricingModel === "flexible_total_commitment" && (!Number.isFinite(contractValue) || contractValue <= 0)) {
       toast.error("Contract value must be greater than zero");
+      return;
+    }
+    if (pricingModel === "monthly_minimum" && (!Number.isFinite(Number(monthlyMinimum)) || Number(monthlyMinimum) <= 0)) {
+      toast.error("Monthly minimum must be greater than zero");
       return;
     }
     const invalidDiscount = [...Object.values(groupDiscounts), ...Object.values(serviceDiscounts)]
@@ -85,11 +93,13 @@ export default function NewCustomerContractPage() {
         endDate: timestampFromDateInput(form.endDate),
         signedDate: form.signedDate ? timestampFromDateInput(form.signedDate) : undefined,
         currency: "USD",
-        billingFrequency: form.billingFrequency,
-        billingTiming: form.billingTiming,
-        pricingBasis: form.pricingBasis,
-        commitmentModel: "flexible_value",
-        contractValue,
+        billingFrequency: pricingModel === "flexible_total_commitment" ? form.billingFrequency : "monthly",
+        billingTiming: pricingModel === "flexible_total_commitment" ? form.billingTiming : "postpaid",
+        pricingBasis: pricingModel === "flexible_total_commitment" ? "total_contract" : "service_lines",
+        pricingModel,
+        commitmentModel: pricingModel === "flexible_total_commitment" ? "flexible_value" : undefined,
+        contractValue: pricingModel === "flexible_total_commitment" ? contractValue : undefined,
+        monthlyMinimum: pricingModel === "monthly_minimum" ? Number(monthlyMinimum) : undefined,
         overagePricingPolicy: "current_catalog",
         paymentTermDays: form.paymentTermDays ? Number(form.paymentTermDays) : undefined,
         signedDocumentUrl: form.signedDocumentUrl.trim() || undefined,
@@ -137,12 +147,10 @@ export default function NewCustomerContractPage() {
               <Field label="Currency"><Input value="USD" disabled /></Field>
               <Field label="Start date"><Input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></Field>
               <Field label="End date"><Input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} /></Field>
-              <Field label="Billing cycle"><Select value={form.billingFrequency} onValueChange={(value) => setForm({ ...form, billingFrequency: value as typeof form.billingFrequency })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="monthly">Monthly</SelectItem><SelectItem value="quarterly">Quarterly</SelectItem><SelectItem value="semiannual">Semiannual</SelectItem><SelectItem value="yearly">Yearly</SelectItem></SelectContent></Select></Field>
-              <Field label="Billing timing"><Select value={form.billingTiming} onValueChange={(value) => setForm({ ...form, billingTiming: value as typeof form.billingTiming })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="prepaid">Prepaid</SelectItem><SelectItem value="postpaid">Postpaid</SelectItem></SelectContent></Select></Field>
-              <Field label="Commitment model"><Input value="Flexible value — all catalogue services" disabled /></Field>
-              <Field label="Signed contract value"><Input type="number" min="0.01" step="0.01" value={form.contractValue} onChange={(e) => setForm({ ...form, contractValue: e.target.value })} /></Field>
+              <Field label="How is this customer billed?"><Select value={pricingModel} onValueChange={(value) => { const model = value as typeof pricingModel; setPricingModel(model); if (model !== "flexible_total_commitment") setForm({ ...form, billingFrequency: "monthly", billingTiming: "postpaid" }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="flexible_total_commitment">Total contract commitment</SelectItem><SelectItem value="monthly_minimum">Monthly minimum payment</SelectItem><SelectItem value="discounted_usage">Monthly discounted usage</SelectItem></SelectContent></Select></Field>
+              {pricingModel === "flexible_total_commitment" ? <><Field label="Billing cycle"><Select value={form.billingFrequency} onValueChange={(value) => setForm({ ...form, billingFrequency: value as typeof form.billingFrequency })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="monthly">Monthly</SelectItem><SelectItem value="quarterly">Quarterly</SelectItem><SelectItem value="semiannual">Semiannual</SelectItem><SelectItem value="yearly">Yearly</SelectItem></SelectContent></Select></Field><Field label="Billing timing"><Select value={form.billingTiming} onValueChange={(value) => setForm({ ...form, billingTiming: value as typeof form.billingTiming })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="prepaid">Prepaid</SelectItem><SelectItem value="postpaid">Postpaid</SelectItem></SelectContent></Select></Field><Field label="Signed contract value"><Input type="number" min="0.01" step="0.01" value={form.contractValue} onChange={(e) => setForm({ ...form, contractValue: e.target.value })} /></Field></> : <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">Monthly usage arrangements are billed postpaid after the month closes.</div>}
+              {pricingModel === "monthly_minimum" && <Field label="Minimum monthly payment"><Input type="number" min="0.01" step="0.01" value={monthlyMinimum} onChange={(e) => setMonthlyMinimum(e.target.value)} /></Field>}
               <Field label="Payment terms (days)"><Input type="number" min="0" value={form.paymentTermDays} onChange={(e) => setForm({ ...form, paymentTermDays: e.target.value })} /></Field>
-              <Field label="Overage pricing"><Input value="Current catalogue price — no discount" disabled /></Field>
             </CardContent>
           </Card>
 
@@ -171,7 +179,7 @@ export default function NewCustomerContractPage() {
           <Card><CardHeader><CardTitle>5. Notes and document</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2"><Field label="Signed date"><Input type="date" value={form.signedDate} onChange={(e) => setForm({ ...form, signedDate: e.target.value })} /></Field><Field label="Signed document link"><Input value={form.signedDocumentUrl} onChange={(e) => setForm({ ...form, signedDocumentUrl: e.target.value })} /></Field><div className="md:col-span-2"><Field label="Notes"><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field></div></CardContent></Card>
         </div>
 
-        <div><Card className="sticky top-6"><CardHeader><CardTitle>Contract summary</CardTitle></CardHeader><CardContent className="space-y-3 text-sm"><div className="flex justify-between"><span>Eligible services</span><strong>All catalogue</strong></div><div className="flex justify-between"><span>Group discount rules</span><strong>{Object.values(groupDiscounts).filter(Boolean).length}</strong></div><div className="flex justify-between"><span>Service overrides</span><strong>{serviceCodes.length}</strong></div><div className="flex justify-between border-t pt-3 text-base"><span>Total commitment</span><strong>{money(contractValue)}</strong></div><div className="rounded-md bg-muted p-3"><p className="text-xs text-muted-foreground">Discounted usage consumes this shared balance. Once exhausted, additional usage is charged at current catalogue price without discount.</p></div><Button className="w-full" disabled={pending} onClick={() => void save()}>{pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save Draft Contract</Button></CardContent></Card></div>
+        <div><Card className="sticky top-6"><CardHeader><CardTitle>Contract summary</CardTitle></CardHeader><CardContent className="space-y-3 text-sm"><div className="flex justify-between"><span>Eligible services</span><strong>All catalogue</strong></div><div className="flex justify-between"><span>Group discount rules</span><strong>{Object.values(groupDiscounts).filter(Boolean).length}</strong></div><div className="flex justify-between"><span>Service overrides</span><strong>{serviceCodes.length}</strong></div><div className="flex justify-between border-t pt-3 text-base"><span>{pricingModel === "flexible_total_commitment" ? "Total commitment" : pricingModel === "monthly_minimum" ? "Monthly minimum" : "Billing basis"}</span><strong>{pricingModel === "flexible_total_commitment" ? money(contractValue) : pricingModel === "monthly_minimum" ? money(Number(monthlyMinimum) || 0) : "Discounted usage"}</strong></div><div className="rounded-md bg-muted p-3"><p className="text-xs text-muted-foreground">{pricingModel === "flexible_total_commitment" ? "Discounted usage consumes the shared contract balance. Usage beyond it is billed at catalogue price." : pricingModel === "monthly_minimum" ? "The customer pays the higher of discounted monthly usage or the agreed monthly minimum." : "The customer pays actual monthly usage after the agreed discounts. There is no minimum or overage."}</p></div><Button className="w-full" disabled={pending} onClick={() => void save()}>{pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save Draft Contract</Button></CardContent></Card></div>
       </div>
     </div>
   );

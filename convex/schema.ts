@@ -835,6 +835,16 @@ export default defineSchema({
     contractInvoiceKind: v.optional(
       v.union(v.literal("cycle"), v.literal("overage_settlement")),
     ),
+    contractUsageSummary: v.optional(
+      v.object({
+        catalogueUsage: v.number(),
+        discountedUsage: v.number(),
+        monthlyMinimum: v.number(),
+        minimumShortfall: v.number(),
+        payable: v.number(),
+        usageEntries: v.number(),
+      }),
+    ),
     revenueAllocations: v.optional(
       v.array(v.object({ month: v.string(), amount: v.number() })),
     ),
@@ -934,11 +944,13 @@ export default defineSchema({
 
   invoicePayments: defineTable({
     invoiceId: v.id("invoices"),
+    receivingAccountId: v.optional(v.id("receivingAccounts")),
     amount: v.number(),
     amountCents: v.optional(v.number()),
     paidAt: v.number(),
     method: v.optional(v.string()),
     reference: v.optional(v.string()),
+    transactionId: v.optional(v.string()),
     receivingBankName: v.optional(v.string()),
     receivingAccountNumber: v.optional(v.string()),
     receivingAccountName: v.optional(v.string()),
@@ -948,7 +960,35 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_invoice", ["invoiceId"])
-    .index("by_recorded_by", ["recordedBy"]),
+    .index("by_recorded_by", ["recordedBy"])
+    .index("by_receiving_account", ["receivingAccountId"])
+    .index("by_account_transaction", ["receivingAccountId", "transactionId"]),
+
+  receivingAccounts: defineTable({
+    countryId: v.optional(v.id("countries")),
+    name: v.string(),
+    providerName: v.string(),
+    accountNumber: v.string(),
+    accountHolderName: v.string(),
+    type: v.union(
+      v.literal("bank"),
+      v.literal("mobile_money"),
+      v.literal("cash"),
+    ),
+    usage: v.optional(
+      v.union(v.literal("incoming"), v.literal("outgoing"), v.literal("both")),
+    ),
+    currency: v.string(),
+    location: v.optional(v.string()),
+    isActive: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_active", ["isActive"])
+    .index("by_country", ["countryId"])
+    .index("by_country_active", ["countryId", "isActive"])
+    .index("by_type_active", ["type", "isActive"]),
 
   invoiceEvents: defineTable({
     invoiceId: v.id("invoices"),
@@ -1008,6 +1048,10 @@ export default defineSchema({
     submittedAt: v.optional(v.number()),
     approvedAt: v.optional(v.number()),
     approvedBy: v.optional(v.id("users")),
+    fundingAccountId: v.optional(v.id("receivingAccounts")),
+    fundingAccountName: v.optional(v.string()),
+    fundingProviderName: v.optional(v.string()),
+    fundingAccountNumber: v.optional(v.string()),
     rejectedAt: v.optional(v.number()),
     rejectedBy: v.optional(v.id("users")),
     rejectionReason: v.optional(v.string()),
@@ -1015,6 +1059,10 @@ export default defineSchema({
     paidBy: v.optional(v.id("users")),
     paymentMethod: v.optional(v.string()),
     paymentReference: v.optional(v.string()),
+    paymentTransactionId: v.optional(v.string()),
+    fundingAccountType: v.optional(
+      v.union(v.literal("bank"), v.literal("mobile_money"), v.literal("cash")),
+    ),
     onboardingCreditId: v.optional(v.id("customerCredits")),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1026,7 +1074,12 @@ export default defineSchema({
     .index("by_company", ["companyId"])
     .index("by_country", ["countryId"])
     .index("by_created_at", ["createdAt"])
-    .index("by_expense_date", ["expenseDate"]),
+    .index("by_expense_date", ["expenseDate"])
+    .index("by_funding_account", ["fundingAccountId"])
+    .index("by_account_transaction", [
+      "fundingAccountId",
+      "paymentTransactionId",
+    ]),
 
   expenseEvents: defineTable({
     expenseId: v.id("expenseRequests"),
@@ -1131,6 +1184,14 @@ export default defineSchema({
       v.union(v.literal("service_lines"), v.literal("total_contract")),
     ),
     commitmentModel: v.optional(v.literal("flexible_value")),
+    pricingModel: v.optional(
+      v.union(
+        v.literal("flexible_total_commitment"),
+        v.literal("monthly_minimum"),
+        v.literal("discounted_usage"),
+      ),
+    ),
+    monthlyMinimum: v.optional(v.number()),
     contractValue: v.optional(v.number()),
     defaultDiscountType: v.optional(
       v.union(v.literal("percentage"), v.literal("amount")),

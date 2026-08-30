@@ -103,7 +103,9 @@ export default function FinanceSettingsPage() {
       !Number.isFinite(parsedBusinessLimit) ||
       parsedBusinessLimit <= parsedCountryLimit
     ) {
-      toast.error("Business approval limit must be greater than country approval limit");
+      toast.error(
+        "Business approval limit must be greater than country approval limit",
+      );
       return;
     }
 
@@ -117,7 +119,9 @@ export default function FinanceSettingsPage() {
       toast.success("Finance settings saved");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to save finance settings",
+        error instanceof Error
+          ? error.message
+          : "Failed to save finance settings",
       );
     } finally {
       setPending(false);
@@ -131,6 +135,18 @@ export default function FinanceSettingsPage() {
         <p className="mt-1 text-muted-foreground">
           Configure expense approval thresholds for operational finance.
         </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Button asChild variant="outline">
+          <a href="/finance/invoice-profiles">Invoice profiles</a>
+        </Button>
+        <Button asChild variant="outline">
+          <a href="/finance/expense-categories">Expense categories</a>
+        </Button>
+        <Button asChild variant="outline">
+          <a href="/finance/accounts">Accounts</a>
+        </Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -178,7 +194,10 @@ export default function FinanceSettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <form className="space-y-5" onSubmit={(event) => void handleSubmit(event)}>
+          <form
+            className="space-y-5"
+            onSubmit={(event) => void handleSubmit(event)}
+          >
             <div className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="countryApprovalLimit">

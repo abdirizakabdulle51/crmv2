@@ -1,10 +1,17 @@
 import { useQuery } from "convex/react";
+import { Link } from "react-router-dom";
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { useCrm } from "@/lib/crm-context.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import { Button } from "@/components/ui/button.tsx";
 import { TrendingUp, TrendingDown, Calendar, Gauge } from "lucide-react";
 import {
   calculatePace,
@@ -49,27 +56,43 @@ export default function PerformancePage() {
   const getQuarterlyTargets = (amId: Id<"users">): QuarterlyTargets => {
     const findTarget = (q: number) => {
       const t = targets.find(
-        (t: Doc<"salesTargets">) => t.accountManagerId === amId && t.quarter === q,
+        (t: Doc<"salesTargets">) =>
+          t.accountManagerId === amId && t.quarter === q,
       );
       return t?.target || 0;
     };
-    return { q1: findTarget(1), q2: findTarget(2), q3: findTarget(3), q4: findTarget(4) };
+    return {
+      q1: findTarget(1),
+      q2: findTarget(2),
+      q3: findTarget(3),
+      q4: findTarget(4),
+    };
   };
 
   // Build pace data per AM
   const allAMs = users.filter(
-    (u) => u.role === "account_manager" || u.role === "country_gm" || u.role === "head_of_business" || u.role === "ceo",
+    (u) =>
+      u.role === "account_manager" ||
+      u.role === "country_gm" ||
+      u.role === "head_of_business" ||
+      u.role === "ceo",
   );
 
   const amPaceData = allAMs.map((am) => ({
     user: am,
-    pace: calculatePace(getQuarterlyTargets(am._id), getAchieved(am._id), today),
+    pace: calculatePace(
+      getQuarterlyTargets(am._id),
+      getAchieved(am._id),
+      today,
+    ),
   }));
 
   // Filter based on role
   let visibleAMs = amPaceData;
   if (currentUser?.role === "country_gm" && currentUser.countryId) {
-    visibleAMs = amPaceData.filter((d) => d.user.countryId === currentUser.countryId);
+    visibleAMs = amPaceData.filter(
+      (d) => d.user.countryId === currentUser.countryId,
+    );
   } else if (currentUser?.role === "account_manager") {
     visibleAMs = amPaceData.filter((d) => d.user._id === currentUser._id);
   }
@@ -79,25 +102,41 @@ export default function PerformancePage() {
     return ams.reduce(
       (acc, d) => {
         const qt = getQuarterlyTargets(d.user._id);
-        return { q1: acc.q1 + qt.q1, q2: acc.q2 + qt.q2, q3: acc.q3 + qt.q3, q4: acc.q4 + qt.q4 };
+        return {
+          q1: acc.q1 + qt.q1,
+          q2: acc.q2 + qt.q2,
+          q3: acc.q3 + qt.q3,
+          q4: acc.q4 + qt.q4,
+        };
       },
       { q1: 0, q2: 0, q3: 0, q4: 0 },
     );
   };
 
-  const companyWideAchieved = visibleAMs.reduce((s, d) => s + d.pace.achieved, 0);
-  const companyWidePace = calculatePace(aggregateQuarterly(visibleAMs), companyWideAchieved, today);
+  const companyWideAchieved = visibleAMs.reduce(
+    (s, d) => s + d.pace.achieved,
+    0,
+  );
+  const companyWidePace = calculatePace(
+    aggregateQuarterly(visibleAMs),
+    companyWideAchieved,
+    today,
+  );
 
   // Country rollup (for CEO)
-  const countryRollup = countries.map((country) => {
-    const countryAMs = amPaceData.filter((d) => d.user.countryId === country._id);
-    const achieved = countryAMs.reduce((s, d) => s + d.pace.achieved, 0);
-    return {
-      country,
-      pace: calculatePace(aggregateQuarterly(countryAMs), achieved, today),
-      amCount: countryAMs.length,
-    };
-  }).filter((d) => d.pace.yearlyTarget > 0 || d.pace.achieved > 0);
+  const countryRollup = countries
+    .map((country) => {
+      const countryAMs = amPaceData.filter(
+        (d) => d.user.countryId === country._id,
+      );
+      const achieved = countryAMs.reduce((s, d) => s + d.pace.achieved, 0);
+      return {
+        country,
+        pace: calculatePace(aggregateQuarterly(countryAMs), achieved, today),
+        amCount: countryAMs.length,
+      };
+    })
+    .filter((d) => d.pace.yearlyTarget > 0 || d.pace.achieved > 0);
 
   // Sector rollup (for CEO)
   const sectorRollup = sectors
@@ -107,16 +146,31 @@ export default function PerformancePage() {
     }))
     .filter((d) => d.achieved > 0);
 
-  const isCeoOrHob = currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
+  const isCeoOrHob =
+    currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
   const isGm = currentUser?.role === "country_gm";
 
   return (
     <div className="p-6 md:p-8 space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Performance Pace</h1>
-        <p className="text-muted-foreground mt-1">
-          {year} Year-to-date — Currently in Q{quarter} (Day {companyWidePace.elapsedWorkingDaysInQuarter} of {companyWidePace.totalWorkingDaysInQuarter})
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            Performance Pace
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            {year} Year-to-date — Currently in Q{quarter} (Day{" "}
+            {companyWidePace.elapsedWorkingDaysInQuarter} of{" "}
+            {companyWidePace.totalWorkingDaysInQuarter})
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link to="/targets">Targets</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/coach">Coaching</Link>
+          </Button>
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -133,7 +187,9 @@ export default function PerformancePage() {
               {formatCurrency(companyWidePace.yearlyTarget)}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Q{quarter} target: {formatCurrency(companyWidePace.currentQuarterTarget)} ({formatCurrency(companyWidePace.dailyPace)}/day)
+              Q{quarter} target:{" "}
+              {formatCurrency(companyWidePace.currentQuarterTarget)} (
+              {formatCurrency(companyWidePace.dailyPace)}/day)
             </p>
           </CardContent>
         </Card>
@@ -184,10 +240,16 @@ export default function PerformancePage() {
             )}
           </CardHeader>
           <CardContent>
-            <div className={`text-2xl font-bold ${companyWidePace.gap >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-              {companyWidePace.gap >= 0 ? "+" : ""}{formatCurrency(companyWidePace.gap)}
+            <div
+              className={`text-2xl font-bold ${companyWidePace.gap >= 0 ? "text-emerald-600" : "text-destructive"}`}
+            >
+              {companyWidePace.gap >= 0 ? "+" : ""}
+              {formatCurrency(companyWidePace.gap)}
             </div>
-            <Badge className={`mt-1 text-xs ${getStatusColor(companyWidePace.status)}`} variant="secondary">
+            <Badge
+              className={`mt-1 text-xs ${getStatusColor(companyWidePace.status)}`}
+              variant="secondary"
+            >
               {getStatusLabel(companyWidePace.status)}
             </Badge>
           </CardContent>
@@ -199,7 +261,11 @@ export default function PerformancePage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              {isCeoOrHob ? "Account Manager Pace" : isGm ? "Your Country Team" : "Your Performance"}
+              {isCeoOrHob
+                ? "Account Manager Pace"
+                : isGm
+                  ? "Your Country Team"
+                  : "Your Performance"}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -208,20 +274,39 @@ export default function PerformancePage() {
                 <thead>
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-2 pr-4 font-medium">Name</th>
-                    <th className="text-right py-2 px-3 font-medium">Year Target</th>
-                    <th className="text-right py-2 px-3 font-medium">Expected</th>
-                    <th className="text-right py-2 px-3 font-medium">Achieved</th>
+                    <th className="text-right py-2 px-3 font-medium">
+                      Year Target
+                    </th>
+                    <th className="text-right py-2 px-3 font-medium">
+                      Expected
+                    </th>
+                    <th className="text-right py-2 px-3 font-medium">
+                      Achieved
+                    </th>
                     <th className="text-right py-2 px-3 font-medium">Gap</th>
-                    <th className="text-right py-2 px-3 font-medium">Q{quarter} Pace/Day</th>
-                    <th className="text-center py-2 pl-3 font-medium">Status</th>
+                    <th className="text-right py-2 px-3 font-medium">
+                      Q{quarter} Pace/Day
+                    </th>
+                    <th className="text-center py-2 pl-3 font-medium">
+                      Status
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {visibleAMs
-                    .filter((d) => d.pace.yearlyTarget > 0 || d.pace.achieved > 0)
-                    .sort((a, b) => b.pace.percentOfExpected - a.pace.percentOfExpected)
+                    .filter(
+                      (d) => d.pace.yearlyTarget > 0 || d.pace.achieved > 0,
+                    )
+                    .sort(
+                      (a, b) =>
+                        b.pace.percentOfExpected - a.pace.percentOfExpected,
+                    )
                     .map((d) => (
-                      <PaceRow key={d.user._id} name={d.user.name || "Unknown"} pace={d.pace} />
+                      <PaceRow
+                        key={d.user._id}
+                        name={d.user.name || "Unknown"}
+                        pace={d.pace}
+                      />
                     ))}
                 </tbody>
               </table>
@@ -242,18 +327,33 @@ export default function PerformancePage() {
                 <thead>
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-2 pr-4 font-medium">Country</th>
-                    <th className="text-right py-2 px-3 font-medium">Year Target</th>
-                    <th className="text-right py-2 px-3 font-medium">Expected</th>
-                    <th className="text-right py-2 px-3 font-medium">Achieved</th>
+                    <th className="text-right py-2 px-3 font-medium">
+                      Year Target
+                    </th>
+                    <th className="text-right py-2 px-3 font-medium">
+                      Expected
+                    </th>
+                    <th className="text-right py-2 px-3 font-medium">
+                      Achieved
+                    </th>
                     <th className="text-right py-2 px-3 font-medium">Gap</th>
-                    <th className="text-center py-2 pl-3 font-medium">Status</th>
+                    <th className="text-center py-2 pl-3 font-medium">
+                      Status
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {countryRollup
-                    .sort((a, b) => b.pace.percentOfExpected - a.pace.percentOfExpected)
+                    .sort(
+                      (a, b) =>
+                        b.pace.percentOfExpected - a.pace.percentOfExpected,
+                    )
                     .map((d) => (
-                      <PaceRow key={d.country._id} name={`${d.country.name} (${d.amCount} AMs)`} pace={d.pace} />
+                      <PaceRow
+                        key={d.country._id}
+                        name={`${d.country.name} (${d.amCount} AMs)`}
+                        pace={d.pace}
+                      />
                     ))}
                 </tbody>
               </table>
@@ -266,7 +366,9 @@ export default function PerformancePage() {
       {isCeoOrHob && sectorRollup.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Collected Revenue by Sector</CardTitle>
+            <CardTitle className="text-base">
+              Collected Revenue by Sector
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -274,7 +376,9 @@ export default function PerformancePage() {
                 <thead>
                   <tr className="border-b text-muted-foreground">
                     <th className="text-left py-2 pr-4 font-medium">Sector</th>
-                    <th className="text-right py-2 px-3 font-medium">Collected Revenue</th>
+                    <th className="text-right py-2 px-3 font-medium">
+                      Collected Revenue
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -282,8 +386,12 @@ export default function PerformancePage() {
                     .sort((a, b) => b.achieved - a.achieved)
                     .map((d) => (
                       <tr key={d.sector._id} className="border-b last:border-0">
-                        <td className="py-2 pr-4 font-medium">{d.sector.name}</td>
-                        <td className="py-2 px-3 text-right">{formatCurrency(d.achieved)}</td>
+                        <td className="py-2 pr-4 font-medium">
+                          {d.sector.name}
+                        </td>
+                        <td className="py-2 px-3 text-right">
+                          {formatCurrency(d.achieved)}
+                        </td>
                       </tr>
                     ))}
                 </tbody>
@@ -300,15 +408,27 @@ function PaceRow({ name, pace }: { name: string; pace: PaceMetrics }) {
   return (
     <tr className="border-b last:border-0">
       <td className="py-2 pr-4 font-medium">{name}</td>
-      <td className="py-2 px-3 text-right">{formatCurrency(pace.yearlyTarget)}</td>
-      <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(pace.expectedToDate)}</td>
-      <td className="py-2 px-3 text-right">{formatCurrency(pace.achieved)}</td>
-      <td className={`py-2 px-3 text-right ${pace.gap >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-        {pace.gap >= 0 ? "+" : ""}{formatCurrency(pace.gap)}
+      <td className="py-2 px-3 text-right">
+        {formatCurrency(pace.yearlyTarget)}
       </td>
-      <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(pace.dailyPace)}</td>
+      <td className="py-2 px-3 text-right text-muted-foreground">
+        {formatCurrency(pace.expectedToDate)}
+      </td>
+      <td className="py-2 px-3 text-right">{formatCurrency(pace.achieved)}</td>
+      <td
+        className={`py-2 px-3 text-right ${pace.gap >= 0 ? "text-emerald-600" : "text-destructive"}`}
+      >
+        {pace.gap >= 0 ? "+" : ""}
+        {formatCurrency(pace.gap)}
+      </td>
+      <td className="py-2 px-3 text-right text-muted-foreground">
+        {formatCurrency(pace.dailyPace)}
+      </td>
       <td className="py-2 pl-3 text-center">
-        <Badge className={`text-xs ${getStatusColor(pace.status)}`} variant="secondary">
+        <Badge
+          className={`text-xs ${getStatusColor(pace.status)}`}
+          variant="secondary"
+        >
           {getStatusLabel(pace.status)}
         </Badge>
       </td>

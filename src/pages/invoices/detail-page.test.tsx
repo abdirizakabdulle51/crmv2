@@ -30,6 +30,8 @@ vi.mock("@/convex/_generated/api.js", () => ({
     customerContracts: {
       getByContractNumber: "customerContracts.getByContractNumber",
     },
+    receivingAccounts: { list: "receivingAccounts.list" },
+    companies: { getById: "companies.getById" },
   },
 }));
 
@@ -40,6 +42,8 @@ const mocks = vi.hoisted(() => ({
   users: undefined as Doc<"users">[] | undefined,
   sourceContract: null as Doc<"customerContracts"> | null,
   currentUser: undefined as Doc<"users"> | null | undefined,
+  receivingAccounts: [] as Doc<"receivingAccounts">[],
+  invoiceCompany: undefined as Doc<"companies"> | undefined,
   issueInvoice: vi.fn(),
   cancelDraftInvoice: vi.fn(),
   voidInvoice: vi.fn(),
@@ -73,6 +77,8 @@ vi.mock("convex/react", () => ({
     if (query === "users.getCurrentUser") return mocks.currentUser;
     if (query === "customerContracts.getByContractNumber")
       return mocks.sourceContract;
+    if (query === "receivingAccounts.list") return mocks.receivingAccounts;
+    if (query === "companies.getById") return mocks.invoiceCompany;
     return undefined;
   },
 }));
@@ -181,10 +187,7 @@ function invoicePayment(
   };
 }
 
-function user(
-  id: string,
-  overrides: Partial<Doc<"users">> = {},
-): Doc<"users"> {
+function user(id: string, overrides: Partial<Doc<"users">> = {}): Doc<"users"> {
   return {
     _id: id as Id<"users">,
     _creationTime: 1,
@@ -246,6 +249,47 @@ describe("InvoiceDetailPage", () => {
     mocks.voidInvoice.mockResolvedValue(undefined);
     mocks.setInvoiceTestMode.mockResolvedValue(undefined);
     mocks.recordPayment.mockResolvedValue(undefined);
+    mocks.receivingAccounts = [
+      {
+        _id: "account-1" as Id<"receivingAccounts">,
+        _creationTime: 1,
+        countryId: "country-1" as Id<"countries">,
+        name: "Salaam Bank USD",
+        providerName: "Salaam Somali Bank",
+        accountNumber: "33111777",
+        accountHolderName: "HTG CLOUDS LIMITED",
+        type: "bank",
+        currency: "USD",
+        isActive: true,
+        createdBy: "user-ceo" as Id<"users">,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "account-2" as Id<"receivingAccounts">,
+        _creationTime: 1,
+        countryId: "country-1" as Id<"countries">,
+        name: "ZAAD USD",
+        providerName: "ZAAD",
+        accountNumber: "252610000000",
+        accountHolderName: "HTG CLOUDS LIMITED",
+        type: "mobile_money",
+        currency: "USD",
+        isActive: true,
+        createdBy: "user-ceo" as Id<"users">,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    mocks.invoiceCompany = {
+      _id: "company-1" as Id<"companies">,
+      _creationTime: 1,
+      name: "Company A",
+      countryId: "country-1" as Id<"countries">,
+      sectorId: "sector-1" as Id<"sectors">,
+      accountManagerId: "user-1" as Id<"users">,
+      contractStatus: "active",
+    };
     mocks.sendInvoiceEmail.mockResolvedValue(undefined);
     mocks.payments = [];
     mocks.currentUser = user("ceo-user", { role: "ceo" });
@@ -284,9 +328,9 @@ describe("InvoiceDetailPage", () => {
 
     renderDetailPage();
 
-    expect(screen.getByText("Source Reference").parentElement).toHaveTextContent(
-      "Source Reference-",
-    );
+    expect(
+      screen.getByText("Source Reference").parentElement,
+    ).toHaveTextContent("Source Reference-");
     expect(screen.queryByText("quote-1")).not.toBeInTheDocument();
   });
 
@@ -524,20 +568,18 @@ describe("InvoiceDetailPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it.each([
-    "issued",
-    "sent",
-    "overdue",
-    "partially_paid",
-  ] as const)("shows Record Payment for %s invoices", (status) => {
-    mocks.invoice = invoice({ status });
+  it.each(["issued", "sent", "overdue", "partially_paid"] as const)(
+    "shows Record Payment for %s invoices",
+    (status) => {
+      mocks.invoice = invoice({ status });
 
-    renderDetailPage();
+      renderDetailPage();
 
-    expect(
-      screen.getByRole("button", { name: "Record Payment" }),
-    ).toBeInTheDocument();
-  });
+      expect(
+        screen.getByRole("button", { name: "Record Payment" }),
+      ).toBeInTheDocument();
+    },
+  );
 
   it.each(["draft", "paid", "void", "cancelled"] as const)(
     "hides Record Payment for %s invoices",
@@ -565,10 +607,12 @@ describe("InvoiceDetailPage", () => {
     expect(within(dialog).getByLabelText("Payment date")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Payment method")).toBeInTheDocument();
     expect(
-      within(dialog).getByLabelText("Customer reference / receipt number"),
+      within(dialog).getByLabelText("Internal note (optional)"),
     ).toBeInTheDocument();
-    expect(within(dialog).getByText("Receiving bank details")).toBeInTheDocument();
-    expect(within(dialog).getByText("ACCOUNT # = 33111777")).toBeInTheDocument();
+    expect(
+      within(dialog).getByLabelText("Paid into account"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Transaction ID")).toBeInTheDocument();
   });
 
   it("shows only supported payment methods and hides bank details for Mobile Money", async () => {
@@ -579,16 +623,26 @@ describe("InvoiceDetailPage", () => {
     const dialog = screen.getByRole("dialog", { name: "Record Payment" });
     await user.click(within(dialog).getByLabelText("Payment method"));
 
-    expect(screen.getByRole("option", { name: "Bank Transfer" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Mobile Money" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Cash" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Card" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Other" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Bank Transfer" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Mobile Money" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Cash" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Card" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Other" }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("option", { name: "Mobile Money" }));
     expect(
-      within(dialog).queryByText("Receiving bank details"),
-    ).not.toBeInTheDocument();
+      within(dialog).getByLabelText("Paid into account"),
+    ).toBeInTheDocument();
   });
 
   it("records a valid payment and shows a success toast", async () => {
@@ -599,9 +653,18 @@ describe("InvoiceDetailPage", () => {
     const dialog = screen.getByRole("dialog", { name: "Record Payment" });
     await user.type(within(dialog).getByLabelText("Amount"), "250");
     await user.clear(within(dialog).getByLabelText("Payment date"));
-    await user.type(within(dialog).getByLabelText("Payment date"), "2026-08-04");
     await user.type(
-      within(dialog).getByLabelText("Customer reference / receipt number"),
+      within(dialog).getByLabelText("Payment date"),
+      "2026-08-04",
+    );
+    await user.type(
+      within(dialog).getByLabelText("Internal note (optional)"),
+      "Customer confirmed",
+    );
+    await user.click(within(dialog).getByLabelText("Paid into account"));
+    await user.click(screen.getByRole("option", { name: /Salaam Bank USD/ }));
+    await user.type(
+      within(dialog).getByLabelText("Transaction ID"),
       "SSB-2002",
     );
     await user.click(
@@ -613,7 +676,9 @@ describe("InvoiceDetailPage", () => {
       amount: 250,
       paidAt: new Date("2026-08-04T00:00:00").getTime(),
       method: "Bank Transfer",
-      reference: "SSB-2002",
+      reference: "Customer confirmed",
+      receivingAccountId: "account-1",
+      transactionId: "SSB-2002",
     });
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Payment recorded");
   });
@@ -643,6 +708,9 @@ describe("InvoiceDetailPage", () => {
     await user.click(screen.getByRole("button", { name: "Record Payment" }));
     const dialog = screen.getByRole("dialog", { name: "Record Payment" });
     await user.type(within(dialog).getByLabelText("Amount"), "100");
+    await user.click(within(dialog).getByLabelText("Paid into account"));
+    await user.click(screen.getByRole("option", { name: /Salaam Bank USD/ }));
+    await user.type(within(dialog).getByLabelText("Transaction ID"), "FAIL-1");
     await user.click(
       within(dialog).getByRole("button", { name: "Record Payment" }),
     );
@@ -672,19 +740,35 @@ describe("InvoiceDetailPage", () => {
       .getByText("Payment History")
       .closest("[data-slot='card']");
     expect(history).not.toBeNull();
-    expect(within(history as HTMLElement).getByText("$200.00")).toBeInTheDocument();
-    expect(within(history as HTMLElement).getByText("Bank Transfer")).toBeInTheDocument();
-    expect(within(history as HTMLElement).getByText("SSB-1001")).toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).getByText("$200.00"),
+    ).toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).getByText("Bank Transfer"),
+    ).toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).getByText("SSB-1001"),
+    ).toBeInTheDocument();
     expect(
       within(history as HTMLElement).getByText(
         /Salaam Somali Bank \/ ACCOUNT # = 33111777 \/ ACC\. NAME = HTG CLOUDS LIMITED/i,
       ),
     ).toBeInTheDocument();
-    expect(within(history as HTMLElement).getAllByText("Amina Recorder").length).toBeGreaterThan(0);
-    expect(within(history as HTMLElement).queryByText("user-1")).not.toBeInTheDocument();
-    expect(within(history as HTMLElement).getByText("$50.00")).toBeInTheDocument();
-    expect(within(history as HTMLElement).getByText("Cash")).toBeInTheDocument();
-    expect(within(history as HTMLElement).getAllByText("-").length).toBeGreaterThan(0);
+    expect(
+      within(history as HTMLElement).getAllByText("Amina Recorder").length,
+    ).toBeGreaterThan(0);
+    expect(
+      within(history as HTMLElement).queryByText("user-1"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).getByText("$50.00"),
+    ).toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).getByText("Cash"),
+    ).toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).getAllByText("-").length,
+    ).toBeGreaterThan(0);
   });
 
   it("falls back to recorder email or generic label without exposing raw ids", () => {
@@ -719,8 +803,12 @@ describe("InvoiceDetailPage", () => {
     expect(
       within(history as HTMLElement).getByText("Recorded user"),
     ).toBeInTheDocument();
-    expect(within(history as HTMLElement).queryByText("user-1")).not.toBeInTheDocument();
-    expect(within(history as HTMLElement).queryByText("user-2")).not.toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).queryByText("user-1"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(history as HTMLElement).queryByText("user-2"),
+    ).not.toBeInTheDocument();
   });
 
   it("opens confirmation before issuing a draft invoice", async () => {
@@ -942,7 +1030,9 @@ describe("InvoiceDetailPage", () => {
       ),
     ).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: "Cancel Draft" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Cancel Draft" }),
+    );
     expect(mocks.cancelDraftInvoice).not.toHaveBeenCalled();
     expect(mocks.toastError).toHaveBeenCalledWith("Cleanup reason is required");
 
@@ -950,7 +1040,9 @@ describe("InvoiceDetailPage", () => {
       within(dialog).getByLabelText("Reason"),
       "Duplicate test invoice",
     );
-    await user.click(within(dialog).getByRole("button", { name: "Cancel Draft" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Cancel Draft" }),
+    );
 
     expect(mocks.cancelDraftInvoice).toHaveBeenCalledWith({
       invoiceId: "invoice-1",
@@ -969,7 +1061,9 @@ describe("InvoiceDetailPage", () => {
       within(dialog).getByLabelText("Reason"),
       "Customer requested correction",
     );
-    await user.click(within(dialog).getByRole("button", { name: "Void Invoice" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Void Invoice" }),
+    );
 
     expect(mocks.voidInvoice).toHaveBeenCalledWith({
       invoiceId: "invoice-1",
@@ -987,7 +1081,9 @@ describe("InvoiceDetailPage", () => {
       name: "Mark invoice as test/hidden?",
     });
     await user.type(within(dialog).getByLabelText("Reason"), "Training data");
-    await user.click(within(dialog).getByRole("button", { name: "Mark as Test" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Mark as Test" }),
+    );
 
     expect(mocks.setInvoiceTestMode).toHaveBeenCalledWith({
       invoiceId: "invoice-1",
@@ -1005,7 +1101,9 @@ describe("InvoiceDetailPage", () => {
       name: "Unmark invoice as test/hidden?",
     });
     await user.type(within(dialog).getByLabelText("Reason"), "Real invoice");
-    await user.click(within(dialog).getByRole("button", { name: "Unmark Test" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Unmark Test" }),
+    );
 
     expect(mocks.setInvoiceTestMode).toHaveBeenLastCalledWith({
       invoiceId: "invoice-1",

@@ -19,6 +19,8 @@ type Seed = {
   amB: Doc<"users">;
   companyA: Id<"companies">;
   companyB: Id<"companies">;
+  fundingAccount: Id<"receivingAccounts">;
+  fundingAccountB: Id<"receivingAccounts">;
 };
 
 function asUser(t: ReturnType<typeof convexTest>, user: Doc<"users">) {
@@ -108,6 +110,34 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       createdAt: 1,
       updatedAt: 1,
     });
+    const fundingAccount = await ctx.db.insert("receivingAccounts", {
+      countryId: countryA,
+      name: "Salaam Bank USD",
+      providerName: "Salaam Somali Bank",
+      accountNumber: "33111777",
+      accountHolderName: "HTG CLOUDS LIMITED",
+      type: "bank",
+      usage: "both",
+      currency: "USD",
+      isActive: true,
+      createdBy: ceoId,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const fundingAccountB = await ctx.db.insert("receivingAccounts", {
+      countryId: countryB,
+      name: "Kenya Bank USD",
+      providerName: "Kenya Bank",
+      accountNumber: "KE-1001",
+      accountHolderName: "HTG CLOUDS LIMITED",
+      type: "bank",
+      usage: "both",
+      currency: "USD",
+      isActive: true,
+      createdBy: ceoId,
+      createdAt: 1,
+      updatedAt: 1,
+    });
 
     return {
       countryA,
@@ -123,6 +153,8 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       amB: (await ctx.db.get(amBId))!,
       companyA,
       companyB,
+      fundingAccount,
+      fundingAccountB,
     };
   });
 }
@@ -241,6 +273,7 @@ describe("expenses", () => {
     await expect(
       asUser(t, s.amA).mutation(api.expenses.approveExpenseRequest, {
         expenseId,
+        fundingAccountId: s.fundingAccount,
       }),
     ).rejects.toThrow();
     await expect(
@@ -349,6 +382,7 @@ describe("expenses", () => {
 
     await asUser(t, s.gmA).mutation(api.expenses.approveExpenseRequest, {
       expenseId: countryExpense,
+      fundingAccountId: s.fundingAccount,
       note: "Within policy",
     });
 
@@ -385,11 +419,13 @@ describe("expenses", () => {
     await expect(
       asUser(t, s.gmA).mutation(api.expenses.approveExpenseRequest, {
         expenseId,
+        fundingAccountId: s.fundingAccount,
       }),
     ).rejects.toThrow("You do not have permission to approve this expense");
 
     await asUser(t, s.hob).mutation(api.expenses.approveExpenseRequest, {
       expenseId,
+      fundingAccountId: s.fundingAccount,
     });
     const expense = await asUser(t, s.hob).query(
       api.expenses.getExpenseRequest,
@@ -422,16 +458,20 @@ describe("expenses", () => {
 
     await asUser(t, s.hob).mutation(api.expenses.approveExpenseRequest, {
       expenseId: businessExpense,
+      fundingAccountId: s.fundingAccount,
     });
     await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
       expenseId: executiveExpense,
+      fundingAccountId: s.fundingAccountB,
     });
 
     const visible = await asUser(t, s.ceo).query(
       api.expenses.listExpenseRequests,
       {},
     );
-    expect(visible.every((expense) => expense.status === "approved")).toBe(true);
+    expect(visible.every((expense) => expense.status === "approved")).toBe(
+      true,
+    );
   });
 
   it("allows HOB and CEO to view, approve, reject, and mark paid across countries", async () => {
@@ -442,6 +482,7 @@ describe("expenses", () => {
 
     await asUser(t, s.hob).mutation(api.expenses.approveExpenseRequest, {
       expenseId: expenseA,
+      fundingAccountId: s.fundingAccount,
     });
     await asUser(t, s.ceo).mutation(api.expenses.rejectExpenseRequest, {
       expenseId: expenseB,
@@ -449,8 +490,8 @@ describe("expenses", () => {
     });
     await asUser(t, s.ceo).mutation(api.expenses.markExpensePaid, {
       expenseId: expenseA,
-      paymentMethod: "Bank Transfer",
       paymentReference: "PAY-1",
+      paymentTransactionId: "PAY-1",
     });
 
     const visible = await asUser(t, s.ceo).query(
@@ -475,6 +516,7 @@ describe("expenses", () => {
     await expect(
       asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
         expenseId: draft,
+        fundingAccountId: s.fundingAccount,
       }),
     ).rejects.toThrow();
 
@@ -483,6 +525,7 @@ describe("expenses", () => {
     });
     await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
       expenseId: draft,
+      fundingAccountId: s.fundingAccount,
     });
     await expect(
       asUser(t, s.amA).mutation(api.expenses.submitExpenseRequest, {
@@ -524,9 +567,11 @@ describe("expenses", () => {
     });
     await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
       expenseId,
+      fundingAccountId: s.fundingAccount,
     });
     await asUser(t, s.ceo).mutation(api.expenses.markExpensePaid, {
       expenseId,
+      paymentTransactionId: "PAY-EVENT-1",
     });
 
     const events = await asUser(t, s.ceo).query(
@@ -591,6 +636,7 @@ describe("expenses", () => {
     await expect(
       asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
         expenseId,
+        fundingAccountId: s.fundingAccount,
       }),
     ).rejects.toThrow(
       "A receipt is required before this expense can be approved.",
@@ -599,6 +645,7 @@ describe("expenses", () => {
     await uploadReceipt(t, s, expenseId);
     await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
       expenseId,
+      fundingAccountId: s.fundingAccount,
     });
 
     const expense = await asUser(t, s.ceo).query(
@@ -615,6 +662,7 @@ describe("expenses", () => {
 
     await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
       expenseId,
+      fundingAccountId: s.fundingAccount,
     });
 
     const expense = await asUser(t, s.ceo).query(
@@ -622,6 +670,44 @@ describe("expenses", () => {
       { expenseId },
     );
     expect(expense.status).toBe("approved");
+  });
+
+  it("enforces country, active account, and unique outgoing transaction IDs", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const first = await createSubmittedExpense(t, s);
+    await expect(
+      asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
+        expenseId: first,
+        fundingAccountId: s.fundingAccountB,
+      }),
+    ).rejects.toThrow("expense country");
+    await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
+      expenseId: first,
+      fundingAccountId: s.fundingAccount,
+    });
+    await asUser(t, s.ceo).mutation(api.expenses.markExpensePaid, {
+      expenseId: first,
+      paymentTransactionId: "OUT-1",
+    });
+    const second = await createSubmittedExpense(t, s);
+    await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
+      expenseId: second,
+      fundingAccountId: s.fundingAccount,
+    });
+    await expect(
+      asUser(t, s.ceo).mutation(api.expenses.markExpensePaid, {
+        expenseId: second,
+        paymentTransactionId: "OUT-1",
+      }),
+    ).rejects.toThrow("already been used");
+    await t.run((ctx) => ctx.db.patch(s.fundingAccount, { isActive: false }));
+    await expect(
+      asUser(t, s.ceo).mutation(api.expenses.markExpensePaid, {
+        expenseId: second,
+        paymentTransactionId: "OUT-2",
+      }),
+    ).rejects.toThrow("no longer active");
   });
 
   it("enforces category create and update permissions", async () => {
@@ -654,7 +740,9 @@ describe("expenses", () => {
       api.expenses.listExpenseCategories,
       { includeInactive: true },
     );
-    expect(categories.find((category) => category._id === categoryId)).toMatchObject({
+    expect(
+      categories.find((category) => category._id === categoryId),
+    ).toMatchObject({
       name: "Fuel and Transport",
       isActive: false,
     });
@@ -679,12 +767,14 @@ describe("expenses", () => {
 
     expect(firstRun.created).toBe(12);
     expect(secondRun.created).toBe(0);
-    expect(categories.filter((category) => category.name === "Travel"))
-      .toHaveLength(1);
-    expect(categories.find((category) => category.name === "Travel"))
-      .toMatchObject({
-        isActive: true,
-      });
+    expect(
+      categories.filter((category) => category.name === "Travel"),
+    ).toHaveLength(1);
+    expect(
+      categories.find((category) => category.name === "Travel"),
+    ).toMatchObject({
+      isActive: true,
+    });
     expect(
       categories.find(
         (category) => category.name === "Internet / Connectivity",
@@ -694,7 +784,9 @@ describe("expenses", () => {
       isActive: true,
     });
     expect(
-      categories.find((category) => category.name === "Data Center / Colocation"),
+      categories.find(
+        (category) => category.name === "Data Center / Colocation",
+      ),
     ).toMatchObject({
       code: "DATA_CENTER_COLOCATION",
       isActive: true,
@@ -814,9 +906,12 @@ describe("expenses", () => {
       uploadedBy: s.amA._id,
       uploadedAt: expect.any(Number),
     });
-    const events = await asUser(t, s.amA).query(api.expenses.listExpenseEvents, {
-      expenseId,
-    });
+    const events = await asUser(t, s.amA).query(
+      api.expenses.listExpenseEvents,
+      {
+        expenseId,
+      },
+    );
     expect(events.map((event) => event.type)).toContain("receipt_uploaded");
   });
 
@@ -972,10 +1067,14 @@ describe("expenses", () => {
     expect(archived.ceo?.archivedBy).toBe(s.ceo._id);
     expect(archived.other?.archivedAt).toBeUndefined();
 
-    const events = await asUser(t, s.ceo).query(api.expenses.listExpenseEvents, {
-      expenseId,
-    });
-    expect(events.filter((event) => event.type === "receipt_removed"))
-      .toHaveLength(3);
+    const events = await asUser(t, s.ceo).query(
+      api.expenses.listExpenseEvents,
+      {
+        expenseId,
+      },
+    );
+    expect(
+      events.filter((event) => event.type === "receipt_removed"),
+    ).toHaveLength(3);
   });
 });

@@ -323,9 +323,13 @@ export const summary = query({
       );
       const preCollectedByMonth = new Map<string, number>();
       for (const payment of paymentsByInvoice.get(invoice._id) ?? []) {
-        for (const allocation of allocateMoney(payment.amount, receivableAllocations.map(
-          (row) => ({ month: row.month, weight: row.amount }),
-        ))) {
+        for (const allocation of allocateMoney(
+          payment.amount,
+          receivableAllocations.map((row) => ({
+            month: row.month,
+            weight: row.amount,
+          })),
+        )) {
           if (payment.paidAt < monthStartTimestamp(allocation.month)) {
             preCollectedByMonth.set(
               allocation.month,
@@ -682,6 +686,10 @@ export const paidExpensesExport = query({
             currency: expense.currency,
             paymentMethod: expense.paymentMethod ?? "",
             paymentReference: expense.paymentReference ?? "",
+            paymentTransactionId: expense.paymentTransactionId ?? "",
+            fundingAccountName: expense.fundingAccountName ?? "",
+            fundingProviderName: expense.fundingProviderName ?? "",
+            fundingAccountNumber: expense.fundingAccountNumber ?? "",
             approvedByName: displayUserName(approvedBy),
             approvedByEmail: displayUserEmail(approvedBy),
             paidByName: displayUserName(paidBy),

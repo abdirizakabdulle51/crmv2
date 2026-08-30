@@ -78,6 +78,10 @@ type PaidExpenseExportRow = {
   currency: string;
   paymentMethod: string;
   paymentReference: string;
+  paymentTransactionId: string;
+  fundingAccountName: string;
+  fundingProviderName: string;
+  fundingAccountNumber: string;
   approvedByName: string;
   approvedByEmail: string;
   paidByName: string;
@@ -240,6 +244,13 @@ const PAID_EXPENSE_EXPORT_COLUMNS: CsvColumn<PaidExpenseExportRow>[] = [
   { header: "Currency", value: (row) => row.currency },
   { header: "Payment Method", value: (row) => row.paymentMethod },
   { header: "Payment Reference", value: (row) => row.paymentReference },
+  { header: "Transaction ID", value: (row) => row.paymentTransactionId },
+  { header: "Funding Account", value: (row) => row.fundingAccountName },
+  { header: "Funding Provider", value: (row) => row.fundingProviderName },
+  {
+    header: "Funding Account Number",
+    value: (row) => row.fundingAccountNumber,
+  },
   { header: "Approved By Name", value: (row) => row.approvedByName },
   { header: "Approved By Email", value: (row) => row.approvedByEmail },
   { header: "Paid By Name", value: (row) => row.paidByName },

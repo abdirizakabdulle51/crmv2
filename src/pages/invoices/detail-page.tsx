@@ -103,17 +103,7 @@ const VOIDABLE_STATUSES = new Set<InvoiceStatus>([
   "overdue",
 ]);
 
-const PAYMENT_METHODS = [
-  "Bank Transfer",
-  "Mobile Money",
-];
-const BANK_TRANSFER_RECEIVING_DETAILS = {
-  receivingBankName: "Salaam Somali Bank",
-  receivingAccountNumber: "33111777",
-  receivingAccountName: "HTG CLOUDS LIMITED",
-  receivingBankLocation: "MOGADISHU - SOMALIA",
-  receivingCurrencyNote: "All fees are listed in USD",
-};
+const PAYMENT_METHODS = ["Bank Transfer", "Mobile Money"];
 
 function formatDate(value?: number) {
   if (!value) return "-";
@@ -252,7 +242,9 @@ function eventMessage(event: InvoiceEvent) {
 }
 
 function lineItemRegionLabel(item: InvoiceLineItem) {
-  return item.regionName || item.dataCenterName || item.regionId || "Unassigned";
+  return (
+    item.regionName || item.dataCenterName || item.regionId || "Unassigned"
+  );
 }
 
 function hasLineItemRegion(item: InvoiceLineItem) {
@@ -363,6 +355,8 @@ function InvoiceDetailContent() {
   );
   const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]);
   const [paymentReference, setPaymentReference] = useState("");
+  const [receivingAccountId, setReceivingAccountId] = useState("");
+  const [transactionId, setTransactionId] = useState("");
   const invoice = useQuery(
     api.invoices.getById,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
@@ -383,6 +377,13 @@ function InvoiceDetailContent() {
   );
   const users = useQuery(api.users.listAll, {});
   const currentUser = useQuery(api.users.getCurrentUser, {});
+  const receivingAccounts = useQuery(api.receivingAccounts.list, {
+    purpose: "incoming",
+  });
+  const invoiceCompany = useQuery(
+    api.companies.getById,
+    invoice ? { id: invoice.companyId } : "skip",
+  );
   const issueInvoice = useMutation(api.invoices.issueInvoice);
   const recordPayment = useMutation(api.invoices.recordPayment);
   const cancelDraftInvoice = useMutation(api.invoices.cancelDraftInvoice);
@@ -398,7 +399,15 @@ function InvoiceDetailContent() {
     return <UnavailableState />;
   }
 
-  if (!invoice || !events || !payments || !users || currentUser === undefined) {
+  if (
+    !invoice ||
+    !events ||
+    !payments ||
+    !users ||
+    !receivingAccounts ||
+    !invoiceCompany ||
+    currentUser === undefined
+  ) {
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-8 w-48" />
@@ -456,6 +465,8 @@ function InvoiceDetailContent() {
     setPaymentDate(formatDateInput(Date.now()));
     setPaymentMethod(PAYMENT_METHODS[0]);
     setPaymentReference("");
+    setReceivingAccountId("");
+    setTransactionId("");
   };
 
   const handleRecordPayment = async (event: React.FormEvent) => {
@@ -469,6 +480,14 @@ function InvoiceDetailContent() {
       toast.error("Payment cannot exceed the balance due");
       return;
     }
+    if (!receivingAccountId) {
+      toast.error("Select the account that received the payment");
+      return;
+    }
+    if (!transactionId.trim()) {
+      toast.error("Enter the bank or provider transaction ID");
+      return;
+    }
 
     setIsRecordingPayment(true);
     try {
@@ -478,6 +497,8 @@ function InvoiceDetailContent() {
         paidAt: parsePaymentDate(paymentDate),
         method: paymentMethod,
         reference: paymentReference.trim() || undefined,
+        receivingAccountId: receivingAccountId as Id<"receivingAccounts">,
+        transactionId: transactionId.trim(),
       });
       toast.success("Payment recorded");
       setPaymentDialogOpen(false);
@@ -919,9 +940,7 @@ function InvoiceDetailContent() {
                 <thead>
                   <tr className="border-b bg-muted/30">
                     <th className="p-3 text-left font-medium">Amount</th>
-                    <th className="p-3 text-left font-medium">
-                      Payment Date
-                    </th>
+                    <th className="p-3 text-left font-medium">Payment Date</th>
                     <th className="p-3 text-left font-medium">Method</th>
                     <th className="p-3 text-left font-medium">Reference</th>
                     <th className="p-3 text-left font-medium">
@@ -933,10 +952,7 @@ function InvoiceDetailContent() {
                 </thead>
                 <tbody>
                   {payments.map((payment) => (
-                    <tr
-                      key={payment._id}
-                      className="border-b last:border-0"
-                    >
+                    <tr key={payment._id} className="border-b last:border-0">
                       <td className="p-3 font-medium">
                         {formatCurrency(payment.amount)}
                       </td>
@@ -1015,12 +1031,22 @@ function InvoiceDetailContent() {
         date={paymentDate}
         method={paymentMethod}
         reference={paymentReference}
+        receivingAccountId={receivingAccountId}
+        transactionId={transactionId}
+        accounts={receivingAccounts.filter(
+          (account) => account.countryId === invoiceCompany.countryId,
+        )}
         open={paymentDialogOpen}
         pending={isRecordingPayment}
         onAmountChange={setPaymentAmount}
         onDateChange={setPaymentDate}
-        onMethodChange={setPaymentMethod}
+        onMethodChange={(value) => {
+          setPaymentMethod(value);
+          setReceivingAccountId("");
+        }}
         onReferenceChange={setPaymentReference}
+        onReceivingAccountChange={setReceivingAccountId}
+        onTransactionIdChange={setTransactionId}
         onOpenChange={(open) => {
           if (isRecordingPayment) return;
           setPaymentDialogOpen(open);
@@ -1087,12 +1113,17 @@ function RecordPaymentDialog({
   date,
   method,
   reference,
+  receivingAccountId,
+  transactionId,
+  accounts,
   open,
   pending,
   onAmountChange,
   onDateChange,
   onMethodChange,
   onReferenceChange,
+  onReceivingAccountChange,
+  onTransactionIdChange,
   onOpenChange,
   onSubmit,
 }: {
@@ -1101,12 +1132,17 @@ function RecordPaymentDialog({
   date: string;
   method: string;
   reference: string;
+  receivingAccountId: string;
+  transactionId: string;
+  accounts: Doc<"receivingAccounts">[];
   open: boolean;
   pending: boolean;
   onAmountChange: (value: string) => void;
   onDateChange: (value: string) => void;
   onMethodChange: (value: string) => void;
   onReferenceChange: (value: string) => void;
+  onReceivingAccountChange: (value: string) => void;
+  onTransactionIdChange: (value: string) => void;
   onOpenChange: (open: boolean) => void;
   onSubmit: (event: React.FormEvent) => void;
 }) {
@@ -1114,6 +1150,10 @@ function RecordPaymentDialog({
   const isOverBalance = Number.isFinite(numericAmount)
     ? numericAmount > balanceDue
     : false;
+  const accountType = method === "Bank Transfer" ? "bank" : "mobile_money";
+  const eligibleAccounts = accounts.filter(
+    (account) => account.type === accountType,
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1173,37 +1213,50 @@ function RecordPaymentDialog({
             </Select>
           </div>
 
-          {method === "Bank Transfer" ? (
-            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
-              <div className="mb-2 font-medium">Receiving bank details</div>
-              <div className="space-y-1 text-muted-foreground">
-                <div>
-                  ACCOUNT # ={" "}
-                  {BANK_TRANSFER_RECEIVING_DETAILS.receivingAccountNumber}
-                </div>
-                <div>
-                  ACC. NAME ={" "}
-                  {BANK_TRANSFER_RECEIVING_DETAILS.receivingAccountName}
-                </div>
-                <div>
-                  {BANK_TRANSFER_RECEIVING_DETAILS.receivingBankLocation}
-                </div>
-                <div>
-                  {BANK_TRANSFER_RECEIVING_DETAILS.receivingCurrencyNote}
-                </div>
-              </div>
-            </div>
-          ) : null}
+          <div className="space-y-2">
+            <Label>Paid into account</Label>
+            <Select
+              value={receivingAccountId}
+              onValueChange={onReceivingAccountChange}
+            >
+              <SelectTrigger aria-label="Paid into account" className="w-full">
+                <SelectValue placeholder="Select receiving account" />
+              </SelectTrigger>
+              <SelectContent>
+                {eligibleAccounts.map((account) => (
+                  <SelectItem key={account._id} value={account._id}>
+                    {account.name} · {account.accountNumber} ({account.currency}
+                    )
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {eligibleAccounts.length === 0 ? (
+              <p className="text-xs text-destructive">
+                Configure an active{" "}
+                {accountType === "bank" ? "bank" : "mobile money"} account in
+                Collections first.
+              </p>
+            ) : null}
+          </div>
 
           <div className="space-y-2">
-            <Label htmlFor="payment-reference">
-              Customer reference / receipt number
-            </Label>
+            <Label htmlFor="payment-transaction-id">Transaction ID</Label>
+            <Input
+              id="payment-transaction-id"
+              value={transactionId}
+              onChange={(event) => onTransactionIdChange(event.target.value)}
+              placeholder="Bank or provider transaction ID"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="payment-reference">Internal note (optional)</Label>
             <Input
               id="payment-reference"
               value={reference}
               onChange={(event) => onReferenceChange(event.target.value)}
-              placeholder="Customer transfer reference or receipt number"
+              placeholder="Optional payment note"
             />
           </div>
 
@@ -1219,9 +1272,16 @@ function RecordPaymentDialog({
             <Button
               type="submit"
               className="bg-cyan-600 text-white hover:bg-cyan-700"
-              disabled={pending || isOverBalance}
+              disabled={
+                pending ||
+                isOverBalance ||
+                !receivingAccountId ||
+                !transactionId.trim()
+              }
             >
-              {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {pending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
               {pending ? "Recording..." : "Record Payment"}
             </Button>
           </DialogFooter>

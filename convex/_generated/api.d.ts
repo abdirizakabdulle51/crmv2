@@ -43,6 +43,7 @@ import type * as pingResults from "../pingResults.js";
 import type * as pingTargets from "../pingTargets.js";
 import type * as quotes from "../quotes.js";
 import type * as recommendations from "../recommendations.js";
+import type * as receivingAccounts from "../receivingAccounts.js";
 import type * as regionConsumers from "../regionConsumers.js";
 import type * as salesTargets from "../salesTargets.js";
 import type * as sectors from "../sectors.js";
@@ -97,6 +98,7 @@ declare const fullApi: ApiFromModules<{
   pingTargets: typeof pingTargets;
   quotes: typeof quotes;
   recommendations: typeof recommendations;
+  receivingAccounts: typeof receivingAccounts;
   regionConsumers: typeof regionConsumers;
   salesTargets: typeof salesTargets;
   sectors: typeof sectors;

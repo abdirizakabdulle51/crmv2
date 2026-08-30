@@ -16,6 +16,15 @@ type Line = Pick<
   | "includedQuantity"
 >;
 
+export function isDynamicPricingContract(
+  contract: Pick<
+    Doc<"customerContracts">,
+    "commitmentModel" | "pricingModel"
+  >,
+) {
+  return contract.commitmentModel === "flexible_value" || Boolean(contract.pricingModel);
+}
+
 export function contractDiscount(
   contract: Contract,
   line: Line,

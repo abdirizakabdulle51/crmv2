@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
@@ -156,6 +156,9 @@ export default function UsagePage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link to="/finance/daily-usage">Daily usage</Link>
+          </Button>
           <Button variant="secondary" onClick={() => setImportOpen(true)}>
             <Upload className="h-4 w-4 mr-2" />
             Import CSV

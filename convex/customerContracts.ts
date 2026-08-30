@@ -11,10 +11,14 @@ import {
   assertSupportedCurrency,
   calculateContractCharges,
   calculateMonthProration,
+  roundMoney,
   sumMoney,
 } from "./money";
-import { contractDiscount, contractOveragePrice } from "./contractPricing";
-import { allocateFlexibleCommitment } from "./flexibleCommitment";
+import { contractDiscount, contractOveragePrice, isDynamicPricingContract } from "./contractPricing";
+import {
+  priceFlexibleContractUsage,
+  priceMonthlyContractUsage,
+} from "./contractUsagePricing";
 import { PRODUCT_GROUPS } from "../src/lib/product-groups";
 
 type Ctx = QueryCtx | MutationCtx;
@@ -45,6 +49,11 @@ type ContractInput = {
   billingTiming?: "prepaid" | "postpaid";
   pricingBasis?: "service_lines" | "total_contract";
   commitmentModel?: "flexible_value";
+  pricingModel?:
+    | "flexible_total_commitment"
+    | "monthly_minimum"
+    | "discounted_usage";
+  monthlyMinimum?: number;
   contractValue?: number;
   defaultDiscountType?: "percentage" | "amount";
   defaultDiscountValue?: number;
@@ -132,6 +141,14 @@ const contractFieldsValidator = {
     v.union(v.literal("service_lines"), v.literal("total_contract")),
   ),
   commitmentModel: v.optional(v.literal("flexible_value")),
+  pricingModel: v.optional(
+    v.union(
+      v.literal("flexible_total_commitment"),
+      v.literal("monthly_minimum"),
+      v.literal("discounted_usage"),
+    ),
+  ),
+  monthlyMinimum: v.optional(v.number()),
   contractValue: v.optional(v.number()),
   defaultDiscountType: v.optional(
     v.union(v.literal("percentage"), v.literal("amount")),
@@ -315,6 +332,10 @@ function normalizeFields(args: ContractInput) {
     });
   }
   const contractValue = assertNonNegative(args.contractValue, "Contract value");
+  const monthlyMinimum = assertNonNegative(
+    args.monthlyMinimum,
+    "Monthly minimum",
+  );
   if (args.pricingBasis === "total_contract" && !contractValue) {
     throw new ConvexError({
       code: "BAD_REQUEST",
@@ -329,6 +350,52 @@ function normalizeFields(args: ContractInput) {
     throw new ConvexError({
       code: "BAD_REQUEST",
       message: "Flexible commitments require a total contract value",
+    });
+  }
+  if (
+    args.pricingModel === "flexible_total_commitment" &&
+    (!contractValue || args.pricingBasis !== "total_contract")
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Flexible total commitments require a total contract value",
+    });
+  }
+  if (args.pricingModel === "monthly_minimum" && !monthlyMinimum) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Monthly minimum contracts require a positive monthly minimum",
+    });
+  }
+  if (
+    (args.pricingModel === "monthly_minimum" ||
+      args.pricingModel === "discounted_usage") &&
+    (args.pricingBasis !== "service_lines" ||
+      args.commitmentModel !== undefined ||
+      contractValue !== undefined)
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Monthly usage contracts cannot have a total commitment balance",
+    });
+  }
+  if (
+    args.pricingModel !== "monthly_minimum" &&
+    monthlyMinimum !== undefined
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "A monthly minimum is only valid for monthly minimum contracts",
+    });
+  }
+  if (
+    (args.pricingModel === "monthly_minimum" ||
+      args.pricingModel === "discounted_usage") &&
+    (args.billingFrequency !== "monthly" || args.billingTiming !== "postpaid")
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Monthly usage contracts must be billed monthly and postpaid",
     });
   }
   const defaultDiscountValue = assertNonNegative(
@@ -361,10 +428,16 @@ function normalizeFields(args: ContractInput) {
     billingTiming: args.billingTiming ?? "postpaid",
     pricingBasis: args.pricingBasis ?? "service_lines",
     commitmentModel: args.commitmentModel,
+    pricingModel: args.pricingModel,
+    monthlyMinimum,
     contractValue,
     defaultDiscountType: args.defaultDiscountType,
     defaultDiscountValue,
-    overagePricingPolicy: args.overagePricingPolicy ?? "current_catalog",
+    overagePricingPolicy:
+      args.pricingModel === "monthly_minimum" ||
+      args.pricingModel === "discounted_usage"
+        ? undefined
+        : args.overagePricingPolicy ?? "current_catalog",
     paymentTermDays: args.paymentTermDays,
     signedDocumentUrl: optionalText(args.signedDocumentUrl),
     notes: optionalText(args.notes),
@@ -845,67 +918,62 @@ export const usageComparison = query({
     const groupDiscountByKey = new Map(
       groupDiscounts.map((rule) => [rule.productGroup, rule.discountPercent]),
     );
-    if (contract.commitmentModel === "flexible_value") {
-      const allUsage = await ctx.db
-        .query("consumption")
-        .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
-        .collect();
-      const through = monthEndTimestamp(args.month);
-      const eligibleUsage = allUsage
-        .map((entry) => ({
-          entry,
-          timestamp: entry.usageDate
-            ? Date.parse(`${entry.usageDate}T12:00:00.000Z`)
-            : monthEndTimestamp(entry.month),
-        }))
+    if (
+      contract.pricingModel === "monthly_minimum" ||
+      contract.pricingModel === "discounted_usage"
+    ) {
+      const pricing = await priceMonthlyContractUsage(ctx, contract, args.month);
+      const invoice = (
+        await ctx.db
+          .query("invoices")
+          .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+          .collect()
+      )
         .filter(
-          ({ timestamp }) =>
-            timestamp >= contract.startDate &&
-            timestamp <= contract.endDate &&
-            timestamp <= through,
+          (candidate) =>
+            candidate.sourceMonth === args.month &&
+            candidate.status !== "void" &&
+            candidate.status !== "cancelled",
         )
-        .sort(
-          (a, b) =>
-            a.timestamp - b.timestamp || a.entry._id.localeCompare(b.entry._id),
-        );
-      const catalogIds = new Set(
-        eligibleUsage.flatMap(({ entry }) =>
-          entry.catalogItemId ? [entry.catalogItemId] : [],
-        ),
-      );
-      const catalogs = await Promise.all(
-        [...catalogIds].map(async (id) => [id, await ctx.db.get(id)] as const),
-      );
-      const catalogById = new Map(catalogs);
-      const overrideByService = new Map(
-        lines
-          .filter(
-            (line) =>
-              line.serviceCode &&
-              line.discountType === "percentage" &&
-              line.discountValue !== undefined,
-          )
-          .map((line) => [line.serviceCode!, line.discountValue!]),
-      );
-      const allocations = allocateFlexibleCommitment(
-        contract.contractValue ?? 0,
-        eligibleUsage.map(({ entry }) => {
-          const catalog = entry.catalogItemId
-            ? catalogById.get(entry.catalogItemId)
-            : null;
-          const serviceCode = catalog?.serviceCode ?? catalog?.serviceCategory;
-          return {
-            key: entry._id,
-            grossAmount: entry.amount,
-            discountPercent:
-              (serviceCode ? overrideByService.get(serviceCode) : undefined) ??
-              (catalog?.productGroup
-                ? groupDiscountByKey.get(catalog.productGroup)
-                : undefined) ??
-              0,
-          };
-        }),
-      );
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
+      const invoicedPayable = invoice?.contractUsageSummary?.payable;
+      return {
+        month: args.month,
+        rows: [],
+        totals: {
+          contractMinimum: pricing.minimum,
+          overage: 0,
+          projected: pricing.payable,
+          usageAmount: pricing.catalogueUsage,
+          matchedEntries: pricing.entries,
+          totalUsageEntries: pricing.totalEntries,
+        },
+        monthlyPricing: {
+          catalogueUsage: pricing.catalogueUsage,
+          discountedUsage: pricing.discountedUsage,
+          minimum: pricing.minimum,
+          shortfall: pricing.shortfall,
+          payable: pricing.payable,
+          reconciliation: invoice
+            ? {
+                invoiceId: invoice._id,
+                invoiceStatus: invoice.status,
+                invoicedPayable,
+                difference:
+                  invoicedPayable === undefined
+                    ? undefined
+                    : sumMoney([pricing.payable, -invoicedPayable]),
+              }
+            : undefined,
+        },
+      };
+    }
+    if (
+      contract.commitmentModel === "flexible_value" ||
+      contract.pricingModel === "flexible_total_commitment"
+    ) {
+      const through = monthEndTimestamp(args.month);
+      const allocations = await priceFlexibleContractUsage(ctx, contract, through);
       const remainingCommitment =
         allocations.at(-1)?.remainingCommitment ?? contract.contractValue ?? 0;
       return {
@@ -1192,8 +1260,10 @@ export const createConfigured = mutation({
         message: "Configured contracts must be created as drafts",
       });
     }
-    const isFlexible = fields.commitmentModel === "flexible_value";
-    if (!isFlexible && services.length === 0) {
+    const isDynamic =
+      fields.commitmentModel === "flexible_value" ||
+      fields.pricingModel !== undefined;
+    if (!isDynamic && services.length === 0) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Select at least one contract service",
@@ -1215,10 +1285,10 @@ export const createConfigured = mutation({
     const catalogs = [];
     const seenCatalogIds = new Set<string>();
     for (const service of services) {
-      if (!Number.isFinite(service.includedQuantity) || (!isFlexible && service.includedQuantity <= 0) || service.includedQuantity < 0) {
+      if (!Number.isFinite(service.includedQuantity) || (!isDynamic && service.includedQuantity <= 0) || service.includedQuantity < 0) {
         throw new ConvexError({
           code: "BAD_REQUEST",
-          message: isFlexible
+          message: isDynamic
             ? "Service override quantity must be zero or greater"
             : "Included quantity must be greater than zero",
         });
@@ -1301,8 +1371,8 @@ export const createConfigured = mutation({
       contractId,
       user._id,
       "created",
-      isFlexible
-        ? `Flexible customer contract ${fields.contractNumber} created with ${services.length} service overrides`
+      isDynamic
+        ? `Dynamic-pricing customer contract ${fields.contractNumber} created with ${services.length} service overrides`
         : `Customer contract ${fields.contractNumber} created with ${services.length} services`,
     );
     return contractId;
@@ -1363,6 +1433,68 @@ export const setGroupDiscounts = mutation({
   },
 });
 
+export const setServiceDiscountOverride = mutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    catalogItemId: v.id("serviceCatalog"),
+    discountPercent: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Contract not found" });
+    }
+    assertDraftContract(contract);
+    await getVisibleCompany(ctx, user, contract.companyId);
+    if (!isDynamicPricingContract(contract)) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Service discount overrides are only valid for dynamic-pricing contracts",
+      });
+    }
+    const catalog = await ctx.db.get(args.catalogItemId);
+    if (!catalog?.productGroup || !catalog.serviceCode) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select a classified catalogue service with a service code",
+      });
+    }
+    const discountPercent = normalizeDiscountPercent(args.discountPercent);
+    const existing = await ctx.db
+      .query("customerContractLineItems")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    for (const line of existing.filter(
+      (line) => line.serviceCode === catalog.serviceCode,
+    )) {
+      await ctx.db.delete(line._id);
+    }
+    const now = Date.now();
+    await ctx.db.insert("customerContractLineItems", {
+      contractId: args.contractId,
+      catalogItemId: catalog._id,
+      itemName: catalog.itemName,
+      serviceCategory: catalog.serviceCategory,
+      productGroup: catalog.productGroup,
+      serviceCode: catalog.serviceCode,
+      description: catalog.specs,
+      includedQuantity: 0,
+      unit: catalog.billingUnit,
+      catalogUnitPrice: catalog.monthlyPrice,
+      contractUnitPrice: catalog.monthlyPrice,
+      discountType: "percentage",
+      discountValue: discountPercent,
+      billingUnit: catalog.billingUnit,
+      createdBy: user._id,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.patch(args.contractId, { updatedAt: now });
+  },
+});
+
 export const update = mutation({
   args: {
     contractId: v.id("customerContracts"),
@@ -1380,7 +1512,12 @@ export const update = mutation({
     }
     assertDraftContract(existing);
     await getVisibleCompany(ctx, user, args.companyId);
-    const fields = normalizeFields(args);
+    const fields = normalizeFields({
+      ...args,
+      commitmentModel: args.commitmentModel ?? existing.commitmentModel,
+      pricingModel: args.pricingModel ?? existing.pricingModel,
+      monthlyMinimum: args.monthlyMinimum ?? existing.monthlyMinimum,
+    });
     if (fields.status !== "draft") {
       throw new ConvexError({
         code: "BAD_REQUEST",
@@ -1439,14 +1576,17 @@ export const activate = mutation({
       .query("customerContractGroupDiscounts")
       .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
       .collect();
-    if (contract.commitmentModel !== "flexible_value" && lineItems.length === 0) {
+    const isDynamic =
+      contract.commitmentModel === "flexible_value" ||
+      contract.pricingModel !== undefined;
+    if (!isDynamic && lineItems.length === 0) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Add at least one contract service before activating",
       });
     }
 
-    if (contract.commitmentModel !== "flexible_value") {
+    if (!isDynamic) {
       assertContractValueMatchesServices(
         contract,
         lineItems,

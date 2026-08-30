@@ -750,6 +750,7 @@ export const approveExpenseRequest = mutation({
   args: {
     expenseId: v.id("expenseRequests"),
     note: v.optional(v.string()),
+    fundingAccountId: v.optional(v.id("receivingAccounts")),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -757,20 +758,54 @@ export const approveExpenseRequest = mutation({
     assertExpenseStatus(expense, "submitted", "approved");
     await assertCanApproveExpense(ctx, user, expense);
     await assertReceiptRequirementSatisfied(ctx, expense, "approve");
+    const fundingAccount = args.fundingAccountId
+      ? await ctx.db.get(args.fundingAccountId)
+      : null;
+    if (
+      !fundingAccount ||
+      !fundingAccount.isActive ||
+      fundingAccount.usage === "incoming"
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select an active account that can fund expenses",
+      });
+    }
+    if (fundingAccount.currency !== expense.currency) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Funding account currency must be ${expense.currency}`,
+      });
+    }
+    const expenseCompany = expense.companyId
+      ? await ctx.db.get(expense.companyId)
+      : null;
+    const expenseCountryId = expense.countryId ?? expenseCompany?.countryId;
+    if (!expenseCountryId || fundingAccount.countryId !== expenseCountryId) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Funding account must belong to the expense country",
+      });
+    }
     const now = Date.now();
     const note = normalizeOptionalText(args.note);
     await ctx.db.patch(args.expenseId, {
       status: "approved",
       approvedAt: now,
       approvedBy: user._id,
+      fundingAccountId: fundingAccount._id,
+      fundingAccountName: fundingAccount.name,
+      fundingProviderName: fundingAccount.providerName,
+      fundingAccountNumber: fundingAccount.accountNumber,
+      fundingAccountType: fundingAccount.type,
       updatedAt: now,
     });
     await insertExpenseEvent(ctx, {
       expenseId: args.expenseId,
       type: "approved",
       message: note
-        ? `Expense request approved. Note: ${note}`
-        : "Expense request approved.",
+        ? `Expense request approved from ${fundingAccount.name}. Note: ${note}`
+        : `Expense request approved from ${fundingAccount.name}.`,
       actorId: user._id,
       now,
     });
@@ -809,28 +844,94 @@ export const rejectExpenseRequest = mutation({
 export const markExpensePaid = mutation({
   args: {
     expenseId: v.id("expenseRequests"),
-    paymentMethod: v.optional(v.string()),
     paymentReference: v.optional(v.string()),
+    paymentTransactionId: v.optional(v.string()),
+    fundingAccountId: v.optional(v.id("receivingAccounts")),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     assertCanMarkPaid(user);
     const expense = await getExpenseOrThrow(ctx, args.expenseId);
     assertExpenseStatus(expense, "approved", "marked paid");
-    const paymentMethod = normalizeOptionalText(args.paymentMethod);
+    const fundingAccountId = expense.fundingAccountId ?? args.fundingAccountId;
+    const fundingAccount = fundingAccountId
+      ? await ctx.db.get(fundingAccountId)
+      : null;
+    if (!fundingAccount) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select a funding account for this legacy approved expense",
+      });
+    }
+    if (!fundingAccount.isActive || fundingAccount.usage === "incoming") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Funding account is no longer active for expenses",
+      });
+    }
+    const expenseCompany = expense.companyId
+      ? await ctx.db.get(expense.companyId)
+      : null;
+    const expenseCountryId = expense.countryId ?? expenseCompany?.countryId;
+    if (!expenseCountryId || fundingAccount.countryId !== expenseCountryId) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Funding account must belong to the expense country",
+      });
+    }
+    if (fundingAccount.currency !== expense.currency) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Funding account currency must be ${expense.currency}`,
+      });
+    }
+    const paymentTransactionId = normalizeRequiredText(
+      args.paymentTransactionId ?? "",
+      "Payment transaction ID",
+    );
+    const duplicate = await ctx.db
+      .query("expenseRequests")
+      .withIndex("by_account_transaction", (q) =>
+        q
+          .eq("fundingAccountId", fundingAccount._id)
+          .eq("paymentTransactionId", paymentTransactionId),
+      )
+      .first();
+    if (duplicate && duplicate._id !== expense._id) {
+      throw new ConvexError({
+        code: "CONFLICT",
+        message:
+          "This transaction ID has already been used for the funding account",
+      });
+    }
+    const paymentMethod =
+      fundingAccount.type === "bank"
+        ? "Bank Transfer"
+        : fundingAccount.type === "mobile_money"
+          ? "Mobile Money"
+          : "Cash";
     const paymentReference = normalizeOptionalText(args.paymentReference);
     const now = Date.now();
     await ctx.db.patch(args.expenseId, {
       status: "paid",
       paidAt: now,
       paidBy: user._id,
+      fundingAccountId: fundingAccount._id,
+      fundingAccountName: expense.fundingAccountName ?? fundingAccount.name,
+      fundingProviderName:
+        expense.fundingProviderName ?? fundingAccount.providerName,
+      fundingAccountNumber:
+        expense.fundingAccountNumber ?? fundingAccount.accountNumber,
+      fundingAccountType: expense.fundingAccountType ?? fundingAccount.type,
       paymentMethod,
       paymentReference,
+      paymentTransactionId,
       updatedAt: now,
     });
     const details = [
       paymentMethod ? `Method: ${paymentMethod}` : undefined,
       paymentReference ? `Reference: ${paymentReference}` : undefined,
+      `Transaction ID: ${paymentTransactionId}`,
     ]
       .filter(Boolean)
       .join(". ");

@@ -814,14 +814,12 @@ export const createDraftInvoiceFromRollup = mutation({
       [company._id],
       args.month,
     );
-    if (
-      contractPricingByCompany.get(company._id)?.contract.commitmentModel ===
-      "flexible_value"
-    ) {
+    const activeContract = contractPricingByCompany.get(company._id)?.contract;
+    if (activeContract?.commitmentModel === "flexible_value" || activeContract?.pricingModel) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message:
-          "Flexible commitments must be invoiced from the contract schedule so the shared balance and overage are calculated once",
+          "Dynamic-pricing contracts must be invoiced from the contract schedule so discounts and commitments are calculated once",
       });
     }
     const rollupRows = buildMonthlyRollupRows({

@@ -39,8 +39,15 @@ import {
   reserveCredit,
   restoreInvoiceCredit,
 } from "./customerCredits";
-import { contractDiscount, contractOveragePrice } from "./contractPricing";
-import { allocateFlexibleCommitment } from "./flexibleCommitment";
+import {
+  contractDiscount,
+  contractOveragePrice,
+  isDynamicPricingContract,
+} from "./contractPricing";
+import {
+  priceFlexibleContractUsage,
+  priceMonthlyContractUsage,
+} from "./contractUsagePricing";
 
 type Ctx = QueryCtx | MutationCtx;
 type InvoiceStatus = Doc<"invoices">["status"];
@@ -133,13 +140,6 @@ const SUPPORTED_PAYMENT_METHODS = new Set([
   PAYMENT_METHOD_BANK_TRANSFER,
   PAYMENT_METHOD_MOBILE_MONEY,
 ]);
-const BANK_TRANSFER_RECEIVING_DETAILS = {
-  receivingBankName: "Salaam Somali Bank",
-  receivingAccountNumber: "33111777",
-  receivingAccountName: "HTG CLOUDS LIMITED",
-  receivingBankLocation: "MOGADISHU - SOMALIA",
-  receivingCurrencyNote: "All fees are listed in USD",
-};
 
 const PAYABLE_STATUSES = new Set<InvoiceStatus>([
   "issued",
@@ -901,102 +901,6 @@ function contractValueAllocations(contract: Doc<"customerContracts">) {
   );
 }
 
-async function flexibleCommitmentUsage(
-  ctx: Ctx,
-  contract: Doc<"customerContracts">,
-  through: number,
-) {
-  const [usage, rules, overrides] = await Promise.all([
-    ctx.db
-      .query("consumption")
-      .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
-      .collect(),
-    ctx.db
-      .query("customerContractGroupDiscounts")
-      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
-      .collect(),
-    ctx.db
-      .query("customerContractLineItems")
-      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
-      .collect(),
-  ]);
-  const groupDiscount = new Map(
-    rules.map((rule) => [rule.productGroup, rule.discountPercent]),
-  );
-  const boundaryMonths = new Set([
-    monthKeyFromTimestamp(contract.startDate),
-    monthKeyFromTimestamp(contract.endDate),
-  ]);
-  if (
-    usage.some(
-      (entry) =>
-        boundaryMonths.has(entry.month) &&
-        contractMonthFraction(contract, entry.month) < 1 &&
-        !entry.usageDate,
-    )
-  ) {
-    throw new ConvexError({
-      code: "USAGE_PERIOD_REQUIRED",
-      message:
-        "Partial-month flexible commitments require dated usage so pre-contract and post-contract usage remain separate",
-    });
-  }
-  const catalogIds = new Set(
-    usage.flatMap((entry) => (entry.catalogItemId ? [entry.catalogItemId] : [])),
-  );
-  const catalogs = await Promise.all(
-    [...catalogIds].map(async (id) => [id, await ctx.db.get(id)] as const),
-  );
-  const catalogById = new Map(catalogs);
-  const overrideByService = new Map(
-    overrides
-      .filter(
-        (line) =>
-          line.serviceCode &&
-          line.discountType === "percentage" &&
-          line.discountValue !== undefined,
-      )
-      .map((line) => [line.serviceCode!, line.discountValue!]),
-  );
-  const dated = usage
-    .map((entry) => {
-      const timestamp = entry.usageDate
-        ? Date.parse(`${entry.usageDate}T12:00:00.000Z`)
-        : monthEndTimestamp(entry.month);
-      return { entry, timestamp };
-    })
-    .filter(
-      ({ timestamp }) =>
-        timestamp >= contract.startDate &&
-        timestamp <= contract.endDate &&
-        timestamp <= through,
-    )
-    .sort(
-      (a, b) =>
-        a.timestamp - b.timestamp || a.entry._id.localeCompare(b.entry._id),
-    );
-  return allocateFlexibleCommitment(
-    contract.contractValue ?? 0,
-    dated.map(({ entry }) => {
-      const catalog = entry.catalogItemId
-        ? catalogById.get(entry.catalogItemId)
-        : null;
-      const serviceCode = catalog?.serviceCode ?? catalog?.serviceCategory;
-      const discountPercent =
-        (serviceCode ? overrideByService.get(serviceCode) : undefined) ??
-        (catalog?.productGroup
-          ? groupDiscount.get(catalog.productGroup)
-          : undefined) ??
-        0;
-      return {
-        key: entry._id,
-        grossAmount: entry.amount,
-        discountPercent,
-      };
-    }),
-  );
-}
-
 async function previouslyBilledFlexibleOverage(
   ctx: Ctx,
   contract: Doc<"customerContracts">,
@@ -1060,6 +964,16 @@ async function createContractDraftInvoice(
 ) {
   const { user, contract, sourceMonth } = args;
   const kind = args.kind ?? "cycle";
+  if (
+    kind === "overage_settlement" &&
+    (contract.pricingModel === "monthly_minimum" ||
+      contract.pricingModel === "discounted_usage")
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Monthly usage contracts do not have overage settlements",
+    });
+  }
   if (kind === "overage_settlement" && contract.billingTiming !== "prepaid") {
     throw new ConvexError({
       code: "BAD_REQUEST",
@@ -1107,8 +1021,13 @@ async function createContractDraftInvoice(
   const groupDiscountByKey = new Map(
     groupDiscounts.map((rule) => [rule.productGroup, rule.discountPercent]),
   );
-  const isFlexible = contract.commitmentModel === "flexible_value";
-  if (!isFlexible && lines.length === 0) {
+  const isFlexible =
+    contract.commitmentModel === "flexible_value" ||
+    contract.pricingModel === "flexible_total_commitment";
+  const isMonthlyUsageModel =
+    contract.pricingModel === "monthly_minimum" ||
+    contract.pricingModel === "discounted_usage";
+  if (!isFlexible && !isMonthlyUsageModel && lines.length === 0) {
     throw new ConvexError({
       code: "BAD_REQUEST",
       message: "Add at least one contract service before creating an invoice",
@@ -1138,7 +1057,102 @@ async function createContractDraftInvoice(
     month: string;
     lineItems: InvoiceLineItem[];
   }> = [];
-  if (isFlexible) {
+  let monthlyUsageSummary:
+    | {
+        catalogueUsage: number;
+        discountedUsage: number;
+        minimum: number;
+        shortfall: number;
+        payable: number;
+        entries: number;
+      }
+    | undefined;
+  let monthlyUsageBreakdown: string | undefined;
+  if (isMonthlyUsageModel) {
+    if (kind !== "cycle") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Monthly usage contracts do not have overage settlements",
+      });
+    }
+    const usage = await priceMonthlyContractUsage(ctx, contract, sourceMonth);
+    if (contract.pricingModel === "discounted_usage" && usage.entries === 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "No billable usage is available for this month",
+      });
+    }
+    const minimum = usage.minimum;
+    const payable = usage.payable;
+    const minimumApplies = minimum > usage.discountedUsage;
+    monthlyUsageSummary = {
+      catalogueUsage: usage.catalogueUsage,
+      discountedUsage: usage.discountedUsage,
+      minimum,
+      shortfall: usage.shortfall,
+      payable,
+      entries: usage.entries,
+    };
+    monthlyUsageBreakdown = usage.lines.length
+      ? `Usage detail: ${usage.lines
+          .map(
+            (line) =>
+              `${line.itemName}: ${line.catalogueUsage.toFixed(2)} less ${line.discountPercent}% = ${line.discountedUsage.toFixed(2)} ${contract.currency}`,
+          )
+          .join("; ")}.`
+      : "Usage detail: no usage recorded for this billing period.";
+    const usageLines: InvoiceLineItem[] = usage.lines.flatMap((line) => {
+      const discountAmount = sumMoney([
+        line.catalogueUsage,
+        -line.discountedUsage,
+      ]);
+      const common = {
+        catalogItemId: line.catalogItemId,
+        serviceCategory: line.serviceCategory,
+        billingUnit: line.billingUnit,
+      };
+      return [
+        {
+          ...common,
+          itemName: `${line.itemName} catalogue usage`,
+          quantity: 1,
+          monthlyUnitPrice: line.catalogueUsage,
+          monthlyTotal: line.catalogueUsage,
+          yearlyTotal: roundMoney(line.catalogueUsage * 12),
+        },
+        ...(discountAmount > 0
+          ? [
+              {
+                ...common,
+                itemName: `${line.itemName} contract discount (${line.discountPercent}%)`,
+                quantity: 1,
+                monthlyUnitPrice: -discountAmount,
+                monthlyTotal: -discountAmount,
+                yearlyTotal: -roundMoney(discountAmount * 12),
+              },
+            ]
+          : []),
+      ];
+    });
+    monthlyLineGroups = [
+      {
+        month: sourceMonth,
+        lineItems: minimumApplies
+          ? [
+              {
+                itemName: `Contracted monthly minimum — includes discounted usage ${usage.discountedUsage.toFixed(2)}`,
+                serviceCategory: "Contract Usage",
+                billingUnit: "month",
+                quantity: 1,
+                monthlyUnitPrice: payable,
+                monthlyTotal: payable,
+                yearlyTotal: roundMoney(payable * 12),
+              },
+            ]
+          : usageLines,
+      },
+    ];
+  } else if (isFlexible) {
     const valueAllocations = contractValueAllocations(contract) ?? [];
     monthlyLineGroups = cycleMonths.map((month) => {
       const amount =
@@ -1166,7 +1180,7 @@ async function createContractDraftInvoice(
       kind === "overage_settlement" ||
       (contract.billingTiming ?? "postpaid") === "postpaid"
     ) {
-      const allocations = await flexibleCommitmentUsage(
+      const allocations = await priceFlexibleContractUsage(
         ctx,
         contract,
         monthEndTimestamp(cycleEndMonth),
@@ -1174,8 +1188,14 @@ async function createContractDraftInvoice(
       const expectedOverage = sumMoney(
         allocations.map((allocation) => allocation.overageAmount),
       );
-      const alreadyBilled = await previouslyBilledFlexibleOverage(ctx, contract);
-      const overageDue = Math.max(0, sumMoney([expectedOverage, -alreadyBilled]));
+      const alreadyBilled = await previouslyBilledFlexibleOverage(
+        ctx,
+        contract,
+      );
+      const overageDue = Math.max(
+        0,
+        sumMoney([expectedOverage, -alreadyBilled]),
+      );
       if (overageDue > 0) {
         monthlyLineGroups.at(-1)!.lineItems.push({
           itemName: `Flexible contract overage through ${cycleEndMonth}`,
@@ -1188,64 +1208,65 @@ async function createContractDraftInvoice(
         });
       }
     }
-  } else for (const month of cycleMonths) {
-    const recordedUsageEntries = await ctx.db
-      .query("consumption")
-      .withIndex("by_company_month", (q) =>
-        q.eq("companyId", contract.companyId).eq("month", month),
-      )
-      .collect();
-    const usageEntries =
-      (contract.billingTiming ?? "postpaid") === "prepaid" && kind === "cycle"
-        ? []
-        : recordedUsageEntries;
-    const monthFraction = contractMonthFraction(contract, month);
-    if (
-      monthFraction < 1 &&
-      usageEntries.some((entry) =>
-        lines.some(
-          (line) => usageMatchesContractLine(entry, line) && !entry.usageDate,
-        ),
-      )
-    ) {
-      throw new ConvexError({
-        code: "USAGE_PERIOD_REQUIRED",
-        message:
-          "Mid-month contract conversion requires dated usage entries so pre-contract and contract usage can be separated",
-      });
-    }
-    monthlyLineGroups.push({
-      month,
-      lineItems: lines
-        .sort((a, b) => a.createdAt - b.createdAt)
-        .flatMap((line, lineIndex) => {
-          const catalogPrice = line.catalogItemId
-            ? catalogById.get(line.catalogItemId)?.monthlyPrice
-            : undefined;
-          const discount = contractDiscount(
-            contract,
-            line,
-            lineIndex,
-            lines,
-            line.productGroup
-              ? groupDiscountByKey.get(line.productGroup)
-              : undefined,
-          );
-          return contractInvoiceLines(line, usageEntries, monthFraction, {
-            monthLabel: cycleMonths.length > 1 ? month : undefined,
-            defaultDiscountType: discount.type,
-            defaultDiscountValue: discount.value,
-            overageUnitPrice: contractOveragePrice(
+  } else
+    for (const month of cycleMonths) {
+      const recordedUsageEntries = await ctx.db
+        .query("consumption")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", contract.companyId).eq("month", month),
+        )
+        .collect();
+      const usageEntries =
+        (contract.billingTiming ?? "postpaid") === "prepaid" && kind === "cycle"
+          ? []
+          : recordedUsageEntries;
+      const monthFraction = contractMonthFraction(contract, month);
+      if (
+        monthFraction < 1 &&
+        usageEntries.some((entry) =>
+          lines.some(
+            (line) => usageMatchesContractLine(entry, line) && !entry.usageDate,
+          ),
+        )
+      ) {
+        throw new ConvexError({
+          code: "USAGE_PERIOD_REQUIRED",
+          message:
+            "Mid-month contract conversion requires dated usage entries so pre-contract and contract usage can be separated",
+        });
+      }
+      monthlyLineGroups.push({
+        month,
+        lineItems: lines
+          .sort((a, b) => a.createdAt - b.createdAt)
+          .flatMap((line, lineIndex) => {
+            const catalogPrice = line.catalogItemId
+              ? catalogById.get(line.catalogItemId)?.monthlyPrice
+              : undefined;
+            const discount = contractDiscount(
               contract,
               line,
-              catalogPrice,
-            ),
-            activeStart: contract.startDate,
-            activeEnd: contract.endDate,
-          });
-        }),
-    });
-  }
+              lineIndex,
+              lines,
+              line.productGroup
+                ? groupDiscountByKey.get(line.productGroup)
+                : undefined,
+            );
+            return contractInvoiceLines(line, usageEntries, monthFraction, {
+              monthLabel: cycleMonths.length > 1 ? month : undefined,
+              defaultDiscountType: discount.type,
+              defaultDiscountValue: discount.value,
+              overageUnitPrice: contractOveragePrice(
+                contract,
+                line,
+                catalogPrice,
+              ),
+              activeStart: contract.startDate,
+              activeEnd: contract.endDate,
+            });
+          }),
+      });
+    }
   let lineItems = monthlyLineGroups.flatMap((group) => group.lineItems);
   if ((contract.billingTiming ?? "postpaid") === "prepaid") {
     lineItems = lineItems.filter((line) =>
@@ -1261,7 +1282,12 @@ async function createContractDraftInvoice(
     });
   }
   const valueAllocations = contractValueAllocations(contract);
-  if (!isFlexible && valueAllocations && kind === "cycle") {
+  if (
+    !isFlexible &&
+    !isMonthlyUsageModel &&
+    valueAllocations &&
+    kind === "cycle"
+  ) {
     const desiredBase = sumMoney(
       valueAllocations
         .filter((allocation) => cycleMonths.includes(allocation.month))
@@ -1335,10 +1361,9 @@ async function createContractDraftInvoice(
       ),
     };
   });
-  const allocationRecipients =
-    monthlyWeights.some((row) => row.weight > 0)
-      ? monthlyWeights
-      : cycleMonths.map((month) => ({ month, weight: 1 }));
+  const allocationRecipients = monthlyWeights.some((row) => row.weight > 0)
+    ? monthlyWeights
+    : cycleMonths.map((month) => ({ month, weight: 1 }));
   const revenueAllocations = allocateMoney(
     pricedInvoice.grossBeforeCredit,
     allocationRecipients,
@@ -1357,6 +1382,16 @@ async function createContractDraftInvoice(
     cycleEndMonth,
     billingTiming: contract.billingTiming ?? "postpaid",
     contractInvoiceKind: kind,
+    contractUsageSummary: monthlyUsageSummary
+      ? {
+          catalogueUsage: monthlyUsageSummary.catalogueUsage,
+          discountedUsage: monthlyUsageSummary.discountedUsage,
+          monthlyMinimum: monthlyUsageSummary.minimum,
+          minimumShortfall: monthlyUsageSummary.shortfall,
+          payable: monthlyUsageSummary.payable,
+          usageEntries: monthlyUsageSummary.entries,
+        }
+      : undefined,
     revenueAllocations,
     receivableAllocations,
     invoiceProfileId: invoiceProfile?._id,
@@ -1373,9 +1408,16 @@ async function createContractDraftInvoice(
     grossBeforeCredit: pricedInvoice.grossBeforeCredit,
     onboardingCreditId: pricedInvoice.credit?.credit._id,
     onboardingCreditApplied: pricedInvoice.credit?.amount,
-    notes:
-      trimOptional(args.notes) ??
-      `Draft invoice from customer contract ${contract.contractNumber}. Review before issuing.`,
+    notes: [
+      monthlyUsageSummary &&
+      monthlyUsageSummary.minimum > monthlyUsageSummary.discountedUsage
+        ? `Contract ${contract.contractNumber} includes a monthly minimum of ${monthlyUsageSummary.minimum.toFixed(2)} ${contract.currency}. Discounted usage for this billing period was ${monthlyUsageSummary.discountedUsage.toFixed(2)} ${contract.currency}; therefore, the contracted minimum applies.`
+        : `Draft invoice from customer contract ${contract.contractNumber}. Review before issuing.`,
+      monthlyUsageBreakdown,
+      trimOptional(args.notes),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     createdAt: now,
     updatedAt: now,
   });
@@ -1792,7 +1834,10 @@ export const previewContractInvoiceBatch = query({
         } else if (!contractCoversMonth(contract, args.sourceMonth)) {
           status = "not_in_period";
           reason = "Contract does not cover this month";
-        } else if (lineItems.length === 0) {
+        } else if (
+          !isDynamicPricingContract(contract) &&
+          lineItems.length === 0
+        ) {
           status = "no_services";
           reason = "No contract services";
         } else {
@@ -1906,9 +1951,9 @@ export const createDueContractDrafts = internalMutation({
     const users = await ctx.db.query("users").collect();
     const actor = users.find((user) => isCeoOrHob(user));
     if (!actor) return { created: 0, skipped: 0, reason: "No CEO or HOB user" };
-    const contracts = (await ctx.db.query("customerContracts").collect()).filter(
-      (contract) => contract.status === "active",
-    );
+    const contracts = (
+      await ctx.db.query("customerContracts").collect()
+    ).filter((contract) => contract.status === "active");
     let created = 0;
     let skipped = 0;
     for (const contract of contracts) {
@@ -1937,7 +1982,10 @@ export const createDueContractDrafts = internalMutation({
         } catch {
           skipped += 1;
         }
-        if ((contract.billingTiming ?? "postpaid") === "prepaid" && cycleEnd <= now) {
+        if (
+          (contract.billingTiming ?? "postpaid") === "prepaid" &&
+          cycleEnd <= now
+        ) {
           try {
             await createContractDraftInvoice(ctx, {
               user: actor,
@@ -2683,6 +2731,8 @@ export const recordPayment = mutation({
     paidAt: v.optional(v.number()),
     method: v.optional(v.string()),
     reference: v.optional(v.string()),
+    receivingAccountId: v.optional(v.id("receivingAccounts")),
+    transactionId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -2718,19 +2768,84 @@ export const recordPayment = mutation({
       });
     }
     const reference = trimOptional(args.reference);
-    const receivingDetails =
-      method === PAYMENT_METHOD_BANK_TRANSFER
-        ? BANK_TRANSFER_RECEIVING_DETAILS
-        : {};
+    const transactionId = trimOptional(args.transactionId);
+    const receivingAccount = args.receivingAccountId
+      ? await ctx.db.get(args.receivingAccountId)
+      : null;
+    if (!receivingAccount || !receivingAccount.isActive) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select an active receiving account",
+      });
+    }
+    if (receivingAccount.usage === "outgoing") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select an account enabled for customer collections",
+      });
+    }
+    const paymentCompany = await ctx.db.get(invoice.companyId);
+    if (
+      !paymentCompany ||
+      !receivingAccount.countryId ||
+      receivingAccount.countryId !== paymentCompany.countryId
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Receiving account must belong to the customer's country",
+      });
+    }
+    const expectedType =
+      method === PAYMENT_METHOD_BANK_TRANSFER ? "bank" : "mobile_money";
+    if (receivingAccount.type !== expectedType) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "The receiving account does not match the payment method",
+      });
+    }
+    if (!transactionId) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Bank or provider transaction ID is required",
+      });
+    }
+    const invoiceCurrency = invoice.sellerCurrency ?? "USD";
+    if (receivingAccount.currency !== invoiceCurrency) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Payment account currency must be ${invoiceCurrency}`,
+      });
+    }
+    const duplicate = await ctx.db
+      .query("invoicePayments")
+      .withIndex("by_account_transaction", (q) =>
+        q
+          .eq("receivingAccountId", receivingAccount._id)
+          .eq("transactionId", transactionId),
+      )
+      .first();
+    if (duplicate) {
+      throw new ConvexError({
+        code: "CONFLICT",
+        message:
+          "This transaction ID has already been recorded for the account",
+      });
+    }
 
     await ctx.db.insert("invoicePayments", {
       invoiceId: args.invoiceId,
+      receivingAccountId: receivingAccount._id,
       amount,
       amountCents: toCents(amount),
       paidAt,
       method,
       reference,
-      ...receivingDetails,
+      transactionId,
+      receivingBankName: receivingAccount.providerName,
+      receivingAccountNumber: receivingAccount.accountNumber,
+      receivingAccountName: receivingAccount.accountHolderName,
+      receivingBankLocation: receivingAccount.location,
+      receivingCurrencyNote: receivingAccount.currency,
       recordedBy: user._id,
       createdAt: now,
     });
@@ -2747,7 +2862,9 @@ export const recordPayment = mutation({
     const details = [
       `Payment of ${formatMoney(amount)} recorded.`,
       method ? `Method: ${method}.` : undefined,
-      reference ? `Reference: ${reference}.` : undefined,
+      `Account: ${receivingAccount.name}.`,
+      `Transaction ID: ${transactionId}.`,
+      reference ? `Note: ${reference}.` : undefined,
       `Balance due: ${formatMoney(nextBalanceDue)}.`,
     ]
       .filter(Boolean)

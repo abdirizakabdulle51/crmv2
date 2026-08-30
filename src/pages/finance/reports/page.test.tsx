@@ -211,7 +211,9 @@ describe("FinanceReportsPage", () => {
     expect(screen.getAllByText("$750.00").length).toBeGreaterThan(0);
     expect(screen.getByText("Monthly Income vs Expenses")).toBeInTheDocument();
     expect(screen.getByTestId("chart")).toBeInTheDocument();
-    expect(screen.getByText("Income by Region / Data Center")).toBeInTheDocument();
+    expect(
+      screen.getByText("Income by Region / Data Center"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Allocated income from invoice payments/i),
     ).toBeInTheDocument();
@@ -246,7 +248,9 @@ describe("FinanceReportsPage", () => {
     fireEvent.change(screen.getByLabelText("End month"), {
       target: { value: "2026-08" },
     });
-    await user.click(screen.getByRole("combobox", { name: "Filter by country" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by country" }),
+    );
     await user.click(await screen.findByRole("option", { name: "Somalia" }));
 
     expect(mocks.reportArgs.at(-1)).toEqual({
@@ -261,9 +265,7 @@ describe("FinanceReportsPage", () => {
 
     render(<FinanceReportsPage />);
 
-    expect(
-      screen.getByText("Finance reports unavailable"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Finance reports unavailable")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Export Invoice Payments CSV" }),
     ).not.toBeInTheDocument();
@@ -301,8 +303,9 @@ describe("FinanceReportsPage", () => {
     expect(
       screen.getByText("No region income data in this period."),
     ).toBeInTheDocument();
-    expect(screen.getByText("No paid expenses in this period."))
-      .toBeInTheDocument();
+    expect(
+      screen.getByText("No paid expenses in this period."),
+    ).toBeInTheDocument();
   });
 
   it("does not show country filter to Country GM", () => {
@@ -310,8 +313,9 @@ describe("FinanceReportsPage", () => {
 
     render(<FinanceReportsPage />);
 
-    expect(screen.queryByRole("combobox", { name: "Filter by country" }))
-      .not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "Filter by country" }),
+    ).not.toBeInTheDocument();
     expect(mocks.reportArgs.at(-1)).toMatchObject({
       startMonth: expect.any(String),
       endMonth: expect.any(String),
@@ -329,7 +333,9 @@ describe("FinanceReportsPage", () => {
     fireEvent.change(screen.getByLabelText("End month"), {
       target: { value: "2026-08" },
     });
-    await user.click(screen.getByRole("combobox", { name: "Filter by country" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by country" }),
+    );
     await user.click(await screen.findByRole("option", { name: "Somalia" }));
     await user.click(
       screen.getByRole("button", { name: "Export Invoice Payments CSV" }),
@@ -344,29 +350,27 @@ describe("FinanceReportsPage", () => {
       },
     );
     const csvCalls = mocks.rowsToCsv.mock.calls as unknown[][];
-    const columns = csvCalls[0]?.[0] as
-      | Array<{ header: string }>
-      | undefined;
+    const columns = csvCalls[0]?.[0] as Array<{ header: string }> | undefined;
     expect(columns?.map((column) => column.header)).toEqual([
-        "Payment Date",
-        "Invoice Number",
-        "Customer / Company",
-        "Country",
-        "Amount",
-        "Currency",
-        "Payment Method",
-        "Customer Reference",
-        "Receiving Bank Name",
-        "Receiving Account Number",
-        "Receiving Account Name",
-        "Receiving Bank Location",
-        "Receiving Currency Note",
-        "Recorded By Name",
-        "Recorded By Email",
-        "Recorded At",
-        "Invoice Status",
-        "Source Reference",
-      ]);
+      "Payment Date",
+      "Invoice Number",
+      "Customer / Company",
+      "Country",
+      "Amount",
+      "Currency",
+      "Payment Method",
+      "Customer Reference",
+      "Receiving Bank Name",
+      "Receiving Account Number",
+      "Receiving Account Name",
+      "Receiving Bank Location",
+      "Receiving Currency Note",
+      "Recorded By Name",
+      "Recorded By Email",
+      "Recorded At",
+      "Invoice Status",
+      "Source Reference",
+    ]);
     expect(mocks.downloadCsv).toHaveBeenCalledWith(
       "finance-invoice-payments-2026-07-to-2026-08.csv",
       "csv-body",
@@ -383,7 +387,9 @@ describe("FinanceReportsPage", () => {
     fireEvent.change(screen.getByLabelText("End month"), {
       target: { value: "2026-08" },
     });
-    await user.click(screen.getByRole("combobox", { name: "Filter by country" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "Filter by country" }),
+    );
     await user.click(await screen.findByRole("option", { name: "Somalia" }));
     await user.click(
       screen.getByRole("button", { name: "Export Region Income CSV" }),
@@ -398,9 +404,7 @@ describe("FinanceReportsPage", () => {
       },
     );
     const csvCalls = mocks.rowsToCsv.mock.calls as unknown[][];
-    const columns = csvCalls[0]?.[0] as
-      | Array<{ header: string }>
-      | undefined;
+    const columns = csvCalls[0]?.[0] as Array<{ header: string }> | undefined;
     expect(columns?.map((column) => column.header)).toEqual([
       "Payment Date",
       "Invoice Number",
@@ -433,7 +437,9 @@ describe("FinanceReportsPage", () => {
     fireEvent.change(screen.getByLabelText("End month"), {
       target: { value: "2026-08" },
     });
-    await user.click(screen.getByRole("button", { name: "Export Paid Expenses CSV" }));
+    await user.click(
+      screen.getByRole("button", { name: "Export Paid Expenses CSV" }),
+    );
 
     expect(mocks.convexQuery).toHaveBeenCalledWith(
       "financeReports.paidExpensesExport",
@@ -444,29 +450,31 @@ describe("FinanceReportsPage", () => {
       },
     );
     const csvCalls = mocks.rowsToCsv.mock.calls as unknown[][];
-    const columns = csvCalls[0]?.[0] as
-      | Array<{ header: string }>
-      | undefined;
+    const columns = csvCalls[0]?.[0] as Array<{ header: string }> | undefined;
     expect(columns?.map((column) => column.header)).toEqual([
-        "Expense Date",
-        "Paid Date",
-        "Title",
-        "Category",
-        "Requester Name",
-        "Requester Email",
-        "Company",
-        "Country",
-        "Vendor",
-        "Amount",
-        "Currency",
-        "Payment Method",
-        "Payment Reference",
-        "Approved By Name",
-        "Approved By Email",
-        "Paid By Name",
-        "Paid By Email",
-        "Status",
-      ]);
+      "Expense Date",
+      "Paid Date",
+      "Title",
+      "Category",
+      "Requester Name",
+      "Requester Email",
+      "Company",
+      "Country",
+      "Vendor",
+      "Amount",
+      "Currency",
+      "Payment Method",
+      "Payment Reference",
+      "Transaction ID",
+      "Funding Account",
+      "Funding Provider",
+      "Funding Account Number",
+      "Approved By Name",
+      "Approved By Email",
+      "Paid By Name",
+      "Paid By Email",
+      "Status",
+    ]);
     expect(mocks.downloadCsv).toHaveBeenCalledWith(
       "finance-paid-expenses-2026-07-to-2026-08.csv",
       "csv-body",
