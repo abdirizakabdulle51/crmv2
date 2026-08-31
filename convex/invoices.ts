@@ -1197,7 +1197,7 @@ async function createContractDraftInvoice(
         sumMoney([expectedOverage, -alreadyBilled]),
       );
       if (overageDue > 0) {
-        monthlyLineGroups.at(-1)!.lineItems.push({
+        monthlyLineGroups[monthlyLineGroups.length - 1]!.lineItems.push({
           itemName: `Flexible contract overage through ${cycleEndMonth}`,
           serviceCategory: "Contract Overage",
           billingUnit: "usage",
@@ -1835,7 +1835,7 @@ export const previewContractInvoiceBatch = query({
           status = "not_in_period";
           reason = "Contract does not cover this month";
         } else if (
-          !isDynamicPricingContract(contract) &&
+      !isDynamicPricingContract(contract) &&
           lineItems.length === 0
         ) {
           status = "no_services";
@@ -1966,7 +1966,7 @@ export const createDueContractDrafts = internalMutation({
         sourceMonth = addMonths(sourceMonth, frequency)
       ) {
         const cycleMonths = contractCycleMonths(contract, sourceMonth);
-        const cycleEnd = monthEndTimestamp(cycleMonths.at(-1)!);
+        const cycleEnd = monthEndTimestamp(cycleMonths[cycleMonths.length - 1]!);
         const due =
           (contract.billingTiming ?? "postpaid") === "prepaid"
             ? monthStartTimestamp(sourceMonth) <= now

@@ -22,6 +22,8 @@ type Seed = {
   acceptedQuoteB: Id<"quotes">;
   draftQuoteA: Id<"quotes">;
   sentQuoteA: Id<"quotes">;
+  bankAccountId: Id<"receivingAccounts">;
+  mobileAccountId: Id<"receivingAccounts">;
 };
 
 function asUser(t: ReturnType<typeof convexTest>, user: Doc<"users">) {
@@ -2069,11 +2071,13 @@ describe("invoices", () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
-    for (const [index, status] of [
-      "sent",
-      "overdue",
-      "partially_paid",
-    ].entries()) {
+    for (const [index, status] of (
+      [
+        "sent",
+        "overdue",
+        "partially_paid",
+      ] as const
+    ).entries()) {
       const invoiceId = await issueDraftForA(t, s);
       await t.run(async (ctx) => {
         await ctx.db.patch(invoiceId, {
@@ -2280,7 +2284,7 @@ describe("invoices", () => {
     expect(invoice.grossBeforeCredit).toBe(20);
     expect(invoice.onboardingCreditApplied).toBe(15);
     expect(invoice.grandTotal).toBe(5);
-    expect(invoice.lineItems.at(-1)).toMatchObject({
+    expect(invoice.lineItems[invoice.lineItems.length - 1]).toMatchObject({
       itemName: "Onboarding credit",
       monthlyTotal: -15,
     });

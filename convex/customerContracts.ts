@@ -1111,7 +1111,7 @@ export const usageComparison = query({
         through,
       );
       const remainingCommitment =
-        allocations.at(-1)?.remainingCommitment ?? contract.contractValue ?? 0;
+        allocations[allocations.length - 1]?.remainingCommitment ?? contract.contractValue ?? 0;
       return {
         month: args.month,
         rows: [],

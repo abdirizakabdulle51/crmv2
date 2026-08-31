@@ -10,7 +10,7 @@ describe("allocateFlexibleCommitment", () => {
     ]);
     expect(rows.map((row) => row.commitmentConsumed)).toEqual([680, 300, 20]);
     expect(rows.map((row) => row.overageAmount)).toEqual([0, 0, 177.78]);
-    expect(rows.at(-1)?.remainingCommitment).toBe(0);
+    expect(rows[rows.length - 1]?.remainingCommitment).toBe(0);
   });
 
   it("charges the uncovered part at full catalogue value", () => {
