@@ -187,9 +187,10 @@ export const listByLead = query({
         throw new ConvexError({ code: "FORBIDDEN", message: "Access denied" });
       }
     }
-    return (await ctx.db.query("quotes").collect()).filter(
-      (quote) => quote.leadId === args.leadId,
-    );
+    return await ctx.db
+      .query("quotes")
+      .withIndex("by_lead", (q) => q.eq("leadId", args.leadId))
+      .collect();
   },
 });
 
@@ -208,6 +209,30 @@ export const list = query({
       const company = companyMap.get(quote.companyId);
       return company ? canViewCompany(user, company) : false;
     });
+  },
+});
+
+export const transitionSummaries = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const companies = await ctx.db.query("companies").collect();
+    const visible = new Set(
+      companies
+        .filter((company) => canViewCompany(user, company))
+        .map((company) => company._id),
+    );
+    return (await ctx.db.query("quotes").collect())
+      .filter((quote) => visible.has(quote.companyId) && quote.leadId)
+      .map((quote) => ({
+        _id: quote._id,
+        _creationTime: quote._creationTime,
+        leadId: quote.leadId,
+        quoteNumber: quote.quoteNumber,
+        status: quote.status,
+        commercialModel: quote.commercialModel,
+        acceptedAt: quote.acceptedAt,
+      }));
   },
 });
 
@@ -711,6 +736,7 @@ export const updateStatus = mutation({
       v.literal("sent"),
       v.literal("accepted"),
     ),
+    acceptedByContact: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -719,7 +745,39 @@ export const updateStatus = mutation({
       throw new ConvexError({ code: "NOT_FOUND", message: "Quote not found" });
     }
     await assertCanManageQuote(ctx, user, quote);
-    await ctx.db.patch(args.id, { status: args.status });
+    if (
+      args.status === "accepted" &&
+      quote.status !== "sent" &&
+      quote.status !== "accepted"
+    )
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Send the quote before accepting it",
+      });
+    if (
+      quote.status === "accepted" &&
+      args.status !== "accepted" &&
+      quote.leadId
+    ) {
+      const lead = await ctx.db.get(quote.leadId);
+      if (lead?.stage === "won")
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message:
+            "Reopen the won opportunity before changing its accepted quote",
+        });
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      status: args.status,
+      sentAt: args.status === "sent" ? (quote.sentAt ?? now) : quote.sentAt,
+      acceptedAt:
+        args.status === "accepted" ? (quote.acceptedAt ?? now) : undefined,
+      acceptedByContact:
+        args.status === "accepted"
+          ? args.acceptedByContact?.trim() || quote.acceptedByContact
+          : undefined,
+    });
     if (quote.leadId) {
       const lead = await ctx.db.get(quote.leadId);
       if (lead) {

@@ -46,6 +46,7 @@ export default defineSchema({
 
   companies: defineTable({
     name: v.string(),
+    normalizedName: v.optional(v.string()),
     sectorId: v.id("sectors"),
     countryId: v.id("countries"),
     accountManagerId: v.optional(v.id("users")),
@@ -72,10 +73,16 @@ export default defineSchema({
     commercialModel: v.optional(
       v.union(v.literal("payg"), v.literal("contracted")),
     ),
+    lifecycleStatus: v.optional(
+      v.union(v.literal("prospect"), v.literal("customer"), v.literal("lost")),
+    ),
+    lostReason: v.optional(v.string()),
+    lostAt: v.optional(v.number()),
   })
     .index("by_account_manager", ["accountManagerId"])
     .index("by_country", ["countryId"])
     .index("by_sector", ["sectorId"])
+    .index("by_country_normalized_name", ["countryId", "normalizedName"])
     .index("by_status", ["contractStatus"]),
 
   leads: defineTable({
@@ -1106,6 +1113,25 @@ export default defineSchema({
     .index("by_invoice", ["invoiceId"])
     .index("by_type", ["type"]),
 
+  billingAutomationRuns: defineTable({
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    status: v.union(v.literal("running"), v.literal("completed"), v.literal("failed")),
+    trigger: v.union(v.literal("scheduled"), v.literal("manual")),
+    actorId: v.optional(v.id("users")),
+    contractsScanned: v.number(),
+    created: v.number(),
+    skipped: v.number(),
+    issues: v.array(
+      v.object({
+        contractId: v.optional(v.id("customerContracts")),
+        contractNumber: v.optional(v.string()),
+        sourceMonth: v.optional(v.string()),
+        reason: v.string(),
+      }),
+    ),
+  }).index("by_started_at", ["startedAt"]),
+
   expenseCategories: defineTable({
     name: v.string(),
     code: v.optional(v.string()),
@@ -1481,6 +1507,9 @@ export default defineSchema({
       v.literal("sent"),
       v.literal("accepted"),
     ),
+    sentAt: v.optional(v.number()),
+    acceptedAt: v.optional(v.number()),
+    acceptedByContact: v.optional(v.string()),
     lineItems: v.array(
       v.object({
         catalogItemId: v.id("serviceCatalog"),
@@ -1539,6 +1568,7 @@ export default defineSchema({
     .index("by_company", ["companyId"])
     .index("by_status", ["status"])
     .index("by_created_by", ["createdBy"])
+    .index("by_lead", ["leadId"])
     .index("by_quote_number", ["quoteNumber"]),
 
   combinedQuotes: defineTable({

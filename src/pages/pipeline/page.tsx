@@ -22,12 +22,15 @@ export default function PipelinePage() {
   const leads = useQuery(api.leads.list, {});
   const companies = useQuery(api.companies.list, {});
   const users = useQuery(api.users.listAll, {});
+  const quotes = useQuery(api.quotes.transitionSummaries, {});
+  const countries = useQuery(api.countries.list, {});
+  const sectors = useQuery(api.sectors.list, {});
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Doc<"leads"> | null>(null);
 
-  if (!leads || !companies || !users) {
+  if (!leads || !companies || !users || !quotes || !countries || !sectors) {
     return (
       <div className="p-6 md:p-8 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -102,6 +105,9 @@ export default function PipelinePage() {
             leads={leads}
             companies={companies}
             users={users}
+            quotes={quotes}
+            countries={countries}
+            sectors={sectors}
             onEditLead={handleEdit}
           />
         </TabsContent>

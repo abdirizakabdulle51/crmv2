@@ -7,6 +7,7 @@ import {
   Pencil,
   Plus,
   Send,
+  Building2,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -34,6 +35,7 @@ import { Textarea } from "@/components/ui/textarea.tsx";
 import { formatCurrency } from "@/lib/format.ts";
 import { STAGES, STAGE_LABELS, type LeadStage } from "./_lib/constants.ts";
 import LeadDialog from "./_components/lead-dialog.tsx";
+import OpportunityTransitionDialog from "./_components/opportunity-transition-dialog.tsx";
 
 const ACTIVITY_LABELS: Record<string, string> = {
   call: "Call",
@@ -60,16 +62,17 @@ export default function OpportunityDetailPage() {
     leadId: opportunityId,
   });
   const companies = useQuery(api.companies.list, {}) ?? [];
+  const countries = useQuery(api.countries.list, {}) ?? [];
+  const sectors = useQuery(api.sectors.list, {}) ?? [];
   const users = useQuery(api.users.listAll, {}) ?? [];
-  const updateStage = useMutation(api.leads.updateStage);
   const createActivity = useMutation(api.activities.create);
   const [activityType, setActivityType] = useState<
     "call" | "meeting" | "email" | "note" | "follow_up"
   >("note");
   const [description, setDescription] = useState("");
-  const [lossReason, setLossReason] = useState("");
   const [pending, setPending] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [targetStage, setTargetStage] = useState<LeadStage | null>(null);
 
   if (!opportunity || !quotes || !activities) {
     return (
@@ -83,6 +86,15 @@ export default function OpportunityDetailPage() {
   const company = companies.find((row) => row._id === opportunity.companyId);
   const owner = users.find((row) => row._id === opportunity.accountManagerId);
   const hasAcceptedQuote = quotes.some((quote) => quote.status === "accepted");
+  const acceptedQuote = [...quotes]
+    .filter((quote) => quote.status === "accepted")
+    .sort(
+      (a, b) =>
+        (b.acceptedAt ?? b._creationTime) - (a.acceptedAt ?? a._creationTime),
+    )[0];
+  const draftQuote = [...quotes]
+    .filter((quote) => quote.status === "draft")
+    .sort((a, b) => b._creationTime - a._creationTime)[0];
   const stageGuidance =
     opportunity.stage === "proposal"
       ? quotes.length === 0
@@ -96,26 +108,8 @@ export default function OpportunityDetailPage() {
           ? "Customer onboarding is ready for the contracted or PAYG path."
           : "Complete qualification details and move the opportunity toward proposal.";
 
-  const changeStage = async (stage: LeadStage) => {
-    if (stage === "lost" && !lossReason.trim()) {
-      toast.error("Enter a loss reason first");
-      return;
-    }
-    setPending(true);
-    try {
-      await updateStage({
-        id: opportunityId,
-        stage,
-        lossReason: stage === "lost" ? lossReason.trim() : undefined,
-      });
-      toast.success(`Opportunity moved to ${STAGE_LABELS[stage]}`);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Could not change stage",
-      );
-    } finally {
-      setPending(false);
-    }
+  const changeStage = (stage: LeadStage) => {
+    if (stage !== opportunity.stage) setTargetStage(stage);
   };
 
   const logActivity = async () => {
@@ -163,25 +157,35 @@ export default function OpportunityDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {!opportunity.companyId && (
+            <Button onClick={() => setTargetStage("proposal")}>
+              <Building2 className="mr-2 h-4 w-4" /> Create Prospect Company
+            </Button>
+          )}
           <Button variant="outline" onClick={() => setEditOpen(true)}>
             <Pencil className="mr-2 h-4 w-4" /> Edit Details
           </Button>
           <Button
             variant="outline"
             onClick={() =>
-              navigate(`/quotes/new?opportunityId=${opportunityId}`)
+              opportunity.companyId
+                ? navigate(
+                    draftQuote
+                      ? `/quotes/${draftQuote._id}`
+                      : `/quotes/new?opportunityId=${opportunityId}`,
+                  )
+                : setTargetStage("proposal")
             }
           >
             <FileText className="mr-2 h-4 w-4" />
-            Create Opportunity Quote
+            {draftQuote ? "Open Draft Quote" : "Create Opportunity Quote"}
           </Button>
           {opportunity.stage === "won" && (
             <Button
               onClick={() =>
                 navigate(
-                  hasAcceptedQuote &&
-                    quotes[0]?.commercialModel === "contracted"
-                    ? `/finance/customer-contracts/new?quoteId=${quotes.find((q) => q.status === "accepted")?._id}`
+                  acceptedQuote?.commercialModel === "contracted"
+                    ? `/finance/customer-contracts/new?quoteId=${acceptedQuote._id}`
                     : `/companies/${opportunity.companyId}`,
                 )
               }
@@ -320,11 +324,6 @@ export default function OpportunityDetailPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <Input
-                value={lossReason}
-                onChange={(event) => setLossReason(event.target.value)}
-                placeholder="Loss reason required when closing as lost"
-              />
             </CardContent>
           </Card>
         </div>
@@ -430,6 +429,15 @@ export default function OpportunityDetailPage() {
         lead={opportunity}
         companies={companies}
         users={users}
+      />
+      <OpportunityTransitionDialog
+        lead={opportunity}
+        targetStage={targetStage}
+        quotes={quotes}
+        companies={companies}
+        countries={countries}
+        sectors={sectors}
+        onClose={() => setTargetStage(null)}
       />
     </div>
   );

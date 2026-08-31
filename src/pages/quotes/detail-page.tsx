@@ -17,6 +17,16 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/format.ts";
+import { Input } from "@/components/ui/input.tsx";
+import { Label } from "@/components/ui/label.tsx";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog.tsx";
 
 type Quote = Doc<"quotes">;
 
@@ -52,6 +62,11 @@ export default function QuoteDetailPage() {
   const companies = useQuery(api.companies.list, {});
   const updateStatus = useMutation(api.quotes.updateStatus);
   const removeQuote = useMutation(api.quotes.remove);
+  const [pending, setPending] = useState(false);
+  const [nextStatus, setNextStatus] = useState<
+    "draft" | "sent" | "accepted" | null
+  >(null);
+  const [acceptedByContact, setAcceptedByContact] = useState("");
 
   const returnToQuotes = () => {
     navigate("/quotes");
@@ -184,7 +199,25 @@ export default function QuoteDetailPage() {
   };
 
   const handleStatusChange = async (status: "draft" | "sent" | "accepted") => {
-    await updateStatus({ id: quote._id, status });
+    setPending(true);
+    try {
+      await updateStatus({
+        id: quote._id,
+        status,
+        acceptedByContact:
+          status === "accepted"
+            ? acceptedByContact.trim() || undefined
+            : undefined,
+      });
+      toast.success(`Quote marked ${status}`);
+      setNextStatus(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not update quote",
+      );
+    } finally {
+      setPending(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -221,7 +254,8 @@ export default function QuoteDetailPage() {
           {quote.status === "draft" && (
             <Button
               className="bg-blue-600 hover:bg-blue-700 text-white"
-              onClick={() => handleStatusChange("sent")}
+              onClick={() => setNextStatus("sent")}
+              disabled={pending}
             >
               <Send className="h-4 w-4 mr-2" /> Mark as Sent
             </Button>
@@ -229,7 +263,8 @@ export default function QuoteDetailPage() {
           {quote.status === "sent" && (
             <Button
               className="bg-emerald-600 hover:bg-emerald-700 text-white"
-              onClick={() => handleStatusChange("accepted")}
+              onClick={() => setNextStatus("accepted")}
+              disabled={pending}
             >
               <CheckCircle className="h-4 w-4 mr-2" /> Mark as Accepted
             </Button>
@@ -249,7 +284,13 @@ export default function QuoteDetailPage() {
             )}
           {quote.status === "accepted" &&
           quote.commercialModel !== "contracted" ? (
-            <Button onClick={() => navigate("/pipeline")}>
+            <Button
+              onClick={() =>
+                navigate(
+                  quote.leadId ? `/pipeline/${quote.leadId}` : "/pipeline",
+                )
+              }
+            >
               <CheckCircle className="h-4 w-4 mr-2" /> Continue to Won
               Onboarding
             </Button>
@@ -257,7 +298,8 @@ export default function QuoteDetailPage() {
           {quote.status !== "draft" && (
             <Button
               variant="secondary"
-              onClick={() => handleStatusChange("draft")}
+              onClick={() => setNextStatus("draft")}
+              disabled={pending}
             >
               Revert to Draft
             </Button>
@@ -348,6 +390,50 @@ export default function QuoteDetailPage() {
           </div>
         </CardContent>
       </Card>
+      <Dialog
+        open={nextStatus !== null}
+        onOpenChange={(open) => !open && setNextStatus(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {nextStatus === "accepted"
+                ? "Confirm customer acceptance"
+                : nextStatus === "sent"
+                  ? "Confirm quote was sent"
+                  : "Revert quote to draft"}
+            </DialogTitle>
+            <DialogDescription>
+              {nextStatus === "accepted"
+                ? "Confirm that the customer accepted this quote. The opportunity can then be completed as Won."
+                : nextStatus === "sent"
+                  ? "This records the quote as sent and advances its linked opportunity to Negotiation."
+                  : "This reopens the quote for changes; it does not automatically reverse the opportunity stage."}
+            </DialogDescription>
+          </DialogHeader>
+          {nextStatus === "accepted" ? (
+            <div className="space-y-2">
+              <Label>Accepted by</Label>
+              <Input
+                value={acceptedByContact}
+                onChange={(event) => setAcceptedByContact(event.target.value)}
+                placeholder="Customer contact name"
+              />
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNextStatus(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => nextStatus && handleStatusChange(nextStatus)}
+              disabled={pending}
+            >
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

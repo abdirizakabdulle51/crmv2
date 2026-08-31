@@ -44,6 +44,7 @@ import type * as manageOneHourlyMonitoring from "../manageOneHourlyMonitoring.js
 import type * as manageOneTenants from "../manageOneTenants.js";
 import type * as money from "../money.js";
 import type * as notifications from "../notifications.js";
+import type * as operations from "../operations.js";
 import type * as pingResults from "../pingResults.js";
 import type * as pingTargets from "../pingTargets.js";
 import type * as quotes from "../quotes.js";
@@ -104,6 +105,7 @@ declare const fullApi: ApiFromModules<{
   manageOneTenants: typeof manageOneTenants;
   money: typeof money;
   notifications: typeof notifications;
+  operations: typeof operations;
   pingResults: typeof pingResults;
   pingTargets: typeof pingTargets;
   quotes: typeof quotes;

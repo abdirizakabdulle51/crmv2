@@ -2145,18 +2145,50 @@ export const createDraftsFromContracts = mutation({
   },
 });
 
-export const createDueContractDrafts = internalMutation({
-  args: { now: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    const now = args.now ?? Date.now();
-    const users = await ctx.db.query("users").collect();
-    const actor = users.find((user) => isCeoOrHob(user));
-    if (!actor) return { created: 0, skipped: 0, reason: "No CEO or HOB user" };
+async function runDueContractDrafts(
+  ctx: MutationCtx,
+  actor: Doc<"users">,
+  now: number,
+  trigger: "scheduled" | "manual",
+) {
+    const runId = await ctx.db.insert("billingAutomationRuns", {
+      startedAt: Date.now(),
+      status: "running",
+      trigger,
+      actorId: actor._id,
+      contractsScanned: 0,
+      created: 0,
+      skipped: 0,
+      issues: [],
+    });
     const contracts = (
       await ctx.db.query("customerContracts").collect()
     ).filter((contract) => contract.status === "active");
     let created = 0;
     let skipped = 0;
+    const issues: Array<{
+      contractId?: Id<"customerContracts">;
+      contractNumber?: string;
+      sourceMonth?: string;
+      reason: string;
+    }> = [];
+    const recordSkip = (contract: Doc<"customerContracts">, sourceMonth: string, error: unknown) => {
+      const reason =
+        error instanceof ConvexError
+          ? String(error.data?.message ?? error.message)
+          : error instanceof Error
+            ? error.message
+            : "Invoice draft could not be created";
+      // Existing invoices are the expected idempotent outcome on later runs.
+      if (reason.includes("invoice already exists")) return;
+      skipped += 1;
+      issues.push({
+        contractId: contract._id,
+        contractNumber: contract.contractNumber,
+        sourceMonth,
+        reason,
+      });
+    };
     for (const contract of contracts) {
       const startMonth = monthKeyFromTimestamp(contract.startDate);
       const endMonth = monthKeyFromTimestamp(contract.endDate);
@@ -2180,11 +2212,12 @@ export const createDueContractDrafts = internalMutation({
             sourceMonth,
           });
           created += 1;
-        } catch {
-          skipped += 1;
+        } catch (error) {
+          recordSkip(contract, sourceMonth, error);
         }
         if (
           (contract.billingTiming ?? "postpaid") === "prepaid" &&
+          contract.pricingModel === "flexible_total_commitment" &&
           cycleEnd <= now
         ) {
           try {
@@ -2195,13 +2228,41 @@ export const createDueContractDrafts = internalMutation({
               kind: "overage_settlement",
             });
             created += 1;
-          } catch {
-            skipped += 1;
+          } catch (error) {
+            recordSkip(contract, sourceMonth, error);
           }
         }
       }
     }
-    return { created, skipped };
+    await ctx.db.patch(runId, {
+      completedAt: Date.now(),
+      status: "completed",
+      contractsScanned: contracts.length,
+      created,
+      skipped,
+      issues: issues.slice(0, 250),
+    });
+    return { runId, contractsScanned: contracts.length, created, skipped, issues };
+}
+
+export const createDueContractDrafts = internalMutation({
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const users = await ctx.db.query("users").collect();
+    const actor = users.find((user) => isCeoOrHob(user));
+    if (!actor) return { created: 0, skipped: 0, reason: "No CEO or HOB user" };
+    return await runDueContractDrafts(ctx, actor, now, "scheduled");
+  },
+});
+
+export const runDueContractDraftsNow = mutation({
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const actor = await getCurrentUserOrThrow(ctx);
+    if (!isCeoOrHob(actor))
+      throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can run billing automation" });
+    return await runDueContractDrafts(ctx, actor, args.now ?? Date.now(), "manual");
   },
 });
 

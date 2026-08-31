@@ -116,9 +116,43 @@ describe("create", () => {
       return { opportunity, activities };
     });
     expect(afterSend.opportunity?.stage).toBe("negotiation");
+    const sentQuote = await t.run(async (ctx) => ctx.db.get(quoteId));
+    expect(sentQuote?.sentAt).toEqual(expect.any(Number));
     expect(afterSend.activities).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: "quote_sent" })]),
     );
+  });
+
+  it("requires a quote to be sent before acceptance and records acceptance metadata", async () => {
+    const t = convexTest({ schema, modules });
+    const seed = await t.run(seedQuoteCreateScope);
+    const authed = t.withIdentity({ tokenIdentifier: "ceo-token" });
+    const quoteId = await authed.mutation(api.quotes.create, {
+      companyId: seed.companyId,
+      lineItems: [quoteLineInput(seed.lineItem)],
+    });
+    await expect(
+      authed.mutation(api.quotes.updateStatus, {
+        id: quoteId,
+        status: "accepted",
+      }),
+    ).rejects.toThrow("Send the quote before accepting it");
+    await authed.mutation(api.quotes.updateStatus, {
+      id: quoteId,
+      status: "sent",
+    });
+    await authed.mutation(api.quotes.updateStatus, {
+      id: quoteId,
+      status: "accepted",
+      acceptedByContact: "Procurement Lead",
+    });
+    const quote = await t.run((ctx) => ctx.db.get(quoteId));
+    expect(quote).toMatchObject({
+      status: "accepted",
+      sentAt: expect.any(Number),
+      acceptedAt: expect.any(Number),
+      acceptedByContact: "Procurement Lead",
+    });
   });
 
   it("assigns friendly quote numbers to manual, usage, and advisor-created quotes", async () => {

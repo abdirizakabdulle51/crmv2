@@ -32,6 +32,7 @@ import {
   CalendarDays,
   CalendarClock,
   HandCoins,
+  ShieldCheck,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -124,6 +125,12 @@ const NAV_ITEMS = [
   { to: "/tasks", label: "Tasks", icon: ClipboardList },
   { to: "/team", label: "Team", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
+  {
+    to: "/operations/data-health",
+    label: "Data Health",
+    icon: ShieldCheck,
+    adminOnly: true,
+  },
 ];
 
 const NAV_GROUPS = [
@@ -173,7 +180,7 @@ const NAV_GROUPS = [
   },
   {
     label: "Administration",
-    items: ["/team", "/settings", "/finance/settings"],
+    items: ["/team", "/settings", "/finance/settings", "/operations/data-health"],
   },
 ];
 

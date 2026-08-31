@@ -106,12 +106,20 @@ export default function LeadDialog({
       toast.error("Please assign an account manager");
       return;
     }
-    if (!potentialValue || isNaN(Number(potentialValue))) {
-      toast.error("Please enter a valid potential value");
+    if (
+      !potentialValue ||
+      !Number.isFinite(Number(potentialValue)) ||
+      Number(potentialValue) <= 0
+    ) {
+      toast.error("Potential value must be greater than zero");
       return;
     }
     if (!expectedCloseDate) {
       toast.error("Please set an expected close date");
+      return;
+    }
+    if (contactEmail && !/^\S+@\S+\.\S+$/.test(contactEmail)) {
+      toast.error("Enter a valid contact email");
       return;
     }
 
@@ -148,8 +156,10 @@ export default function LeadDialog({
         toast.success("Lead created");
       }
       onOpenChange(false);
-    } catch {
-      toast.error("Failed to save lead");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to save opportunity",
+      );
     }
   };
 
@@ -285,7 +295,14 @@ export default function LeadDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {STAGES.map((s) => (
+                  {STAGES.filter(
+                    (candidate) =>
+                      lead ||
+                      candidate === "new_lead" ||
+                      candidate === "qualified" ||
+                      candidate === "discovery" ||
+                      (candidate === "proposal" && companyId !== "none"),
+                  ).map((s) => (
                     <SelectItem key={s} value={s}>
                       {STAGE_LABELS[s]}
                     </SelectItem>

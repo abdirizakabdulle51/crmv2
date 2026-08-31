@@ -1030,16 +1030,18 @@ describe("InvoiceDetailPage", () => {
       ),
     ).toBeInTheDocument();
 
-    await user.click(
+    expect(
       within(dialog).getByRole("button", { name: "Cancel Draft" }),
-    );
+    ).toBeDisabled();
     expect(mocks.cancelDraftInvoice).not.toHaveBeenCalled();
-    expect(mocks.toastError).toHaveBeenCalledWith("Cleanup reason is required");
 
     await user.type(
       within(dialog).getByLabelText("Reason"),
       "Duplicate test invoice",
     );
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel Draft" }),
+    ).toBeEnabled();
     await user.click(
       within(dialog).getByRole("button", { name: "Cancel Draft" }),
     );

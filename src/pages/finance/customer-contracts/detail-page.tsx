@@ -879,54 +879,67 @@ export default function CustomerContractDetailPage() {
             Updated {formatDateTime(contract.updatedAt)}
           </div>
           {canManage ? (
-            <div className="flex flex-wrap justify-end gap-2">
-              {contractIsDraft ? (
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex flex-wrap justify-end gap-2">
+                {contractIsDraft ? (
+                  <Button
+                    variant="outline"
+                    disabled={
+                      activationPending ||
+                      (!dynamicPricing && lineItems.length === 0)
+                    }
+                    onClick={() => void handleActivateContract()}
+                  >
+                    {activationPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <ShieldCheck className="mr-2 h-4 w-4" />
+                    )}
+                    Activate & Lock
+                  </Button>
+                ) : null}
                 <Button
-                  variant="outline"
-                  disabled={
-                    activationPending ||
-                    (!dynamicPricing && lineItems.length === 0)
-                  }
-                  onClick={() => void handleActivateContract()}
+                  disabled={invoicePending || !canCreateInvoice}
+                  onClick={() => void handleCreateDraftInvoice()}
                 >
-                  {activationPending ? (
+                  {invoicePending ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
-                    <ShieldCheck className="mr-2 h-4 w-4" />
+                    <FileText className="mr-2 h-4 w-4" />
                   )}
-                  Activate & Lock
+                  Create Draft Invoice
                 </Button>
-              ) : null}
-              <Button
-                disabled={invoicePending || !canCreateInvoice}
-                onClick={() => void handleCreateDraftInvoice()}
-              >
-                {invoicePending ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <FileText className="mr-2 h-4 w-4" />
-                )}
-                Create Draft Invoice
-              </Button>
-              {contract.billingTiming === "prepaid" ? (
-                <Button
-                  variant="outline"
-                  disabled={invoicePending || !canCreateInvoice}
-                  onClick={() => void handleCreateOverageInvoice()}
-                >
-                  Create Overage Settlement
-                </Button>
-              ) : null}
-              {canEditOriginal ? (
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    navigate(`/finance/customer-contracts/${contract._id}/edit`)
-                  }
-                >
-                  <Pencil className="mr-2 h-4 w-4" />
-                  Edit Contract
-                </Button>
+                {contract.billingTiming === "prepaid" ? (
+                  <Button
+                    variant="outline"
+                    disabled={invoicePending || !canCreateInvoice}
+                    onClick={() => void handleCreateOverageInvoice()}
+                  >
+                    Create Overage Settlement
+                  </Button>
+                ) : null}
+                {canEditOriginal ? (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      navigate(
+                        `/finance/customer-contracts/${contract._id}/edit`,
+                      )
+                    }
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Edit Contract
+                  </Button>
+                ) : null}
+              </div>
+              {!contractIsActive ? (
+                <p className="text-xs text-muted-foreground">
+                  Activate and lock the contract before creating invoices.
+                </p>
+              ) : !dynamicPricing && lineItems.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Add at least one service before creating an invoice.
+                </p>
               ) : null}
             </div>
           ) : null}

@@ -1093,7 +1093,7 @@ function InvoiceDetailContent() {
               type="button"
               variant="destructive"
               onClick={() => void handleCleanup()}
-              disabled={isCleaningUp}
+              disabled={isCleaningUp || !cleanupReason.trim()}
             >
               {isCleaningUp ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

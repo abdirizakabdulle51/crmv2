@@ -1,5 +1,4 @@
-import { useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api.js";
+import { useRef, useState } from "react";
 import type { Doc } from "@/convex/_generated/dataModel.d.ts";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -17,15 +16,28 @@ import {
   formatCurrency,
   type LeadStage,
 } from "../_lib/constants.ts";
-import { toast } from "sonner";
 import { CalendarDays, DollarSign } from "lucide-react";
 import { format } from "date-fns";
-import { useNavigate } from "react-router-dom";
+import OpportunityTransitionDialog from "./opportunity-transition-dialog.tsx";
 
 type KanbanBoardProps = {
   leads: Doc<"leads">[];
   companies: Doc<"companies">[];
   users: Doc<"users">[];
+  quotes: Array<
+    Pick<
+      Doc<"quotes">,
+      | "_id"
+      | "_creationTime"
+      | "leadId"
+      | "quoteNumber"
+      | "status"
+      | "commercialModel"
+      | "acceptedAt"
+    >
+  >;
+  countries: Doc<"countries">[];
+  sectors: Doc<"sectors">[];
   onEditLead: (lead: Doc<"leads">) => void;
 };
 
@@ -33,26 +45,26 @@ export default function KanbanBoard({
   leads,
   companies,
   users,
+  quotes,
+  countries,
+  sectors,
   onEditLead,
 }: KanbanBoardProps) {
-  const updateStage = useMutation(api.leads.updateStage);
-  const navigate = useNavigate();
+  const [transition, setTransition] = useState<{
+    lead: Doc<"leads">;
+    stage: LeadStage;
+  } | null>(null);
+  const dragging = useRef(false);
   const companyMap = new Map(companies.map((c) => [c._id, c]));
   const userMap = new Map(users.map((user) => [user._id, user]));
 
-  const handleStageChange = async (
+  const handleStageChange = (
     leadId: Doc<"leads">["_id"],
     newStage: LeadStage,
   ) => {
-    try {
-      await updateStage({ id: leadId, stage: newStage });
-      if (newStage === "proposal")
-        navigate(`/quotes/new?opportunityId=${leadId}`);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to move opportunity",
-      );
-    }
+    const lead = leads.find((item) => item._id === leadId);
+    if (!lead || lead.stage === newStage) return;
+    setTransition({ lead, stage: newStage });
   };
 
   // Only show active pipeline stages in board (not won/lost by default)
@@ -69,11 +81,26 @@ export default function KanbanBoard({
         <Card
           key={lead._id}
           draggable
-          onDragStart={(event) =>
+          onDragStart={(event) => (
+            (dragging.current = true),
             event.dataTransfer.setData("text/opportunity-id", lead._id)
+          )}
+          onDragEnd={() =>
+            window.setTimeout(() => (dragging.current = false), 0)
           }
           className="cursor-pointer transition-colors hover:border-primary/30"
-          onClick={() => onEditLead(lead)}
+          onClick={() => !dragging.current && onEditLead(lead)}
+          role="link"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              (event.key === "Enter" || event.key === " ")
+            ) {
+              event.preventDefault();
+              onEditLead(lead);
+            }
+          }}
         >
           <CardContent className="flex items-center justify-between gap-3 p-3">
             <div className="min-w-0">
@@ -100,11 +127,24 @@ export default function KanbanBoard({
       <Card
         key={lead._id}
         draggable
-        onDragStart={(event) =>
+        onDragStart={(event) => (
+          (dragging.current = true),
           event.dataTransfer.setData("text/opportunity-id", lead._id)
-        }
+        )}
+        onDragEnd={() => window.setTimeout(() => (dragging.current = false), 0)}
         className="cursor-pointer transition-colors hover:border-primary/30"
-        onClick={() => onEditLead(lead)}
+        onClick={() => !dragging.current && onEditLead(lead)}
+        role="link"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (
+            event.target === event.currentTarget &&
+            (event.key === "Enter" || event.key === " ")
+          ) {
+            event.preventDefault();
+            onEditLead(lead);
+          }
+        }}
       >
         <CardContent className="space-y-2 p-3">
           <div className="text-[11px] text-muted-foreground">
@@ -215,6 +255,15 @@ export default function KanbanBoard({
           )}
         </div>
       </div>
+      <OpportunityTransitionDialog
+        lead={transition?.lead ?? null}
+        targetStage={transition?.stage ?? null}
+        quotes={quotes}
+        companies={companies}
+        countries={countries}
+        sectors={sectors}
+        onClose={() => setTransition(null)}
+      />
     </div>
   );
 }

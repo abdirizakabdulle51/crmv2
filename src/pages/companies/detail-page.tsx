@@ -1603,9 +1603,11 @@ export default function CompanyDetailPage() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle>Customer Billing</CardTitle>
               <Badge variant="outline">
-                {company.commercialModel === "contracted"
-                  ? "Contracted"
-                  : "Pay As You Go"}
+                {(company.lifecycleStatus ?? "customer") !== "customer"
+                  ? "Not onboarded"
+                  : company.commercialModel === "contracted"
+                    ? "Contracted"
+                    : "Pay As You Go"}
               </Badge>
             </div>
           </CardHeader>
@@ -1708,6 +1710,22 @@ export default function CompanyDetailPage() {
                   label="Contract Status"
                   value={company.contractStatus}
                 />
+                <DetailItem
+                  label="Customer Status"
+                  value={company.lifecycleStatus ?? "customer"}
+                />
+                {company.lifecycleStatus === "lost" && (
+                  <>
+                    <DetailItem
+                      label="Lost Reason"
+                      value={company.lostReason}
+                    />
+                    <DetailItem
+                      label="Lost Date"
+                      value={formatDateLabel(company.lostAt)}
+                    />
+                  </>
+                )}
                 <DetailItem
                   label="Payment Status"
                   value={company.paymentStatus}

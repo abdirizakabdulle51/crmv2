@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -205,6 +205,11 @@ describe("QuoteDetailPage", () => {
     renderDetailPage();
 
     await user.click(screen.getByRole("button", { name: "Mark as Sent" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Confirm quote was sent",
+    });
+    expect(mocks.updateStatus).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Confirm" }));
 
     expect(mocks.updateStatus).toHaveBeenCalledWith({
       id: "quote-1",

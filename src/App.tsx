@@ -105,6 +105,7 @@ const CloudHealthRegionPage = lazy(
 const DocumentationPage = lazy(() => import("./pages/documentation/page.tsx"));
 const TasksPage = lazy(() => import("./pages/tasks/page.tsx"));
 const TaskDetailPage = lazy(() => import("./pages/tasks/detail-page.tsx"));
+const DataHealthPage = lazy(() => import("./pages/operations/data-health-page.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 function PageLoading() {
@@ -302,6 +303,10 @@ export default function App() {
             />
             <Route path="/team" element={lazyPage(<TeamPage />)} />
             <Route path="/settings" element={lazyPage(<SettingsPage />)} />
+            <Route
+              path="/operations/data-health"
+              element={lazyPage(<DataHealthPage />)}
+            />
           </Route>
           <Route path="*" element={lazyPage(<NotFound />)} />
         </Routes>
