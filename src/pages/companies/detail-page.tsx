@@ -48,7 +48,9 @@ import {
   DollarSign,
   FileText,
   Link2,
+  Loader2,
   Receipt,
+  ReceiptText,
   WalletCards,
 } from "lucide-react";
 import { useCrm } from "@/lib/crm-context.tsx";
@@ -174,7 +176,9 @@ function formatDateLabel(value?: number | null) {
 }
 
 function formatCreditPolicy(value: CustomerCredit["policy"]) {
-  return value === "first_invoice_only" ? "First invoice only" : "Carry forward";
+  return value === "first_invoice_only"
+    ? "First invoice only"
+    : "Carry forward";
 }
 
 function formatCreditAppliesTo(value: CustomerCredit["appliesTo"]) {
@@ -223,7 +227,9 @@ function invoiceSourceLabel(source: {
       periodStart && periodEnd && periodStart !== periodEnd
         ? `${periodStart} - ${periodEnd}`
         : periodStart;
-    return period ? `${source.contractNumber} · ${period}` : source.contractNumber;
+    return period
+      ? `${source.contractNumber} · ${period}`
+      : source.contractNumber;
   }
   if (source.sourceType === "quote" && source.sourceReference) {
     return `Quote ${source.sourceReference}`;
@@ -760,7 +766,8 @@ function BillingUsageSection({
         <CardHeader>
           <CardTitle>Billing & Usage</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Read-only view of customer balance, payments, and current month usage.
+            Read-only view of customer balance, payments, and current month
+            usage.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -814,7 +821,9 @@ function BillingUsageSection({
               icon={<DollarSign className="h-4 w-4" />}
             />
             <FinancialMetricCard
-              title={coverage ? "Remaining Contract Credit" : "Projected Month End"}
+              title={
+                coverage ? "Remaining Contract Credit" : "Projected Month End"
+              }
               value={
                 coverage
                   ? coverage.contractPeriodAmount > 0
@@ -971,7 +980,10 @@ function BillingUsageSection({
                   </thead>
                   <tbody>
                     {snapshot.chargeBreakdown.map((row) => (
-                      <tr key={row.serviceType} className="border-b last:border-0">
+                      <tr
+                        key={row.serviceType}
+                        className="border-b last:border-0"
+                      >
                         <td className="py-2 font-medium">{row.serviceType}</td>
                         <td className="py-2 text-right">
                           {row.unpricedCount > 0
@@ -1088,7 +1100,9 @@ function ContractCoveragePanel({
   coverage,
 }: {
   coverage: NonNullable<
-    NonNullable<Parameters<typeof BillingUsageSection>[0]["snapshot"]>["contractCoverage"]
+    NonNullable<
+      Parameters<typeof BillingUsageSection>[0]["snapshot"]
+    >["contractCoverage"]
   >;
 }) {
   const visibleRows = coverage.rows.filter(
@@ -1316,9 +1330,9 @@ function OnboardingCreditSection({
   const [policy, setPolicy] = useState<"first_invoice_only" | "carry_forward">(
     "first_invoice_only",
   );
-  const [appliesTo, setAppliesTo] = useState<"all" | "contract" | "non_contract">(
-    "all",
-  );
+  const [appliesTo, setAppliesTo] = useState<
+    "all" | "contract" | "non_contract"
+  >("all");
   const [pending, setPending] = useState(false);
 
   const activeCreditExists = Boolean(
@@ -1348,7 +1362,9 @@ function OnboardingCreditSection({
       toast.success("Onboarding credit granted");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Could not grant onboarding credit",
+        error instanceof Error
+          ? error.message
+          : "Could not grant onboarding credit",
       );
     } finally {
       setPending(false);
@@ -1362,24 +1378,51 @@ function OnboardingCreditSection({
       </CardHeader>
       <CardContent className="space-y-3">
         {credits?.map((credit) => (
-          <div key={credit._id} className="rounded-lg border bg-background/50 p-4">
+          <div
+            key={credit._id}
+            className="rounded-lg border bg-background/50 p-4"
+          >
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <div className="font-medium">{formatCurrency(credit.remainingAmount)} remaining</div>
+                <div className="font-medium">
+                  {formatCurrency(credit.remainingAmount)} remaining
+                </div>
                 {credit.description ? (
-                  <div className="mt-1 text-sm text-muted-foreground">{credit.description}</div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    {credit.description}
+                  </div>
                 ) : null}
               </div>
               <Badge variant="secondary">{credit.status}</Badge>
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <DetailItem label="Original Amount" value={formatCurrency(credit.originalAmount)} />
-              <DetailItem label="Remaining Amount" value={formatCurrency(credit.remainingAmount)} />
-              <DetailItem label="Reserved Amount" value={formatCurrency(credit.reservedAmount)} />
+              <DetailItem
+                label="Original Amount"
+                value={formatCurrency(credit.originalAmount)}
+              />
+              <DetailItem
+                label="Remaining Amount"
+                value={formatCurrency(credit.remainingAmount)}
+              />
+              <DetailItem
+                label="Reserved Amount"
+                value={formatCurrency(credit.reservedAmount)}
+              />
               <DetailItem label="Status" value={credit.status} />
-              <DetailItem label="Policy" value={formatCreditPolicy(credit.policy)} />
-              <DetailItem label="Applies To" value={formatCreditAppliesTo(credit.appliesTo)} />
-              {credit.expiresAt ? <DetailItem label="Expiry" value={formatDateLabel(credit.expiresAt)} /> : null}
+              <DetailItem
+                label="Policy"
+                value={formatCreditPolicy(credit.policy)}
+              />
+              <DetailItem
+                label="Applies To"
+                value={formatCreditAppliesTo(credit.appliesTo)}
+              />
+              {credit.expiresAt ? (
+                <DetailItem
+                  label="Expiry"
+                  value={formatDateLabel(credit.expiresAt)}
+                />
+              ) : null}
             </div>
           </div>
         ))}
@@ -1408,7 +1451,9 @@ function OnboardingCreditSection({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="first_invoice_only">First invoice only</SelectItem>
+                  <SelectItem value="first_invoice_only">
+                    First invoice only
+                  </SelectItem>
                   <SelectItem value="carry_forward">Carry forward</SelectItem>
                 </SelectContent>
               </Select>
@@ -1417,7 +1462,9 @@ function OnboardingCreditSection({
               <Label>Applies to</Label>
               <Select
                 value={appliesTo}
-                onValueChange={(value) => setAppliesTo(value as typeof appliesTo)}
+                onValueChange={(value) =>
+                  setAppliesTo(value as typeof appliesTo)
+                }
                 disabled={activeCreditExists}
               >
                 <SelectTrigger>
@@ -1426,7 +1473,9 @@ function OnboardingCreditSection({
                 <SelectContent>
                   <SelectItem value="all">All invoices</SelectItem>
                   <SelectItem value="contract">Contract invoices</SelectItem>
-                  <SelectItem value="non_contract">Non-contract invoices</SelectItem>
+                  <SelectItem value="non_contract">
+                    Non-contract invoices
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1434,7 +1483,10 @@ function OnboardingCreditSection({
               <Button
                 type="button"
                 disabled={
-                  activeCreditExists || pending || !amount || Number(amount) <= 0
+                  activeCreditExists ||
+                  pending ||
+                  !amount ||
+                  Number(amount) <= 0
                 }
                 onClick={handleGrantCredit}
               >
@@ -1487,6 +1539,14 @@ export default function CompanyDetailPage() {
     api.customerCredits.listByCompany,
     companyId && !isDrMode ? { companyId } : "skip",
   );
+  const paygBilling = useQuery(
+    api.invoices.paygBillingStatus,
+    companyId && !isDrMode ? { companyId } : "skip",
+  );
+  const createPaygInvoice = useMutation(api.invoices.createPaygDraftFromUsage);
+  const [billingMonthPending, setBillingMonthPending] = useState<string | null>(
+    null,
+  );
   const drCompany = useDrRow<Company>(
     isDrMode && companyId ? `/api/companies/${companyId}` : null,
   );
@@ -1536,6 +1596,73 @@ export default function CompanyDetailPage() {
         </h1>
         <p className="mt-1 text-muted-foreground">{company.name}</p>
       </div>
+
+      {!isDrMode ? (
+        <Card className="max-w-5xl">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>Customer Billing</CardTitle>
+              <Badge variant="outline">
+                {company.commercialModel === "contracted"
+                  ? "Contracted"
+                  : "Pay As You Go"}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {paygBilling?.length ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Completed usage cycles without an invoice. PAYG invoices use
+                  catalogue prices without discounts.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {paygBilling.map((cycle) => (
+                    <Button
+                      key={cycle.month}
+                      variant="outline"
+                      disabled={billingMonthPending !== null}
+                      onClick={async () => {
+                        if (!companyId) return;
+                        setBillingMonthPending(cycle.month);
+                        try {
+                          const invoiceId = await createPaygInvoice({
+                            companyId,
+                            month: cycle.month,
+                          });
+                          toast.success(
+                            `Draft invoice created for ${cycle.month}`,
+                          );
+                          navigate(`/invoices/${invoiceId}`);
+                        } catch (error) {
+                          toast.error(
+                            error instanceof Error
+                              ? error.message
+                              : "Could not create PAYG invoice",
+                          );
+                        } finally {
+                          setBillingMonthPending(null);
+                        }
+                      }}
+                    >
+                      {billingMonthPending === cycle.month ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <ReceiptText className="mr-2 h-4 w-4" />
+                      )}
+                      Invoice {cycle.month} ({cycle.usageEntries} usage entries)
+                    </Button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No completed usage cycles are currently missing invoices.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Tabs defaultValue="billing-usage" className="max-w-5xl">
         <TabsList className="grid h-auto w-full grid-cols-2 lg:grid-cols-4">
@@ -1601,17 +1728,17 @@ export default function CompanyDetailPage() {
           ) : (
             <>
               <Card className="max-w-3xl">
-              <CardContent className="pt-6">
-                <CompanyForm
-                  company={company}
-                  countries={countries}
-                  sectors={sectors}
-                  users={users}
-                  onFinished={goBack}
-                  showManageOneUsage={false}
-                />
-              </CardContent>
-            </Card>
+                <CardContent className="pt-6">
+                  <CompanyForm
+                    company={company}
+                    countries={countries}
+                    sectors={sectors}
+                    users={users}
+                    onFinished={goBack}
+                    showManageOneUsage={false}
+                  />
+                </CardContent>
+              </Card>
               <OnboardingCreditSection
                 companyId={company._id}
                 credits={customerCredits}

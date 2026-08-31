@@ -68,6 +68,7 @@ const lineItemValidator = v.object({
   billingUnit: v.string(),
   quantity: v.number(),
   monthlyUnitPrice: v.number(),
+  serviceDiscountPercent: v.optional(v.number()),
   regionId: v.optional(v.string()),
   regionName: v.optional(v.string()),
   dataCenterName: v.optional(v.string()),
@@ -228,7 +229,11 @@ export const buildQuotePreviewFromUsage = query({
         .collect();
       contractCatalogIds.set(
         contract._id,
-        new Set(lines.flatMap((line) => (line.catalogItemId ? [line.catalogItemId] : []))),
+        new Set(
+          lines.flatMap((line) =>
+            line.catalogItemId ? [line.catalogItemId] : [],
+          ),
+        ),
       );
     }
     const entries = recordedEntries.filter(
@@ -448,6 +453,24 @@ export const buildQuotePreviewFromAdvisor = query({
 export const create = mutation({
   args: {
     companyId: v.id("companies"),
+    leadId: v.optional(v.id("leads")),
+    commercialModel: v.optional(
+      v.union(v.literal("payg"), v.literal("contracted")),
+    ),
+    contractTerms: v.optional(
+      v.object({
+        pricingModel: v.union(
+          v.literal("flexible_total_commitment"),
+          v.literal("monthly_minimum"),
+          v.literal("discounted_usage"),
+        ),
+        contractValue: v.optional(v.number()),
+        monthlyMinimum: v.optional(v.number()),
+        groupDiscounts: v.array(
+          v.object({ productGroup: v.string(), discountPercent: v.number() }),
+        ),
+      }),
+    ),
     lineItems: v.array(lineItemValidator),
     notes: v.optional(v.string()),
     sourceMonth: v.optional(v.string()),
@@ -456,7 +479,66 @@ export const create = mutation({
     const user = await getCurrentUserOrThrow(ctx);
     const company = await getCompanyOrThrow(ctx, args.companyId);
     assertCanManageCompany(user, company);
+    if (args.leadId) {
+      const lead = await ctx.db.get(args.leadId);
+      if (!lead || lead.companyId !== company._id)
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Quote opportunity must belong to the selected organization",
+        });
+      if (lead.stage === "won" || lead.stage === "lost")
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Closed opportunities cannot receive new quotes",
+        });
+    }
     const now = new Date();
+    if (args.commercialModel === "payg" && args.contractTerms)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "PAYG quotes cannot contain contract discounts",
+      });
+    if (
+      args.commercialModel === "contracted" &&
+      (!args.contractTerms ||
+        (args.contractTerms.pricingModel === "flexible_total_commitment" &&
+          (!args.contractTerms.contractValue ||
+            args.contractTerms.contractValue <= 0)) ||
+        (args.contractTerms.pricingModel === "monthly_minimum" &&
+          (!args.contractTerms.monthlyMinimum ||
+            args.contractTerms.monthlyMinimum <= 0)))
+    )
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Complete the contracted pricing terms before saving",
+      });
+    if (
+      args.commercialModel !== "contracted" &&
+      args.lineItems.some((line) => line.serviceDiscountPercent !== undefined)
+    )
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "PAYG quotes must use catalogue prices without discounts",
+      });
+    const groupRules = args.contractTerms?.groupDiscounts ?? [];
+    if (
+      new Set(groupRules.map((rule) => rule.productGroup)).size !==
+      groupRules.length
+    )
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Each product group can have only one discount",
+      });
+    const groupDiscounts = new Map(
+      groupRules.map((rule) => {
+        if (rule.discountPercent < 0 || rule.discountPercent > 100)
+          throw new ConvexError({
+            code: "BAD_REQUEST",
+            message: "Discounts must be between 0 and 100 percent",
+          });
+        return [rule.productGroup, rule.discountPercent] as const;
+      }),
+    );
     const lineItems = await Promise.all(
       args.lineItems.map(async (line, index) => {
         const catalogItem = await ctx.db.get(line.catalogItemId);
@@ -466,20 +548,42 @@ export const create = mutation({
             message: `Line item ${index + 1} catalog item not found`,
           });
         }
+        const discount =
+          line.serviceDiscountPercent ??
+          (catalogItem.productGroup
+            ? groupDiscounts.get(catalogItem.productGroup)
+            : undefined) ??
+          0;
+        if (discount < 0 || discount > 100)
+          throw new ConvexError({
+            code: "BAD_REQUEST",
+            message: "Discounts must be between 0 and 100 percent",
+          });
+        const discountedPrice = multiplyMoney(
+          catalogItem.monthlyPrice,
+          (100 - discount) / 100,
+          `Line item ${index + 1} discounted price`,
+        );
         const [calculated] = calculateLineItems([
           {
             ...line,
             itemName: catalogItem.itemName,
             serviceCategory: catalogItem.serviceCategory,
             billingUnit: catalogItem.billingUnit,
-            monthlyUnitPrice: catalogItem.monthlyPrice,
+            monthlyUnitPrice: discountedPrice,
           },
         ]);
         return {
           ...calculated,
+          serviceDiscountPercent:
+            line.serviceDiscountPercent === undefined ? undefined : discount,
           yearlyTotal: catalogItem.yearlyPrice
             ? multiplyMoney(
-                catalogItem.yearlyPrice,
+                multiplyMoney(
+                  catalogItem.yearlyPrice,
+                  (100 - discount) / 100,
+                  `Line item ${index + 1} discounted yearly price`,
+                ),
                 line.quantity,
                 `Line item ${index + 1} yearly total`,
               )
@@ -490,6 +594,9 @@ export const create = mutation({
     const totals = calculateInvoiceTotals(lineItems);
     return await ctx.db.insert("quotes", {
       companyId: args.companyId,
+      leadId: args.leadId,
+      commercialModel: args.commercialModel ?? "payg",
+      contractTerms: args.contractTerms,
       createdBy: user._id,
       quoteNumber: await nextQuoteNumber(ctx, now),
       date: now.toISOString().slice(0, 10),

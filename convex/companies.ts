@@ -69,7 +69,18 @@ export const list = query({
         .collect();
     }
 
-    return companies;
+    const activeContracts = await ctx.db
+      .query("customerContracts")
+      .withIndex("by_status", (q) => q.eq("status", "active"))
+      .collect();
+    const contracted = new Set(activeContracts.map((row) => row.companyId));
+    return companies.map((company) => ({
+      ...company,
+      commercialModel:
+        contracted.has(company._id) || company.commercialModel === "contracted"
+          ? ("contracted" as const)
+          : ("payg" as const),
+    }));
   },
 });
 
@@ -90,7 +101,19 @@ export const getById = query({
         message: "You do not have permission to view this company",
       });
     }
-    return company;
+    const activeContract = (
+      await ctx.db
+        .query("customerContracts")
+        .withIndex("by_company", (q) => q.eq("companyId", company._id))
+        .collect()
+    ).some((contract) => contract.status === "active");
+    return {
+      ...company,
+      commercialModel:
+        activeContract || company.commercialModel === "contracted"
+          ? ("contracted" as const)
+          : ("payg" as const),
+    };
   },
 });
 

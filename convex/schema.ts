@@ -69,6 +69,9 @@ export default defineSchema({
     website: v.optional(v.string()),
     contactName: v.optional(v.string()),
     contactEmail: v.optional(v.string()),
+    commercialModel: v.optional(
+      v.union(v.literal("payg"), v.literal("contracted")),
+    ),
   })
     .index("by_account_manager", ["accountManagerId"])
     .index("by_country", ["countryId"])
@@ -1433,6 +1436,24 @@ export default defineSchema({
 
   quotes: defineTable({
     companyId: v.id("companies"),
+    leadId: v.optional(v.id("leads")),
+    commercialModel: v.optional(
+      v.union(v.literal("payg"), v.literal("contracted")),
+    ),
+    contractTerms: v.optional(
+      v.object({
+        pricingModel: v.union(
+          v.literal("flexible_total_commitment"),
+          v.literal("monthly_minimum"),
+          v.literal("discounted_usage"),
+        ),
+        contractValue: v.optional(v.number()),
+        monthlyMinimum: v.optional(v.number()),
+        groupDiscounts: v.array(
+          v.object({ productGroup: v.string(), discountPercent: v.number() }),
+        ),
+      }),
+    ),
     createdBy: v.id("users"),
     quoteNumber: v.optional(v.string()),
     date: v.string(),
@@ -1449,6 +1470,7 @@ export default defineSchema({
         billingUnit: v.string(),
         quantity: v.number(),
         monthlyUnitPrice: v.number(),
+        serviceDiscountPercent: v.optional(v.number()),
         monthlyTotal: v.number(),
         yearlyTotal: v.number(),
         monthlyUnitPriceCents: v.optional(v.number()),

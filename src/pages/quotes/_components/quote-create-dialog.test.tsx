@@ -88,16 +88,19 @@ describe("QuoteCreateDialog", () => {
         open
         onOpenChange={vi.fn()}
         companies={[company("company-1", "AICC")]}
+        leads={[]}
       />,
     );
 
     const grid = screen.getByTestId("quote-line-item-grid");
     expect(grid).toHaveClass(
-      "md:grid-cols-[minmax(0,1fr)_180px]",
+      "md:grid-cols-[minmax(0,1fr)_150px_150px]",
       "grid-cols-1",
     );
 
-    const [, catalogSelect] = screen.getAllByRole("combobox");
+    const catalogSelect = screen.getByRole("combobox", {
+      name: "Catalog item",
+    });
     expect(catalogSelect).toHaveClass("min-w-0");
     await user.click(catalogSelect);
 

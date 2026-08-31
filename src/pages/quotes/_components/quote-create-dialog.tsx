@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
 import { formatCurrency } from "@/lib/format.ts";
+import { PRODUCT_GROUPS } from "@/lib/product-groups.ts";
 
 type CatalogItem = Doc<"serviceCatalog">;
 
@@ -32,6 +33,7 @@ type LineItem = {
   billingUnit: string;
   quantity: number;
   monthlyUnitPrice: number;
+  serviceDiscountPercent?: number;
   monthlyTotal: number;
   yearlyTotal: number;
 };
@@ -40,23 +42,37 @@ type QuoteCreateDialogProps = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   companies: Doc<"companies">[];
+  leads?: Doc<"leads">[];
 };
 
 export default function QuoteCreateDialog({
   open,
   onOpenChange,
   companies,
+  leads = [],
 }: QuoteCreateDialogProps) {
   const catalog = useQuery(api.serviceCatalog.list, {});
   const createQuote = useMutation(api.quotes.create);
 
   const [companyId, setCompanyId] = useState("");
+  const [leadId, setLeadId] = useState("");
+  const [commercialModel, setCommercialModel] = useState<"payg" | "contracted">(
+    "payg",
+  );
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [pricingModel, setPricingModel] = useState<
+    "flexible_total_commitment" | "monthly_minimum" | "discounted_usage"
+  >("flexible_total_commitment");
+  const [commitmentValue, setCommitmentValue] = useState("");
+  const [groupDiscounts, setGroupDiscounts] = useState<Record<string, string>>(
+    {},
+  );
   const [notes, setNotes] = useState("");
 
   // Add line item state
   const [selectedCatalogId, setSelectedCatalogId] = useState("");
   const [quantity, setQuantity] = useState("");
+  const [serviceDiscount, setServiceDiscount] = useState("");
 
   const addLineItem = () => {
     if (!selectedCatalogId || !quantity) {
@@ -71,9 +87,25 @@ export default function QuoteCreateDialog({
     const catalogItem = catalog?.find((c) => c._id === selectedCatalogId);
     if (!catalogItem) return;
 
-    const monthlyTotal = qty * catalogItem.monthlyPrice;
+    const discount =
+      commercialModel === "contracted"
+        ? Number(
+            serviceDiscount ||
+              (catalogItem.productGroup
+                ? groupDiscounts[catalogItem.productGroup]
+                : "") ||
+              0,
+          )
+        : 0;
+    if (!Number.isFinite(discount) || discount < 0 || discount > 100) {
+      toast.error("Discount must be between 0% and 100%");
+      return;
+    }
+    const monthlyUnitPrice =
+      catalogItem.monthlyPrice * ((100 - discount) / 100);
+    const monthlyTotal = qty * monthlyUnitPrice;
     const yearlyTotal = catalogItem.yearlyPrice
-      ? qty * catalogItem.yearlyPrice
+      ? qty * catalogItem.yearlyPrice * ((100 - discount) / 100)
       : monthlyTotal * 12;
 
     const newItem: LineItem = {
@@ -82,7 +114,9 @@ export default function QuoteCreateDialog({
       serviceCategory: catalogItem.serviceCategory,
       billingUnit: catalogItem.billingUnit,
       quantity: qty,
-      monthlyUnitPrice: catalogItem.monthlyPrice,
+      monthlyUnitPrice,
+      serviceDiscountPercent:
+        serviceDiscount === "" ? undefined : Number(serviceDiscount),
       monthlyTotal,
       yearlyTotal,
     };
@@ -90,6 +124,7 @@ export default function QuoteCreateDialog({
     setLineItems([...lineItems, newItem]);
     setSelectedCatalogId("");
     setQuantity("");
+    setServiceDiscount("");
   };
 
   const removeLineItem = (index: number) => {
@@ -106,6 +141,10 @@ export default function QuoteCreateDialog({
   );
 
   const handleCreate = async () => {
+    if (!leadId) {
+      toast.error("Please select an opportunity");
+      return;
+    }
     if (!companyId) {
       toast.error("Please select a company");
       return;
@@ -118,6 +157,28 @@ export default function QuoteCreateDialog({
     try {
       await createQuote({
         companyId: companyId as Id<"companies">,
+        leadId: leadId ? (leadId as Id<"leads">) : undefined,
+        commercialModel,
+        contractTerms:
+          commercialModel === "contracted"
+            ? {
+                pricingModel,
+                contractValue:
+                  pricingModel === "flexible_total_commitment"
+                    ? Number(commitmentValue)
+                    : undefined,
+                monthlyMinimum:
+                  pricingModel === "monthly_minimum"
+                    ? Number(commitmentValue)
+                    : undefined,
+                groupDiscounts: Object.entries(groupDiscounts)
+                  .filter(([, value]) => value !== "")
+                  .map(([productGroup, value]) => ({
+                    productGroup,
+                    discountPercent: Number(value),
+                  })),
+              }
+            : undefined,
         lineItems: lineItems.map((line) => ({
           catalogItemId: line.catalogItemId,
           itemName: line.itemName,
@@ -125,23 +186,32 @@ export default function QuoteCreateDialog({
           billingUnit: line.billingUnit,
           quantity: line.quantity,
           monthlyUnitPrice: line.monthlyUnitPrice,
+          serviceDiscountPercent: line.serviceDiscountPercent,
         })),
         notes: notes.trim() || undefined,
       });
       toast.success("Quote created");
       resetForm();
       onOpenChange(false);
-    } catch {
-      toast.error("Failed to create quote");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create quote",
+      );
     }
   };
 
   const resetForm = () => {
     setCompanyId("");
+    setLeadId("");
+    setCommercialModel("payg");
+    setPricingModel("flexible_total_commitment");
+    setCommitmentValue("");
+    setGroupDiscounts({});
     setLineItems([]);
     setNotes("");
     setSelectedCatalogId("");
     setQuantity("");
+    setServiceDiscount("");
   };
 
   // Group catalog by category for easier selection
@@ -166,6 +236,130 @@ export default function QuoteCreateDialog({
         </DialogHeader>
 
         <div className="space-y-5">
+          <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+            Sequence: select an opportunity, prepare and send the quote, accept
+            it, then mark the opportunity won to onboard the customer.
+          </div>
+          <div className="space-y-2">
+            <Label>Opportunity *</Label>
+            <Select
+              value={leadId}
+              onValueChange={(value) => {
+                setLeadId(value);
+                const lead = leads.find((row) => row._id === value);
+                setCompanyId(lead?.companyId ?? "");
+              }}
+            >
+              <SelectTrigger aria-label="Opportunity">
+                <SelectValue placeholder="Select open opportunity" />
+              </SelectTrigger>
+              <SelectContent>
+                {leads
+                  .filter(
+                    (lead) =>
+                      lead.companyId &&
+                      lead.stage !== "won" &&
+                      lead.stage !== "lost",
+                  )
+                  .map((lead) => (
+                    <SelectItem key={lead._id} value={lead._id}>
+                      {lead.title}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Commercial outcome *</Label>
+            <Select
+              value={commercialModel}
+              onValueChange={(value) =>
+                setCommercialModel(value as "payg" | "contracted")
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="payg">
+                  Pay As You Go — catalogue price
+                </SelectItem>
+                <SelectItem value="contracted">
+                  Contract — configure discounts after acceptance
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {commercialModel === "contracted" ? (
+            <div className="space-y-4 rounded-lg border p-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Contract pricing model</Label>
+                  <Select
+                    value={pricingModel}
+                    onValueChange={(value) =>
+                      setPricingModel(value as typeof pricingModel)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="flexible_total_commitment">
+                        Total commitment
+                      </SelectItem>
+                      <SelectItem value="monthly_minimum">
+                        Monthly minimum
+                      </SelectItem>
+                      <SelectItem value="discounted_usage">
+                        Usage with discounts
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {pricingModel !== "discounted_usage" ? (
+                  <div className="space-y-2">
+                    <Label>
+                      {pricingModel === "monthly_minimum"
+                        ? "Monthly minimum"
+                        : "Contract value"}
+                    </Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={commitmentValue}
+                      onChange={(event) =>
+                        setCommitmentValue(event.target.value)
+                      }
+                    />
+                  </div>
+                ) : null}
+              </div>
+              <div>
+                <Label>Product-group discounts</Label>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {PRODUCT_GROUPS.map((group) => (
+                    <div key={group.value} className="space-y-1">
+                      <Label className="text-xs">{group.label} %</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={groupDiscounts[group.value] ?? ""}
+                        onChange={(event) =>
+                          setGroupDiscounts({
+                            ...groupDiscounts,
+                            [group.value]: event.target.value,
+                          })
+                        }
+                        placeholder="0"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
           {/* Company selection */}
           <div className="space-y-2">
             <Label>Company *</Label>
@@ -187,7 +381,7 @@ export default function QuoteCreateDialog({
           <div className="border rounded-lg p-4 space-y-3 bg-muted/20">
             <h4 className="text-sm font-medium">Add Line Item</h4>
             <div
-              className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_180px]"
+              className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_150px_150px]"
               data-testid="quote-line-item-grid"
             >
               <div className="min-w-0 space-y-2">
@@ -196,7 +390,7 @@ export default function QuoteCreateDialog({
                   value={selectedCatalogId}
                   onValueChange={setSelectedCatalogId}
                 >
-                  <SelectTrigger className="min-w-0">
+                  <SelectTrigger className="min-w-0" aria-label="Catalog item">
                     <SelectValue placeholder="Select from catalog" />
                   </SelectTrigger>
                   <SelectContent>
@@ -238,6 +432,20 @@ export default function QuoteCreateDialog({
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">Service override %</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  disabled={commercialModel === "payg"}
+                  value={serviceDiscount}
+                  onChange={(event) => setServiceDiscount(event.target.value)}
+                  placeholder={
+                    commercialModel === "payg" ? "No discount" : "Optional"
+                  }
+                />
               </div>
             </div>
           </div>

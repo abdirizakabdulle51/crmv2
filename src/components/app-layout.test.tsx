@@ -154,7 +154,7 @@ describe("AppLayout", () => {
       within(sidebar).queryByRole("link", { name: "Customers" }),
     ).not.toBeInTheDocument();
     expect(
-      within(sidebar).queryByRole("link", { name: "Sales Pipeline" }),
+      within(sidebar).queryByRole("link", { name: "Opportunities" }),
     ).not.toBeInTheDocument();
     expect(
       within(sidebar).getByRole("link", { name: "Usage" }),
@@ -191,8 +191,8 @@ describe("AppLayout", () => {
       within(sidebar).queryByRole("link", { name: "Usage" }),
     ).not.toBeInTheDocument();
     expect(
-      within(sidebar).queryByRole("link", { name: "Quotes" }),
-    ).not.toBeInTheDocument();
+      within(sidebar).queryByRole("link", { name: "Opportunity Quotes" }),
+    ).toBeInTheDocument();
     expect(
       within(sidebar).queryByRole("link", { name: "Invoices" }),
     ).not.toBeInTheDocument();

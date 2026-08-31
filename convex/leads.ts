@@ -106,7 +106,8 @@ export const create = mutation({
       if (!canViewCompany(currentUser, company)) {
         throw new ConvexError({
           code: "FORBIDDEN",
-          message: "You do not have permission to create a lead for this company",
+          message:
+            "You do not have permission to create a lead for this company",
         });
       }
     }
@@ -175,7 +176,8 @@ export const update = mutation({
       if (!canViewCompany(currentUser, company)) {
         throw new ConvexError({
           code: "FORBIDDEN",
-          message: "You do not have permission to move this lead to that company",
+          message:
+            "You do not have permission to move this lead to that company",
         });
       }
     }
@@ -216,6 +218,29 @@ export const updateStage = mutation({
       throw new ConvexError({ code: "NOT_FOUND", message: "Lead not found" });
     }
     await assertCanManageLead(ctx, currentUser, lead);
+    if (args.stage === "won") {
+      if (!lead.companyId)
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Complete the prospect organization before marking it won",
+        });
+      const acceptedQuote = (
+        await ctx.db
+          .query("quotes")
+          .withIndex("by_company", (q) => q.eq("companyId", lead.companyId!))
+          .collect()
+      ).find(
+        (quote) => quote.status === "accepted" && quote.leadId === lead._id,
+      );
+      if (!acceptedQuote)
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Accept an opportunity quote before marking the deal won",
+        });
+      await ctx.db.patch(lead.companyId, {
+        commercialModel: acceptedQuote.commercialModel ?? "payg",
+      });
+    }
     await ctx.db.patch(args.id, { stage: args.stage });
   },
 });

@@ -1774,6 +1774,207 @@ export const createDraftFromContract = mutation({
   },
 });
 
+async function paygUsageLines(
+  ctx: QueryCtx | MutationCtx,
+  companyId: Id<"companies">,
+  month: string,
+) {
+  monthStartTimestamp(month);
+  const entries = await ctx.db
+    .query("consumption")
+    .withIndex("by_company_month", (q) =>
+      q.eq("companyId", companyId).eq("month", month),
+    )
+    .collect();
+  const lines = [];
+  for (const entry of entries) {
+    if (!entry.catalogItemId || entry.quantity === undefined)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `${entry.serviceType} usage needs a catalogue item and quantity before invoicing`,
+      });
+    const catalog = await ctx.db.get(entry.catalogItemId);
+    if (!catalog)
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: `Catalogue item for ${entry.serviceType} was not found`,
+      });
+    const [line] = calculateLineItems([
+      {
+        catalogItemId: catalog._id,
+        itemName: catalog.itemName,
+        serviceCategory: catalog.serviceCategory,
+        billingUnit: catalog.billingUnit,
+        quantity: entry.quantity,
+        monthlyUnitPrice: catalog.monthlyPrice,
+        regionId: entry.regionId,
+        regionName: entry.regionName,
+        dataCenterName: entry.dataCenterName,
+      },
+    ]);
+    lines.push(line);
+  }
+  return lines;
+}
+
+export const paygBillingStatus = query({
+  args: { companyId: v.id("companies") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const company = await getCompanyOrThrow(ctx, args.companyId);
+    assertCanManageCompany(user, company);
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const [usage, invoices, contracts] = await Promise.all([
+      ctx.db
+        .query("consumption")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect(),
+      ctx.db
+        .query("invoices")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect(),
+      ctx.db
+        .query("customerContracts")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect(),
+    ]);
+    const billed = new Set(
+      invoices
+        .filter(
+          (invoice) =>
+            !invoice.contractId &&
+            invoice.sourceMonth &&
+            invoice.status !== "void" &&
+            invoice.status !== "cancelled",
+        )
+        .map((invoice) => invoice.sourceMonth!),
+    );
+    return [...new Set(usage.map((entry) => entry.month))]
+      .filter((month) => {
+        if (month >= currentMonth || billed.has(month)) return false;
+        const start = monthStartTimestamp(month);
+        const end = monthEndTimestamp(month);
+        return !contracts.some(
+          (contract) =>
+            contract.status !== "terminated" &&
+            contract.startDate <= end &&
+            contract.endDate >= start,
+        );
+      })
+      .sort()
+      .map((month) => ({
+        month,
+        usageEntries: usage.filter((entry) => entry.month === month).length,
+      }));
+  },
+});
+
+export const createPaygDraftFromUsage = mutation({
+  args: { companyId: v.id("companies"), month: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const company = await getCompanyOrThrow(ctx, args.companyId);
+    assertCanManageCompany(user, company);
+    if (args.month >= new Date().toISOString().slice(0, 7))
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only completed monthly billing cycles can be invoiced",
+      });
+    const monthStart = monthStartTimestamp(args.month);
+    const monthEnd = monthEndTimestamp(args.month);
+    const applicableContract = (
+      await ctx.db
+        .query("customerContracts")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect()
+    ).find(
+      (contract) =>
+        contract.status !== "terminated" &&
+        contract.startDate <= monthEnd &&
+        contract.endDate >= monthStart,
+    );
+    if (applicableContract)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Use contract ${applicableContract.contractNumber} to invoice this cycle`,
+      });
+    const duplicate = (
+      await ctx.db
+        .query("invoices")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect()
+    ).find(
+      (invoice) =>
+        !invoice.contractId &&
+        invoice.sourceMonth === args.month &&
+        invoice.status !== "void" &&
+        invoice.status !== "cancelled",
+    );
+    if (duplicate)
+      throw new ConvexError({
+        code: "CONFLICT",
+        message: "This PAYG billing cycle already has an invoice",
+      });
+    const lines = await paygUsageLines(ctx, args.companyId, args.month);
+    if (!lines.length)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "No billable usage exists for this cycle",
+      });
+    const priced = await invoiceLinesWithOnboardingCredit(ctx, {
+      companyId: args.companyId,
+      isContract: false,
+      lineItems: lines,
+    });
+    const profile = await resolveInvoiceProfileForCompany(ctx, company);
+    const now = Date.now();
+    const invoiceId = await ctx.db.insert("invoices", {
+      companyId: args.companyId,
+      sourceMonth: args.month,
+      sourceReference: `PAYG-${args.month}`,
+      cycleStartMonth: args.month,
+      cycleEndMonth: args.month,
+      billingTiming: "postpaid",
+      invoiceProfileId: profile?._id,
+      ...(profile ? sellerSnapshotFromProfile(profile) : {}),
+      createdBy: user._id,
+      status: "draft",
+      dueDate:
+        company.paymentTermDays === undefined
+          ? undefined
+          : monthEnd + company.paymentTermDays * MS_PER_DAY,
+      companyName: company.name,
+      contactName: company.contactName,
+      contactEmail: company.contactEmail,
+      billingEmail: company.contactEmail,
+      lineItems: priced.lineItems.map(withLineMoneyCents),
+      ...withInvoiceMoneyCents(priced.totals),
+      grossBeforeCredit: priced.grossBeforeCredit,
+      onboardingCreditId: priced.credit?.credit._id,
+      onboardingCreditApplied: priced.credit?.amount,
+      notes: `PAYG catalogue-price usage invoice for ${args.month}.`,
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (priced.credit)
+      await reserveCredit(
+        ctx,
+        priced.credit.credit,
+        invoiceId,
+        priced.credit.amount,
+        user._id,
+      );
+    await insertEvent(ctx, {
+      invoiceId,
+      type: "draft_created",
+      actorId: user._id,
+      message: `PAYG draft invoice created for ${args.month}.`,
+      now,
+    });
+    return invoiceId;
+  },
+});
+
 export const createOverageDraftFromContract = mutation({
   args: {
     contractId: v.id("customerContracts"),

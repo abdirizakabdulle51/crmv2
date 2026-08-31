@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { ArrowLeft, Loader2, Plus, Trash2 } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
@@ -52,6 +52,8 @@ function money(value: number) {
 export default function NewCustomerContractPage() {
   const navigate = useNavigate();
   const { contractId } = useParams();
+  const [searchParams] = useSearchParams();
+  const sourceQuoteId = searchParams.get("quoteId") as Id<"quotes"> | null;
   const editingId = contractId as Id<"customerContracts"> | undefined;
   const companies = useQuery(api.companies.list, {}) ?? [];
   const catalogResult = useQuery(api.serviceCatalog.list, {});
@@ -69,6 +71,10 @@ export default function NewCustomerContractPage() {
   const existingLines = useQuery(
     api.customerContracts.listLineItems,
     editingId ? { contractId: editingId } : "skip",
+  );
+  const sourceQuote = useQuery(
+    api.quotes.getById,
+    !editingId && sourceQuoteId ? { id: sourceQuoteId } : "skip",
   );
   const [form, setForm] = useState<ReturnType<typeof emptyContractForm>>(
     () => ({
@@ -142,6 +148,56 @@ export default function NewCustomerContractPage() {
     );
     setOverridesOpen(existingLines.length > 0);
   }, [editingId, existing, existingGroups, existingLines]);
+
+  useEffect(() => {
+    if (editingId || !sourceQuote?.contractTerms) return;
+    setForm((current) => ({
+      ...current,
+      companyId: sourceQuote.companyId,
+      title: `Contract from ${sourceQuote.quoteNumber ?? "accepted quote"}`,
+      contractValue: sourceQuote.contractTerms?.contractValue?.toString() ?? "",
+      notes: `Created from accepted quote ${sourceQuote.quoteNumber ?? sourceQuote._id}.`,
+    }));
+    setPricingModel(sourceQuote.contractTerms.pricingModel);
+    setMonthlyMinimum(
+      sourceQuote.contractTerms.monthlyMinimum?.toString() ?? "",
+    );
+    setGroupDiscounts(
+      Object.fromEntries(
+        sourceQuote.contractTerms.groupDiscounts.map((rule) => [
+          rule.productGroup,
+          rule.discountPercent.toString(),
+        ]),
+      ),
+    );
+    setSelected(
+      sourceQuote.lineItems.map((line) => ({
+        catalogItemId: line.catalogItemId,
+      })),
+    );
+    setServiceDiscounts(
+      Object.fromEntries(
+        sourceQuote.lineItems.flatMap((line) => {
+          const item = catalog.find((row) => row._id === line.catalogItemId);
+          return line.serviceDiscountPercent === undefined
+            ? []
+            : [
+                [
+                  item?.serviceCode ??
+                    item?.serviceCategory ??
+                    line.serviceCategory,
+                  line.serviceDiscountPercent.toString(),
+                ],
+              ];
+        }),
+      ),
+    );
+    setOverridesOpen(
+      sourceQuote.lineItems.some(
+        (line) => line.serviceDiscountPercent !== undefined,
+      ),
+    );
+  }, [catalog, editingId, sourceQuote]);
 
   const classifiedCatalog = useMemo(
     () => catalog.filter((item) => item.productGroup),

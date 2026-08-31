@@ -58,6 +58,7 @@ export default function CompaniesPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sectorFilter, setSectorFilter] = useState<string>("all");
   const [countryFilter, setCountryFilter] = useState<string>("all");
+  const [commercialFilter, setCommercialFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -89,6 +90,8 @@ export default function CompaniesPage() {
         return false;
       if (sectorFilter !== "all" && c.sectorId !== sectorFilter) return false;
       if (countryFilter !== "all" && c.countryId !== countryFilter)
+        return false;
+      if (commercialFilter !== "all" && c.commercialModel !== commercialFilter)
         return false;
       return true;
     }),
@@ -172,6 +175,16 @@ export default function CompaniesPage() {
             ))}
           </SelectContent>
         </Select>
+        <Select value={commercialFilter} onValueChange={setCommercialFilter}>
+          <SelectTrigger className="w-[170px]" aria-label="Commercial model">
+            <SelectValue placeholder="Commercial model" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Models</SelectItem>
+            <SelectItem value="contracted">Contracted</SelectItem>
+            <SelectItem value="payg">Pay As You Go</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Company List */}
@@ -228,6 +241,11 @@ export default function CompaniesPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <Badge variant="outline">
+                      {company.commercialModel === "contracted"
+                        ? "Contracted"
+                        : "Pay As You Go"}
+                    </Badge>
                     {company.contactName && (
                       <span className="text-xs text-muted-foreground hidden lg:block">
                         {company.contactName}

@@ -2703,6 +2703,44 @@ describe("invoices", () => {
     ]);
   });
 
+  it("creates one catalogue-price PAYG invoice for a completed unbilled cycle", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run((ctx) =>
+      ctx.db.insert("consumption", {
+        companyId: s.companyA,
+        month: "2026-07",
+        serviceType: "ECS",
+        amount: 999,
+        quantity: 2,
+        catalogItemId: s.catalogItemId,
+      }),
+    );
+    expect(
+      await asUser(t, s.ceo).query(api.invoices.paygBillingStatus, {
+        companyId: s.companyA,
+      }),
+    ).toEqual([{ month: "2026-07", usageEntries: 1 }]);
+    const invoiceId = await asUser(t, s.ceo).mutation(
+      api.invoices.createPaygDraftFromUsage,
+      { companyId: s.companyA, month: "2026-07" },
+    );
+    const invoice = await t.run((ctx) => ctx.db.get(invoiceId));
+    const catalog = await t.run((ctx) => ctx.db.get(s.catalogItemId));
+    expect(invoice).toMatchObject({
+      sourceMonth: "2026-07",
+      sourceReference: "PAYG-2026-07",
+      status: "draft",
+      grandTotal: catalog!.monthlyPrice * 2,
+    });
+    await expect(
+      asUser(t, s.ceo).mutation(api.invoices.createPaygDraftFromUsage, {
+        companyId: s.companyA,
+        month: "2026-07",
+      }),
+    ).rejects.toThrow("already has an invoice");
+  });
+
   it("lets flexible contracts use any service and bills only undiscounted overage", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

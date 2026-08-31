@@ -39,13 +39,14 @@ export default function QuotesPage() {
   const navigate = useNavigate();
   const companies = useQuery(api.companies.list, {});
   const quotes = useQuery(api.quotes.list, {});
+  const leads = useQuery(api.leads.list, {});
   const combinedQuotes = useQuery(api.combinedQuotes.list, {});
 
   const [createOpen, setCreateOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [companyFilter, setCompanyFilter] = useState("all");
 
-  if (!companies || !quotes || !combinedQuotes) {
+  if (!companies || !quotes || !combinedQuotes || !leads) {
     return (
       <div className="p-6 md:p-8 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -289,7 +290,9 @@ export default function QuotesPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/30">
-                    <th className="text-left p-3 font-medium">Parent Company</th>
+                    <th className="text-left p-3 font-medium">
+                      Parent Company
+                    </th>
                     <th className="text-left p-3 font-medium">Date</th>
                     <th className="text-left p-3 font-medium">Month</th>
                     <th className="text-left p-3 font-medium">Lines</th>
@@ -349,6 +352,7 @@ export default function QuotesPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         companies={companies}
+        leads={leads}
       />
     </div>
   );

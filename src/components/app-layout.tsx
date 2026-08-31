@@ -53,14 +53,14 @@ const NotificationBell = lazy(() =>
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/companies", label: "Customers", icon: Building2 },
-  { to: "/pipeline", label: "Sales Pipeline", icon: TrendingUp },
+  { to: "/pipeline", label: "Opportunities", icon: TrendingUp },
   { to: "/targets", label: "Targets", icon: Target },
   { to: "/performance", label: "Performance", icon: Gauge },
   { to: "/coach", label: "Coach", icon: Zap },
   { to: "/activities", label: "Activities", icon: Activity },
   { to: "/usage", label: "Usage", icon: BarChart3 },
   { to: "/at-risk", label: "At Risk", icon: AlertTriangle },
-  { to: "/quotes", label: "Quotes", icon: FileText },
+  { to: "/quotes", label: "Opportunity Quotes", icon: FileText },
   { to: "/invoices", label: "Invoices", icon: ReceiptText },
   { to: "/finance/expenses", label: "Expenses", icon: WalletCards },
   { to: "/finance/reports", label: "Reports", icon: ChartColumn },
@@ -132,6 +132,7 @@ const NAV_GROUPS = [
     items: [
       "/companies",
       "/pipeline",
+      "/quotes",
       "/performance",
       "/activities",
       "/at-risk",
@@ -140,7 +141,6 @@ const NAV_GROUPS = [
   {
     label: "Revenue",
     items: [
-      "/quotes",
       "/finance/customer-contracts",
       "/finance/contract-renewals",
       "/finance/contract-performance",
