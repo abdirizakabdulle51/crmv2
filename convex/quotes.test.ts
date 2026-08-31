@@ -46,7 +46,9 @@ async function seedQuoteCreateScope(ctx: ConvexTestCtx) {
   return { companyId, lineItem };
 }
 
-type QuoteLineInput = Awaited<ReturnType<typeof seedQuoteCreateScope>>["lineItem"] & {
+type QuoteLineInput = Awaited<
+  ReturnType<typeof seedQuoteCreateScope>
+>["lineItem"] & {
   regionId?: string;
   regionName?: string;
   dataCenterName?: string;
@@ -61,6 +63,64 @@ function quoteLineInput(line: QuoteLineInput) {
 }
 
 describe("create", () => {
+  it("atomically creates and links a real proposal opportunity when needed", async () => {
+    const t = convexTest({ schema, modules });
+    const seed = await t.run(seedQuoteCreateScope);
+    const authed = t.withIdentity({ tokenIdentifier: "ceo-token" });
+
+    const quoteId = await authed.mutation(api.quotes.create, {
+      companyId: seed.companyId,
+      opportunity: {
+        title: "AICC cloud expansion",
+        expectedCloseDate: "2026-10-15T00:00:00.000Z",
+        contactName: "Finance Director",
+        contactEmail: "finance@aicc.example",
+      },
+      lineItems: [quoteLineInput({ ...seed.lineItem, monthlyUnitPrice: 999 })],
+    });
+
+    const result = await t.run(async (ctx) => {
+      const quote = await ctx.db.get(quoteId);
+      const opportunity = quote?.leadId ? await ctx.db.get(quote.leadId) : null;
+      const activities = opportunity
+        ? await ctx.db
+            .query("activities")
+            .withIndex("by_lead", (q) => q.eq("leadId", opportunity._id))
+            .collect()
+        : [];
+      return { quote, opportunity, activities };
+    });
+
+    expect(result.opportunity).toMatchObject({
+      title: "AICC cloud expansion",
+      stage: "proposal",
+      potentialValue: 10,
+      contactName: "Finance Director",
+    });
+    expect(result.opportunity?.opportunityNumber).toMatch(/^OPP-\d{4}-00001$/);
+    expect(result.quote?.leadId).toBe(result.opportunity?._id);
+    expect(result.activities).toEqual([
+      expect.objectContaining({ type: "quote_created" }),
+    ]);
+
+    await authed.mutation(api.quotes.updateStatus, {
+      id: quoteId,
+      status: "sent",
+    });
+    const afterSend = await t.run(async (ctx) => {
+      const opportunity = await ctx.db.get(result.opportunity!._id);
+      const activities = await ctx.db
+        .query("activities")
+        .withIndex("by_lead", (q) => q.eq("leadId", result.opportunity!._id))
+        .collect();
+      return { opportunity, activities };
+    });
+    expect(afterSend.opportunity?.stage).toBe("negotiation");
+    expect(afterSend.activities).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "quote_sent" })]),
+    );
+  });
+
   it("assigns friendly quote numbers to manual, usage, and advisor-created quotes", async () => {
     const t = convexTest({ schema, modules });
     const seed = await t.run(seedQuoteCreateScope);

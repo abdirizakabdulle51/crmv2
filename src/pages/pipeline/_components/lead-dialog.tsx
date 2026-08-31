@@ -52,6 +52,11 @@ export default function LeadDialog({
   const [potentialValue, setPotentialValue] = useState("");
   const [expectedCloseDate, setExpectedCloseDate] = useState("");
   const [nextAction, setNextAction] = useState("");
+  const [nextActionDate, setNextActionDate] = useState("");
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [source, setSource] = useState("");
+  const [serviceInterests, setServiceInterests] = useState("");
   const [notes, setNotes] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -65,6 +70,11 @@ export default function LeadDialog({
       setPotentialValue(lead.potentialValue.toString());
       setExpectedCloseDate(lead.expectedCloseDate.split("T")[0]);
       setNextAction(lead.nextAction || "");
+      setNextActionDate(lead.nextActionDate?.split("T")[0] || "");
+      setContactName(lead.contactName || "");
+      setContactEmail(lead.contactEmail || "");
+      setSource(lead.source || "");
+      setServiceInterests(lead.serviceInterests?.join(", ") || "");
       setNotes(lead.notes || "");
     } else {
       resetForm();
@@ -79,6 +89,11 @@ export default function LeadDialog({
     setPotentialValue("");
     setExpectedCloseDate("");
     setNextAction("");
+    setNextActionDate("");
+    setContactName("");
+    setContactEmail("");
+    setSource("");
+    setServiceInterests("");
     setNotes("");
   };
 
@@ -112,6 +127,16 @@ export default function LeadDialog({
         potentialValue: Number(potentialValue),
         expectedCloseDate: new Date(expectedCloseDate).toISOString(),
         nextAction: nextAction.trim() || undefined,
+        nextActionDate: nextActionDate
+          ? new Date(nextActionDate).toISOString()
+          : undefined,
+        contactName: contactName.trim() || undefined,
+        contactEmail: contactEmail.trim() || undefined,
+        source: source.trim() || undefined,
+        serviceInterests: serviceInterests
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
         notes: notes.trim() || undefined,
       };
 
@@ -156,17 +181,58 @@ export default function LeadDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{lead ? "Edit Lead" : "Add Lead"}</DialogTitle>
+          <DialogTitle>
+            {lead ? "Edit Opportunity" : "New Opportunity"}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>Lead Title *</Label>
+            <Label>Opportunity Title *</Label>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Enterprise License Deal"
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Primary Contact</Label>
+              <Input
+                value={contactName}
+                onChange={(event) => setContactName(event.target.value)}
+                placeholder="Contact name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Contact Email</Label>
+              <Input
+                type="email"
+                value={contactEmail}
+                onChange={(event) => setContactEmail(event.target.value)}
+                placeholder="name@company.com"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Opportunity Source</Label>
+              <Input
+                value={source}
+                onChange={(event) => setSource(event.target.value)}
+                placeholder="Referral, campaign, inbound..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Service Interests</Label>
+              <Input
+                value={serviceInterests}
+                onChange={(event) => setServiceInterests(event.target.value)}
+                placeholder="Compute, Storage"
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -213,6 +279,7 @@ export default function LeadDialog({
               <Select
                 value={stage}
                 onValueChange={(v) => setStage(v as LeadStage)}
+                disabled={Boolean(lead)}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -225,6 +292,11 @@ export default function LeadDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {lead ? (
+                <p className="text-xs text-muted-foreground">
+                  Change stage from the opportunity workflow.
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -256,6 +328,14 @@ export default function LeadDialog({
               placeholder="e.g. Schedule demo call"
             />
           </div>
+          <div className="space-y-2">
+            <Label>Next Action Date</Label>
+            <Input
+              type="date"
+              value={nextActionDate}
+              onChange={(event) => setNextActionDate(event.target.value)}
+            />
+          </div>
 
           <div className="space-y-2">
             <Label>Notes</Label>
@@ -269,10 +349,15 @@ export default function LeadDialog({
 
           <div className="flex gap-2 pt-2">
             <Button className="flex-1" onClick={handleSave}>
-              {lead ? "Update Lead" : "Create Lead"}
+              {lead ? "Update Opportunity" : "Create Opportunity"}
             </Button>
             {lead && isAdmin && (
-              <Button variant="destructive" size="icon" onClick={() => setConfirmOpen(true)} className="cursor-pointer">
+              <Button
+                variant="destructive"
+                size="icon"
+                onClick={() => setConfirmOpen(true)}
+                className="cursor-pointer"
+              >
                 <Trash2 className="h-4 w-4" />
               </Button>
             )}

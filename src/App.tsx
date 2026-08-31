@@ -12,6 +12,9 @@ const CompanyDetailPage = lazy(
   () => import("./pages/companies/detail-page.tsx"),
 );
 const PipelinePage = lazy(() => import("./pages/pipeline/page.tsx"));
+const OpportunityDetailPage = lazy(
+  () => import("./pages/pipeline/detail-page.tsx"),
+);
 const TargetsPage = lazy(() => import("./pages/targets/page.tsx"));
 const ActivitiesPage = lazy(() => import("./pages/activities/page.tsx"));
 const PerformancePage = lazy(() => import("./pages/performance/page.tsx"));
@@ -21,6 +24,9 @@ const UsageAutoFillPage = lazy(
 );
 const AtRiskPage = lazy(() => import("./pages/at-risk/page.tsx"));
 const QuotesPage = lazy(() => import("./pages/quotes/page.tsx"));
+const NewOpportunityQuotePage = lazy(
+  () => import("./pages/quotes/new-page.tsx"),
+);
 const QuoteGenerateFromUsagePage = lazy(
   () => import("./pages/quotes/generate-page.tsx"),
 );
@@ -133,6 +139,10 @@ export default function App() {
               element={lazyPage(<CompanyDetailPage />)}
             />
             <Route path="/pipeline" element={lazyPage(<PipelinePage />)} />
+            <Route
+              path="/pipeline/:id"
+              element={lazyPage(<OpportunityDetailPage />)}
+            />
             <Route path="/targets" element={lazyPage(<TargetsPage />)} />
             <Route
               path="/performance"
@@ -145,6 +155,10 @@ export default function App() {
             />
             <Route path="/at-risk" element={lazyPage(<AtRiskPage />)} />
             <Route path="/quotes" element={lazyPage(<QuotesPage />)} />
+            <Route
+              path="/quotes/new"
+              element={lazyPage(<NewOpportunityQuotePage />)}
+            />
             <Route path="/invoices" element={lazyPage(<InvoicesPage />)} />
             <Route
               path="/invoices/:invoiceId/print"

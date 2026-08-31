@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { CalendarDays, DollarSign } from "lucide-react";
 import { format } from "date-fns";
+import { useNavigate } from "react-router-dom";
 
 type KanbanBoardProps = {
   leads: Doc<"leads">[];
@@ -31,17 +32,26 @@ type KanbanBoardProps = {
 export default function KanbanBoard({
   leads,
   companies,
-  users: _users,
+  users,
   onEditLead,
 }: KanbanBoardProps) {
   const updateStage = useMutation(api.leads.updateStage);
+  const navigate = useNavigate();
   const companyMap = new Map(companies.map((c) => [c._id, c]));
+  const userMap = new Map(users.map((user) => [user._id, user]));
 
-  const handleStageChange = async (leadId: Doc<"leads">["_id"], newStage: LeadStage) => {
+  const handleStageChange = async (
+    leadId: Doc<"leads">["_id"],
+    newStage: LeadStage,
+  ) => {
     try {
       await updateStage({ id: leadId, stage: newStage });
-    } catch {
-      toast.error("Failed to move lead");
+      if (newStage === "proposal")
+        navigate(`/quotes/new?opportunityId=${leadId}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to move opportunity",
+      );
     }
   };
 
@@ -50,11 +60,18 @@ export default function KanbanBoard({
 
   const renderLeadCard = (lead: Doc<"leads">, compact = false) => {
     const company = lead.companyId ? companyMap.get(lead.companyId) : undefined;
+    const owner = lead.accountManagerId
+      ? userMap.get(lead.accountManagerId)
+      : undefined;
 
     if (compact) {
       return (
         <Card
           key={lead._id}
+          draggable
+          onDragStart={(event) =>
+            event.dataTransfer.setData("text/opportunity-id", lead._id)
+          }
           className="cursor-pointer transition-colors hover:border-primary/30"
           onClick={() => onEditLead(lead)}
         >
@@ -82,13 +99,23 @@ export default function KanbanBoard({
     return (
       <Card
         key={lead._id}
+        draggable
+        onDragStart={(event) =>
+          event.dataTransfer.setData("text/opportunity-id", lead._id)
+        }
         className="cursor-pointer transition-colors hover:border-primary/30"
         onClick={() => onEditLead(lead)}
       >
         <CardContent className="space-y-2 p-3">
+          <div className="text-[11px] text-muted-foreground">
+            {lead.opportunityNumber ?? "Opportunity"}
+          </div>
           <div className="truncate text-sm font-medium">{lead.title}</div>
           <div className="truncate text-xs text-muted-foreground">
             {company?.name || "New company lead"}
+          </div>
+          <div className="truncate text-xs text-muted-foreground">
+            Owner: {owner?.name ?? owner?.email ?? "Unassigned"}
           </div>
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
@@ -132,19 +159,20 @@ export default function KanbanBoard({
 
   const renderStageColumn = (stage: LeadStage, compactCards = false) => {
     const stageLeads = leads.filter((l) => l.stage === stage);
-    const stageValue = stageLeads.reduce(
-      (sum, l) => sum + l.potentialValue,
-      0,
-    );
+    const stageValue = stageLeads.reduce((sum, l) => sum + l.potentialValue, 0);
 
     return (
       <section
         key={stage}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          event.preventDefault();
+          const leadId = event.dataTransfer.getData("text/opportunity-id");
+          if (leadId) handleStageChange(leadId as Doc<"leads">["_id"], stage);
+        }}
         className="flex max-h-[calc(100vh-17rem)] min-h-[22rem] min-w-0 flex-col overflow-hidden rounded-lg border bg-muted/20"
       >
-        <div
-          className={`border-t-4 ${STAGE_BORDER_COLORS[stage]} bg-card p-3`}
-        >
+        <div className={`border-t-4 ${STAGE_BORDER_COLORS[stage]} bg-card p-3`}>
           <div className="flex items-center justify-between gap-3">
             <h3 className="min-w-0 truncate text-sm font-semibold">
               {STAGE_LABELS[stage]}
@@ -161,7 +189,7 @@ export default function KanbanBoard({
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
           {stageLeads.length === 0 ? (
             <div className="flex h-24 items-center justify-center rounded-md border border-dashed bg-background/50 px-3 text-center text-xs text-muted-foreground">
-              No leads in this stage
+              Drop an opportunity here
             </div>
           ) : (
             stageLeads.map((lead) => renderLeadCard(lead, compactCards))

@@ -79,6 +79,7 @@ export default defineSchema({
     .index("by_status", ["contractStatus"]),
 
   leads: defineTable({
+    opportunityNumber: v.optional(v.string()),
     title: v.string(),
     companyId: v.optional(v.id("companies")),
     countryId: v.optional(v.id("countries")),
@@ -95,7 +96,15 @@ export default defineSchema({
     potentialValue: v.number(),
     expectedCloseDate: v.string(),
     nextAction: v.optional(v.string()),
+    nextActionDate: v.optional(v.string()),
+    contactName: v.optional(v.string()),
+    contactEmail: v.optional(v.string()),
+    source: v.optional(v.string()),
+    serviceInterests: v.optional(v.array(v.string())),
+    lossReason: v.optional(v.string()),
     notes: v.optional(v.string()),
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
   })
     .index("by_account_manager", ["accountManagerId"])
     .index("by_country", ["countryId"])
@@ -680,9 +689,19 @@ export default defineSchema({
       v.literal("call"),
       v.literal("meeting"),
       v.literal("proposal_sent"),
+      v.literal("email"),
+      v.literal("note"),
+      v.literal("follow_up"),
+      v.literal("stage_changed"),
+      v.literal("quote_created"),
+      v.literal("quote_sent"),
+      v.literal("quote_accepted"),
+      v.literal("won"),
+      v.literal("lost"),
     ),
     description: v.optional(v.string()),
     date: v.string(),
+    createdAt: v.optional(v.number()),
   })
     .index("by_account_manager", ["accountManagerId"])
     .index("by_lead", ["leadId"])

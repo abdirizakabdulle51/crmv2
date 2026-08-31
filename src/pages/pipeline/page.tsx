@@ -47,8 +47,7 @@ export default function PipelinePage() {
   };
 
   const handleEdit = (lead: Doc<"leads">) => {
-    setEditingLead(lead);
-    setDialogOpen(true);
+    navigate(`/pipeline/${lead._id}`);
   };
 
   // Total pipeline value (excluding won/lost)
@@ -62,7 +61,7 @@ export default function PipelinePage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Opportunities</h1>
           <p className="text-muted-foreground mt-1">
-            {leads.length} leads — Active pipeline:{" "}
+            {leads.length} opportunities — Active pipeline:{" "}
             {new Intl.NumberFormat("en-US", {
               style: "currency",
               currency: "USD",
@@ -81,7 +80,7 @@ export default function PipelinePage() {
           </Button>
           <Button onClick={handleCreate}>
             <Plus className="h-4 w-4 mr-2" />
-            Add Lead
+            New Opportunity
           </Button>
         </div>
       </div>

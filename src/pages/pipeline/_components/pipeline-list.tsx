@@ -40,9 +40,9 @@ export default function PipelineList({
           <EmptyMedia variant="icon">
             <TrendingUp />
           </EmptyMedia>
-          <EmptyTitle>No leads yet</EmptyTitle>
+          <EmptyTitle>No opportunities yet</EmptyTitle>
           <EmptyDescription>
-            Add your first lead to start tracking your pipeline
+            Add your first opportunity to start tracking the pipeline
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -68,7 +68,7 @@ export default function PipelineList({
     <div className="space-y-2">
       {/* Header */}
       <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-        <div className="col-span-3">Lead</div>
+        <div className="col-span-3">Opportunity</div>
         <div className="col-span-2">Company</div>
         <div className="col-span-2">Stage</div>
         <div className="col-span-1">Value</div>
@@ -92,6 +92,9 @@ export default function PipelineList({
           >
             <CardContent className="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 items-center py-3 px-4">
               <div className="col-span-3 min-w-0">
+                <div className="text-[11px] text-muted-foreground">
+                  {lead.opportunityNumber ?? "Opportunity"}
+                </div>
                 <div className="font-medium text-sm truncate">{lead.title}</div>
                 {lead.nextAction && (
                   <div className="text-xs text-muted-foreground truncate mt-0.5">

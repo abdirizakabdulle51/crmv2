@@ -147,6 +147,15 @@ async function nextQuoteNumber(ctx: MutationCtx, now: Date) {
   return quoteNumberForSequence(now, issuedThisYear.length + 1);
 }
 
+async function nextOpportunityNumber(ctx: MutationCtx, now: Date) {
+  const prefix = `OPP-${now.getUTCFullYear()}-`;
+  const opportunities = await ctx.db.query("leads").collect();
+  const count = opportunities.filter((lead) =>
+    lead.opportunityNumber?.startsWith(prefix),
+  ).length;
+  return `OPP-${now.getUTCFullYear()}-${String(count + 1).padStart(5, "0")}`;
+}
+
 /** List quotes by company */
 export const listByCompany = query({
   args: { companyId: v.id("companies") },
@@ -158,6 +167,29 @@ export const listByCompany = query({
       .query("quotes")
       .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
       .collect();
+  },
+});
+
+export const listByLead = query({
+  args: { leadId: v.id("leads") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const lead = await ctx.db.get(args.leadId);
+    if (!lead) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Opportunity not found",
+      });
+    }
+    if (lead.companyId) {
+      const company = await getCompanyOrThrow(ctx, lead.companyId);
+      if (!canViewCompany(user, company)) {
+        throw new ConvexError({ code: "FORBIDDEN", message: "Access denied" });
+      }
+    }
+    return (await ctx.db.query("quotes").collect()).filter(
+      (quote) => quote.leadId === args.leadId,
+    );
   },
 });
 
@@ -454,6 +486,16 @@ export const create = mutation({
   args: {
     companyId: v.id("companies"),
     leadId: v.optional(v.id("leads")),
+    opportunity: v.optional(
+      v.object({
+        title: v.string(),
+        expectedCloseDate: v.string(),
+        contactName: v.optional(v.string()),
+        contactEmail: v.optional(v.string()),
+        source: v.optional(v.string()),
+        nextAction: v.optional(v.string()),
+      }),
+    ),
     commercialModel: v.optional(
       v.union(v.literal("payg"), v.literal("contracted")),
     ),
@@ -479,8 +521,11 @@ export const create = mutation({
     const user = await getCurrentUserOrThrow(ctx);
     const company = await getCompanyOrThrow(ctx, args.companyId);
     assertCanManageCompany(user, company);
-    if (args.leadId) {
-      const lead = await ctx.db.get(args.leadId);
+    const now = new Date();
+    let leadId = args.leadId;
+    let createdOpportunity = false;
+    if (leadId) {
+      const lead = await ctx.db.get(leadId);
       if (!lead || lead.companyId !== company._id)
         throw new ConvexError({
           code: "BAD_REQUEST",
@@ -492,7 +537,28 @@ export const create = mutation({
           message: "Closed opportunities cannot receive new quotes",
         });
     }
-    const now = new Date();
+    if (!leadId) {
+      createdOpportunity = true;
+      leadId = await ctx.db.insert("leads", {
+        opportunityNumber: await nextOpportunityNumber(ctx, now),
+        title: args.opportunity?.title.trim() || `${company.name} opportunity`,
+        companyId: company._id,
+        countryId: company.countryId,
+        accountManagerId: company.accountManagerId,
+        stage: "proposal",
+        potentialValue: 0,
+        expectedCloseDate:
+          args.opportunity?.expectedCloseDate ??
+          new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        contactName: args.opportunity?.contactName,
+        contactEmail: args.opportunity?.contactEmail,
+        source: args.opportunity?.source,
+        nextAction:
+          args.opportunity?.nextAction ?? "Review and send opportunity quote",
+        createdAt: now.getTime(),
+        updatedAt: now.getTime(),
+      });
+    }
     if (args.commercialModel === "payg" && args.contractTerms)
       throw new ConvexError({
         code: "BAD_REQUEST",
@@ -592,9 +658,15 @@ export const create = mutation({
       }),
     );
     const totals = calculateInvoiceTotals(lineItems);
-    return await ctx.db.insert("quotes", {
+    if (createdOpportunity) {
+      await ctx.db.patch(leadId, {
+        potentialValue: totals.monthlyTotal,
+        updatedAt: now.getTime(),
+      });
+    }
+    const quoteId = await ctx.db.insert("quotes", {
       companyId: args.companyId,
-      leadId: args.leadId,
+      leadId,
       commercialModel: args.commercialModel ?? "payg",
       contractTerms: args.contractTerms,
       createdBy: user._id,
@@ -609,6 +681,24 @@ export const create = mutation({
       notes: args.notes,
       sourceMonth: args.sourceMonth,
     });
+    const lead = await ctx.db.get(leadId);
+    if (lead) {
+      if (lead.stage !== "proposal" && lead.stage !== "negotiation") {
+        await ctx.db.patch(leadId, {
+          stage: "proposal",
+          updatedAt: now.getTime(),
+        });
+      }
+      await ctx.db.insert("activities", {
+        accountManagerId: lead.accountManagerId ?? user._id,
+        leadId,
+        type: "quote_created",
+        description: "Opportunity quote created",
+        date: now.toISOString(),
+        createdAt: now.getTime(),
+      });
+    }
+    return quoteId;
   },
 });
 
@@ -630,6 +720,31 @@ export const updateStatus = mutation({
     }
     await assertCanManageQuote(ctx, user, quote);
     await ctx.db.patch(args.id, { status: args.status });
+    if (quote.leadId) {
+      const lead = await ctx.db.get(quote.leadId);
+      if (lead) {
+        const type =
+          args.status === "accepted"
+            ? "quote_accepted"
+            : args.status === "sent"
+              ? "quote_sent"
+              : "stage_changed";
+        await ctx.db.insert("activities", {
+          accountManagerId: lead.accountManagerId ?? user._id,
+          leadId: lead._id,
+          type,
+          description: `Quote ${quote.quoteNumber ?? quote._id} marked ${args.status}`,
+          date: new Date().toISOString(),
+          createdAt: Date.now(),
+        });
+        if (args.status === "sent" && lead.stage === "proposal") {
+          await ctx.db.patch(lead._id, {
+            stage: "negotiation",
+            updatedAt: Date.now(),
+          });
+        }
+      }
+    }
   },
 });
 
