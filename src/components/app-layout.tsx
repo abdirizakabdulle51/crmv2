@@ -30,6 +30,7 @@ import {
   Landmark,
   FileSignature,
   CalendarDays,
+  CalendarClock,
   HandCoins,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
@@ -86,6 +87,16 @@ const NAV_ITEMS = [
     icon: FileSignature,
   },
   {
+    to: "/finance/contract-renewals",
+    label: "Contract Renewals",
+    icon: CalendarClock,
+  },
+  {
+    to: "/finance/contract-performance",
+    label: "Contract Performance",
+    icon: ChartColumn,
+  },
+  {
     to: "/finance/settings",
     label: "Finance Settings",
     icon: SlidersHorizontal,
@@ -128,7 +139,14 @@ const NAV_GROUPS = [
   },
   {
     label: "Revenue",
-    items: ["/quotes", "/finance/customer-contracts", "/usage", "/invoices"],
+    items: [
+      "/quotes",
+      "/finance/customer-contracts",
+      "/finance/contract-renewals",
+      "/finance/contract-performance",
+      "/usage",
+      "/invoices",
+    ],
   },
   {
     label: "Finance",

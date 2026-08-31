@@ -37,7 +37,7 @@ type EventType =
   | "renewed";
 type ContractInput = {
   companyId: Id<"companies">;
-  contractNumber: string;
+  contractNumber?: string;
   title: string;
   status: ContractStatus;
   startDate: number;
@@ -118,7 +118,7 @@ const ALLOWED_SIGNED_DOCUMENT_MIME_TYPES = new Set([
 
 const contractFieldsValidator = {
   companyId: v.id("companies"),
-  contractNumber: v.string(),
+  contractNumber: v.optional(v.string()),
   title: v.string(),
   status: v.union(
     v.literal("draft"),
@@ -416,7 +416,7 @@ function normalizeFields(args: ContractInput) {
 
   return {
     companyId: args.companyId,
-    contractNumber: requiredText(args.contractNumber, "Contract number"),
+    contractNumber: requiredText(args.contractNumber ?? "", "Contract number"),
     title: requiredText(args.title, "Contract title"),
     status: args.status,
     startDate: args.startDate,
@@ -655,6 +655,20 @@ async function assertUniqueContractNumber(
   }
 }
 
+async function nextContractNumber(ctx: MutationCtx, now = Date.now()) {
+  const year = new Date(now).getUTCFullYear();
+  const prefix = `CTR-${year}-`;
+  const highest = (await ctx.db.query("customerContracts").collect()).reduce(
+    (max, contract) => {
+      if (!contract.contractNumber.startsWith(prefix)) return max;
+      const sequence = Number(contract.contractNumber.slice(prefix.length));
+      return Number.isInteger(sequence) ? Math.max(max, sequence) : max;
+    },
+    0,
+  );
+  return `${prefix}${String(highest + 1).padStart(5, "0")}`;
+}
+
 function monthInputValue(timestamp = Date.now()) {
   const date = new Date(timestamp);
   const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
@@ -786,6 +800,110 @@ export const list = query({
     }
 
     return visible.sort((a, b) => b.updatedAt - a.updatedAt);
+  },
+});
+
+export const performance = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const [contracts, allInvoices, allPayments] = await Promise.all([
+      ctx.db
+        .query("customerContracts")
+        .withIndex("by_status", (q) => q.eq("status", "active"))
+        .collect(),
+      ctx.db.query("invoices").collect(),
+      ctx.db.query("invoicePayments").collect(),
+    ]);
+    const paymentsByInvoice = new Map<Id<"invoices">, number>();
+    for (const payment of allPayments)
+      paymentsByInvoice.set(
+        payment.invoiceId,
+        sumMoney([
+          paymentsByInvoice.get(payment.invoiceId) ?? 0,
+          payment.amount,
+        ]),
+      );
+    const rows = [];
+    for (const contract of contracts) {
+      const company = await ctx.db.get(contract.companyId);
+      if (!company || !canViewCompany(user, company)) continue;
+      const invoices = allInvoices.filter(
+        (invoice) =>
+          invoice.companyId === company._id &&
+          (invoice.contractId === contract._id ||
+            invoice.sourceReference === contract.contractNumber) &&
+          invoice.status !== "void" &&
+          invoice.status !== "cancelled",
+      );
+      const billed = invoices.filter((invoice) => invoice.status !== "draft");
+      const invoiced = sumMoney(billed.map((invoice) => invoice.grandTotal));
+      const collected = sumMoney(
+        invoices.map((invoice) => paymentsByInvoice.get(invoice._id) ?? 0),
+      );
+      let consumed: number | undefined;
+      let overage = 0;
+      if (
+        contract.pricingModel === "flexible_total_commitment" &&
+        Date.now() >= contract.startDate
+      ) {
+        const allocations = await priceFlexibleContractUsage(
+          ctx,
+          contract,
+          Math.min(Date.now(), contract.endDate),
+        );
+        consumed = sumMoney(
+          allocations.map((allocation) => allocation.commitmentConsumed),
+        );
+        overage = sumMoney(
+          allocations.map((allocation) => allocation.overageAmount),
+        );
+      } else {
+        overage = sumMoney(
+          invoices
+            .filter(
+              (invoice) => invoice.contractInvoiceKind === "overage_settlement",
+            )
+            .map((invoice) => invoice.grandTotal),
+        );
+      }
+      const duration = Math.max(1, contract.endDate - contract.startDate);
+      const elapsedPercent = Math.max(
+        0,
+        Math.min(100, ((Date.now() - contract.startDate) / duration) * 100),
+      );
+      const utilizationPercent =
+        consumed !== undefined && contract.contractValue
+          ? (consumed / contract.contractValue) * 100
+          : undefined;
+      const outstanding = Math.max(0, sumMoney([invoiced, -collected]));
+      const hasOverdue = billed.some((invoice) => invoice.status === "overdue");
+      const signal =
+        hasOverdue && outstanding > 0
+          ? "Collection risk"
+          : utilizationPercent !== undefined &&
+              utilizationPercent > elapsedPercent + 20
+            ? "Over-consuming"
+            : utilizationPercent !== undefined &&
+                utilizationPercent + 20 < elapsedPercent
+              ? "Underutilized"
+              : "On track";
+      rows.push({
+        contractId: contract._id,
+        contractNumber: contract.contractNumber,
+        companyName: company.name,
+        contractValue: contract.contractValue,
+        elapsedPercent,
+        utilizationPercent,
+        consumed,
+        invoiced,
+        collected,
+        outstanding,
+        overage,
+        signal,
+      });
+    }
+    return rows.sort((a, b) => b.outstanding - a.outstanding);
   },
 });
 
@@ -1219,7 +1337,10 @@ export const create = mutation({
     const user = await getCurrentUserOrThrow(ctx);
     assertCanManageContracts(user);
     await getVisibleCompany(ctx, user, args.companyId);
-    const fields = normalizeFields(args);
+    const fields = normalizeFields({
+      ...args,
+      contractNumber: await nextContractNumber(ctx),
+    });
     if (fields.status !== "draft") {
       throw new ConvexError({
         code: "BAD_REQUEST",
@@ -1272,7 +1393,10 @@ export const createConfigured = mutation({
     assertCanManageContracts(user);
     await getVisibleCompany(ctx, user, args.companyId);
     const { groupDiscounts, services, ...contractArgs } = args;
-    const fields = normalizeFields(contractArgs);
+    const fields = normalizeFields({
+      ...contractArgs,
+      contractNumber: await nextContractNumber(ctx),
+    });
     if (fields.status !== "draft") {
       throw new ConvexError({
         code: "BAD_REQUEST",
@@ -1446,6 +1570,7 @@ export const updateConfigured = mutation({
     const { contractId, groupDiscounts, services, ...rawFields } = args;
     const fields = normalizeFields({
       ...rawFields,
+      contractNumber: existing.contractNumber,
       commitmentModel: rawFields.commitmentModel ?? existing.commitmentModel,
       pricingModel: rawFields.pricingModel ?? existing.pricingModel,
       monthlyMinimum: rawFields.monthlyMinimum ?? existing.monthlyMinimum,
@@ -1697,6 +1822,7 @@ export const update = mutation({
     await getVisibleCompany(ctx, user, args.companyId);
     const fields = normalizeFields({
       ...args,
+      contractNumber: existing.contractNumber,
       commitmentModel: args.commitmentModel ?? existing.commitmentModel,
       pricingModel: args.pricingModel ?? existing.pricingModel,
       monthlyMinimum: args.monthlyMinimum ?? existing.monthlyMinimum,

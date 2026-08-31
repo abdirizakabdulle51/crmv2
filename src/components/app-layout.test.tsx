@@ -216,6 +216,15 @@ describe("AppLayout", () => {
     expect(
       within(sidebar).getByRole("link", { name: "Invoices" }),
     ).toBeInTheDocument();
+    expect(
+      within(sidebar).getByRole("link", { name: "Contracts" }),
+    ).toBeInTheDocument();
+    expect(
+      within(sidebar).getByRole("link", { name: "Contract Renewals" }),
+    ).toBeInTheDocument();
+    expect(
+      within(sidebar).getByRole("link", { name: "Contract Performance" }),
+    ).toBeInTheDocument();
   });
 
   it("groups cloud operations and workspace tools", () => {

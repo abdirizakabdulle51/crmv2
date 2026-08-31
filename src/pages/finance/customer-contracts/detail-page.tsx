@@ -495,9 +495,14 @@ export default function CustomerContractDetailPage() {
   const contractIsDraft = contract?.status === "draft";
   const contractIsActive = contract?.status === "active";
   const contractIsLocked = !!contract && contract.status !== "draft";
-  const canEditOriginal = canManage && contractIsDraft && !!contract?.pricingModel;
+  const dynamicPricing =
+    contract?.commitmentModel === "flexible_value" || !!contract?.pricingModel;
+  const canEditOriginal =
+    canManage && contractIsDraft && !!contract?.pricingModel;
   const canCreateInvoice =
-    canManage && contractIsActive && (lineItems?.length ?? 0) > 0;
+    canManage &&
+    contractIsActive &&
+    (dynamicPricing || (lineItems?.length ?? 0) > 0);
 
   const resetLineForm = () => {
     setEditingLine(null);
@@ -878,7 +883,10 @@ export default function CustomerContractDetailPage() {
               {contractIsDraft ? (
                 <Button
                   variant="outline"
-                  disabled={activationPending || lineItems.length === 0}
+                  disabled={
+                    activationPending ||
+                    (!dynamicPricing && lineItems.length === 0)
+                  }
                   onClick={() => void handleActivateContract()}
                 >
                   {activationPending ? (

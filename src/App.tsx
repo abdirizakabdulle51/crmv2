@@ -64,6 +64,12 @@ const DailyUsagePage = lazy(
 const CustomerContractsPage = lazy(
   () => import("./pages/finance/customer-contracts/page.tsx"),
 );
+const ContractRenewalsPage = lazy(
+  () => import("./pages/finance/customer-contracts/renewals-page.tsx"),
+);
+const ContractPerformancePage = lazy(
+  () => import("./pages/finance/customer-contracts/performance-page.tsx"),
+);
 const CustomerContractDetailPage = lazy(
   () => import("./pages/finance/customer-contracts/detail-page.tsx"),
 );
@@ -160,9 +166,18 @@ export default function App() {
               path="/finance/reports"
               element={lazyPage(<FinanceReportsPage />)}
             />
-            <Route path="/finance/reports/revenue" element={lazyPage(<FinanceReportsPage view="revenue" />)} />
-            <Route path="/finance/reports/expenses" element={lazyPage(<FinanceReportsPage view="expenses" />)} />
-            <Route path="/finance/reports/country" element={lazyPage(<FinanceReportsPage view="country" />)} />
+            <Route
+              path="/finance/reports/revenue"
+              element={lazyPage(<FinanceReportsPage view="revenue" />)}
+            />
+            <Route
+              path="/finance/reports/expenses"
+              element={lazyPage(<FinanceReportsPage view="expenses" />)}
+            />
+            <Route
+              path="/finance/reports/country"
+              element={lazyPage(<FinanceReportsPage view="country" />)}
+            />
             <Route
               path="/finance/collections"
               element={lazyPage(<CollectionsPage />)}
@@ -182,6 +197,14 @@ export default function App() {
             <Route
               path="/finance/customer-contracts"
               element={lazyPage(<CustomerContractsPage />)}
+            />
+            <Route
+              path="/finance/contract-renewals"
+              element={lazyPage(<ContractRenewalsPage />)}
+            />
+            <Route
+              path="/finance/contract-performance"
+              element={lazyPage(<ContractPerformancePage />)}
             />
             <Route
               path="/finance/customer-contracts/:contractId"

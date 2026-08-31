@@ -2526,6 +2526,10 @@ describe("invoices", () => {
         services: [],
       },
     );
+    const generatedNumber = (
+      await asUser(t, s.ceo).query(api.customerContracts.get, { contractId })
+    ).contractNumber;
+    expect(generatedNumber).toMatch(/^CTR-\d{4}-\d{5}$/);
     await asUser(t, s.ceo).mutation(api.customerContracts.updateConfigured, {
       contractId,
       companyId: s.companyA,
@@ -2583,6 +2587,10 @@ describe("invoices", () => {
       (await asUser(t, s.ceo).query(api.customerContracts.get, { contractId }))
         .title,
     ).toBe("Updated atomic edit");
+    expect(
+      (await asUser(t, s.ceo).query(api.customerContracts.get, { contractId }))
+        .contractNumber,
+    ).toBe(generatedNumber);
   });
 
   it("refuses to rewrite legacy service-line contracts through the configured editor", async () => {
@@ -2628,6 +2636,67 @@ describe("invoices", () => {
     expect((await t.run((ctx) => ctx.db.get(contractId)))!.title).toBe(
       "Legacy contract",
     );
+  });
+
+  it("reports contract invoicing, collections, and outstanding balances", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const { contractId, invoiceId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const contractId = await ctx.db.insert("customerContracts", {
+        companyId: s.companyA,
+        contractNumber: "CTR-2026-99999",
+        title: "Performance contract",
+        status: "active",
+        startDate: Date.UTC(2026, 0, 1),
+        endDate: Date.UTC(2026, 11, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "postpaid",
+        pricingBasis: "service_lines",
+        pricingModel: "discounted_usage",
+        createdBy: s.ceo._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const invoiceId = await ctx.db.insert("invoices", {
+        companyId: s.companyA,
+        contractId,
+        sourceReference: "CTR-2026-99999",
+        createdBy: s.ceo._id,
+        status: "partially_paid",
+        companyName: "Company A",
+        lineItems: [],
+        subtotal: 1000,
+        monthlyTotal: 1000,
+        yearlyTotal: 1000,
+        grandTotal: 1000,
+        amountPaid: 400,
+        balanceDue: 600,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("invoicePayments", {
+        invoiceId,
+        amount: 400,
+        paidAt: now,
+        recordedBy: s.ceo._id,
+        createdAt: now,
+      });
+      return { contractId, invoiceId };
+    });
+    expect(contractId).toBeTruthy();
+    expect(invoiceId).toBeTruthy();
+    expect(
+      await asUser(t, s.ceo).query(api.customerContracts.performance, {}),
+    ).toEqual([
+      expect.objectContaining({
+        contractNumber: "CTR-2026-99999",
+        invoiced: 1000,
+        collected: 400,
+        outstanding: 600,
+      }),
+    ]);
   });
 
   it("lets flexible contracts use any service and bills only undiscounted overage", async () => {

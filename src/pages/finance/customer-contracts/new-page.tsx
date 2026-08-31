@@ -171,12 +171,11 @@ export default function NewCustomerContractPage() {
   const save = async () => {
     if (
       !form.companyId ||
-      !form.contractNumber.trim() ||
       !form.title.trim() ||
       !form.startDate ||
       !form.endDate
     ) {
-      toast.error("Complete the customer, agreement number, title, and dates");
+      toast.error("Complete the customer, title, and contract dates");
       return;
     }
     if (
@@ -212,7 +211,6 @@ export default function NewCustomerContractPage() {
     try {
       const payload = {
         companyId: form.companyId,
-        contractNumber: form.contractNumber.trim(),
         title: form.title.trim(),
         status: "draft" as const,
         startDate: timestampFromDateInput(form.startDate),
@@ -350,11 +348,8 @@ export default function NewCustomerContractPage() {
               </Field>
               <Field label="Contract number">
                 <Input
-                  value={form.contractNumber}
-                  onChange={(e) =>
-                    setForm({ ...form, contractNumber: e.target.value })
-                  }
-                  placeholder="HTG-2026-001"
+                  value={existing?.contractNumber ?? "Generated when saved"}
+                  disabled
                 />
               </Field>
               <Field label="Contract title">
