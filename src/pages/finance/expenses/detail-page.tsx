@@ -942,6 +942,7 @@ export default function ExpenseDetailPage() {
         expense={expense}
         categories={categories.filter((category) => category.isActive)}
         companies={companies}
+        countries={countries}
         onOpenChange={setEditOpen}
         onSubmit={async (values) => {
           setPendingAction("edit");
@@ -1175,6 +1176,7 @@ function EditExpenseDialog({
   expense,
   categories,
   companies,
+  countries,
   onOpenChange,
   onSubmit,
 }: {
@@ -1183,6 +1185,7 @@ function EditExpenseDialog({
   expense: Expense;
   categories: Doc<"expenseCategories">[];
   companies: Doc<"companies">[];
+  countries: Doc<"countries">[];
   onOpenChange: (open: boolean) => void;
   onSubmit: (values: {
     title: string;
@@ -1193,6 +1196,7 @@ function EditExpenseDialog({
     expenseDate: number;
     vendor?: string;
     companyId?: Id<"companies">;
+    countryId?: Id<"countries">;
   }) => Promise<void>;
 }) {
   const [title, setTitle] = useState(expense.title);
@@ -1204,10 +1208,13 @@ function EditExpenseDialog({
   );
   const [vendor, setVendor] = useState(expense.vendor ?? "");
   const [companyId, setCompanyId] = useState(expense.companyId ?? "none");
+  const [countryId, setCountryId] = useState(expense.countryId ?? "none");
   const [description, setDescription] = useState(expense.description ?? "");
   const selectedCategory = categories.find(
     (category) => category._id === categoryId,
   );
+  const selectedCompany = companies.find((company) => company._id === companyId);
+  const resolvedCountryId = selectedCompany?.countryId ?? (countryId === "none" ? undefined : (countryId as Id<"countries">));
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1229,6 +1236,10 @@ function EditExpenseDialog({
       toast.error("Expense date is required");
       return;
     }
+    if (!resolvedCountryId) {
+      toast.error("Please select an expense country");
+      return;
+    }
     await onSubmit({
       title: title.trim(),
       categoryId: categoryId as Id<"expenseCategories">,
@@ -1238,6 +1249,7 @@ function EditExpenseDialog({
       vendor: vendor.trim() || undefined,
       companyId:
         companyId === "none" ? undefined : (companyId as Id<"companies">),
+      countryId: resolvedCountryId,
       description: description.trim() || undefined,
     });
   };
@@ -1326,6 +1338,25 @@ function EditExpenseDialog({
                   {companies.map((company) => (
                     <SelectItem key={company._id} value={company._id}>
                       {company.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Country</Label>
+              <Select
+                value={selectedCompany?.countryId ?? countryId}
+                onValueChange={setCountryId}
+                disabled={companyId !== "none"}
+              >
+                <SelectTrigger className="w-full" aria-label="Edit expense country">
+                  <SelectValue placeholder="Select country" />
+                </SelectTrigger>
+                <SelectContent>
+                  {countries.map((country) => (
+                    <SelectItem key={country._id} value={country._id}>
+                      {country.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
