@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
-import { Landmark, Loader2, Plus } from "lucide-react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { Building2, Landmark, Loader2, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
@@ -57,6 +57,7 @@ function date(value: number) {
 
 const emptyForm = {
   countryId: "",
+  institutionId: "",
   name: "",
   providerName: "",
   accountNumber: "",
@@ -80,12 +81,41 @@ export default function CollectionsPage({
   const [editAccountId, setEditAccountId] =
     useState<Id<"receivingAccounts"> | null>(null);
   const [pending, setPending] = useState(false);
-  const [form, setForm] = useState(emptyForm);
-  const accounts = useQuery(api.receivingAccounts.list, {
-    includeInactive: accountsMode ? true : undefined,
-    purpose: accountsMode ? undefined : "incoming",
+  const [search, setSearch] = useState("");
+  const [countryFilter, setCountryFilter] = useState("all");
+  const [bankOpen, setBankOpen] = useState(false);
+  const [editInstitutionId, setEditInstitutionId] =
+    useState<Id<"financialInstitutions"> | null>(null);
+  const [bankForm, setBankForm] = useState({
+    countryId: "",
+    name: "",
+    code: "",
+    swiftCode: "",
+    type: "bank" as "bank" | "mobile_money",
   });
+  const [form, setForm] = useState(emptyForm);
+  const operationalAccounts = useQuery(
+    api.receivingAccounts.list,
+    accountsMode ? "skip" : { purpose: "incoming" },
+  );
+  const accountPage = usePaginatedQuery(
+    api.receivingAccounts.listPage,
+    accountsMode
+      ? {
+          countryId:
+            countryFilter === "all"
+              ? undefined
+              : (countryFilter as Id<"countries">),
+          search: search.trim() || undefined,
+        }
+      : "skip",
+    { initialNumItems: 15 },
+  );
+  const accounts = accountsMode ? accountPage.results : operationalAccounts;
   const countries = useQuery(api.countries.list, {});
+  const institutions = useQuery(api.financialInstitutions.list, {
+    includeInactive: true,
+  });
   const report = useQuery(api.receivingAccounts.collections, {
     startDate: timestamp(startDate),
     endDate: timestamp(endDate, true),
@@ -105,6 +135,12 @@ export default function CollectionsPage({
   const createAccount = useMutation(api.receivingAccounts.create);
   const updateAccount = useMutation(api.receivingAccounts.update);
   const setActive = useMutation(api.receivingAccounts.setActive);
+  const createInstitution = useMutation(api.financialInstitutions.create);
+  const updateInstitution = useMutation(api.financialInstitutions.update);
+  const setInstitutionActive = useMutation(api.financialInstitutions.setActive);
+  const migrateLegacy = useMutation(
+    api.receivingAccounts.migrateLegacyInstitutions,
+  );
   const canManage =
     currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
 
@@ -119,6 +155,9 @@ export default function CollectionsPage({
       if (editAccountId) {
         await updateAccount({
           accountId: editAccountId,
+          institutionId: form.institutionId
+            ? (form.institutionId as Id<"financialInstitutions">)
+            : undefined,
           countryId: form.countryId as Id<"countries">,
           name: form.name,
           accountHolderName: form.accountHolderName,
@@ -128,6 +167,11 @@ export default function CollectionsPage({
       } else {
         await createAccount({
           ...form,
+          institutionId:
+            form.type === "cash"
+              ? undefined
+              : (form.institutionId as Id<"financialInstitutions">),
+          providerName: form.type === "cash" ? "Cash" : undefined,
           countryId: form.countryId as Id<"countries">,
         });
       }
@@ -146,7 +190,7 @@ export default function CollectionsPage({
     }
   }
 
-  if (!accounts || !report || !countries)
+  if (!accounts || !report || !countries || !institutions)
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-9 w-64" />
@@ -168,16 +212,52 @@ export default function CollectionsPage({
           </p>
         </div>
         {canManage && accountsMode ? (
-          <Button
-            onClick={() => {
-              setEditAccountId(null);
-              setForm(emptyForm);
-              setDialogOpen(true);
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add account
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={async () => {
+                try {
+                  const result = await migrateLegacy({});
+                  toast.success(
+                    `Created ${result.created} institutions; linked ${result.linked}; unresolved ${result.unresolved}; conflicts ${result.conflicts}`,
+                  );
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error ? error.message : "Migration failed",
+                  );
+                }
+              }}
+            >
+              Reconcile legacy accounts
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditInstitutionId(null);
+                setBankForm({
+                  countryId: "",
+                  name: "",
+                  code: "",
+                  swiftCode: "",
+                  type: "bank",
+                });
+                setBankOpen(true);
+              }}
+            >
+              <Building2 className="mr-2 h-4 w-4" />
+              Register bank
+            </Button>
+            <Button
+              onClick={() => {
+                setEditAccountId(null);
+                setForm(emptyForm);
+                setDialogOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add account
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -343,66 +423,237 @@ export default function CollectionsPage({
           <CardHeader>
             <CardTitle>Finance accounts</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {accounts.map((account) => (
-              <div
-                key={account._id}
-                className="flex items-center justify-between rounded-lg border p-3"
-              >
-                <div>
-                  <div className="font-medium">{account.name}</div>
-                  <div className="text-sm text-muted-foreground">
-                    {account.providerName} · {account.accountNumber} ·{" "}
-                    {account.currency} ·{" "}
-                    {countries.find(
-                      (country) => country._id === account.countryId,
-                    )?.name ?? "Country missing"}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setAccountId(account._id)}
-                  >
-                    Ledger
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setEditAccountId(account._id);
-                      setForm({
-                        countryId: account.countryId ?? "",
-                        name: account.name,
-                        providerName: account.providerName,
-                        accountNumber: account.accountNumber,
-                        accountHolderName: account.accountHolderName,
-                        type: account.type,
-                        usage: account.usage ?? "both",
-                        currency: account.currency,
-                        location: account.location ?? "",
-                      });
-                      setDialogOpen(true);
-                    }}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      void setActive({
-                        accountId: account._id,
-                        isActive: !account.isActive,
-                      })
-                    }
-                  >
-                    {account.isActive ? "Deactivate" : "Activate"}
-                  </Button>
-                </div>
+          <CardContent>
+            <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_220px]">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                  }}
+                  placeholder="Search account, bank, or number"
+                />
               </div>
-            ))}
+              <Select
+                value={countryFilter}
+                onValueChange={(value) => {
+                  setCountryFilter(value);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All countries</SelectItem>
+                  {countries.map((country) => (
+                    <SelectItem key={country._id} value={country._id}>
+                      {country.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[850px] text-sm">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="p-3">Account</th>
+                    <th>Bank / provider</th>
+                    <th>Number</th>
+                    <th>Country</th>
+                    <th>Currency</th>
+                    <th>Purpose</th>
+                    <th>Status</th>
+                    <th className="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accounts.map((account) => (
+                    <tr key={account._id} className="border-b">
+                      <td className="p-3 font-medium">{account.name}</td>
+                      <td>{account.providerName}</td>
+                      <td className="font-mono">
+                        ••••{account.accountNumber.slice(-4)}
+                      </td>
+                      <td>
+                        {countries.find(
+                          (country) => country._id === account.countryId,
+                        )?.name ?? "Missing"}
+                      </td>
+                      <td>{account.currency}</td>
+                      <td className="capitalize">
+                        {(account.usage ?? "both").replace(
+                          "both",
+                          "Collections & expenses",
+                        )}
+                      </td>
+                      <td>{account.isActive ? "Active" : "Inactive"}</td>
+                      <td>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setAccountId(account._id)}
+                          >
+                            Ledger
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setEditAccountId(account._id);
+                              setForm({
+                                countryId: account.countryId ?? "",
+                                institutionId: account.institutionId ?? "",
+                                name: account.name,
+                                providerName: account.providerName,
+                                accountNumber: account.accountNumber,
+                                accountHolderName: account.accountHolderName,
+                                type: account.type,
+                                usage: account.usage ?? "both",
+                                currency: account.currency,
+                                location: account.location ?? "",
+                              });
+                              setDialogOpen(true);
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              void setActive({
+                                accountId: account._id,
+                                isActive: !account.isActive,
+                              })
+                            }
+                          >
+                            {account.isActive ? "Deactivate" : "Activate"}
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {accountPage.status !== "Exhausted" ? (
+              <div className="mt-4 flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={accountPage.status === "LoadingMore"}
+                  onClick={() => accountPage.loadMore(15)}
+                >
+                  {accountPage.status === "LoadingMore"
+                    ? "Loading..."
+                    : "Load more"}
+                </Button>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {accountsMode && canManage ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Registered banks and providers</CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="border-b text-left text-muted-foreground">
+                  <th className="p-3">Institution</th>
+                  <th>Country</th>
+                  <th>Type</th>
+                  <th>Code / SWIFT</th>
+                  <th>Status</th>
+                  <th className="text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {institutions.map((institution) => (
+                  <tr key={institution._id} className="border-b">
+                    <td className="p-3 font-medium">{institution.name}</td>
+                    <td>
+                      {countries.find(
+                        (country) => country._id === institution.countryId,
+                      )?.name ?? "Missing"}
+                    </td>
+                    <td className="capitalize">
+                      {institution.type.replace("_", " ")}
+                    </td>
+                    <td>
+                      {[institution.code, institution.swiftCode]
+                        .filter(Boolean)
+                        .join(" · ") || "-"}
+                    </td>
+                    <td>{institution.isActive ? "Active" : "Inactive"}</td>
+                    <td className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setEditInstitutionId(institution._id);
+                            setBankForm({
+                              countryId: institution.countryId,
+                              name: institution.name,
+                              code: institution.code ?? "",
+                              swiftCode: institution.swiftCode ?? "",
+                              type: institution.type,
+                            });
+                            setBankOpen(true);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            try {
+                              await setInstitutionActive({
+                                institutionId: institution._id,
+                                isActive: !institution.isActive,
+                              });
+                              toast.success(
+                                institution.isActive
+                                  ? "Institution deactivated"
+                                  : "Institution activated",
+                              );
+                            } catch (error) {
+                              toast.error(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Could not update institution",
+                              );
+                            }
+                          }}
+                        >
+                          {institution.isActive ? "Deactivate" : "Activate"}
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {institutions.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="p-8 text-center text-muted-foreground"
+                    >
+                      Register a bank or provider before adding a non-cash
+                      account.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
           </CardContent>
         </Card>
       ) : null}
@@ -498,7 +749,9 @@ export default function CollectionsPage({
               <Select
                 disabled={Boolean(editAccountId && form.countryId)}
                 value={form.countryId}
-                onValueChange={(countryId) => setForm({ ...form, countryId })}
+                onValueChange={(countryId) =>
+                  setForm({ ...form, countryId, institutionId: "" })
+                }
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select country" />
@@ -520,16 +773,39 @@ export default function CollectionsPage({
                 placeholder="Salaam Bank USD"
               />
             </div>
-            <div>
-              <Label>Bank or provider</Label>
-              <Input
-                disabled={Boolean(editAccountId)}
-                value={form.providerName}
-                onChange={(e) =>
-                  setForm({ ...form, providerName: e.target.value })
-                }
-              />
-            </div>
+            {form.type !== "cash" ? (
+              <div>
+                <Label>Registered bank or provider</Label>
+                <Select
+                  disabled={
+                    Boolean(editAccountId && form.institutionId) ||
+                    !form.countryId
+                  }
+                  value={form.institutionId}
+                  onValueChange={(institutionId) =>
+                    setForm({ ...form, institutionId })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select registered institution" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {institutions
+                      .filter(
+                        (item) =>
+                          item.countryId === form.countryId &&
+                          item.type === form.type &&
+                          item.isActive,
+                      )
+                      .map((item) => (
+                        <SelectItem key={item._id} value={item._id}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <div>
               <Label>Account number</Label>
               <Input
@@ -556,7 +832,11 @@ export default function CollectionsPage({
                   disabled={Boolean(editAccountId)}
                   value={form.type}
                   onValueChange={(type) =>
-                    setForm({ ...form, type: type as typeof form.type })
+                    setForm({
+                      ...form,
+                      type: type as typeof form.type,
+                      institutionId: "",
+                    })
                   }
                 >
                   <SelectTrigger>
@@ -606,18 +886,171 @@ export default function CollectionsPage({
               />
             </div>
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setDialogOpen(false)}
-              >
-                Cancel
-              </Button>
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
               <Button disabled={pending}>
                 {pending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : null}
                 Save account
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={bankOpen}
+        onOpenChange={(open) => {
+          setBankOpen(open);
+          if (!open) setEditInstitutionId(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editInstitutionId
+                ? "Edit bank or provider"
+                : "Register bank or provider"}
+            </DialogTitle>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setPending(true);
+              try {
+                if (editInstitutionId)
+                  await updateInstitution({
+                    institutionId: editInstitutionId,
+                    name: bankForm.name,
+                    code: bankForm.code || undefined,
+                    swiftCode: bankForm.swiftCode || undefined,
+                  });
+                else
+                  await createInstitution({
+                    countryId: bankForm.countryId as Id<"countries">,
+                    name: bankForm.name,
+                    code: bankForm.code || undefined,
+                    swiftCode: bankForm.swiftCode || undefined,
+                    type: bankForm.type,
+                  });
+                toast.success(
+                  editInstitutionId
+                    ? "Institution updated"
+                    : "Institution registered",
+                );
+                setBankOpen(false);
+                setBankForm({
+                  countryId: "",
+                  name: "",
+                  code: "",
+                  swiftCode: "",
+                  type: "bank",
+                });
+              } catch (error) {
+                toast.error(
+                  error instanceof Error
+                    ? error.message
+                    : "Could not register institution",
+                );
+              } finally {
+                setPending(false);
+              }
+            }}
+          >
+            <div>
+              <Label>Country</Label>
+              <Select
+                disabled={!!editInstitutionId}
+                value={bankForm.countryId}
+                onValueChange={(countryId) =>
+                  setBankForm({ ...bankForm, countryId })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select country" />
+                </SelectTrigger>
+                <SelectContent>
+                  {countries.map((country) => (
+                    <SelectItem key={country._id} value={country._id}>
+                      {country.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Type</Label>
+              <Select
+                disabled={!!editInstitutionId}
+                value={bankForm.type}
+                onValueChange={(type) =>
+                  setBankForm({
+                    ...bankForm,
+                    type: type as typeof bankForm.type,
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bank">Bank</SelectItem>
+                  <SelectItem value="mobile_money">Mobile money</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Name</Label>
+              <Input
+                required
+                value={bankForm.name}
+                onChange={(e) =>
+                  setBankForm({ ...bankForm, name: e.target.value })
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Code (optional)</Label>
+                <Input
+                  value={bankForm.code}
+                  onChange={(e) =>
+                    setBankForm({ ...bankForm, code: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <Label>SWIFT/BIC (optional)</Label>
+                <Input
+                  value={bankForm.swiftCode}
+                  onChange={(e) =>
+                    setBankForm({ ...bankForm, swiftCode: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setBankOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={
+                  pending || !bankForm.countryId || !bankForm.name.trim()
+                }
+              >
+                {editInstitutionId ? "Save changes" : "Register"}
               </Button>
             </DialogFooter>
           </form>

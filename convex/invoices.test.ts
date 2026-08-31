@@ -2502,6 +2502,134 @@ describe("invoices", () => {
     expect(invoice.grandTotal).toBe(140);
   });
 
+  it("atomically updates configured contract discounts and preserves data after invalid edits", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "ATOMIC-EDIT-1",
+        title: "Atomic edit",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2027, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "total_contract",
+        pricingModel: "flexible_total_commitment",
+        commitmentModel: "flexible_value",
+        contractValue: 12000,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 15 }],
+        services: [],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.updateConfigured, {
+      contractId,
+      companyId: s.companyA,
+      contractNumber: "ATOMIC-EDIT-1",
+      title: "Updated atomic edit",
+      status: "draft",
+      startDate: Date.UTC(2026, 7, 1),
+      endDate: Date.UTC(2027, 6, 31),
+      currency: "USD",
+      billingFrequency: "quarterly",
+      billingTiming: "prepaid",
+      pricingBasis: "total_contract",
+      pricingModel: "flexible_total_commitment",
+      commitmentModel: "flexible_value",
+      contractValue: 12000,
+      overagePricingPolicy: "current_catalog",
+      groupDiscounts: [{ productGroup: "compute", discountPercent: 20 }],
+      services: [{ catalogItemId: s.catalogItemId, serviceDiscountPercent: 0 }],
+    });
+    expect(
+      await asUser(t, s.ceo).query(api.customerContracts.listGroupDiscounts, {
+        contractId,
+      }),
+    ).toEqual([
+      expect.objectContaining({ productGroup: "compute", discountPercent: 20 }),
+    ]);
+    expect(
+      await asUser(t, s.ceo).query(api.customerContracts.listLineItems, {
+        contractId,
+      }),
+    ).toEqual([expect.objectContaining({ discountValue: 0 })]);
+
+    await expect(
+      asUser(t, s.ceo).mutation(api.customerContracts.updateConfigured, {
+        contractId,
+        companyId: s.companyA,
+        contractNumber: "ATOMIC-EDIT-1",
+        title: "Should not save",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2027, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "total_contract",
+        pricingModel: "flexible_total_commitment",
+        commitmentModel: "flexible_value",
+        contractValue: 12000,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 101 }],
+        services: [],
+      }),
+    ).rejects.toThrow();
+    expect(
+      (await asUser(t, s.ceo).query(api.customerContracts.get, { contractId }))
+        .title,
+    ).toBe("Updated atomic edit");
+  });
+
+  it("refuses to rewrite legacy service-line contracts through the configured editor", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await t.run((ctx) =>
+      ctx.db.insert("customerContracts", {
+        companyId: s.companyA,
+        contractNumber: "LEGACY-EDIT-1",
+        title: "Legacy contract",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2027, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        pricingBasis: "service_lines",
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    await expect(
+      asUser(t, s.ceo).mutation(api.customerContracts.updateConfigured, {
+        contractId,
+        companyId: s.companyA,
+        contractNumber: "LEGACY-EDIT-1",
+        title: "Unsafe rewrite",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2027, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "total_contract",
+        pricingModel: "flexible_total_commitment",
+        commitmentModel: "flexible_value",
+        contractValue: 12000,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [],
+        services: [],
+      }),
+    ).rejects.toThrow("Legacy service-line contracts");
+    expect((await t.run((ctx) => ctx.db.get(contractId)))!.title).toBe(
+      "Legacy contract",
+    );
+  });
+
   it("lets flexible contracts use any service and bills only undiscounted overage", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

@@ -31,6 +31,7 @@ import type * as dashboard from "../dashboard.js";
 import type * as documentation from "../documentation.js";
 import type * as expenses from "../expenses.js";
 import type * as financeReports from "../financeReports.js";
+import type * as financialInstitutions from "../financialInstitutions.js";
 import type * as http from "../http.js";
 import type * as invoiceProfiles from "../invoiceProfiles.js";
 import type * as invoices from "../invoices.js";
@@ -86,6 +87,7 @@ declare const fullApi: ApiFromModules<{
   documentation: typeof documentation;
   expenses: typeof expenses;
   financeReports: typeof financeReports;
+  financialInstitutions: typeof financialInstitutions;
   http: typeof http;
   invoiceProfiles: typeof invoiceProfiles;
   invoices: typeof invoices;

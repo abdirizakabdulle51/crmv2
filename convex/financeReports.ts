@@ -285,6 +285,27 @@ export const summary = query({
         },
       ]),
     );
+    const countryPerformance = new Map<
+      Id<"countries">,
+      {
+        countryId: Id<"countries">;
+        countryName: string;
+        revenue: number;
+        collections: number;
+        expenses: number;
+      }
+    >();
+    const countryRow = (countryId: Id<"countries">) => {
+      const row = countryPerformance.get(countryId) ?? {
+        countryId,
+        countryName: scope.countryMap.get(countryId)?.name ?? "Unknown",
+        revenue: 0,
+        collections: 0,
+        expenses: 0,
+      };
+      countryPerformance.set(countryId, row);
+      return row;
+    };
 
     const invoices = await ctx.db.query("invoices").collect();
     const invoiceMap = new Map(
@@ -348,6 +369,14 @@ export const summary = query({
           row.recognizedRevenue,
           allocation.amount,
         ]);
+        const company = scope.companyMap.get(invoice.companyId);
+        if (company) {
+          const performance = countryRow(company.countryId);
+          performance.revenue = sumMoney([
+            performance.revenue,
+            allocation.amount,
+          ]);
+        }
         const receivable =
           receivableAllocations.find((row) => row.month === allocation.month)
             ?.amount ?? allocation.amount;
@@ -391,6 +420,14 @@ export const summary = query({
       if (!row) continue;
       row.income = roundMoney(row.income + payment.amount);
       row.paymentCount += 1;
+      const company = scope.companyMap.get(invoice.companyId);
+      if (company) {
+        const performance = countryRow(company.countryId);
+        performance.collections = sumMoney([
+          performance.collections,
+          payment.amount,
+        ]);
+      }
 
       for (const allocation of paymentRegionAllocations(
         invoice,
@@ -447,6 +484,14 @@ export const summary = query({
         row.expenses = sumMoney([row.expenses, expense.amount]);
         row.paidExpenseCount += 1;
       }
+      const expenseCompany = expense.companyId
+        ? scope.companyMap.get(expense.companyId)
+        : undefined;
+      const expenseCountryId = expense.countryId ?? expenseCompany?.countryId;
+      if (expenseCountryId) {
+        const performance = countryRow(expenseCountryId);
+        performance.expenses = sumMoney([performance.expenses, expense.amount]);
+      }
 
       const category = scope.categoryMap.get(expense.categoryId);
       const existing = categoryTotals.get(expense.categoryId) ?? {
@@ -501,6 +546,12 @@ export const summary = query({
         (a, b) => b.total - a.total,
       ),
       expenseStatusSummary: [...statusSummary.values()],
+      countryPerformance: [...countryPerformance.values()]
+        .map((row) => ({
+          ...row,
+          net: sumMoney([row.collections, -row.expenses]),
+        }))
+        .sort((a, b) => b.net - a.net),
       incomeByRegion: [...regionIncome.values()]
         .map((row) => ({
           region: row.region,

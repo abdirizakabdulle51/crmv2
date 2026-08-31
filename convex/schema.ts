@@ -24,6 +24,9 @@ export default defineSchema({
         v.literal("monitoring"),
       ),
     ),
+    organizationScope: v.optional(
+      v.union(v.literal("country"), v.literal("global")),
+    ),
     countryId: v.optional(v.id("countries")),
   })
     .index("by_token", ["tokenIdentifier"])
@@ -964,11 +967,30 @@ export default defineSchema({
     .index("by_receiving_account", ["receivingAccountId"])
     .index("by_account_transaction", ["receivingAccountId", "transactionId"]),
 
+  financialInstitutions: defineTable({
+    countryId: v.id("countries"),
+    name: v.string(),
+    code: v.optional(v.string()),
+    swiftCode: v.optional(v.string()),
+    type: v.union(v.literal("bank"), v.literal("mobile_money")),
+    normalizedName: v.string(),
+    isActive: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_country", ["countryId"])
+    .index("by_country_name", ["countryId", "normalizedName"])
+    .index("by_active", ["isActive"]),
+
   receivingAccounts: defineTable({
     countryId: v.optional(v.id("countries")),
+    institutionId: v.optional(v.id("financialInstitutions")),
     name: v.string(),
     providerName: v.string(),
     accountNumber: v.string(),
+    uniquenessKey: v.optional(v.string()),
+    searchText: v.optional(v.string()),
     accountHolderName: v.string(),
     type: v.union(
       v.literal("bank"),
@@ -988,7 +1010,12 @@ export default defineSchema({
     .index("by_active", ["isActive"])
     .index("by_country", ["countryId"])
     .index("by_country_active", ["countryId", "isActive"])
-    .index("by_type_active", ["type", "isActive"]),
+    .index("by_uniqueness_key", ["uniquenessKey"])
+    .index("by_type_active", ["type", "isActive"])
+    .searchIndex("search_accounts", {
+      searchField: "searchText",
+      filterFields: ["countryId", "isActive"],
+    }),
 
   invoiceEvents: defineTable({
     invoiceId: v.id("invoices"),

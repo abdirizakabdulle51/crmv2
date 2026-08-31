@@ -607,6 +607,16 @@ describe("role scoping", () => {
     ).rejects.toThrow(/Country GMs|FORBIDDEN/i);
     await expect(
       asUser(t, s.gmA).action(api.auth.createTeamMember, {
+        name: "Global AM",
+        email: "global-am@example.com",
+        password: "Temporary123!",
+        role: "account_manager",
+        countryId: s.countryA,
+        organizationScope: "global",
+      }),
+    ).rejects.toThrow(/Country GMs|FORBIDDEN/i);
+    await expect(
+      asUser(t, s.gmA).action(api.auth.createTeamMember, {
         name: "Promoted",
         email: "promoted@example.com",
         password: "Temporary123!",

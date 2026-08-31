@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router-dom";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import FinanceReportsPage from "./page.tsx";
 
@@ -181,8 +182,26 @@ function report(overrides = {}) {
         invoiceCount: 1,
       },
     ],
+    countryPerformance: [
+      {
+        countryId: "country-1",
+        countryName: "Somalia",
+        revenue: 900,
+        collections: 1000,
+        expenses: 250,
+        net: 750,
+      },
+    ],
     ...overrides,
   };
+}
+
+function renderReport(view?: "overview" | "revenue" | "expenses" | "country") {
+  return render(
+    <MemoryRouter>
+      <FinanceReportsPage view={view} />
+    </MemoryRouter>,
+  );
 }
 
 describe("FinanceReportsPage", () => {
@@ -197,50 +216,55 @@ describe("FinanceReportsPage", () => {
   });
 
   it("renders finance report summary cards and report sections", () => {
-    render(<FinanceReportsPage />);
+    renderReport();
 
     expect(
-      screen.getByRole("heading", { name: "Finance Reports" }),
+      screen.getByRole("heading", { name: "Finance Overview" }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Income").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Expenses").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Net").length).toBeGreaterThan(0);
-    expect(screen.getByText("Paid invoice payments")).toBeInTheDocument();
     expect(screen.getAllByText("$1,000.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$250.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$750.00").length).toBeGreaterThan(0);
     expect(screen.getByText("Monthly Income vs Expenses")).toBeInTheDocument();
     expect(screen.getByTestId("chart")).toBeInTheDocument();
     expect(
-      screen.getByText("Income by Region / Data Center"),
-    ).toBeInTheDocument();
+      screen.queryByText("Income by Region / Data Center"),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Allocated income from invoice payments/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Hoa-Mogadishu-2")).toBeInTheDocument();
-    expect(screen.getAllByText("$700.00").length).toBeGreaterThan(0);
-    expect(
-      screen.getAllByRole("columnheader", { name: "Payments" }).length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.getByRole("columnheader", { name: "Invoices" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Travel")).toBeInTheDocument();
-    expect(screen.getByText("Expense Status Summary")).toBeInTheDocument();
+      screen.queryByText("Expense Status Summary"),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Export Invoice Payments CSV" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Export Region Income CSV" }),
+      screen.getByRole("link", { name: "Country performance" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Expenses" })).toBeInTheDocument();
+  });
+
+  it("keeps revenue and country views focused", () => {
+    const { unmount } = renderReport("revenue");
     expect(
-      screen.getByRole("button", { name: "Export Paid Expenses CSV" }),
+      screen.getByText("Monthly Revenue and Collections"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Paid Expenses")).not.toBeInTheDocument();
+    unmount();
+
+    renderReport("country");
+    expect(
+      screen.getByText("Country financial performance"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Somalia")).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Revenue" }),
     ).toBeInTheDocument();
   });
 
   it("updates report query filters", async () => {
     const user = userEvent.setup();
-    render(<FinanceReportsPage />);
+    renderReport();
 
     fireEvent.change(screen.getByLabelText("Start month"), {
       target: { value: "2026-07" },
@@ -263,7 +287,7 @@ describe("FinanceReportsPage", () => {
   it("renders an unauthorized state for Account Managers", () => {
     mocks.currentUser = crmUser("account_manager");
 
-    render(<FinanceReportsPage />);
+    renderReport();
 
     expect(screen.getByText("Finance reports unavailable")).toBeInTheDocument();
     expect(
@@ -297,21 +321,15 @@ describe("FinanceReportsPage", () => {
       ],
     });
 
-    render(<FinanceReportsPage />);
+    renderReport();
 
     expect(screen.getByText("No finance report data yet.")).toBeInTheDocument();
-    expect(
-      screen.getByText("No region income data in this period."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("No paid expenses in this period."),
-    ).toBeInTheDocument();
   });
 
   it("does not show country filter to Country GM", () => {
     mocks.currentUser = crmUser("country_gm");
 
-    render(<FinanceReportsPage />);
+    renderReport("country");
 
     expect(
       screen.queryByRole("combobox", { name: "Filter by country" }),
@@ -325,7 +343,7 @@ describe("FinanceReportsPage", () => {
 
   it("exports invoice payments with current filters and filename", async () => {
     const user = userEvent.setup();
-    render(<FinanceReportsPage />);
+    renderReport();
 
     fireEvent.change(screen.getByLabelText("Start month"), {
       target: { value: "2026-07" },
@@ -379,7 +397,7 @@ describe("FinanceReportsPage", () => {
 
   it("exports region income with current filters and headers", async () => {
     const user = userEvent.setup();
-    render(<FinanceReportsPage />);
+    renderReport("country");
 
     fireEvent.change(screen.getByLabelText("Start month"), {
       target: { value: "2026-07" },
@@ -429,7 +447,7 @@ describe("FinanceReportsPage", () => {
 
   it("exports paid expenses with current filters and filename", async () => {
     const user = userEvent.setup();
-    render(<FinanceReportsPage />);
+    renderReport("expenses");
 
     fireEvent.change(screen.getByLabelText("Start month"), {
       target: { value: "2026-07" },

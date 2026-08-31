@@ -65,13 +65,7 @@ import { Textarea } from "@/components/ui/textarea.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 import { PRODUCT_GROUPS, productGroupLabel } from "@/lib/product-groups.ts";
 import { cn } from "@/lib/utils.ts";
-import { ContractDialog, type ContractFormState } from "./contract-form.tsx";
-import {
-  FREQUENCY_LABELS,
-  emptyContractForm,
-  formFromContract,
-  timestampFromDateInput,
-} from "./contract-utils.ts";
+import { FREQUENCY_LABELS, timestampFromDateInput } from "./contract-utils.ts";
 
 type ContractLineItem = Doc<"customerContractLineItems">;
 type ContractAmendment = Doc<"customerContractAmendments">;
@@ -412,7 +406,6 @@ export default function CustomerContractDetailPage() {
     api.customerContracts.get,
     parsedContractId ? { contractId: parsedContractId } : "skip",
   );
-  const companies = useQuery(api.companies.list, {});
   const lineItems = useQuery(
     api.customerContracts.listLineItems,
     parsedContractId ? { contractId: parsedContractId } : "skip",
@@ -436,8 +429,9 @@ export default function CustomerContractDetailPage() {
   const setServiceDiscountOverride = useMutation(
     api.customerContracts.setServiceDiscountOverride,
   );
-  const saveGroupDiscounts = useMutation(api.customerContracts.setGroupDiscounts);
-  const updateContract = useMutation(api.customerContracts.update);
+  const saveGroupDiscounts = useMutation(
+    api.customerContracts.setGroupDiscounts,
+  );
   const activateContract = useMutation(api.customerContracts.activate);
   const createAmendment = useMutation(api.customerContracts.createAmendment);
   const generateSignedDocumentUploadUrl = useMutation(
@@ -459,12 +453,8 @@ export default function CustomerContractDetailPage() {
   const [overrideDiscount, setOverrideDiscount] = useState("");
   const [amendmentForm, setAmendmentForm] =
     useState<AmendmentFormState>(emptyAmendmentForm);
-  const [contractDialogOpen, setContractDialogOpen] = useState(false);
-  const [contractForm, setContractForm] =
-    useState<ContractFormState>(emptyContractForm);
   const [comparisonMonth, setComparisonMonth] = useState("");
   const [pending, setPending] = useState(false);
-  const [contractPending, setContractPending] = useState(false);
   const [invoicePending, setInvoicePending] = useState(false);
   const [activationPending, setActivationPending] = useState(false);
   const [amendmentPending, setAmendmentPending] = useState(false);
@@ -502,96 +492,16 @@ export default function CustomerContractDetailPage() {
       ),
     [groupDiscountByKey, lineItems],
   );
-  const sortedCompanies = useMemo(
-    () => [...(companies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
-    [companies],
-  );
   const contractIsDraft = contract?.status === "draft";
   const contractIsActive = contract?.status === "active";
   const contractIsLocked = !!contract && contract.status !== "draft";
-  const canEditOriginal = canManage && contractIsDraft;
+  const canEditOriginal = canManage && contractIsDraft && !!contract?.pricingModel;
   const canCreateInvoice =
     canManage && contractIsActive && (lineItems?.length ?? 0) > 0;
 
   const resetLineForm = () => {
     setEditingLine(null);
     setForm(emptyLineItemForm());
-  };
-
-  const openContractEdit = (loadedContract: NonNullable<typeof contract>) => {
-    setContractForm(formFromContract(loadedContract));
-    setContractDialogOpen(true);
-  };
-
-  const handleContractSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!parsedContractId || !contractForm.companyId) {
-      toast.error("Please select a customer");
-      return;
-    }
-    if (
-      !contractForm.contractNumber.trim() ||
-      !contractForm.title.trim() ||
-      !contractForm.startDate ||
-      !contractForm.endDate ||
-      !contractForm.currency.trim()
-    ) {
-      toast.error("Please fill all required contract fields");
-      return;
-    }
-    const paymentTermDays = contractForm.paymentTermDays.trim()
-      ? Number(contractForm.paymentTermDays)
-      : undefined;
-    const contractValue = contractForm.contractValue.trim()
-      ? Number(contractForm.contractValue)
-      : undefined;
-    const defaultDiscountValue = contractForm.defaultDiscountValue.trim()
-      ? Number(contractForm.defaultDiscountValue)
-      : undefined;
-    if (
-      paymentTermDays !== undefined &&
-      (!Number.isFinite(paymentTermDays) || paymentTermDays < 0)
-    ) {
-      toast.error("Payment terms must be a valid number of days");
-      return;
-    }
-    setContractPending(true);
-    try {
-      await updateContract({
-        contractId: parsedContractId,
-        companyId: contractForm.companyId,
-        contractNumber: contractForm.contractNumber.trim(),
-        title: contractForm.title.trim(),
-        status: contractForm.status,
-        startDate: timestampFromDateInput(contractForm.startDate),
-        endDate: timestampFromDateInput(contractForm.endDate),
-        signedDate: contractForm.signedDate
-          ? timestampFromDateInput(contractForm.signedDate)
-          : undefined,
-        currency: contractForm.currency.trim().toUpperCase(),
-        billingFrequency: contractForm.billingFrequency,
-        billingTiming: contractForm.billingTiming,
-        pricingBasis: contractForm.pricingBasis,
-        contractValue,
-        defaultDiscountType:
-          contractForm.defaultDiscountType === "none"
-            ? undefined
-            : contractForm.defaultDiscountType,
-        defaultDiscountValue,
-        overagePricingPolicy: contractForm.overagePricingPolicy,
-        paymentTermDays,
-        signedDocumentUrl: optionalText(contractForm.signedDocumentUrl),
-        notes: optionalText(contractForm.notes),
-      });
-      toast.success("Customer contract updated");
-      setContractDialogOpen(false);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Could not update contract",
-      );
-    } finally {
-      setContractPending(false);
-    }
   };
 
   const selectCatalogItem = (value: string) => {
@@ -701,13 +611,17 @@ export default function CustomerContractDetailPage() {
       setOverrideDiscount("");
       toast.success("Service discount override saved");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save override");
+      toast.error(
+        error instanceof Error ? error.message : "Could not save override",
+      );
     } finally {
       setPending(false);
     }
   };
 
-  const handleGroupDiscountSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const handleGroupDiscountSubmit = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
     event.preventDefault();
     if (!parsedContractId) return;
     const data = new FormData(event.currentTarget);
@@ -717,7 +631,14 @@ export default function CustomerContractDetailPage() {
         ? []
         : [{ productGroup: group.value, discountPercent: Number(value) }];
     });
-    if (discounts.some((rule) => !Number.isFinite(rule.discountPercent) || rule.discountPercent < 0 || rule.discountPercent > 100)) {
+    if (
+      discounts.some(
+        (rule) =>
+          !Number.isFinite(rule.discountPercent) ||
+          rule.discountPercent < 0 ||
+          rule.discountPercent > 100,
+      )
+    ) {
       toast.error("Discounts must be between 0% and 100%");
       return;
     }
@@ -726,7 +647,9 @@ export default function CustomerContractDetailPage() {
       await saveGroupDiscounts({ contractId: parsedContractId, discounts });
       toast.success("Product-group discounts saved");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not save discounts");
+      toast.error(
+        error instanceof Error ? error.message : "Could not save discounts",
+      );
     } finally {
       setPending(false);
     }
@@ -838,7 +761,8 @@ export default function CustomerContractDetailPage() {
       return;
     }
     if (
-      (!contract.commitmentModel && !contract.pricingModel) &&
+      !contract.commitmentModel &&
+      !contract.pricingModel &&
       (!lineItems || lineItems.length === 0)
     ) {
       toast.error("Add contract services before creating a draft invoice");
@@ -887,7 +811,6 @@ export default function CustomerContractDetailPage() {
 
   if (
     contract === undefined ||
-    companies === undefined ||
     lineItems === undefined ||
     amendments === undefined ||
     invoiceSchedule === undefined ||
@@ -989,7 +912,9 @@ export default function CustomerContractDetailPage() {
               {canEditOriginal ? (
                 <Button
                   variant="outline"
-                  onClick={() => openContractEdit(contract)}
+                  onClick={() =>
+                    navigate(`/finance/customer-contracts/${contract._id}/edit`)
+                  }
                 >
                   <Pencil className="mr-2 h-4 w-4" />
                   Edit Contract
@@ -1222,15 +1147,58 @@ export default function CustomerContractDetailPage() {
             : "grid gap-5"
         }
       >
-        {((groupDiscounts?.length ?? 0) > 0 || contract.commitmentModel === "flexible_value" || contract.pricingModel) && (
+        {((groupDiscounts?.length ?? 0) > 0 ||
+          contract.commitmentModel === "flexible_value" ||
+          contract.pricingModel) && (
           <Card className="xl:col-span-2">
-            <CardHeader><CardTitle>Product-group Discounts</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Product-group Discounts</CardTitle>
+            </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex flex-wrap gap-2">{groupDiscounts?.map((rule) => <Badge key={rule._id} variant="secondary" className="px-3 py-1.5">{productGroupLabel(rule.productGroup)} · {rule.discountPercent}%</Badge>)}</div>
-              {canEditOriginal && (contract.commitmentModel === "flexible_value" || contract.pricingModel) ? (
-                <form className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" onSubmit={handleGroupDiscountSubmit}>
-                  {PRODUCT_GROUPS.map((group) => <Field key={`${group.value}-${groupDiscounts?.find((rule) => rule.productGroup === group.value)?.discountPercent ?? ""}`} label={group.label}><Input name={group.value} type="number" min="0" max="100" step="0.01" defaultValue={groupDiscounts?.find((rule) => rule.productGroup === group.value)?.discountPercent ?? ""} placeholder="No discount" /></Field>)}
-                  <div className="sm:col-span-2 lg:col-span-3"><Button type="submit" disabled={pending}>Save Group Discounts</Button></div>
+              <div className="flex flex-wrap gap-2">
+                {groupDiscounts?.map((rule) => (
+                  <Badge
+                    key={rule._id}
+                    variant="secondary"
+                    className="px-3 py-1.5"
+                  >
+                    {productGroupLabel(rule.productGroup)} ·{" "}
+                    {rule.discountPercent}%
+                  </Badge>
+                ))}
+              </div>
+              {canEditOriginal &&
+              (contract.commitmentModel === "flexible_value" ||
+                contract.pricingModel) ? (
+                <form
+                  className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+                  onSubmit={handleGroupDiscountSubmit}
+                >
+                  {PRODUCT_GROUPS.map((group) => (
+                    <Field
+                      key={`${group.value}-${groupDiscounts?.find((rule) => rule.productGroup === group.value)?.discountPercent ?? ""}`}
+                      label={group.label}
+                    >
+                      <Input
+                        name={group.value}
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        defaultValue={
+                          groupDiscounts?.find(
+                            (rule) => rule.productGroup === group.value,
+                          )?.discountPercent ?? ""
+                        }
+                        placeholder="No discount"
+                      />
+                    </Field>
+                  ))}
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <Button type="submit" disabled={pending}>
+                      Save Group Discounts
+                    </Button>
+                  </div>
                 </form>
               ) : null}
             </CardContent>
@@ -1238,7 +1206,12 @@ export default function CustomerContractDetailPage() {
         )}
         <Card>
           <CardHeader>
-            <CardTitle>{contract.commitmentModel === "flexible_value" || contract.pricingModel ? "Service Discount Overrides" : "Contract Services"}</CardTitle>
+            <CardTitle>
+              {contract.commitmentModel === "flexible_value" ||
+              contract.pricingModel
+                ? "Service Discount Overrides"
+                : "Contract Services"}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {lineItems.length === 0 ? (
@@ -1247,19 +1220,63 @@ export default function CustomerContractDetailPage() {
                   <EmptyMedia variant="icon">
                     <FileSignature className="h-6 w-6" />
                   </EmptyMedia>
-                  <EmptyTitle>{contract.commitmentModel === "flexible_value" || contract.pricingModel ? "All services use their group discount." : "No services added yet."}</EmptyTitle>
+                  <EmptyTitle>
+                    {contract.commitmentModel === "flexible_value" ||
+                    contract.pricingModel
+                      ? "All services use their group discount."
+                      : "No services added yet."}
+                  </EmptyTitle>
                   <EmptyDescription>
-                    {contract.commitmentModel === "flexible_value" || contract.pricingModel
+                    {contract.commitmentModel === "flexible_value" ||
+                    contract.pricingModel
                       ? "Every catalogue service is eligible. Add an override only when a specific service needs a different discount."
                       : "Add agreed services, limits, contract prices, discounts, and overage prices."}
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
-            ) : contract.commitmentModel === "flexible_value" || contract.pricingModel ? (
+            ) : contract.commitmentModel === "flexible_value" ||
+              contract.pricingModel ? (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[560px] text-sm">
-                  <thead><tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground"><th className="px-3 py-3">Service</th><th className="px-3 py-3">Group</th><th className="px-3 py-3">Override</th>{canEditOriginal ? <th className="px-3 py-3">Actions</th> : null}</tr></thead>
-                  <tbody>{lineItems.map((line) => <tr key={line._id} className="border-b last:border-0"><td className="px-3 py-3"><div className="font-medium">{line.itemName}</div><div className="text-muted-foreground">{line.serviceCode ?? line.serviceCategory}</div></td><td className="px-3 py-3">{productGroupLabel(line.productGroup)}</td><td className="px-3 py-3">{formatDiscount(line, groupDiscountByKey)}</td>{canEditOriginal ? <td className="px-3 py-3"><Button size="sm" variant="outline" onClick={() => void handleRemove(line)}><Trash2 className="h-4 w-4" /></Button></td> : null}</tr>)}</tbody>
+                  <thead>
+                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-3">Service</th>
+                      <th className="px-3 py-3">Group</th>
+                      <th className="px-3 py-3">Override</th>
+                      {canEditOriginal ? (
+                        <th className="px-3 py-3">Actions</th>
+                      ) : null}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineItems.map((line) => (
+                      <tr key={line._id} className="border-b last:border-0">
+                        <td className="px-3 py-3">
+                          <div className="font-medium">{line.itemName}</div>
+                          <div className="text-muted-foreground">
+                            {line.serviceCode ?? line.serviceCategory}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          {productGroupLabel(line.productGroup)}
+                        </td>
+                        <td className="px-3 py-3">
+                          {formatDiscount(line, groupDiscountByKey)}
+                        </td>
+                        {canEditOriginal ? (
+                          <td className="px-3 py-3">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void handleRemove(line)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </td>
+                        ) : null}
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
             ) : (
@@ -1347,24 +1364,52 @@ export default function CustomerContractDetailPage() {
           </CardContent>
         </Card>
 
-        {canEditOriginal && (contract.commitmentModel === "flexible_value" || contract.pricingModel) ? (
+        {canEditOriginal &&
+        (contract.commitmentModel === "flexible_value" ||
+          contract.pricingModel) ? (
           <Card>
-            <CardHeader><CardTitle>Add or update service override</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Add or update service override</CardTitle>
+            </CardHeader>
             <CardContent>
               <form className="space-y-4" onSubmit={handleOverrideSubmit}>
                 <Field label="Catalogue service">
-                  <CatalogItemCombobox items={serviceCatalog} value={overrideCatalogItemId} onValueChange={(value) => setOverrideCatalogItemId(value as Id<"serviceCatalog">)} />
+                  <CatalogItemCombobox
+                    items={serviceCatalog}
+                    value={overrideCatalogItemId}
+                    onValueChange={(value) =>
+                      setOverrideCatalogItemId(value as Id<"serviceCatalog">)
+                    }
+                  />
                 </Field>
                 <Field label="Discount percentage">
-                  <Input type="number" min="0" max="100" step="0.01" value={overrideDiscount} onChange={(event) => setOverrideDiscount(event.target.value)} />
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={overrideDiscount}
+                    onChange={(event) =>
+                      setOverrideDiscount(event.target.value)
+                    }
+                  />
                 </Field>
-                <Button type="submit" disabled={pending || !overrideCatalogItemId || overrideDiscount === ""}>Save Override</Button>
+                <Button
+                  type="submit"
+                  disabled={
+                    pending || !overrideCatalogItemId || overrideDiscount === ""
+                  }
+                >
+                  Save Override
+                </Button>
               </form>
             </CardContent>
           </Card>
         ) : null}
 
-        {canEditOriginal && contract.commitmentModel !== "flexible_value" && !contract.pricingModel ? (
+        {canEditOriginal &&
+        contract.commitmentModel !== "flexible_value" &&
+        !contract.pricingModel ? (
           <Card>
             <CardHeader>
               <CardTitle>
@@ -1713,33 +1758,110 @@ export default function CustomerContractDetailPage() {
           ) : usageComparison.monthlyPricing ? (
             <div className="space-y-4">
               <div className="grid gap-4 md:grid-cols-5">
-                <UsageSummaryCard label="Catalogue usage" value={formatMoney(usageComparison.monthlyPricing.catalogueUsage, contract.currency)} />
-                <UsageSummaryCard label="After discounts" value={formatMoney(usageComparison.monthlyPricing.discountedUsage, contract.currency)} />
-                <UsageSummaryCard label="Contracted minimum" value={formatMoney(usageComparison.monthlyPricing.minimum, contract.currency)} />
-                <UsageSummaryCard label="Internal shortfall" value={formatMoney(usageComparison.monthlyPricing.shortfall, contract.currency)} />
-                <UsageSummaryCard label="Amount payable" value={formatMoney(usageComparison.monthlyPricing.payable, contract.currency)} />
+                <UsageSummaryCard
+                  label="Catalogue usage"
+                  value={formatMoney(
+                    usageComparison.monthlyPricing.catalogueUsage,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="After discounts"
+                  value={formatMoney(
+                    usageComparison.monthlyPricing.discountedUsage,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Contracted minimum"
+                  value={formatMoney(
+                    usageComparison.monthlyPricing.minimum,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Internal shortfall"
+                  value={formatMoney(
+                    usageComparison.monthlyPricing.shortfall,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Amount payable"
+                  value={formatMoney(
+                    usageComparison.monthlyPricing.payable,
+                    contract.currency,
+                  )}
+                />
               </div>
               <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                When the minimum applies, the customer invoice presents it as the contracted payable amount. The shortfall remains an internal management figure, not an extra-charge line.
+                When the minimum applies, the customer invoice presents it as
+                the contracted payable amount. The shortfall remains an internal
+                management figure, not an extra-charge line.
               </p>
               {usageComparison.monthlyPricing.reconciliation?.difference ? (
                 <p className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-                  Usage changed after invoice creation. The current payable amount differs from the invoice by {formatMoney(usageComparison.monthlyPricing.reconciliation.difference, contract.currency)}. Cancel or void the existing invoice and regenerate it after reviewing the usage correction.
+                  Usage changed after invoice creation. The current payable
+                  amount differs from the invoice by{" "}
+                  {formatMoney(
+                    usageComparison.monthlyPricing.reconciliation.difference,
+                    contract.currency,
+                  )}
+                  . Cancel or void the existing invoice and regenerate it after
+                  reviewing the usage correction.
                 </p>
               ) : null}
             </div>
           ) : usageComparison.flexible ? (
             <div className="space-y-4">
               <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
-                <UsageSummaryCard label="Commitment" value={formatMoney(usageComparison.flexible.commitmentValue, contract.currency)} />
-                <UsageSummaryCard label="Catalogue usage" value={formatMoney(usageComparison.flexible.catalogueUsage, contract.currency)} />
-                <UsageSummaryCard label="Discounted usage" value={formatMoney(usageComparison.flexible.discountedUsage, contract.currency)} />
-                <UsageSummaryCard label="Consumed" value={formatMoney(usageComparison.flexible.consumed, contract.currency)} />
-                <UsageSummaryCard label="Remaining" value={formatMoney(usageComparison.flexible.remaining, contract.currency)} />
-                <UsageSummaryCard label="Overage" value={formatMoney(usageComparison.flexible.overage, contract.currency)} />
+                <UsageSummaryCard
+                  label="Commitment"
+                  value={formatMoney(
+                    usageComparison.flexible.commitmentValue,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Catalogue usage"
+                  value={formatMoney(
+                    usageComparison.flexible.catalogueUsage,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Discounted usage"
+                  value={formatMoney(
+                    usageComparison.flexible.discountedUsage,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Consumed"
+                  value={formatMoney(
+                    usageComparison.flexible.consumed,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Remaining"
+                  value={formatMoney(
+                    usageComparison.flexible.remaining,
+                    contract.currency,
+                  )}
+                />
+                <UsageSummaryCard
+                  label="Overage"
+                  value={formatMoney(
+                    usageComparison.flexible.overage,
+                    contract.currency,
+                  )}
+                />
               </div>
               <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                All catalogue services are eligible. Discounted usage consumes one shared contract balance in chronological order; usage beyond it is charged at catalogue price.
+                All catalogue services are eligible. Discounted usage consumes
+                one shared contract balance in chronological order; usage beyond
+                it is charged at catalogue price.
               </p>
             </div>
           ) : usageComparison.rows.length === 0 ? (
@@ -1881,17 +2003,6 @@ export default function CustomerContractDetailPage() {
           )}
         </CardContent>
       </Card>
-      <ContractDialog
-        canManage={canManage}
-        companies={sortedCompanies}
-        editing
-        form={contractForm}
-        open={contractDialogOpen}
-        pending={contractPending}
-        setForm={setContractForm}
-        setOpen={setContractDialogOpen}
-        onSubmit={handleContractSubmit}
-      />
     </div>
   );
 }

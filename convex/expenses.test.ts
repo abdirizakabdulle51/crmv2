@@ -241,6 +241,31 @@ async function updateFinanceSettings(
 }
 
 describe("expenses", () => {
+  it("requires global users to select a country", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await expect(
+      asUser(t, s.ceo).mutation(api.expenses.createExpenseRequest, {
+        title: "Global expense",
+        categoryId: s.category,
+        amount: 10,
+        expenseDate: Date.UTC(2026, 7, 5),
+      }),
+    ).rejects.toThrow("Select the expense country");
+    const expenseId = await asUser(t, s.ceo).mutation(
+      api.expenses.createExpenseRequest,
+      {
+        title: "Somalia expense",
+        categoryId: s.category,
+        amount: 10,
+        expenseDate: Date.UTC(2026, 7, 5),
+        countryId: s.countryA,
+      },
+    );
+    expect((await t.run((ctx) => ctx.db.get(expenseId)))?.countryId).toBe(
+      s.countryA,
+    );
+  });
   it("allows an Account Manager to create and submit own expense", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

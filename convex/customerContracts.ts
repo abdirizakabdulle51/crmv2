@@ -14,7 +14,11 @@ import {
   roundMoney,
   sumMoney,
 } from "./money";
-import { contractDiscount, contractOveragePrice, isDynamicPricingContract } from "./contractPricing";
+import {
+  contractDiscount,
+  contractOveragePrice,
+  isDynamicPricingContract,
+} from "./contractPricing";
 import {
   priceFlexibleContractUsage,
   priceMonthlyContractUsage,
@@ -379,10 +383,7 @@ function normalizeFields(args: ContractInput) {
       message: "Monthly usage contracts cannot have a total commitment balance",
     });
   }
-  if (
-    args.pricingModel !== "monthly_minimum" &&
-    monthlyMinimum !== undefined
-  ) {
+  if (args.pricingModel !== "monthly_minimum" && monthlyMinimum !== undefined) {
     throw new ConvexError({
       code: "BAD_REQUEST",
       message: "A monthly minimum is only valid for monthly minimum contracts",
@@ -437,7 +438,7 @@ function normalizeFields(args: ContractInput) {
       args.pricingModel === "monthly_minimum" ||
       args.pricingModel === "discounted_usage"
         ? undefined
-        : args.overagePricingPolicy ?? "current_catalog",
+        : (args.overagePricingPolicy ?? "current_catalog"),
     paymentTermDays: args.paymentTermDays,
     signedDocumentUrl: optionalText(args.signedDocumentUrl),
     notes: optionalText(args.notes),
@@ -638,10 +639,19 @@ async function assertUniqueContractNumber(
 ) {
   const contracts = await ctx.db
     .query("customerContracts")
-    .withIndex("by_contract_number", (q) => q.eq("contractNumber", contractNumber))
+    .withIndex("by_contract_number", (q) =>
+      q.eq("contractNumber", contractNumber),
+    )
     .collect();
-  if (contracts.some((row) => row.companyId === companyId && row._id !== excludeId)) {
-    throw new ConvexError({ code: "BAD_REQUEST", message: "Contract number already exists for this customer" });
+  if (
+    contracts.some(
+      (row) => row.companyId === companyId && row._id !== excludeId,
+    )
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Contract number already exists for this customer",
+    });
   }
 }
 
@@ -922,7 +932,11 @@ export const usageComparison = query({
       contract.pricingModel === "monthly_minimum" ||
       contract.pricingModel === "discounted_usage"
     ) {
-      const pricing = await priceMonthlyContractUsage(ctx, contract, args.month);
+      const pricing = await priceMonthlyContractUsage(
+        ctx,
+        contract,
+        args.month,
+      );
       const invoice = (
         await ctx.db
           .query("invoices")
@@ -973,7 +987,11 @@ export const usageComparison = query({
       contract.pricingModel === "flexible_total_commitment"
     ) {
       const through = monthEndTimestamp(args.month);
-      const allocations = await priceFlexibleContractUsage(ctx, contract, through);
+      const allocations = await priceFlexibleContractUsage(
+        ctx,
+        contract,
+        through,
+      );
       const remainingCommitment =
         allocations.at(-1)?.remainingCommitment ?? contract.contractValue ?? 0;
       return {
@@ -992,16 +1010,12 @@ export const usageComparison = query({
         },
         flexible: {
           commitmentValue: contract.contractValue ?? 0,
-          consumed: sumMoney(
-            allocations.map((row) => row.commitmentConsumed),
-          ),
+          consumed: sumMoney(allocations.map((row) => row.commitmentConsumed)),
           remaining: remainingCommitment,
           discountedUsage: sumMoney(
             allocations.map((row) => row.discountedAmount),
           ),
-          catalogueUsage: sumMoney(
-            allocations.map((row) => row.grossAmount),
-          ),
+          catalogueUsage: sumMoney(allocations.map((row) => row.grossAmount)),
           overage: sumMoney(allocations.map((row) => row.overageAmount)),
         },
       };
@@ -1209,10 +1223,15 @@ export const create = mutation({
     if (fields.status !== "draft") {
       throw new ConvexError({
         code: "BAD_REQUEST",
-        message: "New contracts must be saved as drafts and activated after services are added",
+        message:
+          "New contracts must be saved as drafts and activated after services are added",
       });
     }
-    await assertUniqueContractNumber(ctx, fields.companyId, fields.contractNumber);
+    await assertUniqueContractNumber(
+      ctx,
+      fields.companyId,
+      fields.contractNumber,
+    );
     const now = Date.now();
     const contractId = await ctx.db.insert("customerContracts", {
       ...fields,
@@ -1269,7 +1288,11 @@ export const createConfigured = mutation({
         message: "Select at least one contract service",
       });
     }
-    await assertUniqueContractNumber(ctx, fields.companyId, fields.contractNumber);
+    await assertUniqueContractNumber(
+      ctx,
+      fields.companyId,
+      fields.contractNumber,
+    );
     const discountByGroup = new Map<string, number>();
     for (const rule of groupDiscounts) {
       const group = normalizeProductGroup(rule.productGroup)!;
@@ -1279,13 +1302,20 @@ export const createConfigured = mutation({
           message: `Duplicate discount rule for ${group}`,
         });
       }
-      discountByGroup.set(group, normalizeDiscountPercent(rule.discountPercent));
+      discountByGroup.set(
+        group,
+        normalizeDiscountPercent(rule.discountPercent),
+      );
     }
 
     const catalogs = [];
     const seenCatalogIds = new Set<string>();
     for (const service of services) {
-      if (!Number.isFinite(service.includedQuantity) || (!isDynamic && service.includedQuantity <= 0) || service.includedQuantity < 0) {
+      if (
+        !Number.isFinite(service.includedQuantity) ||
+        (!isDynamic && service.includedQuantity <= 0) ||
+        service.includedQuantity < 0
+      ) {
         throw new ConvexError({
           code: "BAD_REQUEST",
           message: isDynamic
@@ -1302,7 +1332,10 @@ export const createConfigured = mutation({
       seenCatalogIds.add(service.catalogItemId);
       const catalog = await ctx.db.get(service.catalogItemId);
       if (!catalog) {
-        throw new ConvexError({ code: "NOT_FOUND", message: "Catalogue item not found" });
+        throw new ConvexError({
+          code: "NOT_FOUND",
+          message: "Catalogue item not found",
+        });
       }
       const productGroup = normalizeProductGroup(catalog.productGroup);
       if (!productGroup) {
@@ -1379,6 +1412,144 @@ export const createConfigured = mutation({
   },
 });
 
+export const updateConfigured = mutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    ...contractFieldsValidator,
+    groupDiscounts: v.array(
+      v.object({ productGroup: v.string(), discountPercent: v.number() }),
+    ),
+    services: v.array(
+      v.object({
+        catalogItemId: v.id("serviceCatalog"),
+        serviceDiscountPercent: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const existing = await ctx.db.get(args.contractId);
+    if (!existing)
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Contract not found",
+      });
+    assertDraftContract(existing);
+    if (!existing.pricingModel)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Legacy service-line contracts must be edited from their service lines or converted explicitly",
+      });
+    await getVisibleCompany(ctx, user, args.companyId);
+    const { contractId, groupDiscounts, services, ...rawFields } = args;
+    const fields = normalizeFields({
+      ...rawFields,
+      commitmentModel: rawFields.commitmentModel ?? existing.commitmentModel,
+      pricingModel: rawFields.pricingModel ?? existing.pricingModel,
+      monthlyMinimum: rawFields.monthlyMinimum ?? existing.monthlyMinimum,
+    });
+    if (fields.status !== "draft")
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only draft contracts can be edited",
+      });
+    await assertUniqueContractNumber(
+      ctx,
+      fields.companyId,
+      fields.contractNumber,
+      contractId,
+    );
+
+    const discounts = new Map<string, number>();
+    for (const rule of groupDiscounts) {
+      const group = normalizeProductGroup(rule.productGroup)!;
+      if (discounts.has(group))
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: `Duplicate discount rule for ${group}`,
+        });
+      discounts.set(group, normalizeDiscountPercent(rule.discountPercent));
+    }
+    const prepared = [];
+    const codes = new Set<string>();
+    for (const service of services) {
+      const catalog = await ctx.db.get(service.catalogItemId);
+      if (!catalog?.productGroup || !catalog.serviceCode)
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message:
+            "Service overrides require a classified catalogue service and code",
+        });
+      if (codes.has(catalog.serviceCode))
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: `Duplicate service override for ${catalog.serviceCode}`,
+        });
+      codes.add(catalog.serviceCode);
+      prepared.push({
+        catalog,
+        discount: normalizeDiscountPercent(service.serviceDiscountPercent),
+      });
+    }
+
+    const [oldGroups, oldLines] = await Promise.all([
+      ctx.db
+        .query("customerContractGroupDiscounts")
+        .withIndex("by_contract", (q) => q.eq("contractId", contractId))
+        .collect(),
+      ctx.db
+        .query("customerContractLineItems")
+        .withIndex("by_contract", (q) => q.eq("contractId", contractId))
+        .collect(),
+    ]);
+    for (const row of [...oldGroups, ...oldLines]) await ctx.db.delete(row._id);
+    const now = Date.now();
+    await ctx.db.patch(contractId, {
+      ...fields,
+      activatedAt: existing.activatedAt,
+      updatedAt: now,
+    });
+    for (const [productGroup, discountPercent] of discounts)
+      await ctx.db.insert("customerContractGroupDiscounts", {
+        contractId,
+        productGroup,
+        discountPercent,
+        createdBy: user._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+    for (const { catalog, discount } of prepared)
+      await ctx.db.insert("customerContractLineItems", {
+        contractId,
+        catalogItemId: catalog._id,
+        itemName: catalog.itemName,
+        serviceCategory: catalog.serviceCategory,
+        productGroup: catalog.productGroup,
+        serviceCode: catalog.serviceCode,
+        description: catalog.specs,
+        includedQuantity: 0,
+        unit: catalog.billingUnit,
+        catalogUnitPrice: catalog.monthlyPrice,
+        contractUnitPrice: catalog.monthlyPrice,
+        discountType: "percentage",
+        discountValue: discount,
+        billingUnit: catalog.billingUnit,
+        createdBy: user._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+    await insertEvent(
+      ctx,
+      contractId,
+      user._id,
+      "updated",
+      "Contract terms and discount rules updated",
+    );
+  },
+});
+
 export const listGroupDiscounts = query({
   args: { contractId: v.id("customerContracts") },
   handler: async (ctx, args) => {
@@ -1404,13 +1575,21 @@ export const setGroupDiscounts = mutation({
     const user = await getCurrentUserOrThrow(ctx);
     assertCanManageContracts(user);
     const contract = await ctx.db.get(args.contractId);
-    if (!contract) throw new ConvexError({ code: "NOT_FOUND", message: "Contract not found" });
+    if (!contract)
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Contract not found",
+      });
     assertDraftContract(contract);
     await getVisibleCompany(ctx, user, contract.companyId);
     const normalized = new Map<string, number>();
     for (const rule of args.discounts) {
       const group = normalizeProductGroup(rule.productGroup)!;
-      if (normalized.has(group)) throw new ConvexError({ code: "BAD_REQUEST", message: `Duplicate discount rule for ${group}` });
+      if (normalized.has(group))
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: `Duplicate discount rule for ${group}`,
+        });
       normalized.set(group, normalizeDiscountPercent(rule.discountPercent));
     }
     const existing = await ctx.db
@@ -1444,14 +1623,18 @@ export const setServiceDiscountOverride = mutation({
     assertCanManageContracts(user);
     const contract = await ctx.db.get(args.contractId);
     if (!contract) {
-      throw new ConvexError({ code: "NOT_FOUND", message: "Contract not found" });
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Contract not found",
+      });
     }
     assertDraftContract(contract);
     await getVisibleCompany(ctx, user, contract.companyId);
     if (!isDynamicPricingContract(contract)) {
       throw new ConvexError({
         code: "BAD_REQUEST",
-        message: "Service discount overrides are only valid for dynamic-pricing contracts",
+        message:
+          "Service discount overrides are only valid for dynamic-pricing contracts",
       });
     }
     const catalog = await ctx.db.get(args.catalogItemId);

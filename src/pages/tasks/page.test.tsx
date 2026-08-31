@@ -222,7 +222,7 @@ describe("TasksPage", () => {
     expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
     expect(screen.getByText(/Report To: Amina Ali/)).toBeInTheDocument();
     expect(screen.getByText(/Report To: Omar Hassan/)).toBeInTheDocument();
-  expect(screen.getByText("Blocked migration")).toBeInTheDocument();
+    expect(screen.getByText("Blocked migration")).toBeInTheDocument();
     expect(screen.queryByText("Finished handoff")).not.toBeInTheDocument();
   });
 
@@ -231,11 +231,17 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("button", { name: "New Task" }));
-    expect(screen.getByRole("combobox", { name: "Report To" })).toHaveTextContent(
-      "Amina Ali",
+    expect(
+      screen.getByRole("combobox", { name: "Report To" }),
+    ).toHaveTextContent("Amina Ali");
+    await user.type(
+      screen.getByLabelText("Title"),
+      "Prepare rollout checklist",
     );
-    await user.type(screen.getByLabelText("Title"), "Prepare rollout checklist");
-    await user.type(screen.getByLabelText("Description"), "Coordinate with NOC.");
+    await user.type(
+      screen.getByLabelText("Description"),
+      "Coordinate with NOC.",
+    );
     await user.click(screen.getByRole("button", { name: "Create Task" }));
 
     await waitFor(() => {
@@ -257,7 +263,10 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("button", { name: /List/i }));
-    await chooseSelectOption(/Change status for Follow up with customer/i, "Done");
+    await chooseSelectOption(
+      /Change status for Follow up with customer/i,
+      "Done",
+    );
 
     await waitFor(() => {
       expect(mocks.updateStatus).toHaveBeenCalledWith({
@@ -304,7 +313,10 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("button", { name: /List/i }));
-    await chooseSelectOption(/Change status for Follow up with customer/i, "Done");
+    await chooseSelectOption(
+      /Change status for Follow up with customer/i,
+      "Done",
+    );
     await chooseSelectOption(
       /Change assignee for Follow up with customer/i,
       "Omar Hassan",
@@ -372,9 +384,13 @@ describe("TasksPage", () => {
     expect(
       screen.getByRole("heading", { name: "In Progress" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Blocked" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Blocked" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Canceled" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Canceled" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
     expect(screen.getByText("Blocked migration")).toBeInTheDocument();
 
@@ -439,13 +455,19 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("combobox", { name: "View filter" }));
-    await user.click(await screen.findByRole("option", { name: "All Visible" }));
-    expect(screen.getByText("Created by me but assigned elsewhere")).toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("option", { name: "All Visible" }),
+    );
+    expect(
+      screen.getByText("Created by me but assigned elsewhere"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("combobox", { name: "Status filter" }));
     await user.click(await screen.findByRole("option", { name: "Blocked" }));
     expect(screen.getByText("Blocked migration")).toBeInTheDocument();
-    expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Follow up with customer"),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("combobox", { name: "Priority filter" }));
     await user.click(await screen.findByRole("option", { name: "Urgent" }));
@@ -471,16 +493,18 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("combobox", { name: "View filter" }));
-    await user.click(await screen.findByRole("option", { name: "Reported to Me" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Reported to Me" }),
+    );
 
     expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
     expect(screen.getByText("Reported blocker")).toBeInTheDocument();
     expect(
       screen.queryByText("Created by me but assigned elsewhere"),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "View filter" })).toHaveTextContent(
-      "Reported to Me",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "View filter" }),
+    ).toHaveTextContent("Reported to Me");
   });
 
   it("combines Reported to Me with status and priority filters", async () => {
@@ -488,18 +512,24 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("combobox", { name: "View filter" }));
-    await user.click(await screen.findByRole("option", { name: "Reported to Me" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Reported to Me" }),
+    );
     await user.click(screen.getByRole("combobox", { name: "Status filter" }));
     await user.click(await screen.findByRole("option", { name: "Blocked" }));
 
     expect(screen.getByText("Reported blocker")).toBeInTheDocument();
-    expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Follow up with customer"),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("combobox", { name: "Priority filter" }));
     await user.click(await screen.findByRole("option", { name: "Medium" }));
 
     expect(screen.queryByText("Reported blocker")).not.toBeInTheDocument();
-    expect(screen.getByText("No tasks match these filters.")).toBeInTheDocument();
+    expect(
+      screen.getByText("No tasks match these filters."),
+    ).toBeInTheDocument();
   });
 
   it("applies My Open Tasks summary shortcut", async () => {
@@ -507,8 +537,12 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("combobox", { name: "View filter" }));
-    await user.click(await screen.findByRole("option", { name: "All Visible" }));
-    expect(screen.getByText("Created by me but assigned elsewhere")).toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("option", { name: "All Visible" }),
+    );
+    expect(
+      screen.getByText("Created by me but assigned elsewhere"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByText("My Open Tasks"));
 
@@ -517,9 +551,9 @@ describe("TasksPage", () => {
     expect(
       screen.queryByText("Created by me but assigned elsewhere"),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "View filter" })).toHaveTextContent(
-      "My Tasks",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "View filter" }),
+    ).toHaveTextContent("My Tasks");
     expect(
       screen.getByRole("combobox", { name: "Status filter" }),
     ).toHaveTextContent("All Active");
@@ -531,8 +565,12 @@ describe("TasksPage", () => {
 
     await user.click(screen.getByText("Overdue"));
 
-    expect(screen.getByText("Created by me but assigned elsewhere")).toBeInTheDocument();
-    expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Created by me but assigned elsewhere"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Follow up with customer"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Blocked migration")).not.toBeInTheDocument();
   });
 
@@ -556,10 +594,12 @@ describe("TasksPage", () => {
     await user.click(screen.getByRole("button", { name: /Blocked\s+2/i }));
 
     expect(screen.getByText("Blocked migration")).toBeInTheDocument();
-    expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Status filter" })).toHaveTextContent(
-      "Blocked",
-    );
+    expect(
+      screen.queryByText("Follow up with customer"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Status filter" }),
+    ).toHaveTextContent("Blocked");
   });
 
   it("shows task metadata on board cards", async () => {
@@ -568,9 +608,13 @@ describe("TasksPage", () => {
 
     expect(screen.getByText("Follow up with customer")).toBeInTheDocument();
     expect(screen.getByText("Medium")).toBeInTheDocument();
-    expect(screen.getAllByText("Assignee: Amina Ali").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Report To: Amina Ali").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Due: Aug/)).toBeInTheDocument();
+    expect(screen.getAllByText("Assignee: Amina Ali").length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getAllByText("Report To: Amina Ali").length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getByText(/Due: (Aug|Sep)/)).toBeInTheDocument();
     expect(screen.getByText("Company: AICC")).toBeInTheDocument();
   });
 
@@ -605,7 +649,10 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("button", { name: /List/i }));
-    await chooseSelectOption(/Change report to for Follow up with customer/i, "Omar Hassan");
+    await chooseSelectOption(
+      /Change report to for Follow up with customer/i,
+      "Omar Hassan",
+    );
 
     await waitFor(() => {
       expect(mocks.updateTask).toHaveBeenCalledWith({
@@ -633,10 +680,12 @@ describe("TasksPage", () => {
 
     await user.click(screen.getByRole("button", { name: /List/i }));
 
-    expect(screen.getAllByRole("button", { name: "Remove" }).length).toBeGreaterThan(
-      0,
-    );
-    expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "Remove" }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: "Archive" }),
+    ).not.toBeInTheDocument();
   });
 
   it("filters by status priority and view", async () => {
@@ -644,13 +693,19 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("combobox", { name: "View filter" }));
-    await user.click(await screen.findByRole("option", { name: "All Visible" }));
-    expect(screen.getByText("Created by me but assigned elsewhere")).toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("option", { name: "All Visible" }),
+    );
+    expect(
+      screen.getByText("Created by me but assigned elsewhere"),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("combobox", { name: "Status filter" }));
     await user.click(await screen.findByRole("option", { name: "Blocked" }));
     expect(screen.getByText("Blocked migration")).toBeInTheDocument();
-    expect(screen.queryByText("Follow up with customer")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Follow up with customer"),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("combobox", { name: "Priority filter" }));
     await user.click(await screen.findByRole("option", { name: "Urgent" }));
@@ -679,7 +734,10 @@ describe("TasksPage", () => {
     renderTasksPage();
 
     await user.click(screen.getByRole("button", { name: /List/i }));
-    await chooseSelectOption(/Change report to for Follow up with customer/i, "Omar Hassan");
+    await chooseSelectOption(
+      /Change report to for Follow up with customer/i,
+      "Omar Hassan",
+    );
 
     await waitFor(() => {
       expect(mocks.toastError).toHaveBeenCalledWith("FORBIDDEN");

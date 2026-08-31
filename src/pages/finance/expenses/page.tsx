@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
+import { useCrm } from "@/lib/crm-context.tsx";
 
 type Expense = Doc<"expenseRequests">;
 type ExpenseStatus = Expense["status"];
@@ -54,7 +55,9 @@ const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
 ];
 
 function statusLabel(status: ExpenseStatus) {
-  return STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+  return (
+    STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status
+  );
 }
 
 function statusBadge(status: ExpenseStatus) {
@@ -128,6 +131,7 @@ function userDisplay(user?: Doc<"users">) {
 }
 
 export default function ExpensesPage() {
+  const { currentUser } = useCrm();
   const navigate = useNavigate();
   const expenses = useQuery(api.expenses.listExpenseRequests, {});
   const categories = useQuery(api.expenses.listExpenseCategories, {});
@@ -144,7 +148,8 @@ export default function ExpensesPage() {
   const [pendingCreate, setPendingCreate] = useState(false);
 
   const categoryMap = useMemo(
-    () => new Map((categories ?? []).map((category) => [category._id, category])),
+    () =>
+      new Map((categories ?? []).map((category) => [category._id, category])),
     [categories],
   );
   const userMap = useMemo(
@@ -177,18 +182,24 @@ export default function ExpensesPage() {
   const activeCategories = categories.filter((category) => category.isActive);
   const summary = {
     draft: expenses.filter((expense) => expense.status === "draft").length,
-    submitted: expenses.filter((expense) => expense.status === "submitted").length,
-    approved: expenses.filter((expense) => expense.status === "approved").length,
+    submitted: expenses.filter((expense) => expense.status === "submitted")
+      .length,
+    approved: expenses.filter((expense) => expense.status === "approved")
+      .length,
     paid: expenses.filter((expense) => expense.status === "paid").length,
   };
 
   const filteredExpenses = expenses
     .filter((expense) => {
-      if (statusFilter !== "all" && expense.status !== statusFilter) return false;
+      if (statusFilter !== "all" && expense.status !== statusFilter)
+        return false;
       if (categoryFilter !== "all" && expense.categoryId !== categoryFilter) {
         return false;
       }
-      if (requesterFilter !== "all" && expense.requestedBy !== requesterFilter) {
+      if (
+        requesterFilter !== "all" &&
+        expense.requestedBy !== requesterFilter
+      ) {
         return false;
       }
       if (companyFilter !== "all" && expense.companyId !== companyFilter) {
@@ -399,6 +410,8 @@ export default function ExpensesPage() {
         pending={pendingCreate}
         categories={activeCategories}
         companies={companies}
+        countries={countries}
+        currentUser={currentUser}
         onOpenChange={setCreateOpen}
         onSubmit={async (values) => {
           setPendingCreate(true);
@@ -440,6 +453,8 @@ function NewExpenseDialog({
   pending,
   categories,
   companies,
+  countries,
+  currentUser,
   onOpenChange,
   onSubmit,
 }: {
@@ -447,6 +462,8 @@ function NewExpenseDialog({
   pending: boolean;
   categories: Doc<"expenseCategories">[];
   companies: Doc<"companies">[];
+  countries: Doc<"countries">[];
+  currentUser: Doc<"users"> | null | undefined;
   onOpenChange: (open: boolean) => void;
   onSubmit: (values: {
     title: string;
@@ -456,6 +473,7 @@ function NewExpenseDialog({
     expenseDate: number;
     vendor?: string;
     companyId?: Id<"companies">;
+    countryId?: Id<"countries">;
     description?: string;
   }) => Promise<void>;
 }) {
@@ -466,6 +484,13 @@ function NewExpenseDialog({
   const [expenseDate, setExpenseDate] = useState(todayInputValue());
   const [vendor, setVendor] = useState("");
   const [companyId, setCompanyId] = useState("none");
+  const isGlobal =
+    currentUser?.organizationScope === "global" ||
+    (currentUser?.organizationScope === undefined &&
+      !currentUser?.countryId &&
+      (currentUser?.role === "ceo" ||
+        currentUser?.role === "head_of_business"));
+  const [countryId, setCountryId] = useState(currentUser?.countryId ?? "");
   const [description, setDescription] = useState("");
   const selectedCategory = categories.find(
     (category) => category._id === categoryId,
@@ -479,6 +504,7 @@ function NewExpenseDialog({
     setExpenseDate(todayInputValue());
     setVendor("");
     setCompanyId("none");
+    setCountryId(currentUser?.countryId ?? "");
     setDescription("");
   };
 
@@ -502,6 +528,10 @@ function NewExpenseDialog({
       toast.error("Expense date is required");
       return;
     }
+    if (!countryId) {
+      toast.error("Please select the expense country");
+      return;
+    }
     await onSubmit({
       title: title.trim(),
       categoryId: categoryId as Id<"expenseCategories">,
@@ -511,6 +541,7 @@ function NewExpenseDialog({
       vendor: vendor.trim() || undefined,
       companyId:
         companyId === "none" ? undefined : (companyId as Id<"companies">),
+      countryId: countryId as Id<"countries">,
       description: description.trim() || undefined,
     });
     resetForm();
@@ -606,6 +637,38 @@ function NewExpenseDialog({
                 />
               </div>
               <div className="space-y-2">
+                <Label>Country</Label>
+                {isGlobal ? (
+                  <Select
+                    value={countryId}
+                    onValueChange={(value) => {
+                      setCountryId(value);
+                      setCompanyId("none");
+                    }}
+                  >
+                    <SelectTrigger aria-label="Expense country">
+                      <SelectValue placeholder="Select country" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {countries.map((country) => (
+                        <SelectItem key={country._id} value={country._id}>
+                          {country.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    value={
+                      countries.find(
+                        (country) => country._id === currentUser?.countryId,
+                      )?.name ?? "Country assignment required"
+                    }
+                    disabled
+                  />
+                )}
+              </div>
+              <div className="space-y-2">
                 <Label>Company</Label>
                 <Select value={companyId} onValueChange={setCompanyId}>
                   <SelectTrigger aria-label="Expense company">
@@ -613,11 +676,13 @@ function NewExpenseDialog({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">No company</SelectItem>
-                    {companies.map((company) => (
-                      <SelectItem key={company._id} value={company._id}>
-                        {company.name}
-                      </SelectItem>
-                    ))}
+                    {companies
+                      .filter((company) => company.countryId === countryId)
+                      .map((company) => (
+                        <SelectItem key={company._id} value={company._id}>
+                          {company.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>

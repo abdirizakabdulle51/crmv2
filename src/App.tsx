@@ -160,6 +160,9 @@ export default function App() {
               path="/finance/reports"
               element={lazyPage(<FinanceReportsPage />)}
             />
+            <Route path="/finance/reports/revenue" element={lazyPage(<FinanceReportsPage view="revenue" />)} />
+            <Route path="/finance/reports/expenses" element={lazyPage(<FinanceReportsPage view="expenses" />)} />
+            <Route path="/finance/reports/country" element={lazyPage(<FinanceReportsPage view="country" />)} />
             <Route
               path="/finance/collections"
               element={lazyPage(<CollectionsPage />)}
@@ -186,6 +189,10 @@ export default function App() {
             />
             <Route
               path="/finance/customer-contracts/new"
+              element={lazyPage(<NewCustomerContractPage />)}
+            />
+            <Route
+              path="/finance/customer-contracts/:contractId/edit"
               element={lazyPage(<NewCustomerContractPage />)}
             />
             <Route

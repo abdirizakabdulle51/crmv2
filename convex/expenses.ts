@@ -265,7 +265,23 @@ async function normalizeExpenseScope(
   },
 ) {
   const companyCountryId = await getCompanyCountryId(ctx, user, args.companyId);
-  const countryId = args.countryId ?? companyCountryId ?? user.countryId;
+  const isGlobal =
+    user.organizationScope === "global" ||
+    (user.organizationScope === undefined &&
+      isCeoOrHob(user) &&
+      !user.countryId);
+  const countryId = isGlobal
+    ? (args.countryId ?? companyCountryId)
+    : user.countryId;
+
+  if (!countryId) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: isGlobal
+        ? "Select the expense country"
+        : "Your team profile must be assigned to a country",
+    });
+  }
 
   if (
     companyCountryId !== undefined &&
@@ -278,7 +294,11 @@ async function normalizeExpenseScope(
     });
   }
 
-  if (!isCeoOrHob(user) && user.countryId && countryId !== user.countryId) {
+  if (
+    !isGlobal &&
+    args.countryId !== undefined &&
+    args.countryId !== countryId
+  ) {
     throw new ConvexError({
       code: "FORBIDDEN",
       message: "You can only create expenses in your country",

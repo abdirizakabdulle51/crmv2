@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { NavLink } from "react-router-dom";
 import { useConvex, useQuery } from "convex/react";
 import {
   Bar,
@@ -266,7 +267,13 @@ function canViewReports(role: Doc<"users">["role"] | undefined) {
   return isAdminRole(role) || role === "country_gm";
 }
 
-export default function FinanceReportsPage() {
+type ReportView = "overview" | "revenue" | "expenses" | "country";
+
+export default function FinanceReportsPage({
+  view = "overview",
+}: {
+  view?: ReportView;
+}) {
   const { currentUser } = useCrm();
   const convex = useConvex();
   const [startMonth, setStartMonth] = useState(currentYearStartMonth());
@@ -399,7 +406,15 @@ export default function FinanceReportsPage() {
     return (
       <div className="space-y-6 p-6 md:p-8">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Finance Reports</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {view === "overview"
+              ? "Finance Overview"
+              : view === "revenue"
+                ? "Revenue Report"
+                : view === "expenses"
+                  ? "Expense Report"
+                  : "Country Performance"}
+          </h1>
           <p className="mt-1 text-muted-foreground">
             Operational income and expense reporting for finance leadership.
           </p>
@@ -433,52 +448,135 @@ export default function FinanceReportsPage() {
     );
   }
   const visibleCountries = countries ?? [];
+  const summaryCards =
+    view === "revenue"
+      ? [
+          ["Collected income", formatCurrency(report.totals.income)],
+          [
+            "Recognized revenue",
+            formatCurrency(report.totals.recognizedRevenue ?? 0),
+          ],
+          ["Pre-collected", formatCurrency(report.totals.preCollected ?? 0)],
+          [
+            "Expected collections",
+            formatCurrency(report.totals.expectedCollections ?? 0),
+          ],
+          ["Payments", report.totals.paymentCount.toLocaleString()],
+        ]
+      : view === "expenses"
+        ? [
+            ["Paid expenses", formatCurrency(report.totals.expenses)],
+            [
+              "Paid expense requests",
+              report.monthly
+                .reduce((sum, row) => sum + row.paidExpenseCount, 0)
+                .toLocaleString(),
+            ],
+          ]
+        : view === "country"
+          ? [
+              ["Collections", formatCurrency(report.totals.income)],
+              ["Revenue", formatCurrency(report.totals.recognizedRevenue ?? 0)],
+              ["Expenses", formatCurrency(report.totals.expenses)],
+              ["Net cash", formatCurrency(report.totals.net)],
+            ]
+          : [
+              ["Income", formatCurrency(report.totals.income)],
+              [
+                "Recognized contract revenue",
+                formatCurrency(report.totals.recognizedRevenue ?? 0),
+              ],
+              ["Expenses", formatCurrency(report.totals.expenses)],
+              ["Net", formatCurrency(report.totals.net)],
+            ];
 
   return (
     <div className="space-y-6 p-6 md:p-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Finance Reports</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {view === "overview"
+              ? "Finance Overview"
+              : view === "revenue"
+                ? "Revenue Report"
+                : view === "expenses"
+                  ? "Expense Report"
+                  : "Country Performance"}
+          </h1>
           <p className="mt-1 text-muted-foreground">
             Operational income, expense, and approval status reporting. USD only
             for this phase.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleExportInvoicePayments}
-            disabled={exporting !== null}
-          >
-            <Download className="mr-2 size-4" />
-            {exporting === "invoice-payments"
-              ? "Exporting..."
-              : "Export Invoice Payments CSV"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleExportRegionIncome}
-            disabled={exporting !== null}
-          >
-            <Download className="mr-2 size-4" />
-            {exporting === "region-income"
-              ? "Exporting..."
-              : "Export Region Income CSV"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleExportPaidExpenses}
-            disabled={exporting !== null}
-          >
-            <Download className="mr-2 size-4" />
-            {exporting === "paid-expenses"
-              ? "Exporting..."
-              : "Export Paid Expenses CSV"}
-          </Button>
+          {view === "overview" || view === "revenue" ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleExportInvoicePayments}
+              disabled={exporting !== null}
+            >
+              <Download className="mr-2 size-4" />
+              {exporting === "invoice-payments"
+                ? "Exporting..."
+                : "Export Invoice Payments CSV"}
+            </Button>
+          ) : null}
+          {view === "country" ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleExportRegionIncome}
+              disabled={exporting !== null}
+            >
+              <Download className="mr-2 size-4" />
+              {exporting === "region-income"
+                ? "Exporting..."
+                : "Export Region Income CSV"}
+            </Button>
+          ) : null}
+          {view === "expenses" ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleExportPaidExpenses}
+              disabled={exporting !== null}
+            >
+              <Download className="mr-2 size-4" />
+              {exporting === "paid-expenses"
+                ? "Exporting..."
+                : "Export Paid Expenses CSV"}
+            </Button>
+          ) : null}
         </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2 border-b pb-3">
+        {(
+          [
+            ["overview", "Overview"],
+            ["revenue", "Revenue"],
+            ["expenses", "Expenses"],
+            ["country", "Country performance"],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            asChild
+            variant={view === value ? "default" : "ghost"}
+            size="sm"
+          >
+            <NavLink
+              to={
+                value === "overview"
+                  ? "/finance/reports"
+                  : `/finance/reports/${value}`
+              }
+            >
+              {label}
+            </NavLink>
+          </Button>
+        ))}
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row">
@@ -526,31 +624,9 @@ export default function FinanceReportsPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard
-          title="Income"
-          value={formatCurrency(report.totals.income)}
-        />
-        <SummaryCard
-          title="Recognized contract revenue"
-          value={formatCurrency(report.totals.recognizedRevenue ?? 0)}
-        />
-        <SummaryCard
-          title="Pre-collected allocation"
-          value={formatCurrency(report.totals.preCollected ?? 0)}
-        />
-        <SummaryCard
-          title="Expected collections"
-          value={formatCurrency(report.totals.expectedCollections ?? 0)}
-        />
-        <SummaryCard
-          title="Expenses"
-          value={formatCurrency(report.totals.expenses)}
-        />
-        <SummaryCard title="Net" value={formatCurrency(report.totals.net)} />
-        <SummaryCard
-          title="Paid invoice payments"
-          value={report.totals.paymentCount.toLocaleString()}
-        />
+        {summaryCards.map(([title, value]) => (
+          <SummaryCard key={title} title={title} value={value} />
+        ))}
       </div>
 
       {!hasData ? (
@@ -568,205 +644,242 @@ export default function FinanceReportsPage() {
         </Empty>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Monthly Income vs Expenses</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="h-[320px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={chartData}
-                margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                <XAxis dataKey="label" className="text-xs" />
-                <YAxis tickFormatter={formatCompact} className="text-xs" />
-                <Tooltip
-                  formatter={(value) => formatCurrency(Number(value))}
-                  labelFormatter={(label) => String(label)}
-                />
-                <Legend />
-                <Bar
-                  dataKey="income"
-                  name="Income"
-                  fill="oklch(0.6 0.18 170)"
-                  radius={[4, 4, 0, 0]}
-                />
-                <Bar
-                  dataKey="expenses"
-                  name="Expenses"
-                  fill="oklch(0.65 0.18 35)"
-                  radius={[4, 4, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-3 py-3">Month</th>
-                  <th className="px-3 py-3 text-right">Income</th>
-                  <th className="px-3 py-3 text-right">Recognized</th>
-                  <th className="px-3 py-3 text-right">Pre-collected</th>
-                  <th className="px-3 py-3 text-right">Expected</th>
-                  <th className="px-3 py-3 text-right">Expenses</th>
-                  <th className="px-3 py-3 text-right">Net</th>
-                  <th className="px-3 py-3 text-right">Payments</th>
-                  <th className="px-3 py-3 text-right">Paid Expenses</th>
-                </tr>
-              </thead>
-              <tbody>
-                {report.monthly.map((row) => (
-                  <tr key={row.month} className="border-b last:border-0">
-                    <td className="px-3 py-3 font-medium">
-                      {formatMonthLabel(row.month)}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      {formatCurrency(row.income)}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      {formatCurrency(row.recognizedRevenue ?? 0)}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      {formatCurrency(row.preCollected ?? 0)}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      {formatCurrency(row.expectedCollections ?? 0)}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      {formatCurrency(row.expenses)}
-                    </td>
-                    <td className="px-3 py-3 text-right font-medium">
-                      {formatCurrency(row.net)}
-                    </td>
-                    <td className="px-3 py-3 text-right">{row.paymentCount}</td>
-                    <td className="px-3 py-3 text-right">
-                      {row.paidExpenseCount}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Income by Region / Data Center</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Allocated income from invoice payments. Payments are recorded at the
-            invoice level and split by invoice line item region totals.
-          </p>
-        </CardHeader>
-        <CardContent>
-          {(report.incomeByRegion ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No region income data in this period.
-            </p>
-          ) : (
+      {view === "overview" || view === "revenue" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              {view === "revenue"
+                ? "Monthly Revenue and Collections"
+                : "Monthly Income vs Expenses"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={chartData}
+                  margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                  <XAxis dataKey="label" className="text-xs" />
+                  <YAxis tickFormatter={formatCompact} className="text-xs" />
+                  <Tooltip
+                    formatter={(value) => formatCurrency(Number(value))}
+                    labelFormatter={(label) => String(label)}
+                  />
+                  <Legend />
+                  <Bar
+                    dataKey="income"
+                    name="Income"
+                    fill="oklch(0.6 0.18 170)"
+                    radius={[4, 4, 0, 0]}
+                  />
+                  {view === "overview" ? (
+                    <Bar
+                      dataKey="expenses"
+                      name="Expenses"
+                      fill="oklch(0.65 0.18 35)"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  ) : null}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] text-sm">
+              <table className="w-full min-w-[1050px] text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-3 py-3">Region / Data Center</th>
-                    <th className="px-3 py-3 text-right">Allocated Income</th>
+                    <th className="px-3 py-3">Month</th>
+                    <th className="px-3 py-3 text-right">Income</th>
+                    <th className="px-3 py-3 text-right">Recognized</th>
+                    <th className="px-3 py-3 text-right">Pre-collected</th>
+                    <th className="px-3 py-3 text-right">Expected</th>
+                    {view === "overview" ? (
+                      <>
+                        <th className="px-3 py-3 text-right">Expenses</th>
+                        <th className="px-3 py-3 text-right">Net</th>
+                      </>
+                    ) : null}
                     <th className="px-3 py-3 text-right">Payments</th>
-                    <th className="px-3 py-3 text-right">Invoices</th>
+                    {view === "overview" ? (
+                      <th className="px-3 py-3 text-right">Paid Expenses</th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody>
-                  {(report.incomeByRegion as IncomeByRegionRow[]).map((row) => (
-                    <tr key={row.region} className="border-b last:border-0">
-                      <td className="px-3 py-3 font-medium">{row.region}</td>
+                  {report.monthly.map((row) => (
+                    <tr key={row.month} className="border-b last:border-0">
+                      <td className="px-3 py-3 font-medium">
+                        {formatMonthLabel(row.month)}
+                      </td>
                       <td className="px-3 py-3 text-right">
                         {formatCurrency(row.income)}
                       </td>
                       <td className="px-3 py-3 text-right">
-                        {row.paymentCount}
+                        {formatCurrency(row.recognizedRevenue ?? 0)}
                       </td>
                       <td className="px-3 py-3 text-right">
-                        {row.invoiceCount}
+                        {formatCurrency(row.preCollected ?? 0)}
                       </td>
+                      <td className="px-3 py-3 text-right">
+                        {formatCurrency(row.expectedCollections ?? 0)}
+                      </td>
+                      {view === "overview" ? (
+                        <>
+                          <td className="px-3 py-3 text-right">
+                            {formatCurrency(row.expenses)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-medium">
+                            {formatCurrency(row.net)}
+                          </td>
+                        </>
+                      ) : null}
+                      <td className="px-3 py-3 text-right">
+                        {row.paymentCount}
+                      </td>
+                      {view === "overview" ? (
+                        <td className="px-3 py-3 text-right">
+                          {row.paidExpenseCount}
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      {view === "country" ? (
         <Card>
           <CardHeader>
-            <CardTitle>Top Expense Categories</CardTitle>
+            <CardTitle>Country financial performance</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Revenue, collections, paid expenses, and net cash contribution by
+              country.
+            </p>
           </CardHeader>
           <CardContent>
-            {report.topExpenseCategories.length === 0 ? (
+            {(report.countryPerformance ?? []).length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No paid expenses in this period.
+                No country performance data in this period.
               </p>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-3 py-3">Category</th>
-                    <th className="px-3 py-3 text-right">Count</th>
-                    <th className="px-3 py-3 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.topExpenseCategories.map((category) => (
-                    <tr
-                      key={category.categoryId}
-                      className="border-b last:border-0"
-                    >
-                      <td className="px-3 py-3 font-medium">
-                        {category.categoryName}
-                      </td>
-                      <td className="px-3 py-3 text-right">{category.count}</td>
-                      <td className="px-3 py-3 text-right">
-                        {formatCurrency(category.total)}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-3">Country</th>
+                      <th className="px-3 py-3 text-right">Revenue</th>
+                      <th className="px-3 py-3 text-right">Collections</th>
+                      <th className="px-3 py-3 text-right">Expenses</th>
+                      <th className="px-3 py-3 text-right">Net cash</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {report.countryPerformance.map((row) => (
+                      <tr
+                        key={row.countryId}
+                        className="border-b last:border-0"
+                      >
+                        <td className="px-3 py-3 font-medium">
+                          {row.countryName}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          {formatCurrency(row.revenue)}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          {formatCurrency(row.collections)}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          {formatCurrency(row.expenses)}
+                        </td>
+                        <td className="px-3 py-3 text-right font-medium">
+                          {formatCurrency(row.net)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </CardContent>
         </Card>
+      ) : null}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Expense Status Summary</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {report.expenseStatusSummary.map((row) => (
-                <div
-                  key={row.status}
-                  className="flex items-center justify-between rounded-lg border p-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <Badge variant="secondary">
-                      {STATUS_LABELS[row.status]}
-                    </Badge>
-                    <span className="text-sm text-muted-foreground">
-                      {row.count} request{row.count === 1 ? "" : "s"}
+      {view === "expenses" ? (
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Expense Categories</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {report.topExpenseCategories.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No paid expenses in this period.
+                </p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-3">Category</th>
+                      <th className="px-3 py-3 text-right">Count</th>
+                      <th className="px-3 py-3 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.topExpenseCategories.map((category) => (
+                      <tr
+                        key={category.categoryId}
+                        className="border-b last:border-0"
+                      >
+                        <td className="px-3 py-3 font-medium">
+                          {category.categoryName}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          {category.count}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          {formatCurrency(category.total)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Expense Status Summary</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {report.expenseStatusSummary.map((row) => (
+                  <div
+                    key={row.status}
+                    className="flex items-center justify-between rounded-lg border p-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Badge variant="secondary">
+                        {STATUS_LABELS[row.status]}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        {row.count} request{row.count === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    <span className="text-sm font-medium">
+                      {formatCurrency(row.total)}
                     </span>
                   </div>
-                  <span className="text-sm font-medium">
-                    {formatCurrency(row.total)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
     </div>
   );
 }
