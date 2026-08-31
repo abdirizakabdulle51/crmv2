@@ -46,9 +46,12 @@ async function seedQuoteCreateScope(ctx: ConvexTestCtx) {
   return { companyId, lineItem };
 }
 
-function quoteLineInput(
-  line: Awaited<ReturnType<typeof seedQuoteCreateScope>>["lineItem"],
-) {
+type QuoteLineInput = Awaited<ReturnType<typeof seedQuoteCreateScope>>["lineItem"] & {
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
+};
+function quoteLineInput(line: QuoteLineInput) {
   const {
     monthlyTotal: _monthlyTotal,
     yearlyTotal: _yearlyTotal,

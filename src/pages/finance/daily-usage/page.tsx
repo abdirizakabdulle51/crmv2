@@ -256,7 +256,10 @@ export default function DailyUsagePage() {
         <SummaryCard label="Captured days" value={totals.dayCount} />
       </div>
 
-      <DailyUsageHealthPanel health={health} />
+      <DailyUsageHealthPanel
+        health={health}
+        billingHealth={review.billingHealth}
+      />
 
       <Card>
         <CardHeader>
@@ -598,6 +601,7 @@ function HealthBadge({ healthy, label }: { healthy: boolean; label: string }) {
 
 function DailyUsageHealthPanel({
   health,
+  billingHealth,
 }: {
   health:
     | {
@@ -609,30 +613,31 @@ function DailyUsageHealthPanel({
           tenantCount: number;
           stale: boolean;
         };
-        dailyBilling: {
-          latestUsageDate: string | null;
-          capturedThroughToday: boolean;
-          rowCount: number;
-          latestDayRowCount: number;
-          attachedRowCount: number;
-        };
-        catalog: {
-          missingPriceRowCount: number;
-          missingServices: string[];
-        };
+      }
+    | undefined;
+  billingHealth:
+    | {
+        latestUsageDate: string | null;
+        capturedThroughToday: boolean;
+        rowCount: number;
+        latestDayRowCount: number;
+        serviceRows: Array<{ serviceType: string; rowCount: number }>;
+        attachedRowCount: number;
+        missingPriceRowCount: number;
+        missingServices: string[];
       }
     | undefined;
 }) {
-  if (!health) {
+  if (!health || !billingHealth) {
     return <Skeleton className="h-40" />;
   }
 
   const liveOk =
     Boolean(health.latestHourly.capturedAt) && !health.latestHourly.stale;
   const dailyOk =
-    Boolean(health.dailyBilling.latestUsageDate) &&
-    health.dailyBilling.capturedThroughToday;
-  const catalogOk = health.catalog.missingPriceRowCount === 0;
+    Boolean(billingHealth.latestUsageDate) &&
+    billingHealth.capturedThroughToday;
+  const catalogOk = billingHealth.missingPriceRowCount === 0;
   const linksOk =
     health.linkedTenantCount > 0 && health.unlinkedTenantCount === 0;
 
@@ -679,14 +684,12 @@ function DailyUsageHealthPanel({
             Latest usage date
           </div>
           <div className="mt-1 text-sm font-medium">
-            {health.dailyBilling.latestUsageDate ?? "-"}
+            {billingHealth.latestUsageDate ?? "-"}
           </div>
           <div className="mt-2 text-xs text-muted-foreground">
             Latest day rows
           </div>
-          <div className="font-semibold">
-            {health.dailyBilling.latestDayRowCount}
-          </div>
+          <div className="font-semibold">{billingHealth.latestDayRowCount}</div>
         </div>
         <div className="rounded-md border p-3">
           <div className="flex items-center gap-2 text-sm font-medium">
@@ -711,11 +714,11 @@ function DailyUsageHealthPanel({
             Rows without catalog price
           </div>
           <div className="font-semibold">
-            {health.catalog.missingPriceRowCount}
+            {billingHealth.missingPriceRowCount}
           </div>
           <div className="mt-2 text-xs text-muted-foreground">
-            {health.catalog.missingServices.length > 0
-              ? health.catalog.missingServices.join(", ")
+            {billingHealth.missingServices.length > 0
+              ? billingHealth.missingServices.join(", ")
               : "No missing services"}
           </div>
         </div>

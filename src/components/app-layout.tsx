@@ -163,6 +163,7 @@ const NAV_GROUPS = [
       "/cloud-health",
       "/manageone-tenants",
       "/manageone-hourly",
+      "/finance/daily-usage",
       "/recommendations",
     ],
   },

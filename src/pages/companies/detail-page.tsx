@@ -2,6 +2,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -13,14 +15,6 @@ import {
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { Button } from "@/components/ui/button.tsx";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card.tsx";
-import { Badge } from "@/components/ui/badge.tsx";
-import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import {
@@ -30,7 +24,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select.tsx";
-import { toast } from "sonner";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
+import { Badge } from "@/components/ui/badge.tsx";
+import { Skeleton } from "@/components/ui/skeleton.tsx";
 import {
   Tabs,
   TabsContent,
@@ -40,10 +41,15 @@ import {
 import {
   AlertTriangle,
   ArrowLeft,
+  BarChart3,
   CheckCircle2,
   Clock3,
   Database,
+  DollarSign,
+  FileText,
   Link2,
+  Receipt,
+  WalletCards,
 } from "lucide-react";
 import { useCrm } from "@/lib/crm-context.tsx";
 import {
@@ -51,6 +57,8 @@ import {
   ManageOneUsageCard,
 } from "./_components/company-dialog.tsx";
 import { isDrMode } from "@/lib/dr-mode.ts";
+import { formatCurrency } from "@/lib/format.ts";
+import { toast } from "sonner";
 
 type TenantUsageHistoryRow = Doc<"tenantUsageHistory">;
 type Company = Doc<"companies">;
@@ -58,6 +66,7 @@ type Country = Doc<"countries">;
 type Sector = Doc<"sectors">;
 type User = Doc<"users">;
 type ManageOneTenant = Doc<"manageOneTenants">;
+type CustomerCredit = Doc<"customerCredits">;
 
 const CHART_GROUPS = [
   {
@@ -121,6 +130,10 @@ function canViewUsageHistory(role: string | undefined) {
   return role === "ceo" || role === "head_of_business" || role === "country_gm";
 }
 
+function canGrantOnboardingCredit(role: string | undefined) {
+  return role === "ceo" || role === "head_of_business";
+}
+
 function formatSyncLabel(value: number) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -151,6 +164,89 @@ function formatNumber(value: number) {
   }).format(value);
 }
 
+function formatDateLabel(value?: number | null) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function formatCreditPolicy(value: CustomerCredit["policy"]) {
+  return value === "first_invoice_only" ? "First invoice only" : "Carry forward";
+}
+
+function formatCreditAppliesTo(value: CustomerCredit["appliesTo"]) {
+  if (value === "contract") return "Contract invoices";
+  if (value === "non_contract") return "Non-contract invoices";
+  return "All invoices";
+}
+
+function formatDateKeyLabel(value: string) {
+  const [, month, day] = value.split("-");
+  return month && day ? `${month}/${day}` : value;
+}
+
+function formatHourLabel(value: number) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+  }).format(new Date(value));
+}
+
+function formatMonthKeyLabel(value?: string) {
+  if (!value) return undefined;
+  const [year, month] = value.split("-").map(Number);
+  if (!year || !month) return value;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    year: "numeric",
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+
+function invoiceSourceLabel(source: {
+  sourceType?: "quote" | "contract" | "daily_usage";
+  sourceMonth?: string;
+  sourceReference?: string;
+  contractNumber?: string;
+  contractPeriodStartMonth?: string;
+  contractPeriodEndMonth?: string;
+}) {
+  if (source.contractNumber) {
+    const periodStart =
+      formatMonthKeyLabel(source.contractPeriodStartMonth) ??
+      formatMonthKeyLabel(source.sourceMonth);
+    const periodEnd = formatMonthKeyLabel(source.contractPeriodEndMonth);
+    const period =
+      periodStart && periodEnd && periodStart !== periodEnd
+        ? `${periodStart} - ${periodEnd}`
+        : periodStart;
+    return period ? `${source.contractNumber} · ${period}` : source.contractNumber;
+  }
+  if (source.sourceType === "quote" && source.sourceReference) {
+    return `Quote ${source.sourceReference}`;
+  }
+  if (source.sourceType === "daily_usage") {
+    const month = formatMonthKeyLabel(source.sourceMonth);
+    return month ? `Daily usage · ${month}` : "Daily usage";
+  }
+  return source.sourceReference;
+}
+
+function billingFrequencyLabel(value: string) {
+  switch (value) {
+    case "yearly":
+      return "year";
+    case "quarterly":
+    case "every_3_months":
+      return "quarter";
+    default:
+      return "month";
+  }
+}
+
 function HealthStatusBadge({
   healthy,
   label,
@@ -179,6 +275,7 @@ function HealthStatusBadge({
 
 function UsageHealthPanel({
   health,
+  billingHealth,
 }: {
   health:
     | {
@@ -209,21 +306,22 @@ function UsageHealthPanel({
             waf: number;
           };
         };
-        dailyBilling: {
-          latestUsageDate: string | null;
-          capturedThroughToday: boolean;
-          rowCount: number;
-          latestDayRowCount: number;
-          attachedRowCount: number;
-        };
-        catalog: {
-          missingPriceRowCount: number;
-          missingServices: string[];
-        };
+      }
+    | undefined;
+  billingHealth:
+    | {
+        latestUsageDate: string | null;
+        capturedThroughToday: boolean;
+        rowCount: number;
+        latestDayRowCount: number;
+        serviceRows: Array<{ serviceType: string; rowCount: number }>;
+        attachedRowCount: number;
+        missingPriceRowCount: number;
+        missingServices: string[];
       }
     | undefined;
 }) {
-  if (!health) {
+  if (!health || !billingHealth) {
     return (
       <Card>
         <CardHeader>
@@ -241,9 +339,9 @@ function UsageHealthPanel({
   const liveOk =
     Boolean(health.latestHourly.capturedAt) && !health.latestHourly.stale;
   const dailyOk =
-    Boolean(health.dailyBilling.latestUsageDate) &&
-    health.dailyBilling.capturedThroughToday;
-  const catalogOk = health.catalog.missingPriceRowCount === 0;
+    Boolean(billingHealth.latestUsageDate) &&
+    billingHealth.capturedThroughToday;
+  const catalogOk = billingHealth.missingPriceRowCount === 0;
   const linksOk =
     health.linkedTenantCount > 0 && health.unlinkedTenantCount === 0;
   const totals = health.latestHourly.totals;
@@ -294,13 +392,13 @@ function UsageHealthPanel({
               Latest daily usage date
             </div>
             <div className="mt-1 text-sm font-medium">
-              {health.dailyBilling.latestUsageDate ?? "-"}
+              {billingHealth.latestUsageDate ?? "-"}
             </div>
             <div className="mt-3 text-xs text-muted-foreground">
               Rows captured this month
             </div>
             <div className="mt-1 text-lg font-semibold">
-              {health.dailyBilling.rowCount}
+              {billingHealth.rowCount}
             </div>
           </div>
           <div className="rounded-md border p-3">
@@ -330,11 +428,11 @@ function UsageHealthPanel({
               Rows without catalog price
             </div>
             <div className="mt-1 text-lg font-semibold">
-              {health.catalog.missingPriceRowCount}
+              {billingHealth.missingPriceRowCount}
             </div>
             <div className="mt-2 text-xs text-muted-foreground">
-              {health.catalog.missingServices.length > 0
-                ? health.catalog.missingServices.join(", ")
+              {billingHealth.missingServices.length > 0
+                ? billingHealth.missingServices.join(", ")
                 : "No missing services"}
             </div>
           </div>
@@ -499,6 +597,635 @@ function UsageTrendsSection({
   );
 }
 
+function FinancialMetricCard({
+  title,
+  value,
+  detail,
+  icon,
+}: {
+  title: string;
+  value: string;
+  detail: string;
+  icon: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border bg-background p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-medium text-muted-foreground">{title}</div>
+        <div className="text-cyan-600">{icon}</div>
+      </div>
+      <div className="mt-3 text-2xl font-semibold">{value}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+    </div>
+  );
+}
+
+function BillingUsageSection({
+  snapshot,
+}: {
+  snapshot:
+    | {
+        month: string;
+        currentBalance: number;
+        currentBalanceForActiveContract: number;
+        upcomingCharges: number;
+        paidThisMonth: number;
+        paidThisMonthForActiveContract: number;
+        projectedMonthEnd: number | null;
+        contractCoverage: {
+          contractId: Id<"customerContracts">;
+          contractNumber: string;
+          title: string;
+          billingFrequency: string;
+          capturedDays: number;
+          monthDayCount: number;
+          contractPeriodAmount: number;
+          frequencyMonthCount: number;
+          coverageBasis: "month_to_date" | "contract_period";
+          monthlyMinimum: number;
+          includedToDate: number;
+          usageToDate: number;
+          extraToDate: number;
+          status: "within_contract" | "overage" | "pricing_not_configured";
+          rows: Array<{
+            lineItemId: Id<"customerContractLineItems">;
+            itemName: string;
+            serviceCategory: string;
+            includedQuantity: number;
+            unit: string;
+            amount: number;
+            includedAmount: number;
+            extraAmount: number;
+          }>;
+        } | null;
+        dailyUsageReady: boolean;
+        latestUsageDate: string | null;
+        dailySeries: Array<{
+          usageDate: string;
+          dailyCharge: number;
+          cumulativeCharge: number;
+        }>;
+        hourlySeries: Array<{
+          capturedHour: number;
+          estimatedHourlyCost: number;
+        }>;
+        chargeBreakdown: Array<{
+          serviceType: string;
+          amount: number;
+          billableQuantity: number;
+          capturedDays: number;
+          unpricedCount: number;
+        }>;
+        openInvoices: Array<{
+          _id: Id<"invoices">;
+          invoiceNumber?: string;
+          status: string;
+          issueDate?: number;
+          dueDate?: number;
+          grandTotal: number;
+          amountPaid: number;
+          balanceDue: number;
+          sourceType?: "quote" | "contract" | "daily_usage";
+          sourceMonth?: string;
+          sourceReference?: string;
+          sourceContractId?: Id<"customerContracts">;
+          contractNumber?: string;
+          contractTitle?: string;
+          contractPeriodStartMonth?: string;
+          contractPeriodEndMonth?: string;
+        }>;
+        recentPayments: Array<{
+          _id: Id<"invoicePayments">;
+          invoiceId: Id<"invoices">;
+          invoiceNumber?: string;
+          amount: number;
+          paidAt: number;
+          method?: string;
+          reference?: string;
+          sourceType?: "quote" | "contract" | "daily_usage";
+          sourceMonth?: string;
+          sourceReference?: string;
+          sourceContractId?: Id<"customerContracts">;
+          contractNumber?: string;
+          contractTitle?: string;
+          contractPeriodStartMonth?: string;
+          contractPeriodEndMonth?: string;
+        }>;
+        unpricedCount: number;
+        uninvoicedRowCount: number;
+        dailyRowCount: number;
+      }
+    | undefined;
+}) {
+  const [chartMode, setChartMode] = useState<"daily" | "hourly">("daily");
+
+  if (!snapshot) {
+    return (
+      <Card className="max-w-5xl">
+        <CardHeader>
+          <CardTitle>Billing & Usage</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-28" />
+            ))}
+          </div>
+          <Skeleton className="h-72 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const dailyChartData = snapshot.dailySeries.map((row) => ({
+    label: formatDateKeyLabel(row.usageDate),
+    value: row.dailyCharge,
+  }));
+  const hourlyChartData = snapshot.hourlySeries.map((row) => ({
+    label: formatHourLabel(row.capturedHour),
+    value: row.estimatedHourlyCost,
+  }));
+  const chartData = chartMode === "daily" ? dailyChartData : hourlyChartData;
+  const chartValueName =
+    chartMode === "daily" ? "Daily usage cost" : "Estimated hourly cost";
+  const coverage = snapshot.contractCoverage;
+  const remainingContractCredit =
+    coverage && coverage.contractPeriodAmount > 0
+      ? Math.max(0, coverage.contractPeriodAmount - coverage.usageToDate)
+      : 0;
+
+  return (
+    <div className="max-w-5xl space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Billing & Usage</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Read-only view of customer balance, payments, and current month usage.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <FinancialMetricCard
+              title="Current Balance"
+              value={formatCurrency(snapshot.currentBalance)}
+              detail={
+                coverage
+                  ? `${formatCurrency(
+                      snapshot.currentBalanceForActiveContract,
+                    )} for ${coverage.contractNumber}; ${formatCurrency(
+                      snapshot.currentBalance,
+                    )} all open`
+                  : "Open invoice balance due"
+              }
+              icon={<WalletCards className="h-4 w-4" />}
+            />
+            <FinancialMetricCard
+              title={coverage ? "Billable Extra So Far" : "Current Usage Bill"}
+              value={
+                coverage
+                  ? coverage.contractPeriodAmount > 0
+                    ? formatCurrency(coverage.extraToDate)
+                    : "-"
+                  : snapshot.dailyUsageReady
+                    ? formatCurrency(snapshot.upcomingCharges)
+                    : "Not calculated"
+              }
+              detail={
+                coverage
+                  ? `After contract credit for ${coverage.contractNumber}`
+                  : snapshot.dailyUsageReady
+                    ? "Unbilled usage as of today"
+                    : "Daily billing snapshot missing"
+              }
+              icon={<Receipt className="h-4 w-4" />}
+            />
+            <FinancialMetricCard
+              title="Paid This Month"
+              value={formatCurrency(snapshot.paidThisMonth)}
+              detail={
+                coverage
+                  ? `${formatCurrency(
+                      snapshot.paidThisMonthForActiveContract,
+                    )} for ${coverage.contractNumber}; ${formatCurrency(
+                      snapshot.paidThisMonth,
+                    )} all payments`
+                  : `Payments recorded for ${snapshot.month}`
+              }
+              icon={<DollarSign className="h-4 w-4" />}
+            />
+            <FinancialMetricCard
+              title={coverage ? "Remaining Contract Credit" : "Projected Month End"}
+              value={
+                coverage
+                  ? coverage.contractPeriodAmount > 0
+                    ? formatCurrency(remainingContractCredit)
+                    : "-"
+                  : snapshot.projectedMonthEnd === null
+                    ? "Not available"
+                    : formatCurrency(snapshot.projectedMonthEnd)
+              }
+              detail={
+                coverage
+                  ? `Usage ${formatCurrency(coverage.usageToDate)} of ${formatCurrency(
+                      coverage.contractPeriodAmount,
+                    )} contract credit`
+                  : snapshot.latestUsageDate
+                    ? "Estimated full-month usage"
+                    : "No daily usage captured"
+              }
+              icon={<BarChart3 className="h-4 w-4" />}
+            />
+          </div>
+
+          {!snapshot.dailyUsageReady ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              Daily usage has not been calculated for this month. Upcoming
+              charges and projection will appear after the midnight billing sync
+              or Auto-fill from ManageOne runs.
+            </div>
+          ) : null}
+
+          <div className="rounded-md border p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="font-medium">
+                  {chartMode === "daily"
+                    ? "Daily Usage Cost"
+                    : "Hourly Usage Cost"}
+                </div>
+                {chartMode === "hourly" ? (
+                  <div className="text-xs text-muted-foreground">
+                    Hourly chart is for visibility/estimate only and is not used
+                    for invoice math.
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="rounded-md border bg-muted p-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={
+                      chartMode === "daily"
+                        ? "bg-[#35C7C9] text-white shadow-sm hover:bg-[#2fb3b5] hover:text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }
+                    onClick={() => setChartMode("daily")}
+                  >
+                    Daily
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={
+                      chartMode === "hourly"
+                        ? "bg-[#35C7C9] text-white shadow-sm hover:bg-[#2fb3b5] hover:text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }
+                    onClick={() => setChartMode("hourly")}
+                  >
+                    Hourly
+                  </Button>
+                </div>
+                <Badge variant="outline">{snapshot.month}</Badge>
+              </div>
+            </div>
+            {chartData.length > 0 ? (
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData}>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      className="stroke-border"
+                    />
+                    <XAxis
+                      dataKey="label"
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 12 }}
+                    />
+                    <YAxis
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(value) =>
+                        Number(value) >= 1000
+                          ? `$${Number(value) / 1000}k`
+                          : formatCurrency(Number(value))
+                      }
+                      width={56}
+                    />
+                    <Tooltip
+                      formatter={(value, name) => [
+                        formatCurrency(Number(value)),
+                        name,
+                      ]}
+                      labelClassName="text-foreground"
+                      contentStyle={{
+                        background: "var(--card)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "8px",
+                      }}
+                    />
+                    <Bar
+                      dataKey="value"
+                      name={chartValueName}
+                      fill="#35C7C9"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+                {chartMode === "daily"
+                  ? "No daily billing rows found for this company and month."
+                  : "No hourly monitoring rows found for this company and month."}
+              </div>
+            )}
+          </div>
+
+          {snapshot.contractCoverage ? (
+            <ContractCoveragePanel coverage={snapshot.contractCoverage} />
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Charge Breakdown</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {snapshot.chargeBreakdown.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="py-2 font-medium">Service</th>
+                      <th className="py-2 text-right font-medium">Amount</th>
+                      <th className="py-2 text-right font-medium">Days</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {snapshot.chargeBreakdown.map((row) => (
+                      <tr key={row.serviceType} className="border-b last:border-0">
+                        <td className="py-2 font-medium">{row.serviceType}</td>
+                        <td className="py-2 text-right">
+                          {row.unpricedCount > 0
+                            ? "Missing price"
+                            : formatCurrency(row.amount)}
+                        </td>
+                        <td className="py-2 text-right text-muted-foreground">
+                          {row.capturedDays}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+                No uninvoiced usage charges for this month.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Invoices & Payments</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <FileText className="h-4 w-4 text-cyan-600" />
+                Open invoices
+              </div>
+              {snapshot.openInvoices.length > 0 ? (
+                <div className="space-y-2">
+                  {snapshot.openInvoices.map((invoice) => {
+                    const sourceLabel = invoiceSourceLabel(invoice);
+                    return (
+                      <div
+                        key={invoice._id}
+                        className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
+                      >
+                        <div>
+                          <div className="font-medium">
+                            {invoice.invoiceNumber ?? "Draft invoice"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {sourceLabel ? `${sourceLabel} · ` : ""}
+                            Due {formatDateLabel(invoice.dueDate)}
+                          </div>
+                        </div>
+                        <div className="text-left sm:text-right">
+                          <div className="font-semibold">
+                            {formatCurrency(invoice.balanceDue)}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {invoice.status.replace("_", " ")}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No open invoices.
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <DollarSign className="h-4 w-4 text-cyan-600" />
+                Recent payments this month
+              </div>
+              {snapshot.recentPayments.length > 0 ? (
+                <div className="space-y-2">
+                  {snapshot.recentPayments.map((payment) => {
+                    const sourceLabel = invoiceSourceLabel(payment);
+                    return (
+                      <div
+                        key={payment._id}
+                        className="grid gap-2 rounded-md border p-3 text-sm sm:grid-cols-[1fr_auto]"
+                      >
+                        <div>
+                          <div className="font-medium">
+                            {payment.invoiceNumber ?? "Invoice"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {sourceLabel ? `${sourceLabel} · ` : ""}
+                            {formatDateLabel(payment.paidAt)}
+                          </div>
+                        </div>
+                        <div className="text-left font-semibold sm:text-right">
+                          {formatCurrency(payment.amount)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No payments recorded this month.
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function ContractCoveragePanel({
+  coverage,
+}: {
+  coverage: NonNullable<
+    NonNullable<Parameters<typeof BillingUsageSection>[0]["snapshot"]>["contractCoverage"]
+  >;
+}) {
+  const visibleRows = coverage.rows.filter(
+    (row) => row.amount > 0 || row.includedAmount > 0,
+  );
+  const frequencyLabel = billingFrequencyLabel(coverage.billingFrequency);
+  const hasConfiguredContractValue = coverage.contractPeriodAmount > 0;
+  const remainingCoverage = hasConfiguredContractValue
+    ? Math.max(0, coverage.includedToDate - coverage.usageToDate)
+    : 0;
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="font-medium">Contract Coverage</div>
+            <Badge
+              variant={
+                coverage.status === "overage"
+                  ? "destructive"
+                  : coverage.status === "pricing_not_configured"
+                    ? "outline"
+                    : "secondary"
+              }
+            >
+              {coverage.status === "overage"
+                ? "Extra usage"
+                : coverage.status === "pricing_not_configured"
+                  ? "Pricing not configured"
+                  : "Within contract"}
+            </Badge>
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {coverage.contractNumber} · {coverage.title}
+          </div>
+        </div>
+        <div className="grid gap-3 text-sm sm:grid-cols-4">
+          <div>
+            <div className="text-xs text-muted-foreground">Contract value</div>
+            <div className="font-semibold">
+              {formatCurrency(coverage.contractPeriodAmount)}
+              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                / {frequencyLabel}
+              </span>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">
+              {coverage.coverageBasis === "contract_period"
+                ? "Used this period"
+                : "Covered so far"}
+            </div>
+            <div className="font-semibold">
+              {formatCurrency(coverage.usageToDate)}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">
+              {coverage.coverageBasis === "contract_period"
+                ? "Remaining coverage"
+                : "Covered so far"}
+            </div>
+            <div className="font-semibold">
+              {hasConfiguredContractValue
+                ? formatCurrency(
+                    coverage.coverageBasis === "contract_period"
+                      ? remainingCoverage
+                      : coverage.includedToDate,
+                  )
+                : "-"}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">Extra so far</div>
+            <div className="font-semibold">
+              {hasConfiguredContractValue
+                ? formatCurrency(coverage.extraToDate)
+                : "-"}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {visibleRows.length > 0 ? (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead>
+              <tr className="border-b text-left text-muted-foreground">
+                <th className="py-2 font-medium">Service</th>
+                <th className="py-2 text-right font-medium">Included</th>
+                <th className="py-2 text-right font-medium">Covered</th>
+                <th className="py-2 text-right font-medium">Current usage</th>
+                <th className="py-2 text-right font-medium">Extra</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((row) => (
+                <tr key={row.lineItemId} className="border-b last:border-0">
+                  <td className="py-2">
+                    <div className="font-medium">{row.itemName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {row.serviceCategory}
+                    </div>
+                  </td>
+                  <td className="py-2 text-right text-muted-foreground">
+                    {row.includedQuantity} {row.unit}
+                  </td>
+                  <td className="py-2 text-right">
+                    {formatCurrency(row.includedAmount)}
+                  </td>
+                  <td className="py-2 text-right">
+                    {formatCurrency(row.amount)}
+                  </td>
+                  <td className="py-2 text-right">
+                    {row.extraAmount > 0
+                      ? formatCurrency(row.extraAmount)
+                      : "-"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      <div className="mt-3 text-xs text-muted-foreground">
+        {coverage.status === "pricing_not_configured"
+          ? "This contract exists, but its priced contract services are not configured yet. This is read-only and does not create or change invoices."
+          : coverage.coverageBasis === "contract_period"
+            ? `Based on current usage for ${coverage.billingFrequency} contract coverage. This is read-only and does not create or change invoices.`
+            : `Based on ${coverage.capturedDays} of ${coverage.monthDayCount} captured billing days. This is read-only and does not create or change invoices.`}
+      </div>
+    </div>
+  );
+}
+
 function useDrRow<T>(path: string | null) {
   const [row, setRow] = useState<T | undefined>();
 
@@ -575,55 +1302,99 @@ function DetailItem({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function OnboardingCreditCard({
+function OnboardingCreditSection({
   companyId,
-  canManage,
+  credits,
+  canGrant,
 }: {
   companyId: Id<"companies">;
-  canManage: boolean;
+  credits?: CustomerCredit[];
+  canGrant: boolean;
 }) {
-  const credits = useQuery(api.customerCredits.listByCompany, { companyId });
-  const grant = useMutation(api.customerCredits.grant);
+  const grantCredit = useMutation(api.customerCredits.grant);
   const [amount, setAmount] = useState("");
   const [policy, setPolicy] = useState<"first_invoice_only" | "carry_forward">(
     "first_invoice_only",
   );
-  const [appliesTo, setAppliesTo] = useState<
-    "all" | "contract" | "non_contract"
-  >("all");
+  const [appliesTo, setAppliesTo] = useState<"all" | "contract" | "non_contract">(
+    "all",
+  );
   const [pending, setPending] = useState(false);
+
+  const activeCreditExists = Boolean(
+    credits?.some(
+      (credit) =>
+        (credit.status === "available" || credit.status === "reserved") &&
+        credit.remainingAmount > 0,
+    ),
+  );
+
+  if ((!credits || credits.length === 0) && !canGrant) return null;
+
+  const handleGrantCredit = async () => {
+    const creditAmount = Number(amount);
+    if (!Number.isFinite(creditAmount) || creditAmount <= 0) return;
+
+    setPending(true);
+    try {
+      await grantCredit({
+        companyId,
+        amount: creditAmount,
+        policy,
+        appliesTo,
+        description: "Onboarding credit",
+      });
+      setAmount("");
+      toast.success("Onboarding credit granted");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not grant onboarding credit",
+      );
+    } finally {
+      setPending(false);
+    }
+  };
 
   return (
     <Card className="mt-4 max-w-3xl">
       <CardHeader>
         <CardTitle>Onboarding Credit</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Customer-level credit that can apply with or without a contract.
-        </p>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          {(credits ?? []).map((credit) => (
-            <div key={credit._id} className="rounded-md border p-3 text-sm">
-              <div className="font-medium">
-                {credit.description ?? "Onboarding credit"}
+      <CardContent className="space-y-3">
+        {credits?.map((credit) => (
+          <div key={credit._id} className="rounded-lg border bg-background/50 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="font-medium">{formatCurrency(credit.remainingAmount)} remaining</div>
+                {credit.description ? (
+                  <div className="mt-1 text-sm text-muted-foreground">{credit.description}</div>
+                ) : null}
               </div>
-              <div className="mt-1 text-muted-foreground">
-                ${credit.remainingAmount.toFixed(2)} remaining · {credit.status}
-              </div>
+              <Badge variant="secondary">{credit.status}</Badge>
             </div>
-          ))}
-        </div>
-        {canManage && (
-          <div className="grid gap-3 sm:grid-cols-4">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <DetailItem label="Original Amount" value={formatCurrency(credit.originalAmount)} />
+              <DetailItem label="Remaining Amount" value={formatCurrency(credit.remainingAmount)} />
+              <DetailItem label="Reserved Amount" value={formatCurrency(credit.reservedAmount)} />
+              <DetailItem label="Status" value={credit.status} />
+              <DetailItem label="Policy" value={formatCreditPolicy(credit.policy)} />
+              <DetailItem label="Applies To" value={formatCreditAppliesTo(credit.appliesTo)} />
+              {credit.expiresAt ? <DetailItem label="Expiry" value={formatDateLabel(credit.expiresAt)} /> : null}
+            </div>
+          </div>
+        ))}
+        {canGrant ? (
+          <div className="grid gap-3 border-t pt-3 sm:grid-cols-4">
             <div className="space-y-2">
               <Label>Credit amount</Label>
               <Input
                 type="number"
-                min={0.01}
+                min="0.01"
                 step="0.01"
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
+                placeholder="0.00"
+                disabled={activeCreditExists}
               />
             </div>
             <div className="space-y-2">
@@ -631,14 +1402,13 @@ function OnboardingCreditCard({
               <Select
                 value={policy}
                 onValueChange={(value) => setPolicy(value as typeof policy)}
+                disabled={activeCreditExists}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="first_invoice_only">
-                    First invoice only
-                  </SelectItem>
+                  <SelectItem value="first_invoice_only">First invoice only</SelectItem>
                   <SelectItem value="carry_forward">Carry forward</SelectItem>
                 </SelectContent>
               </Select>
@@ -647,9 +1417,8 @@ function OnboardingCreditCard({
               <Label>Applies to</Label>
               <Select
                 value={appliesTo}
-                onValueChange={(value) =>
-                  setAppliesTo(value as typeof appliesTo)
-                }
+                onValueChange={(value) => setAppliesTo(value as typeof appliesTo)}
+                disabled={activeCreditExists}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -657,43 +1426,23 @@ function OnboardingCreditCard({
                 <SelectContent>
                   <SelectItem value="all">All invoices</SelectItem>
                   <SelectItem value="contract">Contract invoices</SelectItem>
-                  <SelectItem value="non_contract">
-                    Non-contract invoices
-                  </SelectItem>
+                  <SelectItem value="non_contract">Non-contract invoices</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="flex items-end">
               <Button
-                disabled={pending || !amount || Number(amount) <= 0}
-                onClick={async () => {
-                  setPending(true);
-                  try {
-                    await grant({
-                      companyId,
-                      amount: Number(amount),
-                      policy,
-                      appliesTo,
-                      description: "Onboarding credit",
-                    });
-                    setAmount("");
-                    toast.success("Onboarding credit granted");
-                  } catch (error) {
-                    toast.error(
-                      error instanceof Error
-                        ? error.message
-                        : "Could not grant credit",
-                    );
-                  } finally {
-                    setPending(false);
-                  }
-                }}
+                type="button"
+                disabled={
+                  activeCreditExists || pending || !amount || Number(amount) <= 0
+                }
+                onClick={handleGrantCredit}
               >
                 Grant credit
               </Button>
             </div>
           </div>
-        )}
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -705,6 +1454,7 @@ export default function CompanyDetailPage() {
   const { currentUser } = useCrm();
   const companyId = id as Id<"companies"> | undefined;
   const canViewTrends = canViewUsageHistory(currentUser?.role);
+  const canGrantCredit = canGrantOnboardingCredit(currentUser?.role);
 
   const convexCompany = useQuery(
     api.companies.getById,
@@ -726,6 +1476,16 @@ export default function CompanyDetailPage() {
     companyId && !isDrMode
       ? { companyId, month: currentMonthInputValue() }
       : "skip",
+  );
+  const billingSnapshot = useQuery(
+    api.dailyUsage.companyBillingSnapshot,
+    companyId && !isDrMode
+      ? { companyId, month: currentMonthInputValue() }
+      : "skip",
+  );
+  const customerCredits = useQuery(
+    api.customerCredits.listByCompany,
+    companyId && !isDrMode ? { companyId } : "skip",
   );
   const drCompany = useDrRow<Company>(
     isDrMode && companyId ? `/api/companies/${companyId}` : null,
@@ -777,11 +1537,12 @@ export default function CompanyDetailPage() {
         <p className="mt-1 text-muted-foreground">{company.name}</p>
       </div>
 
-      <Tabs defaultValue="company-info" className="max-w-5xl">
-        <TabsList className="grid h-auto w-full grid-cols-3">
-          <TabsTrigger value="company-info">Company Detail</TabsTrigger>
+      <Tabs defaultValue="billing-usage" className="max-w-5xl">
+        <TabsList className="grid h-auto w-full grid-cols-2 lg:grid-cols-4">
+          <TabsTrigger value="billing-usage">Billing</TabsTrigger>
           <TabsTrigger value="usage-trends">Usage Trends</TabsTrigger>
-          <TabsTrigger value="manageone-usage">Billing & Usage</TabsTrigger>
+          <TabsTrigger value="manageone-usage">Cloud Resources</TabsTrigger>
+          <TabsTrigger value="company-info">Company Detail</TabsTrigger>
         </TabsList>
 
         <TabsContent value="company-info" className="mt-4">
@@ -840,23 +1601,21 @@ export default function CompanyDetailPage() {
           ) : (
             <>
               <Card className="max-w-3xl">
-                <CardContent className="pt-6">
-                  <CompanyForm
-                    company={company}
-                    countries={countries}
-                    sectors={sectors}
-                    users={users}
-                    onFinished={goBack}
-                    showManageOneUsage={false}
-                  />
-                </CardContent>
-              </Card>
-              <OnboardingCreditCard
+              <CardContent className="pt-6">
+                <CompanyForm
+                  company={company}
+                  countries={countries}
+                  sectors={sectors}
+                  users={users}
+                  onFinished={goBack}
+                  showManageOneUsage={false}
+                />
+              </CardContent>
+            </Card>
+              <OnboardingCreditSection
                 companyId={company._id}
-                canManage={
-                  currentUser?.role === "ceo" ||
-                  currentUser?.role === "head_of_business"
-                }
+                credits={customerCredits}
+                canGrant={canGrantCredit}
               />
             </>
           )}
@@ -881,9 +1640,29 @@ export default function CompanyDetailPage() {
 
         <TabsContent value="manageone-usage" className="mt-4">
           <div className="space-y-4">
-            <UsageHealthPanel health={usageHealth} />
+            <UsageHealthPanel
+              health={usageHealth}
+              billingHealth={billingSnapshot?.billingHealth}
+            />
             <ManageOneUsageCard manageOneTenants={manageOneTenants} />
           </div>
+        </TabsContent>
+
+        <TabsContent value="billing-usage" className="mt-4">
+          {isDrMode ? (
+            <Card className="max-w-5xl">
+              <CardHeader>
+                <CardTitle>Billing & Usage</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                  Billing snapshot is available in the live CRM.
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <BillingUsageSection snapshot={billingSnapshot} />
+          )}
         </TabsContent>
       </Tabs>
 
