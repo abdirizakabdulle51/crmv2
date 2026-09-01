@@ -107,6 +107,21 @@ function contractLine(
 }
 
 describe("daily usage capture helpers", () => {
+  it("does not mount heavy health while loading the global rollup", () => {
+    const source = readFileSync(
+      new URL("../src/pages/finance/daily-usage/page.tsx", import.meta.url),
+      "utf8",
+    );
+    const healthBlock = source.slice(
+      source.indexOf("const health = useQuery"),
+      source.indexOf("const rows = useMemo"),
+    );
+
+    expect(healthBlock).toContain("api.dailyUsage.health");
+    expect(healthBlock).toContain("shouldLoadHealth");
+    expect(healthBlock).not.toContain("shouldLoadDetailedQueries");
+  });
+
   it("keeps initial status hourly reads to one indexed row", () => {
     const source = readFileSync(
       new URL("./dailyUsage.ts", import.meta.url),

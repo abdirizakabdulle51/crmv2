@@ -98,6 +98,7 @@ export default function DailyUsagePage() {
   const [showRollup, setShowRollup] = useState(false);
   const shouldLoadCapturedRows = showCapturedRows || companyId !== "all";
   const shouldLoadDetailedQueries = showRollup || companyId !== "all";
+  const shouldLoadHealth = companyId !== "all" && !showRollup;
   const status = useQuery(api.dailyUsage.status, { month });
 
   const review = useQuery(
@@ -126,7 +127,7 @@ export default function DailyUsagePage() {
   );
   const health = useQuery(
     api.dailyUsage.health,
-    shouldLoadDetailedQueries
+    shouldLoadHealth
       ? {
           month,
           companyId:
