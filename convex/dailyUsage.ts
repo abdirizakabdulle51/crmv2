@@ -894,16 +894,12 @@ export const status = query({
       .withIndex("by_month_date", (q) => q.eq("month", args.month))
       .order("desc")
       .first();
-    const latestHourlyRows = await ctx.db
+    const latestHourlyRow = await ctx.db
       .query("manageOneHourlySnapshots")
       .withIndex("by_hour")
       .order("desc")
-      .take(500);
-    const latestHourlyCapturedAt =
-      latestHourlyRows.reduce(
-        (latest, row) => Math.max(latest, row.capturedAt),
-        0,
-      ) || null;
+      .first();
+    const latestHourlyCapturedAt = latestHourlyRow?.capturedAt ?? null;
 
     return {
       month: args.month,

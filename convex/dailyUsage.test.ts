@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import {
   buildMonthlyRollupRows,
@@ -106,6 +107,23 @@ function contractLine(
 }
 
 describe("daily usage capture helpers", () => {
+  it("keeps initial status hourly reads to one indexed row", () => {
+    const source = readFileSync(
+      new URL("./dailyUsage.ts", import.meta.url),
+      "utf8",
+    );
+    const statusSource = source.slice(
+      source.indexOf("export const status"),
+      source.indexOf("export const createDraftInvoiceFromRollup"),
+    );
+
+    expect(statusSource).toContain('.withIndex("by_hour")');
+    expect(statusSource).toContain('.order("desc")');
+    expect(statusSource).toContain(".first()");
+    expect(statusSource).not.toContain(".take(500)");
+    expect(statusSource).not.toContain("latestHourlyRows.reduce");
+  });
+
   it("formats the Africa/Mogadishu business date key", () => {
     expect(dateKeyForTimestamp(Date.UTC(2026, 7, 13, 20, 55))).toBe(
       "2026-08-13",
