@@ -12,6 +12,9 @@ const CompanyDetailPage = lazy(
   () => import("./pages/companies/detail-page.tsx"),
 );
 const PipelinePage = lazy(() => import("./pages/pipeline/page.tsx"));
+const OpportunityDetailPage = lazy(
+  () => import("./pages/pipeline/detail-page.tsx"),
+);
 const TargetsPage = lazy(() => import("./pages/targets/page.tsx"));
 const ActivitiesPage = lazy(() => import("./pages/activities/page.tsx"));
 const PerformancePage = lazy(() => import("./pages/performance/page.tsx"));
@@ -21,6 +24,9 @@ const UsageAutoFillPage = lazy(
 );
 const AtRiskPage = lazy(() => import("./pages/at-risk/page.tsx"));
 const QuotesPage = lazy(() => import("./pages/quotes/page.tsx"));
+const NewOpportunityQuotePage = lazy(
+  () => import("./pages/quotes/new-page.tsx"),
+);
 const QuoteGenerateFromUsagePage = lazy(
   () => import("./pages/quotes/generate-page.tsx"),
 );
@@ -52,6 +58,9 @@ const FinanceSettingsPage = lazy(
 const FinanceReportsPage = lazy(
   () => import("./pages/finance/reports/page.tsx"),
 );
+const CollectionsPage = lazy(
+  () => import("./pages/finance/collections/page.tsx"),
+);
 const InvoiceProfilesPage = lazy(
   () => import("./pages/finance/invoice-profiles/page.tsx"),
 );
@@ -61,8 +70,17 @@ const DailyUsagePage = lazy(
 const CustomerContractsPage = lazy(
   () => import("./pages/finance/customer-contracts/page.tsx"),
 );
+const ContractRenewalsPage = lazy(
+  () => import("./pages/finance/customer-contracts/renewals-page.tsx"),
+);
+const ContractPerformancePage = lazy(
+  () => import("./pages/finance/customer-contracts/performance-page.tsx"),
+);
 const CustomerContractDetailPage = lazy(
   () => import("./pages/finance/customer-contracts/detail-page.tsx"),
+);
+const NewCustomerContractPage = lazy(
+  () => import("./pages/finance/customer-contracts/new-page.tsx"),
 );
 const RecommendationsPage = lazy(
   () => import("./pages/recommendations/page.tsx"),
@@ -87,6 +105,7 @@ const CloudHealthRegionPage = lazy(
 const DocumentationPage = lazy(() => import("./pages/documentation/page.tsx"));
 const TasksPage = lazy(() => import("./pages/tasks/page.tsx"));
 const TaskDetailPage = lazy(() => import("./pages/tasks/detail-page.tsx"));
+const DataHealthPage = lazy(() => import("./pages/operations/data-health-page.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 function PageLoading() {
@@ -121,6 +140,10 @@ export default function App() {
               element={lazyPage(<CompanyDetailPage />)}
             />
             <Route path="/pipeline" element={lazyPage(<PipelinePage />)} />
+            <Route
+              path="/pipeline/:id"
+              element={lazyPage(<OpportunityDetailPage />)}
+            />
             <Route path="/targets" element={lazyPage(<TargetsPage />)} />
             <Route
               path="/performance"
@@ -133,6 +156,10 @@ export default function App() {
             />
             <Route path="/at-risk" element={lazyPage(<AtRiskPage />)} />
             <Route path="/quotes" element={lazyPage(<QuotesPage />)} />
+            <Route
+              path="/quotes/new"
+              element={lazyPage(<NewOpportunityQuotePage />)}
+            />
             <Route path="/invoices" element={lazyPage(<InvoicesPage />)} />
             <Route
               path="/invoices/:invoiceId/print"
@@ -155,6 +182,26 @@ export default function App() {
               element={lazyPage(<FinanceReportsPage />)}
             />
             <Route
+              path="/finance/reports/revenue"
+              element={lazyPage(<FinanceReportsPage view="revenue" />)}
+            />
+            <Route
+              path="/finance/reports/expenses"
+              element={lazyPage(<FinanceReportsPage view="expenses" />)}
+            />
+            <Route
+              path="/finance/reports/country"
+              element={lazyPage(<FinanceReportsPage view="country" />)}
+            />
+            <Route
+              path="/finance/collections"
+              element={lazyPage(<CollectionsPage />)}
+            />
+            <Route
+              path="/finance/accounts"
+              element={lazyPage(<CollectionsPage accountsMode />)}
+            />
+            <Route
               path="/finance/invoice-profiles"
               element={lazyPage(<InvoiceProfilesPage />)}
             />
@@ -167,8 +214,24 @@ export default function App() {
               element={lazyPage(<CustomerContractsPage />)}
             />
             <Route
+              path="/finance/contract-renewals"
+              element={lazyPage(<ContractRenewalsPage />)}
+            />
+            <Route
+              path="/finance/contract-performance"
+              element={lazyPage(<ContractPerformancePage />)}
+            />
+            <Route
               path="/finance/customer-contracts/:contractId"
               element={lazyPage(<CustomerContractDetailPage />)}
+            />
+            <Route
+              path="/finance/customer-contracts/new"
+              element={lazyPage(<NewCustomerContractPage />)}
+            />
+            <Route
+              path="/finance/customer-contracts/:contractId/edit"
+              element={lazyPage(<NewCustomerContractPage />)}
             />
             <Route
               path="/finance/settings"
@@ -240,6 +303,10 @@ export default function App() {
             />
             <Route path="/team" element={lazyPage(<TeamPage />)} />
             <Route path="/settings" element={lazyPage(<SettingsPage />)} />
+            <Route
+              path="/operations/data-health"
+              element={lazyPage(<DataHealthPage />)}
+            />
           </Route>
           <Route path="*" element={lazyPage(<NotFound />)} />
         </Routes>

@@ -7,6 +7,7 @@ import {
   canViewCompany,
   isCeoOrHob,
 } from "./authorization";
+import { allocateMoney, sumMoney } from "./money";
 
 type AchievementRow = {
   accountManagerId: Id<"users">;
@@ -14,10 +15,6 @@ type AchievementRow = {
   sectorId: Id<"sectors">;
   amount: number;
 };
-
-function roundMoney(value: number) {
-  return Math.round(value * 100) / 100;
-}
 
 function yearFromTimestamp(timestamp: number) {
   return new Date(timestamp).getFullYear();
@@ -66,9 +63,12 @@ export async function buildCollectedRevenueAchievement(
     visibleCompanies.map((company) => [company._id, company]),
   );
   const invoices = (await ctx.db.query("invoices").collect()).filter(
-    (invoice) => companyById.has(invoice.companyId) && isRevenueInvoice(invoice),
+    (invoice) =>
+      companyById.has(invoice.companyId) && isRevenueInvoice(invoice),
   );
-  const invoiceById = new Map(invoices.map((invoice) => [invoice._id, invoice]));
+  const invoiceById = new Map(
+    invoices.map((invoice) => [invoice._id, invoice]),
+  );
   const recordedByInvoiceId = new Map<Id<"invoices">, number>();
   const rows: AchievementRow[] = [];
 
@@ -91,6 +91,38 @@ export async function buildCollectedRevenueAchievement(
       amount,
     });
   };
+  const addCollection = (
+    invoice: Doc<"invoices">,
+    amount: number,
+    collectedAt: number,
+  ) => {
+    if (
+      invoice.billingTiming === "prepaid" &&
+      invoice.revenueAllocations?.length
+    ) {
+      const allocations = allocateMoney(
+        amount,
+        invoice.revenueAllocations.map((allocation) => ({
+          month: allocation.month,
+          weight: allocation.amount,
+        })),
+      );
+      for (const allocation of allocations) {
+        const [allocationYear, allocationMonth] = allocation.month
+          .split("-")
+          .map(Number);
+        addRow(
+          invoice,
+          allocation.amount,
+          collectedAt < Date.UTC(allocationYear, allocationMonth - 1, 1)
+            ? Date.UTC(allocationYear, allocationMonth - 1, 1)
+            : collectedAt,
+        );
+      }
+      return;
+    }
+    addRow(invoice, amount, collectedAt);
+  };
 
   for (const payment of await ctx.db.query("invoicePayments").collect()) {
     const invoice = invoiceById.get(payment.invoiceId);
@@ -99,15 +131,15 @@ export async function buildCollectedRevenueAchievement(
     }
     recordedByInvoiceId.set(
       invoice._id,
-      roundMoney((recordedByInvoiceId.get(invoice._id) ?? 0) + payment.amount),
+      sumMoney([recordedByInvoiceId.get(invoice._id) ?? 0, payment.amount]),
     );
-    addRow(invoice, payment.amount, payment.paidAt);
+    addCollection(invoice, payment.amount, payment.paidAt);
   }
 
   for (const invoice of invoices) {
     const recorded = recordedByInvoiceId.get(invoice._id) ?? 0;
-    const unrecorded = roundMoney(invoice.amountPaid - recorded);
-    addRow(invoice, unrecorded, invoice.updatedAt);
+    const unrecorded = sumMoney([invoice.amountPaid, -recorded]);
+    addCollection(invoice, unrecorded, invoice.updatedAt);
   }
 
   const byAccountManager: Record<string, number> = {};
@@ -115,21 +147,24 @@ export async function buildCollectedRevenueAchievement(
   const bySector: Record<string, number> = {};
 
   for (const row of rows) {
-    byAccountManager[row.accountManagerId] = roundMoney(
-      (byAccountManager[row.accountManagerId] ?? 0) + row.amount,
-    );
+    byAccountManager[row.accountManagerId] = sumMoney([
+      byAccountManager[row.accountManagerId] ?? 0,
+      row.amount,
+    ]);
     if (row.countryId) {
-      byCountry[row.countryId] = roundMoney(
-        (byCountry[row.countryId] ?? 0) + row.amount,
-      );
+      byCountry[row.countryId] = sumMoney([
+        byCountry[row.countryId] ?? 0,
+        row.amount,
+      ]);
     }
-    bySector[row.sectorId] = roundMoney(
-      (bySector[row.sectorId] ?? 0) + row.amount,
-    );
+    bySector[row.sectorId] = sumMoney([
+      bySector[row.sectorId] ?? 0,
+      row.amount,
+    ]);
   }
 
   return {
-    total: roundMoney(rows.reduce((sum, row) => sum + row.amount, 0)),
+    total: sumMoney(rows.map((row) => row.amount)),
     byAccountManager,
     byCountry,
     bySector,

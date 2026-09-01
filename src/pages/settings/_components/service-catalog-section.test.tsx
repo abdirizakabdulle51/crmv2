@@ -29,6 +29,13 @@ function catalogItem(
   return {
     _id: id as Id<"serviceCatalog">,
     _creationTime: 1,
+    productGroup:
+      serviceCategory === "ECS"
+        ? "compute"
+        : serviceCategory === "EIP"
+          ? "network"
+          : "security_compliance",
+    serviceCode: serviceCategory,
     serviceCategory,
     itemName,
     billingUnit: "per month",
@@ -51,11 +58,11 @@ describe("ServiceCatalogSection accordion", () => {
 
     render(<ServiceCatalogSection />);
 
-    expect(screen.getByRole("button", { name: /ECS/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /Compute/i })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
-    expect(screen.getByRole("button", { name: /EIP/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /Network/i })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
@@ -64,9 +71,9 @@ describe("ServiceCatalogSection accordion", () => {
     expect(screen.queryByText("Elastic IP")).not.toBeInTheDocument();
     expect(screen.queryByText("WAF Instance")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /ECS/i }));
+    await user.click(screen.getByRole("button", { name: /Compute/i }));
 
-    expect(screen.getByRole("button", { name: /ECS/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /Compute/i })).toHaveAttribute(
       "aria-expanded",
       "true",
     );

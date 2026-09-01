@@ -22,6 +22,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
   api: {
     companies: { list: "companies.list" },
     countries: { list: "countries.list" },
+    receivingAccounts: { list: "receivingAccounts.list" },
     expenses: {
       getExpenseRequest: "expenses.getExpenseRequest",
       getFinanceSettings: "expenses.getFinanceSettings",
@@ -57,6 +58,7 @@ const mocks = vi.hoisted(() => ({
   users: [] as Doc<"users">[],
   companies: [] as Doc<"companies">[],
   countries: [] as Doc<"countries">[],
+  fundingAccounts: [] as Doc<"receivingAccounts">[],
   updateDraftExpenseRequest: vi.fn(),
   submitExpenseRequest: vi.fn(),
   approveExpenseRequest: vi.fn(),
@@ -86,6 +88,7 @@ vi.mock("convex/react", () => ({
     if (query === "users.listAll") return mocks.users;
     if (query === "companies.list") return mocks.companies;
     if (query === "countries.list") return mocks.countries;
+    if (query === "receivingAccounts.list") return mocks.fundingAccounts;
     return undefined;
   },
   useMutation: (mutation: string) => {
@@ -281,16 +284,38 @@ describe("ExpenseDetailPage", () => {
     ];
     mocks.companies = [company("company-1", "Hormuud")];
     mocks.countries = [country("country-1", "Somalia")];
+    mocks.fundingAccounts = [
+      {
+        _id: "account-1" as Id<"receivingAccounts">,
+        _creationTime: 1,
+        countryId: "country-1" as Id<"countries">,
+        name: "Salaam Bank USD",
+        providerName: "Salaam Somali Bank",
+        accountNumber: "33111777",
+        accountHolderName: "HTG CLOUDS LIMITED",
+        type: "bank",
+        usage: "both",
+        currency: "USD",
+        isActive: true,
+        createdBy: "ceo" as Id<"users">,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
     mocks.updateDraftExpenseRequest.mockReset().mockResolvedValue(undefined);
     mocks.submitExpenseRequest.mockReset().mockResolvedValue(undefined);
     mocks.approveExpenseRequest.mockReset().mockResolvedValue(undefined);
     mocks.rejectExpenseRequest.mockReset().mockResolvedValue(undefined);
     mocks.cancelExpenseRequest.mockReset().mockResolvedValue(undefined);
     mocks.markExpensePaid.mockReset().mockResolvedValue(undefined);
-    mocks.generateReceiptUploadUrl.mockReset().mockResolvedValue("https://upload.example");
+    mocks.generateReceiptUploadUrl
+      .mockReset()
+      .mockResolvedValue("https://upload.example");
     mocks.saveReceiptMetadata.mockReset().mockResolvedValue("receipt-new");
     mocks.archiveReceipt.mockReset().mockResolvedValue(undefined);
-    mocks.convexQuery.mockReset().mockResolvedValue("https://download.example/receipt.pdf");
+    mocks.convexQuery
+      .mockReset()
+      .mockResolvedValue("https://download.example/receipt.pdf");
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -306,8 +331,9 @@ describe("ExpenseDetailPage", () => {
   it("renders expense details and audit events", () => {
     renderDetailPage();
 
-    expect(screen.getByRole("heading", { name: "Customer visit taxi" }))
-      .toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Customer visit taxi" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Travel")).toBeInTheDocument();
     expect(screen.getByText("$25.00")).toBeInTheDocument();
     expect(screen.getByText("Amina")).toBeInTheDocument();
@@ -446,12 +472,20 @@ describe("ExpenseDetailPage", () => {
 
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Mark Paid" }))
-      .not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Mark Paid" }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Approve" }));
+    const dialog = screen.getByRole("dialog", { name: "Approve Expense" });
+    await user.click(within(dialog).getByLabelText("Pay from account"));
+    await user.click(screen.getByRole("option", { name: /Salaam Bank USD/ }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Approve Expense" }),
+    );
     expect(mocks.approveExpenseRequest).toHaveBeenCalledWith({
       expenseId: "expense-1",
+      fundingAccountId: "account-1",
     });
   });
 
@@ -462,10 +496,12 @@ describe("ExpenseDetailPage", () => {
     renderDetailPage();
 
     expectDetailValue("Approval Level", "Business Approval");
-    expect(screen.queryByRole("button", { name: "Approve" }))
-      .not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Reject" }))
-      .not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Approve" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reject" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows approve and reject for HOB on executive approval expenses", () => {
@@ -499,11 +535,19 @@ describe("ExpenseDetailPage", () => {
 
   it("shows mark paid only for CEO/HOB on approved expenses", async () => {
     mocks.currentUser = crmUser("am", "account_manager", "Amina");
-    mocks.expense = expense({ status: "approved" });
+    mocks.expense = expense({
+      status: "approved",
+      fundingAccountId: "account-1" as Id<"receivingAccounts">,
+      fundingAccountName: "Salaam Bank USD",
+      fundingProviderName: "Salaam Somali Bank",
+      fundingAccountNumber: "33111777",
+      fundingAccountType: "bank",
+    });
     const { rerender } = renderDetailPage();
 
-    expect(screen.queryByRole("button", { name: "Mark Paid" }))
-      .not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Mark Paid" }),
+    ).not.toBeInTheDocument();
 
     mocks.currentUser = crmUser("ceo", "ceo", "CEO");
     rerender(
@@ -517,26 +561,42 @@ describe("ExpenseDetailPage", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("button", { name: "Mark Paid" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Mark Paid" }),
+    ).toBeInTheDocument();
   });
 
   it("marks an approved expense paid", async () => {
     const user = userEvent.setup();
     mocks.currentUser = crmUser("ceo", "ceo", "CEO");
-    mocks.expense = expense({ status: "approved" });
+    mocks.expense = expense({
+      status: "approved",
+      fundingAccountId: "account-1" as Id<"receivingAccounts">,
+      fundingAccountName: "Salaam Bank USD",
+      fundingProviderName: "Salaam Somali Bank",
+      fundingAccountNumber: "33111777",
+      fundingAccountType: "bank",
+    });
 
     renderDetailPage();
 
     await user.click(screen.getByRole("button", { name: "Mark Paid" }));
     const dialog = screen.getByRole("dialog");
-    await user.type(within(dialog).getByLabelText("Payment method"), "Bank Transfer");
-    await user.type(within(dialog).getByLabelText("Payment reference"), "PAY-1");
+    await user.type(
+      within(dialog).getByLabelText("Transaction ID"),
+      "PAY-TX-1",
+    );
+    await user.type(
+      within(dialog).getByLabelText("Payment reference"),
+      "PAY-1",
+    );
     await user.click(within(dialog).getByRole("button", { name: "Mark Paid" }));
 
     expect(mocks.markExpensePaid).toHaveBeenCalledWith({
       expenseId: "expense-1",
-      paymentMethod: "Bank Transfer",
       paymentReference: "PAY-1",
+      paymentTransactionId: "PAY-TX-1",
+      fundingAccountId: undefined,
     });
   });
 
@@ -566,7 +626,9 @@ describe("ExpenseDetailPage", () => {
       }),
     );
 
-    expect(mocks.toastError).toHaveBeenCalledWith("Receipts must be 10 MB or less");
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "Receipts must be 10 MB or less",
+    );
     expect(mocks.generateReceiptUploadUrl).not.toHaveBeenCalled();
   });
 

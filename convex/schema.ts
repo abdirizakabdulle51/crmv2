@@ -24,6 +24,9 @@ export default defineSchema({
         v.literal("monitoring"),
       ),
     ),
+    organizationScope: v.optional(
+      v.union(v.literal("country"), v.literal("global")),
+    ),
     countryId: v.optional(v.id("countries")),
   })
     .index("by_token", ["tokenIdentifier"])
@@ -43,6 +46,7 @@ export default defineSchema({
 
   companies: defineTable({
     name: v.string(),
+    normalizedName: v.optional(v.string()),
     sectorId: v.id("sectors"),
     countryId: v.id("countries"),
     accountManagerId: v.optional(v.id("users")),
@@ -66,13 +70,23 @@ export default defineSchema({
     website: v.optional(v.string()),
     contactName: v.optional(v.string()),
     contactEmail: v.optional(v.string()),
+    commercialModel: v.optional(
+      v.union(v.literal("payg"), v.literal("contracted")),
+    ),
+    lifecycleStatus: v.optional(
+      v.union(v.literal("prospect"), v.literal("customer"), v.literal("lost")),
+    ),
+    lostReason: v.optional(v.string()),
+    lostAt: v.optional(v.number()),
   })
     .index("by_account_manager", ["accountManagerId"])
     .index("by_country", ["countryId"])
     .index("by_sector", ["sectorId"])
+    .index("by_country_normalized_name", ["countryId", "normalizedName"])
     .index("by_status", ["contractStatus"]),
 
   leads: defineTable({
+    opportunityNumber: v.optional(v.string()),
     title: v.string(),
     companyId: v.optional(v.id("companies")),
     countryId: v.optional(v.id("countries")),
@@ -89,7 +103,15 @@ export default defineSchema({
     potentialValue: v.number(),
     expectedCloseDate: v.string(),
     nextAction: v.optional(v.string()),
+    nextActionDate: v.optional(v.string()),
+    contactName: v.optional(v.string()),
+    contactEmail: v.optional(v.string()),
+    source: v.optional(v.string()),
+    serviceInterests: v.optional(v.array(v.string())),
+    lossReason: v.optional(v.string()),
     notes: v.optional(v.string()),
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
   })
     .index("by_account_manager", ["accountManagerId"])
     .index("by_country", ["countryId"])
@@ -577,9 +599,38 @@ export default defineSchema({
     .index("by_company_date", ["companyId", "usageDate"])
     .index("by_company_month", ["companyId", "month"])
     .index("by_company_month_date", ["companyId", "month", "usageDate"])
-    .index("by_month", ["month"])
     .index("by_month_date", ["month", "usageDate"])
+    .index("by_month", ["month"])
     .index("by_invoice", ["invoiceId"]),
+
+  dailyUsageBillingSnapshots: defineTable({
+    companyId: v.id("companies"),
+    month: v.string(),
+    calculationVersion: v.string(),
+    inputDigest: v.string(),
+    billingResultDigest: v.string(),
+    computedAt: v.number(),
+    sourceLatestCapturedAt: v.optional(v.number()),
+    rowCount: v.number(),
+    serviceCount: v.number(),
+    dayCount: v.number(),
+    capturedCount: v.number(),
+    lockedCount: v.number(),
+    attachedCount: v.number(),
+    unpricedCount: v.number(),
+    rollupRowCount: v.number(),
+    estimatedAmount: v.number(),
+    catalogPricedRowCount: v.number(),
+    contractPricedRowCount: v.number(),
+    latestUsageDate: v.optional(v.string()),
+    capturedThroughToday: v.boolean(),
+    latestDayRowCount: v.number(),
+    missingPriceRowCount: v.number(),
+    missingServiceCount: v.number(),
+  })
+    .index("by_company_month", ["companyId", "month"])
+    .index("by_month", ["month"])
+    .index("by_version_month", ["calculationVersion", "month"]),
 
   pingTargets: defineTable({
     name: v.string(),
@@ -647,9 +698,19 @@ export default defineSchema({
       v.literal("call"),
       v.literal("meeting"),
       v.literal("proposal_sent"),
+      v.literal("email"),
+      v.literal("note"),
+      v.literal("follow_up"),
+      v.literal("stage_changed"),
+      v.literal("quote_created"),
+      v.literal("quote_sent"),
+      v.literal("quote_accepted"),
+      v.literal("won"),
+      v.literal("lost"),
     ),
     description: v.optional(v.string()),
     date: v.string(),
+    createdAt: v.optional(v.number()),
   })
     .index("by_account_manager", ["accountManagerId"])
     .index("by_lead", ["leadId"])
@@ -746,6 +807,7 @@ export default defineSchema({
   consumption: defineTable({
     companyId: v.id("companies"),
     month: v.string(), // YYYY-MM format
+    usageDate: v.optional(v.string()),
     serviceType: v.string(),
     amount: v.number(),
     quantity: v.optional(v.number()),
@@ -760,6 +822,8 @@ export default defineSchema({
     .index("by_month", ["month"]),
 
   serviceCatalog: defineTable({
+    productGroup: v.optional(v.string()),
+    serviceCode: v.optional(v.string()),
     serviceCategory: v.string(),
     itemName: v.string(),
     specs: v.optional(v.string()),
@@ -769,6 +833,7 @@ export default defineSchema({
     hourlyPrice: v.optional(v.number()),
   })
     .index("by_category", ["serviceCategory"])
+    .index("by_product_group", ["productGroup"])
     .index("by_name", ["itemName"]),
 
   aiRecommendations: defineTable({
@@ -824,7 +889,7 @@ export default defineSchema({
 
   invoices: defineTable({
     companyId: v.id("companies"),
-    sourceQuoteId: v.optional(v.id("quotes")),
+    contractId: v.optional(v.id("customerContracts")),
     sourceType: v.optional(
       v.union(
         v.literal("quote"),
@@ -833,10 +898,38 @@ export default defineSchema({
       ),
     ),
     sourceContractId: v.optional(v.id("customerContracts")),
-    sourceMonth: v.optional(v.string()),
-    sourceReference: v.optional(v.string()),
     contractPeriodStartMonth: v.optional(v.string()),
     contractPeriodEndMonth: v.optional(v.string()),
+    sourceQuoteId: v.optional(v.id("quotes")),
+    sourceMonth: v.optional(v.string()),
+    sourceReference: v.optional(v.string()),
+    cycleStartMonth: v.optional(v.string()),
+    cycleEndMonth: v.optional(v.string()),
+    billingTiming: v.optional(
+      v.union(v.literal("prepaid"), v.literal("postpaid")),
+    ),
+    contractInvoiceKind: v.optional(
+      v.union(v.literal("cycle"), v.literal("overage_settlement")),
+    ),
+    contractUsageSummary: v.optional(
+      v.object({
+        catalogueUsage: v.number(),
+        discountedUsage: v.number(),
+        monthlyMinimum: v.number(),
+        minimumShortfall: v.number(),
+        payable: v.number(),
+        usageEntries: v.number(),
+      }),
+    ),
+    revenueAllocations: v.optional(
+      v.array(v.object({ month: v.string(), amount: v.number() })),
+    ),
+    receivableAllocations: v.optional(
+      v.array(v.object({ month: v.string(), amount: v.number() })),
+    ),
+    grossBeforeCredit: v.optional(v.number()),
+    onboardingCreditId: v.optional(v.id("customerCredits")),
+    onboardingCreditApplied: v.optional(v.number()),
     invoiceProfileId: v.optional(v.id("invoiceProfiles")),
     createdBy: v.id("users"),
     invoiceNumber: v.optional(v.string()),
@@ -894,6 +987,9 @@ export default defineSchema({
         monthlyUnitPrice: v.number(),
         monthlyTotal: v.number(),
         yearlyTotal: v.number(),
+        monthlyUnitPriceCents: v.optional(v.number()),
+        monthlyTotalCents: v.optional(v.number()),
+        yearlyTotalCents: v.optional(v.number()),
         regionId: v.optional(v.string()),
         regionName: v.optional(v.string()),
         dataCenterName: v.optional(v.string()),
@@ -905,6 +1001,12 @@ export default defineSchema({
     grandTotal: v.number(),
     amountPaid: v.number(),
     balanceDue: v.number(),
+    subtotalCents: v.optional(v.number()),
+    monthlyTotalCents: v.optional(v.number()),
+    yearlyTotalCents: v.optional(v.number()),
+    grandTotalCents: v.optional(v.number()),
+    amountPaidCents: v.optional(v.number()),
+    balanceDueCents: v.optional(v.number()),
     notes: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -913,16 +1015,20 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_created_by", ["createdBy"])
     .index("by_source_quote", ["sourceQuoteId"])
+    .index("by_contract", ["contractId"])
     .index("by_invoice_number", ["invoiceNumber"]),
 
   invoicePayments: defineTable({
     invoiceId: v.id("invoices"),
+    receivingAccountId: v.optional(v.id("receivingAccounts")),
     amount: v.number(),
+    amountCents: v.optional(v.number()),
     appliedAmount: v.optional(v.number()),
     extraServiceRevenueAmount: v.optional(v.number()),
     paidAt: v.number(),
     method: v.optional(v.string()),
     reference: v.optional(v.string()),
+    transactionId: v.optional(v.string()),
     receivingBankName: v.optional(v.string()),
     receivingAccountNumber: v.optional(v.string()),
     receivingAccountName: v.optional(v.string()),
@@ -932,7 +1038,59 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_invoice", ["invoiceId"])
-    .index("by_recorded_by", ["recordedBy"]),
+    .index("by_recorded_by", ["recordedBy"])
+    .index("by_receiving_account", ["receivingAccountId"])
+    .index("by_account_transaction", ["receivingAccountId", "transactionId"]),
+
+  financialInstitutions: defineTable({
+    countryId: v.id("countries"),
+    name: v.string(),
+    code: v.optional(v.string()),
+    swiftCode: v.optional(v.string()),
+    type: v.union(v.literal("bank"), v.literal("mobile_money")),
+    normalizedName: v.string(),
+    isActive: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_country", ["countryId"])
+    .index("by_country_name", ["countryId", "normalizedName"])
+    .index("by_active", ["isActive"]),
+
+  receivingAccounts: defineTable({
+    countryId: v.optional(v.id("countries")),
+    institutionId: v.optional(v.id("financialInstitutions")),
+    name: v.string(),
+    providerName: v.string(),
+    accountNumber: v.string(),
+    uniquenessKey: v.optional(v.string()),
+    searchText: v.optional(v.string()),
+    accountHolderName: v.string(),
+    type: v.union(
+      v.literal("bank"),
+      v.literal("mobile_money"),
+      v.literal("cash"),
+    ),
+    usage: v.optional(
+      v.union(v.literal("incoming"), v.literal("outgoing"), v.literal("both")),
+    ),
+    currency: v.string(),
+    location: v.optional(v.string()),
+    isActive: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_active", ["isActive"])
+    .index("by_country", ["countryId"])
+    .index("by_country_active", ["countryId", "isActive"])
+    .index("by_uniqueness_key", ["uniquenessKey"])
+    .index("by_type_active", ["type", "isActive"])
+    .searchIndex("search_accounts", {
+      searchField: "searchText",
+      filterFields: ["countryId", "isActive"],
+    }),
 
   invoiceEvents: defineTable({
     invoiceId: v.id("invoices"),
@@ -956,6 +1114,25 @@ export default defineSchema({
   })
     .index("by_invoice", ["invoiceId"])
     .index("by_type", ["type"]),
+
+  billingAutomationRuns: defineTable({
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    status: v.union(v.literal("running"), v.literal("completed"), v.literal("failed")),
+    trigger: v.union(v.literal("scheduled"), v.literal("manual")),
+    actorId: v.optional(v.id("users")),
+    contractsScanned: v.number(),
+    created: v.number(),
+    skipped: v.number(),
+    issues: v.array(
+      v.object({
+        contractId: v.optional(v.id("customerContracts")),
+        contractNumber: v.optional(v.string()),
+        sourceMonth: v.optional(v.string()),
+        reason: v.string(),
+      }),
+    ),
+  }).index("by_started_at", ["startedAt"]),
 
   expenseCategories: defineTable({
     name: v.string(),
@@ -992,6 +1169,10 @@ export default defineSchema({
     submittedAt: v.optional(v.number()),
     approvedAt: v.optional(v.number()),
     approvedBy: v.optional(v.id("users")),
+    fundingAccountId: v.optional(v.id("receivingAccounts")),
+    fundingAccountName: v.optional(v.string()),
+    fundingProviderName: v.optional(v.string()),
+    fundingAccountNumber: v.optional(v.string()),
     rejectedAt: v.optional(v.number()),
     rejectedBy: v.optional(v.id("users")),
     rejectionReason: v.optional(v.string()),
@@ -999,6 +1180,11 @@ export default defineSchema({
     paidBy: v.optional(v.id("users")),
     paymentMethod: v.optional(v.string()),
     paymentReference: v.optional(v.string()),
+    paymentTransactionId: v.optional(v.string()),
+    fundingAccountType: v.optional(
+      v.union(v.literal("bank"), v.literal("mobile_money"), v.literal("cash")),
+    ),
+    onboardingCreditId: v.optional(v.id("customerCredits")),
     createdAt: v.number(),
     updatedAt: v.number(),
     archivedAt: v.optional(v.number()),
@@ -1009,7 +1195,12 @@ export default defineSchema({
     .index("by_company", ["companyId"])
     .index("by_country", ["countryId"])
     .index("by_created_at", ["createdAt"])
-    .index("by_expense_date", ["expenseDate"]),
+    .index("by_expense_date", ["expenseDate"])
+    .index("by_funding_account", ["fundingAccountId"])
+    .index("by_account_transaction", [
+      "fundingAccountId",
+      "paymentTransactionId",
+    ]),
 
   expenseEvents: defineTable({
     expenseId: v.id("expenseRequests"),
@@ -1104,7 +1295,35 @@ export default defineSchema({
       v.literal("monthly"),
       v.literal("quarterly"),
       v.literal("every_3_months"),
+      v.literal("semiannual"),
       v.literal("yearly"),
+    ),
+    billingTiming: v.optional(
+      v.union(v.literal("prepaid"), v.literal("postpaid")),
+    ),
+    pricingBasis: v.optional(
+      v.union(v.literal("service_lines"), v.literal("total_contract")),
+    ),
+    commitmentModel: v.optional(v.literal("flexible_value")),
+    pricingModel: v.optional(
+      v.union(
+        v.literal("flexible_total_commitment"),
+        v.literal("monthly_minimum"),
+        v.literal("discounted_usage"),
+      ),
+    ),
+    monthlyMinimum: v.optional(v.number()),
+    contractValue: v.optional(v.number()),
+    defaultDiscountType: v.optional(
+      v.union(v.literal("percentage"), v.literal("amount")),
+    ),
+    defaultDiscountValue: v.optional(v.number()),
+    overagePricingPolicy: v.optional(
+      v.union(
+        v.literal("current_catalog"),
+        v.literal("frozen_catalog"),
+        v.literal("custom"),
+      ),
     ),
     paymentTermDays: v.optional(v.number()),
     signedDocumentUrl: v.optional(v.string()),
@@ -1176,6 +1395,8 @@ export default defineSchema({
     catalogItemId: v.optional(v.id("serviceCatalog")),
     itemName: v.string(),
     serviceCategory: v.string(),
+    productGroup: v.optional(v.string()),
+    serviceCode: v.optional(v.string()),
     description: v.optional(v.string()),
     includedQuantity: v.number(),
     unit: v.string(),
@@ -1196,8 +1417,90 @@ export default defineSchema({
     .index("by_catalog_item", ["catalogItemId"])
     .index("by_service_category", ["serviceCategory"]),
 
+  customerContractGroupDiscounts: defineTable({
+    contractId: v.id("customerContracts"),
+    productGroup: v.string(),
+    discountPercent: v.number(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_contract", ["contractId"])
+    .index("by_contract_group", ["contractId", "productGroup"]),
+
+  customerCredits: defineTable({
+    companyId: v.id("companies"),
+    originalAmount: v.number(),
+    remainingAmount: v.number(),
+    reservedAmount: v.number(),
+    currency: v.string(),
+    policy: v.union(
+      v.literal("first_invoice_only"),
+      v.literal("carry_forward"),
+    ),
+    appliesTo: v.union(
+      v.literal("all"),
+      v.literal("contract"),
+      v.literal("non_contract"),
+    ),
+    status: v.union(
+      v.literal("available"),
+      v.literal("reserved"),
+      v.literal("consumed"),
+      v.literal("expired"),
+    ),
+    expiresAt: v.optional(v.number()),
+    description: v.optional(v.string()),
+    expenseId: v.optional(v.id("expenseRequests")),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_company", ["companyId"])
+    .index("by_status", ["status"]),
+
+  customerCreditLedger: defineTable({
+    creditId: v.id("customerCredits"),
+    companyId: v.id("companies"),
+    invoiceId: v.optional(v.id("invoices")),
+    type: v.union(
+      v.literal("granted"),
+      v.literal("reserved"),
+      v.literal("released"),
+      v.literal("consumed"),
+      v.literal("restored"),
+      v.literal("expired"),
+    ),
+    amount: v.number(),
+    balanceAfter: v.number(),
+    actorId: v.optional(v.id("users")),
+    reason: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_credit", ["creditId"])
+    .index("by_company", ["companyId"])
+    .index("by_invoice", ["invoiceId"]),
+
   quotes: defineTable({
     companyId: v.id("companies"),
+    leadId: v.optional(v.id("leads")),
+    commercialModel: v.optional(
+      v.union(v.literal("payg"), v.literal("contracted")),
+    ),
+    contractTerms: v.optional(
+      v.object({
+        pricingModel: v.union(
+          v.literal("flexible_total_commitment"),
+          v.literal("monthly_minimum"),
+          v.literal("discounted_usage"),
+        ),
+        contractValue: v.optional(v.number()),
+        monthlyMinimum: v.optional(v.number()),
+        groupDiscounts: v.array(
+          v.object({ productGroup: v.string(), discountPercent: v.number() }),
+        ),
+      }),
+    ),
     createdBy: v.id("users"),
     quoteNumber: v.optional(v.string()),
     date: v.string(),
@@ -1206,6 +1509,9 @@ export default defineSchema({
       v.literal("sent"),
       v.literal("accepted"),
     ),
+    sentAt: v.optional(v.number()),
+    acceptedAt: v.optional(v.number()),
+    acceptedByContact: v.optional(v.string()),
     lineItems: v.array(
       v.object({
         catalogItemId: v.id("serviceCatalog"),
@@ -1214,13 +1520,21 @@ export default defineSchema({
         billingUnit: v.string(),
         quantity: v.number(),
         monthlyUnitPrice: v.number(),
+        serviceDiscountPercent: v.optional(v.number()),
         monthlyTotal: v.number(),
         yearlyTotal: v.number(),
+        monthlyUnitPriceCents: v.optional(v.number()),
+        monthlyTotalCents: v.optional(v.number()),
+        yearlyTotalCents: v.optional(v.number()),
         regionId: v.optional(v.string()),
         regionName: v.optional(v.string()),
         dataCenterName: v.optional(v.string()),
       }),
     ),
+    monthlyGrandTotal: v.number(),
+    yearlyGrandTotal: v.number(),
+    monthlyGrandTotalCents: v.optional(v.number()),
+    yearlyGrandTotalCents: v.optional(v.number()),
     discountPercent: v.optional(v.number()),
     monthlySubtotal: v.optional(v.number()),
     yearlySubtotal: v.optional(v.number()),
@@ -1250,14 +1564,13 @@ export default defineSchema({
     discountRejectedBy: v.optional(v.id("users")),
     discountRejectedAt: v.optional(v.number()),
     discountApprovalNote: v.optional(v.string()),
-    monthlyGrandTotal: v.number(),
-    yearlyGrandTotal: v.number(),
     notes: v.optional(v.string()),
     sourceMonth: v.optional(v.string()),
   })
     .index("by_company", ["companyId"])
     .index("by_status", ["status"])
     .index("by_created_by", ["createdBy"])
+    .index("by_lead", ["leadId"])
     .index("by_quote_number", ["quoteNumber"]),
 
   combinedQuotes: defineTable({

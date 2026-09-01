@@ -7,6 +7,13 @@ import {
   assertNotMonitoring,
   canViewCompany,
 } from "./authorization";
+import {
+  addCents,
+  calculateTaxedLine,
+  fromCents,
+  sumMoney,
+  toCents,
+} from "./money";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -23,7 +30,6 @@ const combinedLineItemValidator = v.object({
   unitPrice: v.number(),
   taxRate: v.number(),
   discountPercent: v.number(),
-  amount: v.number(),
 });
 
 async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {
@@ -66,21 +72,13 @@ async function nextCombinedQuoteNumber(ctx: MutationCtx, now: Date) {
   return quoteNumberForSequence(now, issuedThisYear.length + 1);
 }
 
-function roundMoney(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
 function lineAmount(line: {
   quantity: number;
   unitPrice: number;
   taxRate: number;
   discountPercent: number;
 }) {
-  const base = line.quantity * line.unitPrice;
-  const discount = base * (line.discountPercent / 100);
-  const taxable = base - discount;
-  const tax = taxable * (line.taxRate / 100);
-  return roundMoney(taxable + tax);
+  return calculateTaxedLine(line).total;
 }
 
 async function latestAcceptedQuoteTotal(
@@ -122,15 +120,17 @@ export const buildPreview = query({
           q.eq("companyId", companyId).eq("month", args.month),
         )
         .collect();
-      const usageMonthlyTotal = roundMoney(
-        usageEntries.reduce((sum, entry) => sum + entry.amount, 0),
+      const usageMonthlyTotal = sumMoney(
+        usageEntries.map((entry) => entry.amount),
       );
       const acceptedQuoteMonthlyTotal =
-        usageMonthlyTotal > 0 ? 0 : await latestAcceptedQuoteTotal(ctx, companyId);
+        usageMonthlyTotal > 0
+          ? 0
+          : await latestAcceptedQuoteTotal(ctx, companyId);
       const unitPrice =
         usageMonthlyTotal > 0
           ? usageMonthlyTotal
-          : roundMoney(acceptedQuoteMonthlyTotal);
+          : fromCents(toCents(acceptedQuoteMonthlyTotal));
       const source =
         usageMonthlyTotal > 0
           ? "usage"
@@ -166,10 +166,6 @@ export const create = mutation({
     expirationDate: v.optional(v.string()),
     paymentTerms: v.optional(v.string()),
     lineItems: v.array(combinedLineItemValidator),
-    subtotal: v.number(),
-    taxTotal: v.number(),
-    discountTotal: v.number(),
-    grandTotal: v.number(),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -202,6 +198,25 @@ export const create = mutation({
       }
     }
 
+    const calculations = args.lineItems.map((line) => calculateTaxedLine(line));
+    const lineItems = args.lineItems.map((line, index) => ({
+      ...line,
+      product: line.product.trim(),
+      sourceCompanyName: line.sourceCompanyName?.trim(),
+      amount: calculations[index].total,
+    }));
+    const subtotal = fromCents(
+      addCents(...calculations.map((line) => toCents(line.subtotal))),
+    );
+    const taxTotal = fromCents(
+      addCents(...calculations.map((line) => toCents(line.tax))),
+    );
+    const discountTotal = fromCents(
+      addCents(...calculations.map((line) => toCents(line.discount))),
+    );
+    const grandTotal = fromCents(
+      addCents(...calculations.map((line) => toCents(line.total))),
+    );
     const now = Date.now();
     return await ctx.db.insert("combinedQuotes", {
       parentCompanyName,
@@ -212,16 +227,11 @@ export const create = mutation({
       paymentTerms: args.paymentTerms?.trim() || undefined,
       status: "draft",
       sourceMonth: args.sourceMonth,
-      lineItems: args.lineItems.map((line) => ({
-        ...line,
-        product: line.product.trim(),
-        sourceCompanyName: line.sourceCompanyName?.trim(),
-        amount: roundMoney(line.amount),
-      })),
-      subtotal: roundMoney(args.subtotal),
-      taxTotal: roundMoney(args.taxTotal),
-      discountTotal: roundMoney(args.discountTotal),
-      grandTotal: roundMoney(args.grandTotal),
+      lineItems,
+      subtotal,
+      taxTotal,
+      discountTotal,
+      grandTotal,
       notes: args.notes?.trim() || undefined,
       createdAt: now,
       updatedAt: now,

@@ -5,9 +5,20 @@ import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Checkbox } from "@/components/ui/checkbox.tsx";
-import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command.tsx";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
@@ -84,7 +95,9 @@ export default function CombinedQuotePage() {
   const [month, setMonth] = useState(getCurrentMonth());
   const [expirationDate, setExpirationDate] = useState(defaultExpirationDate);
   const [paymentTerms, setPaymentTerms] = useState("Immediate");
-  const [selectedCompanyIds, setSelectedCompanyIds] = useState<Id<"companies">[]>([]);
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<
+    Id<"companies">[]
+  >([]);
   const [lines, setLines] = useState<CombinedLine[]>([]);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -152,7 +165,9 @@ export default function CombinedQuotePage() {
   };
 
   const removeLine = (index: number) => {
-    setLines((current) => current.filter((_, lineIndex) => lineIndex !== index));
+    setLines((current) =>
+      current.filter((_, lineIndex) => lineIndex !== index),
+    );
   };
 
   const saveDraft = async () => {
@@ -173,14 +188,15 @@ export default function CombinedQuotePage() {
         expirationDate,
         paymentTerms,
         lineItems: lines.map((line) => ({
-          ...line,
+          sourceCompanyId: line.sourceCompanyId,
+          sourceCompanyName: line.sourceCompanyName,
+          source: line.source,
           product: line.product.trim(),
-          amount: calculateLineAmount(line),
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          taxRate: line.taxRate,
+          discountPercent: line.discountPercent,
         })),
-        subtotal: roundMoney(totals.subtotal),
-        taxTotal: roundMoney(totals.taxTotal),
-        discountTotal: roundMoney(totals.discountTotal),
-        grandTotal: roundMoney(totals.grandTotal),
         notes,
       });
       toast.success("Combined quote draft saved");
@@ -215,7 +231,8 @@ export default function CombinedQuotePage() {
           </Button>
           <h1 className="text-2xl font-bold tracking-tight">Combined Quote</h1>
           <p className="mt-1 text-muted-foreground">
-            Build one editable quote for a parent company using multiple CRM companies.
+            Build one editable quote for a parent company using multiple CRM
+            companies.
           </p>
         </div>
         <Button onClick={saveDraft} disabled={saving || lines.length === 0}>
@@ -282,12 +299,16 @@ export default function CombinedQuotePage() {
             <div className="flex justify-between">
               <span className="text-muted-foreground">Monthly Total</span>
               <span className="font-medium">
-                {formatCurrency(lines.reduce((sum, line) => sum + line.unitPrice, 0))}
+                {formatCurrency(
+                  lines.reduce((sum, line) => sum + line.unitPrice, 0),
+                )}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Subtotal</span>
-              <span className="font-medium">{formatCurrency(totals.subtotal)}</span>
+              <span className="font-medium">
+                {formatCurrency(totals.subtotal)}
+              </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Discount</span>
@@ -297,12 +318,16 @@ export default function CombinedQuotePage() {
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Tax</span>
-              <span className="font-medium">{formatCurrency(totals.taxTotal)}</span>
+              <span className="font-medium">
+                {formatCurrency(totals.taxTotal)}
+              </span>
             </div>
             <div className="border-t pt-3">
               <div className="flex justify-between text-base">
                 <span className="font-semibold">Grand Total</span>
-                <span className="font-bold">{formatCurrency(totals.grandTotal)}</span>
+                <span className="font-bold">
+                  {formatCurrency(totals.grandTotal)}
+                </span>
               </div>
             </div>
           </CardContent>
@@ -361,7 +386,8 @@ export default function CombinedQuotePage() {
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Select companies to pull their monthly usage total. You can still add manual lines.
+                Select companies to pull their monthly usage total. You can
+                still add manual lines.
               </p>
             )}
           </CardContent>
@@ -372,7 +398,8 @@ export default function CombinedQuotePage() {
             <div>
               <CardTitle className="text-base">Quote Lines</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                Quantity defaults to 12 months. Every value can be edited before saving.
+                Quantity defaults to 12 months. Every value can be edited before
+                saving.
               </p>
             </div>
             <Button variant="outline" onClick={addManualLine}>
@@ -388,7 +415,8 @@ export default function CombinedQuotePage() {
               </div>
             ) : lines.length === 0 ? (
               <div className="p-8 text-center text-sm text-muted-foreground">
-                Select companies or add a manual line to start the combined quote.
+                Select companies or add a manual line to start the combined
+                quote.
               </div>
             ) : (
               <Table>
@@ -396,16 +424,26 @@ export default function CombinedQuotePage() {
                   <TableRow className="bg-muted/30">
                     <TableHead>Product</TableHead>
                     <TableHead className="w-[100px] text-right">Qty</TableHead>
-                    <TableHead className="w-[150px] text-right">Unit Price</TableHead>
-                    <TableHead className="w-[100px] text-right">Taxes</TableHead>
-                    <TableHead className="w-[100px] text-right">Disc.%</TableHead>
-                    <TableHead className="w-[150px] text-right">Amount</TableHead>
+                    <TableHead className="w-[150px] text-right">
+                      Unit Price
+                    </TableHead>
+                    <TableHead className="w-[100px] text-right">
+                      Taxes
+                    </TableHead>
+                    <TableHead className="w-[100px] text-right">
+                      Disc.%
+                    </TableHead>
+                    <TableHead className="w-[150px] text-right">
+                      Amount
+                    </TableHead>
                     <TableHead className="w-[60px]" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {lines.map((line, index) => (
-                    <TableRow key={`${line.sourceCompanyId ?? "manual"}-${index}`}>
+                    <TableRow
+                      key={`${line.sourceCompanyId ?? "manual"}-${index}`}
+                    >
                       <TableCell className="min-w-[340px] whitespace-normal">
                         <Input
                           value={line.product}
@@ -417,7 +455,9 @@ export default function CombinedQuotePage() {
                           <Badge variant="outline" className="text-[10px]">
                             {sourceLabel(line.source)}
                           </Badge>
-                          {line.sourceCompanyName ? line.sourceCompanyName : "Manual line"}
+                          {line.sourceCompanyName
+                            ? line.sourceCompanyName
+                            : "Manual line"}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -469,7 +509,9 @@ export default function CombinedQuotePage() {
                           value={line.discountPercent}
                           onChange={(event) =>
                             setLine(index, {
-                              discountPercent: numberFromInput(event.target.value),
+                              discountPercent: numberFromInput(
+                                event.target.value,
+                              ),
                             })
                           }
                           className="text-right"
@@ -485,7 +527,9 @@ export default function CombinedQuotePage() {
                           size="icon"
                           aria-label="Remove line"
                           onClick={() => removeLine(index)}
-                          className={cn("text-destructive hover:text-destructive")}
+                          className={cn(
+                            "text-destructive hover:text-destructive",
+                          )}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

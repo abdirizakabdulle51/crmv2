@@ -29,7 +29,6 @@ import {
   EmptyContent,
 } from "@/components/ui/empty.tsx";
 import { Plus, FileText, Eye, Sparkles, Files } from "lucide-react";
-import QuoteCreateDialog from "./_components/quote-create-dialog.tsx";
 import { formatCurrency } from "@/lib/format.ts";
 
 type Quote = Doc<"quotes">;
@@ -39,13 +38,13 @@ export default function QuotesPage() {
   const navigate = useNavigate();
   const companies = useQuery(api.companies.list, {});
   const quotes = useQuery(api.quotes.list, {});
+  const leads = useQuery(api.leads.list, {});
   const combinedQuotes = useQuery(api.combinedQuotes.list, {});
 
-  const [createOpen, setCreateOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [companyFilter, setCompanyFilter] = useState("all");
 
-  if (!companies || !quotes || !combinedQuotes) {
+  if (!companies || !quotes || !combinedQuotes || !leads) {
     return (
       <div className="p-6 md:p-8 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -60,6 +59,7 @@ export default function QuotesPage() {
   }
 
   const companyMap = new Map(companies.map((c) => [c._id, c]));
+  const opportunityMap = new Map(leads.map((lead) => [lead._id, lead]));
 
   // Filter quotes
   const filtered = quotes.filter((q) => {
@@ -99,9 +99,11 @@ export default function QuotesPage() {
     <div className="p-6 md:p-8 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Quotes</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            Opportunity Quotes
+          </h1>
           <p className="text-muted-foreground mt-1">
-            Generate and manage service quotes for companies
+            Manage proposals connected to the opportunity lifecycle
           </p>
         </div>
         <div className="flex gap-2">
@@ -119,7 +121,7 @@ export default function QuotesPage() {
             <Files className="h-4 w-4 mr-2" />
             Create Combined Quote
           </Button>
-          <Button onClick={() => setCreateOpen(true)}>
+          <Button onClick={() => navigate("/quotes/new")}>
             <Plus className="h-4 w-4 mr-2" />
             Create Quote
           </Button>
@@ -211,7 +213,7 @@ export default function QuotesPage() {
           </EmptyHeader>
           {quotes.length === 0 && (
             <EmptyContent>
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Button size="sm" onClick={() => navigate("/quotes/new")}>
                 <Plus className="h-4 w-4 mr-1" /> Create Quote
               </Button>
             </EmptyContent>
@@ -225,6 +227,7 @@ export default function QuotesPage() {
                 <thead>
                   <tr className="border-b bg-muted/30">
                     <th className="text-left p-3 font-medium">Company</th>
+                    <th className="text-left p-3 font-medium">Opportunity</th>
                     <th className="text-left p-3 font-medium">Date</th>
                     <th className="text-left p-3 font-medium">Items</th>
                     <th className="text-right p-3 font-medium">Monthly</th>
@@ -238,10 +241,35 @@ export default function QuotesPage() {
                     .sort((a, b) => b.date.localeCompare(a.date))
                     .map((quote) => {
                       const company = companyMap.get(quote.companyId);
+                      const opportunity = quote.leadId
+                        ? opportunityMap.get(quote.leadId)
+                        : undefined;
                       return (
                         <tr key={quote._id} className="border-b last:border-0">
                           <td className="p-3 font-medium">
                             {company?.name || "Unknown"}
+                          </td>
+                          <td className="p-3">
+                            {opportunity ? (
+                              <button
+                                className="text-left hover:text-primary"
+                                onClick={() =>
+                                  navigate(`/pipeline/${opportunity._id}`)
+                                }
+                              >
+                                <div className="font-medium">
+                                  {opportunity.opportunityNumber ??
+                                    "Opportunity"}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {opportunity.title}
+                                </div>
+                              </button>
+                            ) : (
+                              <span className="text-muted-foreground">
+                                Legacy quote
+                              </span>
+                            )}
                           </td>
                           <td className="p-3 text-muted-foreground">
                             {quote.date}
@@ -289,7 +317,9 @@ export default function QuotesPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/30">
-                    <th className="text-left p-3 font-medium">Parent Company</th>
+                    <th className="text-left p-3 font-medium">
+                      Parent Company
+                    </th>
                     <th className="text-left p-3 font-medium">Date</th>
                     <th className="text-left p-3 font-medium">Month</th>
                     <th className="text-left p-3 font-medium">Lines</th>
@@ -344,12 +374,6 @@ export default function QuotesPage() {
           </CardContent>
         </Card>
       )}
-
-      <QuoteCreateDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        companies={companies}
-      />
     </div>
   );
 }

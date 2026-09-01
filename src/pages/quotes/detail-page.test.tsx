@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -16,9 +16,6 @@ vi.mock("@/convex/_generated/api.js", () => ({
       rejectDiscount: "quotes.rejectDiscount",
       remove: "quotes.remove",
     },
-    invoices: {
-      createDraftFromQuote: "invoices.createDraftFromQuote",
-    },
   },
 }));
 
@@ -30,7 +27,6 @@ const mocks = vi.hoisted(() => ({
   approveDiscount: vi.fn(),
   rejectDiscount: vi.fn(),
   removeQuote: vi.fn(),
-  createDraftInvoice: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
 }));
@@ -51,9 +47,6 @@ vi.mock("convex/react", () => ({
     }
     if (mutation === "quotes.remove") {
       return mocks.removeQuote;
-    }
-    if (mutation === "invoices.createDraftFromQuote") {
-      return mocks.createDraftInvoice;
     }
     return vi.fn();
   },
@@ -119,7 +112,12 @@ function quote(
 
 function LocationProbe() {
   const location = useLocation();
-  return <div data-testid="location">{location.pathname}</div>;
+  return (
+    <div data-testid="location">
+      {location.pathname}
+      {location.search}
+    </div>
+  );
 }
 
 function renderDetailPage() {
@@ -145,13 +143,17 @@ function renderDetailPage() {
           }
         />
         <Route
-          path="/invoices"
+          path="/pipeline"
           element={
             <>
-              <div>Invoices List</div>
+              <div>Pipeline</div>
               <LocationProbe />
             </>
           }
+        />
+        <Route
+          path="/finance/customer-contracts/new"
+          element={<LocationProbe />}
         />
       </Routes>
     </MemoryRouter>,
@@ -218,6 +220,11 @@ describe("QuoteDetailPage", () => {
     renderDetailPage();
 
     await user.click(screen.getByRole("button", { name: "Mark as Sent" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Confirm quote was sent",
+    });
+    expect(mocks.updateStatus).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Confirm" }));
 
     expect(mocks.updateStatus).toHaveBeenCalledWith({
       id: "quote-1",
@@ -271,19 +278,21 @@ describe("QuoteDetailPage", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/quotes");
   });
 
-  it("shows Create Invoice only for accepted quotes", () => {
+  it("continues accepted PAYG quotes to won onboarding", async () => {
+    const user = userEvent.setup();
     const aicc = company("company-1", "AICC");
     mocks.companies = [aicc];
     mocks.quote = quote(aicc._id, "accepted");
 
     renderDetailPage();
 
-    expect(
-      screen.getByRole("button", { name: "Create Invoice" }),
-    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Continue to Won Onboarding" }),
+    );
+    expect(screen.getByTestId("location")).toHaveTextContent("/pipeline");
   });
 
-  it("does not show Create Invoice for draft quotes", () => {
+  it("does not show onboarding actions for draft quotes", () => {
     const aicc = company("company-1", "AICC");
     mocks.companies = [aicc];
     mocks.quote = quote(aicc._id, "draft");
@@ -291,11 +300,11 @@ describe("QuoteDetailPage", () => {
     renderDetailPage();
 
     expect(
-      screen.queryByRole("button", { name: "Create Invoice" }),
+      screen.queryByRole("button", { name: /Onboarding|Prepare Contract/ }),
     ).not.toBeInTheDocument();
   });
 
-  it("does not show Create Invoice for sent quotes", () => {
+  it("does not show onboarding actions for sent quotes", () => {
     const aicc = company("company-1", "AICC");
     mocks.companies = [aicc];
     mocks.quote = quote(aicc._id, "sent");
@@ -303,46 +312,26 @@ describe("QuoteDetailPage", () => {
     renderDetailPage();
 
     expect(
-      screen.queryByRole("button", { name: "Create Invoice" }),
+      screen.queryByRole("button", { name: /Onboarding|Prepare Contract/ }),
     ).not.toBeInTheDocument();
   });
 
-  it("creates a draft invoice from an accepted quote and navigates to invoices", async () => {
+  it("prefills a contract from an accepted contracted quote", async () => {
     const user = userEvent.setup();
     const aicc = company("company-1", "AICC");
     mocks.companies = [aicc];
     mocks.quote = quote(aicc._id, "accepted");
-    mocks.createDraftInvoice.mockResolvedValue("invoice-1");
+    mocks.quote.commercialModel = "contracted";
+    mocks.quote.contractTerms = {
+      pricingModel: "discounted_usage",
+      groupDiscounts: [],
+    };
 
     renderDetailPage();
 
-    await user.click(screen.getByRole("button", { name: "Create Invoice" }));
-
-    await waitFor(() => {
-      expect(mocks.createDraftInvoice).toHaveBeenCalledWith({
-        quoteId: "quote-1",
-      });
-    });
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("Draft invoice created");
-    expect(screen.getByTestId("location")).toHaveTextContent("/invoices");
-  });
-
-  it("shows an error and stays on quote detail when invoice creation fails", async () => {
-    const user = userEvent.setup();
-    const aicc = company("company-1", "AICC");
-    mocks.companies = [aicc];
-    mocks.quote = quote(aicc._id, "accepted");
-    mocks.createDraftInvoice.mockRejectedValue(new Error("Only accepted quotes can be invoiced"));
-
-    renderDetailPage();
-
-    await user.click(screen.getByRole("button", { name: "Create Invoice" }));
-
-    await waitFor(() => {
-      expect(mocks.toastError).toHaveBeenCalledWith(
-        "Only accepted quotes can be invoiced",
-      );
-    });
-    expect(screen.getByTestId("location")).toHaveTextContent("/quotes/quote-1");
+    await user.click(screen.getByRole("button", { name: "Prepare Contract" }));
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/finance/customer-contracts/new?quoteId=quote-1",
+    );
   });
 });

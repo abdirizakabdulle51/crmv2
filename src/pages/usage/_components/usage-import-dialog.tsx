@@ -23,6 +23,7 @@ import { formatCurrency } from "@/lib/format.ts";
 type ImportRow = {
   company: string;
   month: string;
+  usage_date?: string;
   service_type: string;
   amount: string;
 };
@@ -31,6 +32,7 @@ type ValidatedRow = {
   companyId: Id<"companies">;
   companyName: string;
   month: string;
+  usageDate?: string;
   serviceType: string;
   amount: number;
   errors: string[];
@@ -93,6 +95,14 @@ export default function UsageImportDialog({
     if (!isValidMonth(month)) {
       errors.push(`Invalid month "${month}" (use YYYY-MM)`);
     }
+    const usageDate = (row.usage_date || "").trim() || undefined;
+    if (
+      usageDate &&
+      (!/^\d{4}-\d{2}-\d{2}$/.test(usageDate) ||
+        usageDate.slice(0, 7) !== month)
+    ) {
+      errors.push(`Invalid usage date "${row.usage_date}"`);
+    }
 
     // Validate service type
     const serviceInput = (row.service_type || "").trim();
@@ -112,6 +122,7 @@ export default function UsageImportDialog({
       companyId: (matchedCompany?._id || "") as Id<"companies">,
       companyName: matchedCompany?.name || companyName,
       month,
+      usageDate,
       serviceType: matchedService || serviceInput,
       amount: isNaN(numAmount) ? 0 : numAmount,
       errors,
@@ -129,6 +140,7 @@ export default function UsageImportDialog({
         entries: validRows.map((r) => ({
           companyId: r.companyId,
           month: r.month,
+          usageDate: r.usageDate,
           serviceType: r.serviceType,
           amount: r.amount,
         })),

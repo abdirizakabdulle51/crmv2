@@ -167,16 +167,12 @@ describe("buildUsageHintsForCompany", () => {
         {
           regionId: "hoa-mog-2",
           regionName: "Hoa-Mogadishu-2",
-          resources: [
-            { serviceId: "sfs", resource: "gigabytes", used: 10 },
-          ],
+          resources: [{ serviceId: "sfs", resource: "gigabytes", used: 10 }],
         },
         {
           regionId: "mog-hq3",
           regionName: "Mogadishu-region-hq3",
-          resources: [
-            { serviceId: "sfs", resource: "gigabytes", used: 20 },
-          ],
+          resources: [{ serviceId: "sfs", resource: "gigabytes", used: 20 }],
         },
       ],
       catalog,
@@ -220,8 +216,20 @@ describe("buildUsageHintsForCompany", () => {
   it("uses resource-space regions on native ECS, EVS, and EVS fee breakdowns", () => {
     const catalog = [
       catalogItem("ecs-hoa", "ECS", "S6_large.1", "per instance/month", 8),
-      catalogItem("evs-fee", "EVS", "EVS - Disk Managed Fee", "per disk/month", 1),
-      catalogItem("evs-ssd", "EVS", "SSD (Block Storage / NVMe)", "per GB/month", 0.072),
+      catalogItem(
+        "evs-fee",
+        "EVS",
+        "EVS - Disk Managed Fee",
+        "per disk/month",
+        1,
+      ),
+      catalogItem(
+        "evs-ssd",
+        "EVS",
+        "SSD (Block Storage / NVMe)",
+        "per GB/month",
+        0.072,
+      ),
     ];
     const hints = buildUsageHintsForCompany(
       [
@@ -305,8 +313,20 @@ describe("buildUsageHintsForCompany", () => {
         },
       ],
       [
-        catalogItem("vpn", "VPN", "General VPN Connection", "per connection", 36.5),
-        catalogItem("vpn-gateway", "VPN Gateway", "VPN Gateway", "per gateway", 65),
+        catalogItem(
+          "vpn",
+          "VPN",
+          "General VPN Connection",
+          "per connection",
+          36.5,
+        ),
+        catalogItem(
+          "vpn-gateway",
+          "VPN Gateway",
+          "VPN Gateway",
+          "per gateway",
+          65,
+        ),
       ],
     );
 
@@ -330,7 +350,13 @@ describe("buildUsageHintsForCompany", () => {
 
   it("auto-prices NAT Gateway breakdowns by ManageOne spec catalog name", () => {
     const catalog = [
-      catalogItem("nat-small", "NAT", "Small (150 Mbps)", "per instance/month", 7),
+      catalogItem(
+        "nat-small",
+        "NAT",
+        "Small (150 Mbps)",
+        "per instance/month",
+        7,
+      ),
     ];
     const hints = buildUsageHintsForCompany(
       [
@@ -447,7 +473,7 @@ describe("buildUsageHintsForCompany", () => {
         catalogItemId: "obs-standard",
         catalogItemName: "Fusion bucket",
         quantity: 1225.282,
-        amount: 14.703384,
+        amount: 14.7,
         regionName: "Hoa-Mogadishu-2",
       }),
     );
@@ -542,10 +568,14 @@ describe("buildUsageHintsForCompany", () => {
       ],
     );
 
-    const preview = buildBulkUsagePreview(hints, [
-      catalogItem("evs-fee", "EVS", "EVS - Disk Managed Fee", "per disk", 1),
-      catalogItem("cbh", "CBH", "Cloud Bastion Host", "per instance", 45),
-    ], []);
+    const preview = buildBulkUsagePreview(
+      hints,
+      [
+        catalogItem("evs-fee", "EVS", "EVS - Disk Managed Fee", "per disk", 1),
+        catalogItem("cbh", "CBH", "Cloud Bastion Host", "per instance", 45),
+      ],
+      [],
+    );
 
     expect(hints).toEqual(
       expect.arrayContaining([
@@ -703,7 +733,9 @@ describe("buildUsageHintsForCompany", () => {
     const hints = buildUsageHintsForCompany(
       [
         {
-          resources: [{ serviceId: "vpc", resource: "bandwidth_size", used: 260 }],
+          resources: [
+            { serviceId: "vpc", resource: "bandwidth_size", used: 260 },
+          ],
           eipBandwidths: [
             { tierName: "1 - 5 Mbps", count: 3, totalMbps: 9 },
             { tierName: "6 - 50 Mbps", count: 7, totalMbps: 140 },
@@ -1149,7 +1181,7 @@ describe("buildUsageHintsForCompany", () => {
           catalogItemId: "evs-ssd",
           catalogItemName: "SSD (Block Storage / NVMe)",
           quantity: 100,
-          amount: 7.199999999999999,
+          amount: 7.2,
           alreadyLogged: false,
         },
       ]),

@@ -22,6 +22,8 @@ type Seed = {
   acceptedQuoteB: Id<"quotes">;
   draftQuoteA: Id<"quotes">;
   sentQuoteA: Id<"quotes">;
+  bankAccountId: Id<"receivingAccounts">;
+  mobileAccountId: Id<"receivingAccounts">;
 };
 
 function asUser(t: ReturnType<typeof convexTest>, user: Doc<"users">) {
@@ -94,6 +96,8 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       contactEmail: "billing-b@example.com",
     });
     const catalogItemId = await ctx.db.insert("serviceCatalog", {
+      productGroup: "compute",
+      serviceCode: "ECS",
       serviceCategory: "ECS",
       itemName: "ECS Small",
       billingUnit: "per instance",
@@ -108,7 +112,7 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       quantity: 2,
       monthlyUnitPrice: 10,
       monthlyTotal: 20,
-      yearlyTotal: 200,
+      yearlyTotal: 240,
       regionId: "hoa-mog-2",
       regionName: "Hoa-Mogadishu-2",
       dataCenterName: "Mogadishu DC 2",
@@ -153,6 +157,36 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       monthlyGrandTotal: 20,
       yearlyGrandTotal: 200,
     });
+    const now = Date.now();
+    const bankAccountId = await ctx.db.insert("receivingAccounts", {
+      countryId: countryA,
+      name: "Salaam Bank USD",
+      providerName: "Salaam Somali Bank",
+      accountNumber: "33111777",
+      accountHolderName: "HTG CLOUDS LIMITED",
+      type: "bank",
+      usage: "both",
+      currency: "USD",
+      location: "MOGADISHU - SOMALIA",
+      isActive: true,
+      createdBy: ceoId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const mobileAccountId = await ctx.db.insert("receivingAccounts", {
+      countryId: countryA,
+      name: "ZAAD USD",
+      providerName: "ZAAD",
+      accountNumber: "252610000000",
+      accountHolderName: "HTG CLOUDS LIMITED",
+      type: "mobile_money",
+      usage: "both",
+      currency: "USD",
+      isActive: true,
+      createdBy: ceoId,
+      createdAt: now,
+      updatedAt: now,
+    });
 
     return {
       countryA,
@@ -171,6 +205,8 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       acceptedQuoteB,
       draftQuoteA,
       sentQuoteA,
+      bankAccountId,
+      mobileAccountId,
     };
   });
 }
@@ -437,7 +473,7 @@ describe("invoices", () => {
       billingEmail: "billing-a@example.com",
       subtotal: 20,
       monthlyTotal: 20,
-      yearlyTotal: 200,
+      yearlyTotal: 240,
       grandTotal: 20,
       amountPaid: 0,
       balanceDue: 20,
@@ -546,7 +582,16 @@ describe("invoices", () => {
       contactEmail: "finance@example.com",
       billingAddress: "Mogadishu HQ",
       taxId: "TIN-123",
-      grandTotal: 30,
+      lineItems: [
+        {
+          catalogItemId: s.catalogItemId,
+          itemName: "Compute",
+          serviceCategory: "ECS",
+          billingUnit: "instance",
+          quantity: 1,
+          monthlyUnitPrice: 30,
+        },
+      ],
       notes: "Updated draft",
     });
 
@@ -560,6 +605,8 @@ describe("invoices", () => {
       taxId: "TIN-123",
       grandTotal: 30,
       balanceDue: 30,
+      grandTotalCents: 3000,
+      balanceDueCents: 3000,
       notes: "Updated draft",
     });
 
@@ -868,7 +915,9 @@ describe("invoices", () => {
     const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
       invoiceId,
     });
-    expect(events[events.length - 1]).toMatchObject({
+    expect(
+      events.find((event) => event.type === "internal_reminder_sent"),
+    ).toMatchObject({
       type: "internal_reminder_sent",
       message: expect.stringContaining("am-a@example.com"),
     });
@@ -1082,7 +1131,9 @@ describe("invoices", () => {
     const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
       invoiceId,
     });
-    expect(events[events.length - 1]).toMatchObject({
+    expect(
+      events.find((event) => event.type === "customer_reminder_sent"),
+    ).toMatchObject({
       type: "customer_reminder_sent",
       message: expect.stringContaining("billing-a@example.com"),
     });
@@ -1275,7 +1326,7 @@ describe("invoices", () => {
       asUser(t, s.amA).mutation(api.invoices.updateDraft, {
         invoiceId,
         companyName: "Changed after issue",
-        grandTotal: 1,
+        notes: "Must not edit",
       }),
     ).rejects.toThrow("Only draft invoices can be edited");
   });
@@ -1478,7 +1529,8 @@ describe("invoices", () => {
     expect(events[events.length - 1]).toMatchObject({
       type: "unmarked_test",
       actorId: s.hob._id,
-      message: "Invoice unmarked as test/hidden. Reason: Real invoice after review",
+      message:
+        "Invoice unmarked as test/hidden. Reason: Real invoice after review",
     });
   });
 
@@ -1826,6 +1878,8 @@ describe("invoices", () => {
       paidAt,
       method: "Bank Transfer",
       reference: "SSB-1001",
+      receivingAccountId: s.bankAccountId,
+      transactionId: "SSB-1001",
     });
 
     const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
@@ -1847,11 +1901,12 @@ describe("invoices", () => {
       paidAt,
       method: "Bank Transfer",
       reference: "SSB-1001",
+      transactionId: "SSB-1001",
       receivingBankName: "Salaam Somali Bank",
       receivingAccountNumber: "33111777",
       receivingAccountName: "HTG CLOUDS LIMITED",
       receivingBankLocation: "MOGADISHU - SOMALIA",
-      receivingCurrencyNote: "All fees are listed in USD",
+      receivingCurrencyNote: "USD",
       recordedBy: s.amA._id,
     });
 
@@ -1867,14 +1922,81 @@ describe("invoices", () => {
       "Method: Bank Transfer.",
     );
     expect(events[events.length - 1].message).toContain(
-      "Reference: SSB-1001.",
+      "Transaction ID: SSB-1001.",
     );
-    expect(events[events.length - 1].message).toContain(
-      "Balance due: $12.50.",
-    );
+    expect(events[events.length - 1].message).toContain("Balance due: $12.50.");
   });
 
-  it("records mobile money payments without receiving bank details", async () => {
+  it("requires a receiving account and transaction ID", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 5,
+        method: "Bank Transfer",
+        transactionId: "TX-1",
+      }),
+    ).rejects.toThrow("Select an active receiving account");
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 5,
+        method: "Bank Transfer",
+        receivingAccountId: s.bankAccountId,
+      }),
+    ).rejects.toThrow("transaction ID is required");
+  });
+
+  it("enforces incoming eligibility and customer country for payment accounts", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    await t.run((ctx) => ctx.db.patch(s.bankAccountId, { usage: "outgoing" }));
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 5,
+        receivingAccountId: s.bankAccountId,
+        transactionId: "WRONG-USAGE",
+      }),
+    ).rejects.toThrow("enabled for customer collections");
+    await t.run((ctx) =>
+      ctx.db.patch(s.bankAccountId, { usage: "both", countryId: s.countryB }),
+    );
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 5,
+        receivingAccountId: s.bankAccountId,
+        transactionId: "WRONG-COUNTRY",
+      }),
+    ).rejects.toThrow("customer's country");
+  });
+
+  it("rejects duplicate transaction IDs within the same account", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const firstInvoiceId = await issueDraftForA(t, s);
+    await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+      invoiceId: firstInvoiceId,
+      amount: 5,
+      receivingAccountId: s.bankAccountId,
+      transactionId: "BANK-DUP-1",
+    });
+    const secondInvoiceId = await issueDraftForA(t, s);
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId: secondInvoiceId,
+        amount: 5,
+        receivingAccountId: s.bankAccountId,
+        transactionId: "BANK-DUP-1",
+      }),
+    ).rejects.toThrow("already been recorded");
+  });
+
+  it("records mobile money payments against a receiving wallet", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const invoiceId = await issueDraftForA(t, s);
@@ -1884,6 +2006,8 @@ describe("invoices", () => {
       amount: 5,
       method: "Mobile Money",
       reference: "ZAAD-1001",
+      receivingAccountId: s.mobileAccountId,
+      transactionId: "ZAAD-1001",
     });
 
     const payments = await asUser(t, s.amA).query(api.invoices.listPayments, {
@@ -1893,11 +2017,11 @@ describe("invoices", () => {
       method: "Mobile Money",
       reference: "ZAAD-1001",
     });
-    expect(payments[0].receivingBankName).toBeUndefined();
-    expect(payments[0].receivingAccountNumber).toBeUndefined();
-    expect(payments[0].receivingAccountName).toBeUndefined();
+    expect(payments[0].receivingBankName).toBe("ZAAD");
+    expect(payments[0].receivingAccountNumber).toBe("252610000000");
+    expect(payments[0].receivingAccountName).toBe("HTG CLOUDS LIMITED");
     expect(payments[0].receivingBankLocation).toBeUndefined();
-    expect(payments[0].receivingCurrencyNote).toBeUndefined();
+    expect(payments[0].receivingCurrencyNote).toBe("USD");
   });
 
   it("rejects unsupported new payment methods", async () => {
@@ -1923,6 +2047,8 @@ describe("invoices", () => {
       invoiceId,
       amount: 20,
       method: "Mobile Money",
+      receivingAccountId: s.mobileAccountId,
+      transactionId: "FULL-MOBILE-1",
     });
 
     const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
@@ -1979,7 +2105,13 @@ describe("invoices", () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
-    for (const status of ["sent", "overdue", "partially_paid"] as const) {
+    for (const [index, status] of (
+      [
+        "sent",
+        "overdue",
+        "partially_paid",
+      ] as const
+    ).entries()) {
       const invoiceId = await issueDraftForA(t, s);
       await t.run(async (ctx) => {
         await ctx.db.patch(invoiceId, {
@@ -1992,6 +2124,8 @@ describe("invoices", () => {
       await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
         invoiceId,
         amount: 5,
+        receivingAccountId: s.bankAccountId,
+        transactionId: `STATUS-${index}`,
       });
 
       const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
@@ -2009,6 +2143,8 @@ describe("invoices", () => {
     await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
       invoiceId,
       amount: 20,
+      receivingAccountId: s.bankAccountId,
+      transactionId: "OVERDUE-FULL-1",
     });
 
     const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
@@ -2035,5 +2171,821 @@ describe("invoices", () => {
     await expect(
       asUser(t, s.amB).query(api.invoices.listPayments, { invoiceId }),
     ).rejects.toThrow();
+  });
+
+  it("reports invoice invariant violations without rewriting historical data", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await createDraftForA(t, s);
+
+    let report = await asUser(t, s.ceo).query(
+      api.invoices.reconciliationReport,
+      {},
+    );
+    expect(report.corruptedInvoiceCount).toBe(0);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(invoiceId, { grandTotal: 999, balanceDue: 998 });
+    });
+
+    report = await asUser(t, s.ceo).query(
+      api.invoices.reconciliationReport,
+      {},
+    );
+    expect(report.corruptedInvoiceCount).toBe(1);
+    expect(report.records[0].invoiceId).toBe(invoiceId);
+    expect(report.records[0].issues.map((issue) => issue.field)).toEqual(
+      expect.arrayContaining(["grandTotal", "balanceDue"]),
+    );
+
+    const unchanged = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(unchanged.grandTotal).toBe(999);
+  });
+
+  it("prorates partial contract months and separates base, discount, and overage", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await t.run(async (ctx) => {
+      const now = Date.UTC(2026, 6, 1);
+      const id = await ctx.db.insert("customerContracts", {
+        companyId: s.companyA,
+        contractNumber: "C-PRORATE-1",
+        title: "Prorated cloud contract",
+        status: "active",
+        startDate: Date.UTC(2026, 6, 16),
+        endDate: Date.UTC(2026, 11, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        createdBy: s.amA._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("customerContractLineItems", {
+        contractId: id,
+        catalogItemId: s.catalogItemId,
+        itemName: "ECS Small",
+        serviceCategory: "ECS",
+        includedQuantity: 10,
+        unit: "instance",
+        catalogUnitPrice: 10,
+        contractUnitPrice: 10,
+        discountType: "percentage",
+        discountValue: 20,
+        overageUnitPrice: 15,
+        billingUnit: "per instance",
+        createdBy: s.amA._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("consumption", {
+        companyId: s.companyA,
+        month: "2026-07",
+        usageDate: "2026-07-20",
+        serviceType: "ECS Small",
+        amount: 70,
+        quantity: 7,
+        catalogItemId: s.catalogItemId,
+      });
+      return id;
+    });
+    const invoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-07" },
+    );
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+
+    expect(invoice.lineItems.map((line) => line.itemName)).toEqual([
+      expect.stringContaining("base"),
+      expect.stringContaining("discount"),
+      expect.stringContaining("overage"),
+    ]);
+    expect(invoice.lineItems.map((line) => line.monthlyTotal)).toEqual([
+      51.61, -10.32, 18.39,
+    ]);
+    expect(invoice.grandTotal).toBe(59.68);
+    expect(invoice.grandTotalCents).toBe(5968);
+
+    await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+    const fetchMock = mockRelaySuccess();
+    await asUser(t, s.amA).action(api.invoices.sendInvoiceEmail, { invoiceId });
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      invoice: Doc<"invoices">;
+    };
+    expect(
+      payload.invoice.lineItems.every((line) => line.monthlyTotal >= 0),
+    ).toBe(true);
+    expect(payload.invoice.lineItems[0]).toMatchObject({
+      itemName: expect.stringContaining("after $10.32 discount"),
+      quantity: 1,
+      monthlyUnitPrice: 41.29,
+      monthlyTotal: 41.29,
+    });
+  });
+
+  it("applies customer onboarding credit to a non-contract first invoice and consumes it on issue", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const creditId = await asUser(t, s.ceo).mutation(
+      api.customerCredits.grant,
+      {
+        companyId: s.companyA,
+        amount: 15,
+        policy: "first_invoice_only",
+        appliesTo: "all",
+      },
+    );
+    const creditExpense = await t.run(async (ctx) =>
+      ctx.db
+        .query("expenseRequests")
+        .filter((q) => q.eq(q.field("onboardingCreditId"), creditId))
+        .unique(),
+    );
+    expect(creditExpense).toMatchObject({
+      amount: 15,
+      status: "paid",
+      paymentMethod: "Non-cash onboarding credit",
+      companyId: s.companyA,
+    });
+
+    const invoiceId = await createDraftForA(t, s);
+    let invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.grossBeforeCredit).toBe(20);
+    expect(invoice.onboardingCreditApplied).toBe(15);
+    expect(invoice.grandTotal).toBe(5);
+    expect(invoice.lineItems[invoice.lineItems.length - 1]).toMatchObject({
+      itemName: "Onboarding credit",
+      monthlyTotal: -15,
+    });
+
+    await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+    const credits = await asUser(t, s.amA).query(
+      api.customerCredits.listByCompany,
+      { companyId: s.companyA },
+    );
+    expect(credits.find((credit) => credit._id === creditId)).toMatchObject({
+      remainingAmount: 0,
+      reservedAmount: 0,
+      status: "consumed",
+    });
+    invoice = await asUser(t, s.amA).query(api.invoices.getById, { invoiceId });
+    expect(invoice.status).toBe("issued");
+    const creditReport = await asUser(t, s.ceo).query(
+      api.customerCredits.reconciliationReport,
+      {},
+    );
+    expect(creditReport).toMatchObject({ checked: 1, corrupted: 0 });
+  });
+
+  it("restores the full first-invoice credit when its issued invoice is voided", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const creditId = await asUser(t, s.ceo).mutation(
+      api.customerCredits.grant,
+      {
+        companyId: s.companyA,
+        amount: 200,
+        policy: "first_invoice_only",
+        appliesTo: "all",
+      },
+    );
+    const invoiceId = await createDraftForA(t, s);
+    await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+    await asUser(t, s.ceo).mutation(api.invoices.voidInvoice, {
+      invoiceId,
+      reason: "Replace incorrect first invoice",
+    });
+
+    const credits = await asUser(t, s.amA).query(
+      api.customerCredits.listByCompany,
+      { companyId: s.companyA },
+    );
+    expect(credits.find((credit) => credit._id === creditId)).toMatchObject({
+      remainingAmount: 200,
+      reservedAmount: 0,
+      status: "available",
+    });
+
+    const replacementId = await createDraftForA(t, s);
+    const replacement = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId: replacementId,
+    });
+    expect(replacement.onboardingCreditId).toBe(creditId);
+    expect(replacement.onboardingCreditApplied).toBe(20);
+    expect(replacement.grandTotal).toBe(0);
+  });
+
+  it("creates an exact quarterly total-value cycle and rejects off-cycle billing", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await t.run(async (ctx) => {
+      const now = Date.UTC(2026, 0, 1);
+      const id = await ctx.db.insert("customerContracts", {
+        companyId: s.companyA,
+        contractNumber: "C-QUARTERLY-1",
+        title: "Annual prepaid cloud commitment",
+        status: "active",
+        startDate: Date.UTC(2026, 0, 1),
+        endDate: Date.UTC(2026, 11, 31),
+        currency: "USD",
+        billingFrequency: "quarterly",
+        billingTiming: "prepaid",
+        pricingBasis: "total_contract",
+        contractValue: 1200,
+        defaultDiscountType: "percentage",
+        defaultDiscountValue: 10,
+        overagePricingPolicy: "current_catalog",
+        createdBy: s.amA._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("customerContractLineItems", {
+        contractId: id,
+        catalogItemId: s.catalogItemId,
+        itemName: "ECS Small",
+        serviceCategory: "ECS",
+        includedQuantity: 1,
+        unit: "instance",
+        catalogUnitPrice: 10,
+        contractUnitPrice: 100,
+        billingUnit: "per instance",
+        createdBy: s.amA._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("consumption", {
+        companyId: s.companyA,
+        month: "2026-01",
+        usageDate: "2026-01-20",
+        serviceType: "ECS",
+        amount: 20,
+        quantity: 2,
+        catalogItemId: s.catalogItemId,
+      });
+      return id;
+    });
+    await asUser(t, s.ceo).mutation(api.customerCredits.grant, {
+      companyId: s.companyA,
+      amount: 30,
+      policy: "carry_forward",
+      appliesTo: "contract",
+    });
+
+    const invoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-01" },
+    );
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.grossBeforeCredit).toBe(300);
+    expect(invoice.grandTotal).toBe(270);
+    expect(invoice.cycleStartMonth).toBe("2026-01");
+    expect(invoice.cycleEndMonth).toBe("2026-03");
+    expect(invoice.billingTiming).toBe("prepaid");
+    expect(invoice.revenueAllocations).toEqual([
+      { month: "2026-01", amount: 100 },
+      { month: "2026-02", amount: 100 },
+      { month: "2026-03", amount: 100 },
+    ]);
+    expect(invoice.receivableAllocations).toEqual([
+      { month: "2026-01", amount: 90 },
+      { month: "2026-02", amount: 90 },
+      { month: "2026-03", amount: 90 },
+    ]);
+
+    const settlementId = await asUser(t, s.amA).mutation(
+      api.invoices.createOverageDraftFromContract,
+      { contractId, cycleStartMonth: "2026-01" },
+    );
+    const settlement = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId: settlementId,
+    });
+    expect(settlement.contractInvoiceKind).toBe("overage_settlement");
+    expect(settlement.grandTotal).toBe(10);
+    expect(settlement.lineItems).toHaveLength(1);
+    expect(settlement.lineItems[0]).toMatchObject({
+      itemName: expect.stringContaining("overage"),
+      monthlyUnitPrice: 10,
+      monthlyTotal: 10,
+    });
+
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.createDraftFromContract, {
+        contractId,
+        sourceMonth: "2026-02",
+      }),
+    ).rejects.toThrow(/cycle boundary/i);
+  });
+
+  it("applies a service discount override before the product-group discount", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const storageId = await t.run((ctx) =>
+      ctx.db.insert("serviceCatalog", {
+        productGroup: "storage",
+        serviceCode: "EVS",
+        serviceCategory: "EVS",
+        itemName: "EVS SSD",
+        billingUnit: "GB/month",
+        monthlyPrice: 10,
+      }),
+    );
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "GROUP-DISCOUNT-1",
+        title: "Grouped cloud commitment",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2026, 7, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "service_lines",
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [
+          { productGroup: "compute", discountPercent: 15 },
+          { productGroup: "storage", discountPercent: 40 },
+        ],
+        services: [
+          {
+            catalogItemId: s.catalogItemId,
+            includedQuantity: 10,
+            serviceDiscountPercent: 20,
+          },
+          { catalogItemId: storageId, includedQuantity: 10 },
+        ],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.activate, {
+      contractId,
+    });
+    const invoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-08" },
+    );
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.lineItems.map((line) => line.monthlyTotal)).toEqual([
+      100, -20, 100, -40,
+    ]);
+    expect(invoice.grandTotal).toBe(140);
+  });
+
+  it("atomically updates configured contract discounts and preserves data after invalid edits", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "ATOMIC-EDIT-1",
+        title: "Atomic edit",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2027, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "total_contract",
+        pricingModel: "flexible_total_commitment",
+        commitmentModel: "flexible_value",
+        contractValue: 12000,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 15 }],
+        services: [],
+      },
+    );
+    const generatedNumber = (
+      await asUser(t, s.ceo).query(api.customerContracts.get, { contractId })
+    ).contractNumber;
+    expect(generatedNumber).toMatch(/^CTR-\d{4}-\d{5}$/);
+    await asUser(t, s.ceo).mutation(api.customerContracts.updateConfigured, {
+      contractId,
+      companyId: s.companyA,
+      contractNumber: "ATOMIC-EDIT-1",
+      title: "Updated atomic edit",
+      status: "draft",
+      startDate: Date.UTC(2026, 7, 1),
+      endDate: Date.UTC(2027, 6, 31),
+      currency: "USD",
+      billingFrequency: "quarterly",
+      billingTiming: "prepaid",
+      pricingBasis: "total_contract",
+      pricingModel: "flexible_total_commitment",
+      commitmentModel: "flexible_value",
+      contractValue: 12000,
+      overagePricingPolicy: "current_catalog",
+      groupDiscounts: [{ productGroup: "compute", discountPercent: 20 }],
+      services: [{ catalogItemId: s.catalogItemId, serviceDiscountPercent: 0 }],
+    });
+    expect(
+      await asUser(t, s.ceo).query(api.customerContracts.listGroupDiscounts, {
+        contractId,
+      }),
+    ).toEqual([
+      expect.objectContaining({ productGroup: "compute", discountPercent: 20 }),
+    ]);
+    expect(
+      await asUser(t, s.ceo).query(api.customerContracts.listLineItems, {
+        contractId,
+      }),
+    ).toEqual([expect.objectContaining({ discountValue: 0 })]);
+
+    await expect(
+      asUser(t, s.ceo).mutation(api.customerContracts.updateConfigured, {
+        contractId,
+        companyId: s.companyA,
+        contractNumber: "ATOMIC-EDIT-1",
+        title: "Should not save",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2027, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "total_contract",
+        pricingModel: "flexible_total_commitment",
+        commitmentModel: "flexible_value",
+        contractValue: 12000,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 101 }],
+        services: [],
+      }),
+    ).rejects.toThrow();
+    expect(
+      (await asUser(t, s.ceo).query(api.customerContracts.get, { contractId }))
+        .title,
+    ).toBe("Updated atomic edit");
+    expect(
+      (await asUser(t, s.ceo).query(api.customerContracts.get, { contractId }))
+        .contractNumber,
+    ).toBe(generatedNumber);
+  });
+
+  it("refuses to rewrite legacy service-line contracts through the configured editor", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await t.run((ctx) =>
+      ctx.db.insert("customerContracts", {
+        companyId: s.companyA,
+        contractNumber: "LEGACY-EDIT-1",
+        title: "Legacy contract",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2027, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        pricingBasis: "service_lines",
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    await expect(
+      asUser(t, s.ceo).mutation(api.customerContracts.updateConfigured, {
+        contractId,
+        companyId: s.companyA,
+        contractNumber: "LEGACY-EDIT-1",
+        title: "Unsafe rewrite",
+        status: "draft",
+        startDate: Date.UTC(2026, 7, 1),
+        endDate: Date.UTC(2027, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "total_contract",
+        pricingModel: "flexible_total_commitment",
+        commitmentModel: "flexible_value",
+        contractValue: 12000,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [],
+        services: [],
+      }),
+    ).rejects.toThrow("Legacy service-line contracts");
+    expect((await t.run((ctx) => ctx.db.get(contractId)))!.title).toBe(
+      "Legacy contract",
+    );
+  });
+
+  it("reports contract invoicing, collections, and outstanding balances", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const { contractId, invoiceId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const contractId = await ctx.db.insert("customerContracts", {
+        companyId: s.companyA,
+        contractNumber: "CTR-2026-99999",
+        title: "Performance contract",
+        status: "active",
+        startDate: Date.UTC(2026, 0, 1),
+        endDate: Date.UTC(2026, 11, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "postpaid",
+        pricingBasis: "service_lines",
+        pricingModel: "discounted_usage",
+        createdBy: s.ceo._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const invoiceId = await ctx.db.insert("invoices", {
+        companyId: s.companyA,
+        contractId,
+        sourceReference: "CTR-2026-99999",
+        createdBy: s.ceo._id,
+        status: "partially_paid",
+        companyName: "Company A",
+        lineItems: [],
+        subtotal: 1000,
+        monthlyTotal: 1000,
+        yearlyTotal: 1000,
+        grandTotal: 1000,
+        amountPaid: 400,
+        balanceDue: 600,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("invoicePayments", {
+        invoiceId,
+        amount: 400,
+        paidAt: now,
+        recordedBy: s.ceo._id,
+        createdAt: now,
+      });
+      return { contractId, invoiceId };
+    });
+    expect(contractId).toBeTruthy();
+    expect(invoiceId).toBeTruthy();
+    expect(
+      await asUser(t, s.ceo).query(api.customerContracts.performance, {}),
+    ).toEqual([
+      expect.objectContaining({
+        contractNumber: "CTR-2026-99999",
+        invoiced: 1000,
+        collected: 400,
+        outstanding: 600,
+      }),
+    ]);
+  });
+
+  it("creates one catalogue-price PAYG invoice for a completed unbilled cycle", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run((ctx) =>
+      ctx.db.insert("consumption", {
+        companyId: s.companyA,
+        month: "2026-07",
+        serviceType: "ECS",
+        amount: 999,
+        quantity: 2,
+        catalogItemId: s.catalogItemId,
+      }),
+    );
+    expect(
+      await asUser(t, s.ceo).query(api.invoices.paygBillingStatus, {
+        companyId: s.companyA,
+      }),
+    ).toEqual([{ month: "2026-07", usageEntries: 1 }]);
+    const invoiceId = await asUser(t, s.ceo).mutation(
+      api.invoices.createPaygDraftFromUsage,
+      { companyId: s.companyA, month: "2026-07" },
+    );
+    const invoice = await t.run((ctx) => ctx.db.get(invoiceId));
+    const catalog = await t.run((ctx) => ctx.db.get(s.catalogItemId));
+    expect(invoice).toMatchObject({
+      sourceMonth: "2026-07",
+      sourceReference: "PAYG-2026-07",
+      status: "draft",
+      grandTotal: catalog!.monthlyPrice * 2,
+    });
+    await expect(
+      asUser(t, s.ceo).mutation(api.invoices.createPaygDraftFromUsage, {
+        companyId: s.companyA,
+        month: "2026-07",
+      }),
+    ).rejects.toThrow("already has an invoice");
+  });
+
+  it("lets flexible contracts use any service and bills only undiscounted overage", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "FLEX-1",
+        title: "Flexible cloud commitment",
+        status: "draft",
+        startDate: Date.UTC(2026, 6, 1),
+        endDate: Date.UTC(2026, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "prepaid",
+        pricingBasis: "total_contract",
+        commitmentModel: "flexible_value",
+        contractValue: 100,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 20 }],
+        services: [],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.activate, {
+      contractId,
+    });
+    await t.run((ctx) =>
+      ctx.db.insert("consumption", {
+        companyId: s.companyA,
+        month: "2026-07",
+        usageDate: "2026-07-15",
+        serviceType: "ECS",
+        amount: 200,
+        catalogItemId: s.catalogItemId,
+      }),
+    );
+
+    const cycleId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-07" },
+    );
+    const cycle = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId: cycleId,
+    });
+    expect(cycle.grandTotal).toBe(100);
+    expect(cycle.lineItems).toEqual([
+      expect.objectContaining({
+        itemName: "Contract commitment — 2026-07",
+        monthlyTotal: 100,
+      }),
+    ]);
+
+    const settlementId = await asUser(t, s.amA).mutation(
+      api.invoices.createOverageDraftFromContract,
+      { contractId, cycleStartMonth: "2026-07" },
+    );
+    const settlement = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId: settlementId,
+    });
+    expect(settlement.grandTotal).toBe(75);
+    expect(settlement.lineItems[0]).toMatchObject({
+      serviceCategory: "Contract Overage",
+      monthlyTotal: 75,
+    });
+
+    const comparison = await asUser(t, s.ceo).query(
+      api.customerContracts.usageComparison,
+      { contractId, month: "2026-07" },
+    );
+    expect(comparison).toMatchObject({
+      flexible: {
+        commitmentValue: 100,
+        consumed: 100,
+        remaining: 0,
+        discountedUsage: 160,
+        catalogueUsage: 200,
+        overage: 75,
+      },
+    });
+  });
+
+  it("bills a monthly minimum without exposing a shortfall charge line", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "MONTHLY-MIN-1",
+        title: "Monthly minimum",
+        status: "draft",
+        startDate: Date.UTC(2026, 6, 1),
+        endDate: Date.UTC(2026, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "postpaid",
+        pricingBasis: "service_lines",
+        pricingModel: "monthly_minimum",
+        monthlyMinimum: 120,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 20 }],
+        services: [],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.update, {
+      contractId,
+      companyId: s.companyA,
+      contractNumber: "MONTHLY-MIN-1",
+      title: "Monthly minimum edited",
+      status: "draft",
+      startDate: Date.UTC(2026, 6, 1),
+      endDate: Date.UTC(2026, 6, 31),
+      currency: "USD",
+      billingFrequency: "monthly",
+      billingTiming: "postpaid",
+      pricingBasis: "service_lines",
+      overagePricingPolicy: "current_catalog",
+    });
+    await asUser(t, s.ceo).mutation(api.customerContracts.activate, {
+      contractId,
+    });
+    await t.run((ctx) =>
+      ctx.db.insert("consumption", {
+        companyId: s.companyA,
+        month: "2026-07",
+        usageDate: "2026-07-15",
+        serviceType: "ECS",
+        amount: 100,
+        catalogItemId: s.catalogItemId,
+      }),
+    );
+    const invoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-07" },
+    );
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.grandTotal).toBe(120);
+    expect(invoice.lineItems).toHaveLength(1);
+    expect(invoice.lineItems[0]).toMatchObject({
+      itemName: "Contracted monthly minimum — includes discounted usage 80.00",
+      monthlyTotal: 120,
+    });
+    expect(invoice.notes).toContain("contracted minimum applies");
+    expect(invoice.contractUsageSummary).toMatchObject({
+      catalogueUsage: 100,
+      discountedUsage: 80,
+      monthlyMinimum: 120,
+      minimumShortfall: 40,
+      payable: 120,
+    });
+    expect(
+      invoice.lineItems.some((line) =>
+        line.itemName.toLowerCase().includes("adjustment"),
+      ),
+    ).toBe(false);
+  });
+
+  it("bills actual discounted usage with no minimum or overage", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "USAGE-DISCOUNT-1",
+        title: "Discounted usage",
+        status: "draft",
+        startDate: Date.UTC(2026, 6, 1),
+        endDate: Date.UTC(2026, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "postpaid",
+        pricingBasis: "service_lines",
+        pricingModel: "discounted_usage",
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 20 }],
+        services: [],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.activate, {
+      contractId,
+    });
+    await t.run((ctx) =>
+      ctx.db.insert("consumption", {
+        companyId: s.companyA,
+        month: "2026-07",
+        usageDate: "2026-07-15",
+        serviceType: "ECS",
+        amount: 100,
+        catalogItemId: s.catalogItemId,
+      }),
+    );
+    const invoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-07" },
+    );
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.grandTotal).toBe(80);
+    expect(invoice.lineItems.map((line) => line.monthlyTotal)).toEqual([
+      100, -20,
+    ]);
+    expect(invoice.lineItems[1].itemName).toContain("contract discount (20%)");
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.createOverageDraftFromContract, {
+        contractId,
+        cycleStartMonth: "2026-07",
+      }),
+    ).rejects.toThrow("do not have overage settlements");
   });
 });

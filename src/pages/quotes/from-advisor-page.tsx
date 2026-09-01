@@ -4,7 +4,12 @@ import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card.tsx";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { formatCurrency } from "@/lib/format.ts";
 import { AlertTriangle, ArrowLeft, FileText } from "lucide-react";
@@ -76,9 +81,16 @@ export default function QuoteFromAdvisorPage() {
     try {
       const quoteId = await createQuote({
         companyId: preview.companyId,
-        lineItems: [preview.lineItemPreview],
-        monthlyGrandTotal: preview.lineItemPreview.monthlyTotal,
-        yearlyGrandTotal: preview.lineItemPreview.yearlyTotal,
+        lineItems: [
+          {
+            catalogItemId: preview.lineItemPreview.catalogItemId,
+            itemName: preview.lineItemPreview.itemName,
+            serviceCategory: preview.lineItemPreview.serviceCategory,
+            billingUnit: preview.lineItemPreview.billingUnit,
+            quantity: preview.lineItemPreview.quantity,
+            monthlyUnitPrice: preview.lineItemPreview.monthlyUnitPrice,
+          },
+        ],
         notes: buildAdvisorQuoteNotes(preview),
       });
       toast.success("Draft quote created");
@@ -197,7 +209,9 @@ export default function QuoteFromAdvisorPage() {
                     <div className="text-xs font-medium uppercase text-muted-foreground">
                       Item
                     </div>
-                    <p className="mt-1">{preview.matchedCatalogItem.itemName}</p>
+                    <p className="mt-1">
+                      {preview.matchedCatalogItem.itemName}
+                    </p>
                   </div>
                   <div>
                     <div className="text-xs font-medium uppercase text-muted-foreground">
@@ -240,7 +254,10 @@ export default function QuoteFromAdvisorPage() {
             </CardHeader>
             <CardContent>
               {preview.lineItemPreview ? (
-                <div className="overflow-x-auto" data-testid="advisor-quote-preview">
+                <div
+                  className="overflow-x-auto"
+                  data-testid="advisor-quote-preview"
+                >
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b bg-muted/30">

@@ -53,6 +53,9 @@ type FinanceActivityPoint = {
   label: string;
   invoicesSent: number;
   invoicesPaid: number;
+  recognizedRevenue: number;
+  preCollected: number;
+  expectedCollections: number;
   expenses: number;
 };
 
@@ -370,7 +373,12 @@ function FinanceActivityChart({
       ? rows
       : rows.filter(
           (row) =>
-            row.invoicesSent > 0 || row.invoicesPaid > 0 || row.expenses > 0,
+            row.invoicesSent > 0 ||
+            row.invoicesPaid > 0 ||
+            row.recognizedRevenue > 0 ||
+            row.preCollected > 0 ||
+            row.expectedCollections > 0 ||
+            row.expenses > 0,
         );
 
   return (
@@ -378,9 +386,11 @@ function FinanceActivityChart({
       <CardHeader className="gap-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <CardTitle className="text-base">Finance Activity</CardTitle>
+            <CardTitle className="text-base">
+              Monthly Revenue & Cash Flow
+            </CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              Invoices sent, payments received, and paid expenses
+              Recognized revenue, collections, expected cash, and expenses
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -427,8 +437,8 @@ function FinanceActivityChart({
                 <Tooltip formatter={financeTooltipFormatter} />
                 <Legend />
                 <Bar
-                  dataKey="invoicesSent"
-                  name="Invoices Sent"
+                  dataKey="recognizedRevenue"
+                  name="Recognized Revenue"
                   fill="oklch(0.6 0.2 260)"
                   radius={[4, 4, 0, 0]}
                 />
@@ -436,6 +446,18 @@ function FinanceActivityChart({
                   dataKey="invoicesPaid"
                   name="Invoices Paid"
                   fill="oklch(0.6 0.15 170)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="preCollected"
+                  name="Pre-collected allocation"
+                  fill="oklch(0.68 0.14 145)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="expectedCollections"
+                  name="Expected collections"
+                  fill="oklch(0.72 0.14 80)"
                   radius={[4, 4, 0, 0]}
                 />
                 <Bar
@@ -474,8 +496,10 @@ export default function DashboardPage() {
   const companyWideTarget = summary?.targets.target ?? 0;
   const companyWideAchieved = summary?.targets.achieved ?? 0;
   const companyWidePercentage = summary?.targets.achievementPercent ?? 0;
-  const pipelineStageCounts = (summary?.pipeline.stageCounts ??
-    {}) as Record<string, number>;
+  const pipelineStageCounts = (summary?.pipeline.stageCounts ?? {}) as Record<
+    string,
+    number
+  >;
   const openPipelineStages = Object.entries(pipelineStageCounts).filter(
     ([stage]) => stage !== "won" && stage !== "lost",
   );
@@ -495,10 +519,10 @@ export default function DashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            Welcome back, {currentUser?.name || "User"}
+            High Level Overview
           </h1>
           <p className="text-muted-foreground mt-1">
-            {getRoleLabel(currentUser?.role)} - HTGCLOUDS CRM Overview
+            {getRoleLabel(currentUser?.role)} · HTGCLOUDS CRM
           </p>
         </div>
         <Select
@@ -518,55 +542,13 @@ export default function DashboardPage() {
         </Select>
       </div>
 
-      <Tabs defaultValue="executive" className="space-y-6">
+      <Tabs defaultValue="overview" className="space-y-6">
         <TabsList className="grid w-full max-w-xl grid-cols-2">
-          <TabsTrigger value="executive">Executive Summary</TabsTrigger>
-          <TabsTrigger value="details">Operational Details</TabsTrigger>
+          <TabsTrigger value="overview">Overview Cards</TabsTrigger>
+          <TabsTrigger value="analytics">Graphs & Analytics</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="executive" className="space-y-8">
-          {companyWideTarget > 0 && (
-            <ClickableCard onClick={() => navigate("/targets")}>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Company-Wide Target Progress - {selectedYear}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">
-                      {formatCurrency(companyWideAchieved)} achieved
-                    </span>
-                    <span className="font-medium">
-                      {formatCurrency(companyWideTarget)} target
-                    </span>
-                  </div>
-                  <div className="h-4 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all"
-                      style={{
-                        width: `${Math.min(companyWidePercentage, 100)}%`,
-                      }}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground text-right">
-                    {companyWidePercentage}% achieved
-                  </p>
-                </div>
-              </CardContent>
-            </ClickableCard>
-          )}
-
-          {!isLoading &&
-            canViewFinanceActivity(currentUser?.role) &&
-            collectionSummary && (
-              <ExecutiveCollectionSummaryCard
-                summary={collectionSummary}
-                onClick={() => navigate("/invoices")}
-              />
-            )}
-
+        <TabsContent value="analytics" className="space-y-8">
           {!isLoading &&
             canViewFinanceActivity(currentUser?.role) &&
             financeActivity && (
@@ -659,9 +641,94 @@ export default function DashboardPage() {
               </CardContent>
             </ClickableCard>
           )}
+
+          {!isLoading && countryChartData.length > 0 && (
+            <ClickableCard onClick={() => navigate("/performance")}>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Target vs Achieved - Per Country
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={countryChartData}
+                      margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                    >
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        className="opacity-30"
+                      />
+                      <XAxis dataKey="name" className="text-xs" />
+                      <YAxis
+                        tickFormatter={formatCompact}
+                        className="text-xs"
+                      />
+                      <Tooltip formatter={tooltipFormatter} />
+                      <Legend />
+                      <Bar
+                        dataKey="target"
+                        name="Target"
+                        fill="oklch(0.7 0.1 260)"
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar
+                        dataKey="achieved"
+                        name="Achieved"
+                        fill="oklch(0.6 0.15 170)"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </ClickableCard>
+          )}
         </TabsContent>
 
-        <TabsContent value="details" className="space-y-8">
+        <TabsContent value="overview" className="space-y-8">
+          {companyWideTarget > 0 && (
+            <ClickableCard onClick={() => navigate("/targets")}>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Company-Wide Target Progress - {selectedYear}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      {formatCurrency(companyWideAchieved)} achieved
+                    </span>
+                    <span className="font-medium">
+                      {formatCurrency(companyWideTarget)} target
+                    </span>
+                  </div>
+                  <div className="h-4 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all"
+                      style={{
+                        width: `${Math.min(companyWidePercentage, 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground text-right">
+                    {companyWidePercentage}% achieved
+                  </p>
+                </div>
+              </CardContent>
+            </ClickableCard>
+          )}
+
+          {!isLoading &&
+            canViewFinanceActivity(currentUser?.role) &&
+            collectionSummary && (
+              <ExecutiveCollectionSummaryCard
+                summary={collectionSummary}
+                onClick={() => navigate("/invoices")}
+              />
+            )}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard
               title="Companies"
@@ -759,63 +826,17 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-                  {Object.entries(pipelineStageCounts).map(
-                    ([stage, count]) => (
-                      <div
-                        key={stage}
-                        className="rounded-md border bg-background/50 p-3"
-                      >
-                        <p className="text-xs text-muted-foreground">
-                          {stageLabel(stage)}
-                        </p>
-                        <p className="mt-1 text-xl font-semibold">{count}</p>
-                      </div>
-                    ),
-                  )}
-                </div>
-              </CardContent>
-            </ClickableCard>
-          )}
-
-          {!isLoading && countryChartData.length > 0 && (
-            <ClickableCard onClick={() => navigate("/performance")}>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Target vs Achieved - Per Country
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={countryChartData}
-                      margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                  {Object.entries(pipelineStageCounts).map(([stage, count]) => (
+                    <div
+                      key={stage}
+                      className="rounded-md border bg-background/50 p-3"
                     >
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        className="opacity-30"
-                      />
-                      <XAxis dataKey="name" className="text-xs" />
-                      <YAxis
-                        tickFormatter={formatCompact}
-                        className="text-xs"
-                      />
-                      <Tooltip formatter={tooltipFormatter} />
-                      <Legend />
-                      <Bar
-                        dataKey="target"
-                        name="Target"
-                        fill="oklch(0.7 0.1 260)"
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Bar
-                        dataKey="achieved"
-                        name="Achieved"
-                        fill="oklch(0.6 0.15 170)"
-                        radius={[4, 4, 0, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
+                      <p className="text-xs text-muted-foreground">
+                        {stageLabel(stage)}
+                      </p>
+                      <p className="mt-1 text-xl font-semibold">{count}</p>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </ClickableCard>

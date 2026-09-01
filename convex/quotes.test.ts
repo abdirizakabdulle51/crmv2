@@ -46,7 +46,115 @@ async function seedQuoteCreateScope(ctx: ConvexTestCtx) {
   return { companyId, lineItem };
 }
 
+type QuoteLineInput = Awaited<
+  ReturnType<typeof seedQuoteCreateScope>
+>["lineItem"] & {
+  regionId?: string;
+  regionName?: string;
+  dataCenterName?: string;
+};
+function quoteLineInput(line: QuoteLineInput) {
+  const {
+    monthlyTotal: _monthlyTotal,
+    yearlyTotal: _yearlyTotal,
+    ...input
+  } = line;
+  return input;
+}
+
 describe("create", () => {
+  it("atomically creates and links a real proposal opportunity when needed", async () => {
+    const t = convexTest({ schema, modules });
+    const seed = await t.run(seedQuoteCreateScope);
+    const authed = t.withIdentity({ tokenIdentifier: "ceo-token" });
+
+    const quoteId = await authed.mutation(api.quotes.create, {
+      companyId: seed.companyId,
+      opportunity: {
+        title: "AICC cloud expansion",
+        expectedCloseDate: "2026-10-15T00:00:00.000Z",
+        contactName: "Finance Director",
+        contactEmail: "finance@aicc.example",
+      },
+      lineItems: [quoteLineInput({ ...seed.lineItem, monthlyUnitPrice: 999 })],
+    });
+
+    const result = await t.run(async (ctx) => {
+      const quote = await ctx.db.get(quoteId);
+      const opportunity = quote?.leadId ? await ctx.db.get(quote.leadId) : null;
+      const activities = opportunity
+        ? await ctx.db
+            .query("activities")
+            .withIndex("by_lead", (q) => q.eq("leadId", opportunity._id))
+            .collect()
+        : [];
+      return { quote, opportunity, activities };
+    });
+
+    expect(result.opportunity).toMatchObject({
+      title: "AICC cloud expansion",
+      stage: "proposal",
+      potentialValue: 10,
+      contactName: "Finance Director",
+    });
+    expect(result.opportunity?.opportunityNumber).toMatch(/^OPP-\d{4}-00001$/);
+    expect(result.quote?.leadId).toBe(result.opportunity?._id);
+    expect(result.activities).toEqual([
+      expect.objectContaining({ type: "quote_created" }),
+    ]);
+
+    await authed.mutation(api.quotes.updateStatus, {
+      id: quoteId,
+      status: "sent",
+    });
+    const afterSend = await t.run(async (ctx) => {
+      const opportunity = await ctx.db.get(result.opportunity!._id);
+      const activities = await ctx.db
+        .query("activities")
+        .withIndex("by_lead", (q) => q.eq("leadId", result.opportunity!._id))
+        .collect();
+      return { opportunity, activities };
+    });
+    expect(afterSend.opportunity?.stage).toBe("negotiation");
+    const sentQuote = await t.run(async (ctx) => ctx.db.get(quoteId));
+    expect(sentQuote?.sentAt).toEqual(expect.any(Number));
+    expect(afterSend.activities).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "quote_sent" })]),
+    );
+  });
+
+  it("requires a quote to be sent before acceptance and records acceptance metadata", async () => {
+    const t = convexTest({ schema, modules });
+    const seed = await t.run(seedQuoteCreateScope);
+    const authed = t.withIdentity({ tokenIdentifier: "ceo-token" });
+    const quoteId = await authed.mutation(api.quotes.create, {
+      companyId: seed.companyId,
+      lineItems: [quoteLineInput(seed.lineItem)],
+    });
+    await expect(
+      authed.mutation(api.quotes.updateStatus, {
+        id: quoteId,
+        status: "accepted",
+      }),
+    ).rejects.toThrow("Send the quote before accepting it");
+    await authed.mutation(api.quotes.updateStatus, {
+      id: quoteId,
+      status: "sent",
+    });
+    await authed.mutation(api.quotes.updateStatus, {
+      id: quoteId,
+      status: "accepted",
+      acceptedByContact: "Procurement Lead",
+    });
+    const quote = await t.run((ctx) => ctx.db.get(quoteId));
+    expect(quote).toMatchObject({
+      status: "accepted",
+      sentAt: expect.any(Number),
+      acceptedAt: expect.any(Number),
+      acceptedByContact: "Procurement Lead",
+    });
+  });
+
   it("assigns friendly quote numbers to manual, usage, and advisor-created quotes", async () => {
     const t = convexTest({ schema, modules });
     const seed = await t.run(seedQuoteCreateScope);
@@ -54,24 +162,18 @@ describe("create", () => {
 
     const manualQuoteId = await authed.mutation(api.quotes.create, {
       companyId: seed.companyId,
-      lineItems: [seed.lineItem],
-      monthlyGrandTotal: 10,
-      yearlyGrandTotal: 120,
+      lineItems: [quoteLineInput(seed.lineItem)],
       notes: "Manual quote",
     });
     const usageQuoteId = await authed.mutation(api.quotes.create, {
       companyId: seed.companyId,
-      lineItems: [seed.lineItem],
-      monthlyGrandTotal: 10,
-      yearlyGrandTotal: 120,
+      lineItems: [quoteLineInput(seed.lineItem)],
       notes: "Generated from Usage Tracking for 2026-08",
       sourceMonth: "2026-08",
     });
     const advisorQuoteId = await authed.mutation(api.quotes.create, {
       companyId: seed.companyId,
-      lineItems: [seed.lineItem],
-      monthlyGrandTotal: 10,
-      yearlyGrandTotal: 120,
+      lineItems: [quoteLineInput(seed.lineItem)],
       notes: "Cloud Advisor recommendation",
     });
 
@@ -197,8 +299,8 @@ describe("buildQuotePreviewFromUsage", () => {
         billingUnit: "per GB",
         quantity: 100,
         monthlyUnitPrice: 0.072,
-        monthlyTotal: 7.199999999999999,
-        yearlyTotal: 86.39999999999999,
+        monthlyTotal: 7.2,
+        yearlyTotal: 86.4,
       },
     ]);
     expect(preview.warnings).toEqual([
@@ -214,7 +316,7 @@ describe("buildQuotePreviewFromUsage", () => {
       },
     ]);
     expect(preview.monthlyGrandTotal).toBe(13.2);
-    expect(preview.yearlyGrandTotal).toBe(146.39999999999998);
+    expect(preview.yearlyGrandTotal).toBe(146.4);
   });
 
   it("stores region metadata on created quote line items", async () => {
@@ -225,15 +327,13 @@ describe("buildQuotePreviewFromUsage", () => {
       .mutation(api.quotes.create, {
         companyId: seed.companyId,
         lineItems: [
-          {
+          quoteLineInput({
             ...seed.lineItem,
             regionId: "mog-hq3",
             regionName: "Mogadishu-region-hq3",
             dataCenterName: "HQ3",
-          },
+          }),
         ],
-        monthlyGrandTotal: 10,
-        yearlyGrandTotal: 120,
       });
 
     const quote = await t.run(async (ctx) => await ctx.db.get(quoteId));

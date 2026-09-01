@@ -30,6 +30,9 @@ import {
   Landmark,
   FileSignature,
   CalendarDays,
+  CalendarClock,
+  HandCoins,
+  ShieldCheck,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -50,18 +53,20 @@ const NotificationBell = lazy(() =>
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/companies", label: "Companies", icon: Building2 },
-  { to: "/pipeline", label: "Pipeline", icon: TrendingUp },
+  { to: "/companies", label: "Customers", icon: Building2 },
+  { to: "/pipeline", label: "Opportunities", icon: TrendingUp },
   { to: "/targets", label: "Targets", icon: Target },
-  { to: "/performance", label: "Pace", icon: Gauge },
+  { to: "/performance", label: "Performance", icon: Gauge },
   { to: "/coach", label: "Coach", icon: Zap },
   { to: "/activities", label: "Activities", icon: Activity },
   { to: "/usage", label: "Usage", icon: BarChart3 },
   { to: "/at-risk", label: "At Risk", icon: AlertTriangle },
-  { to: "/quotes", label: "Quotes", icon: FileText },
+  { to: "/quotes", label: "Opportunity Quotes", icon: FileText },
   { to: "/invoices", label: "Invoices", icon: ReceiptText },
   { to: "/finance/expenses", label: "Expenses", icon: WalletCards },
-  { to: "/finance/reports", label: "Finance Reports", icon: ChartColumn },
+  { to: "/finance/reports", label: "Reports", icon: ChartColumn },
+  { to: "/finance/collections", label: "Collections", icon: HandCoins },
+  { to: "/finance/accounts", label: "Accounts", icon: Landmark },
   {
     to: "/finance/expense-categories",
     label: "Expense Categories",
@@ -79,8 +84,18 @@ const NAV_ITEMS = [
   },
   {
     to: "/finance/customer-contracts",
-    label: "Customer Contracts",
+    label: "Contracts",
     icon: FileSignature,
+  },
+  {
+    to: "/finance/contract-renewals",
+    label: "Contract Renewals",
+    icon: CalendarClock,
+  },
+  {
+    to: "/finance/contract-performance",
+    label: "Contract Performance",
+    icon: ChartColumn,
   },
   {
     to: "/finance/settings",
@@ -110,47 +125,66 @@ const NAV_ITEMS = [
   { to: "/tasks", label: "Tasks", icon: ClipboardList },
   { to: "/team", label: "Team", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
+  {
+    to: "/operations/data-health",
+    label: "Data Health",
+    icon: ShieldCheck,
+    adminOnly: true,
+  },
 ];
 
 const NAV_GROUPS = [
   {
-    label: "Sales",
+    label: "Customers",
     items: [
       "/companies",
       "/pipeline",
-      "/targets",
+      "/quotes",
       "/performance",
-      "/coach",
       "/activities",
+      "/at-risk",
     ],
   },
   {
     label: "Revenue",
-    items: ["/usage", "/at-risk", "/quotes", "/invoices", "/recommendations"],
+    items: [
+      "/finance/customer-contracts",
+      "/finance/contract-renewals",
+      "/finance/contract-performance",
+      "/usage",
+      "/invoices",
+    ],
   },
   {
     label: "Finance",
     items: [
+      "/finance/collections",
       "/finance/expenses",
       "/finance/reports",
-      "/finance/expense-categories",
-      "/finance/invoice-profiles",
-      "/finance/daily-usage",
-      "/finance/customer-contracts",
-      "/finance/settings",
+      "/finance/accounts",
     ],
   },
   {
-    label: "Infrastructure",
-    items: ["/manageone-tenants", "/cloud-health", "/manageone-hourly"],
+    label: "Cloud Operations",
+    items: [
+      "/cloud-health",
+      "/manageone-tenants",
+      "/manageone-hourly",
+      "/finance/daily-usage",
+      "/recommendations",
+    ],
   },
   {
-    label: "System",
-    items: ["/documentation", "/tasks", "/team", "/settings"],
+    label: "Workspace",
+    items: ["/tasks", "/documentation"],
+  },
+  {
+    label: "Administration",
+    items: ["/team", "/settings", "/finance/settings", "/operations/data-health"],
   },
 ];
 
-const COLLAPSIBLE_GROUPS = new Set(["Sales", "Revenue"]);
+const COLLAPSIBLE_GROUPS = new Set(NAV_GROUPS.map((group) => group.label));
 const SIDEBAR_GROUP_STORAGE_KEY = "crm.sidebar.collapsedGroups";
 
 function loadCollapsedGroups() {
@@ -199,6 +233,12 @@ export default function AppLayout() {
   const dashboardItem = visibleNavItems.find(
     (item) => item.to === "/dashboard",
   );
+  const groupedItems = NAV_GROUPS.flatMap((group) => group.items)
+    .map((path) => visibleNavItems.find((item) => item.to === path))
+    .filter((item): item is (typeof visibleNavItems)[number] => Boolean(item));
+  const mobileNavItems = dashboardItem
+    ? [dashboardItem, ...groupedItems]
+    : groupedItems;
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -344,7 +384,7 @@ export default function AppLayout() {
 
       {/* Mobile Bottom Nav */}
       <nav className="fixed bottom-0 left-0 right-0 flex justify-around border-t bg-background py-2 md:hidden z-50">
-        {visibleNavItems.slice(0, 5).map((item) => (
+        {mobileNavItems.slice(0, 5).map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

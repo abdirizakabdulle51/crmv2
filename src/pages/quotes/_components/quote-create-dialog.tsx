@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
 import type { Id, Doc } from "@/convex/_generated/dataModel.d.ts";
@@ -6,12 +6,6 @@ import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog.tsx";
 import {
   Select,
   SelectContent,
@@ -22,6 +16,7 @@ import {
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
 import { formatCurrency } from "@/lib/format.ts";
+import { PRODUCT_GROUPS } from "@/lib/product-groups.ts";
 
 type CatalogItem = Doc<"serviceCatalog">;
 
@@ -32,32 +27,60 @@ type LineItem = {
   billingUnit: string;
   quantity: number;
   monthlyUnitPrice: number;
+  serviceDiscountPercent?: number;
   monthlyTotal: number;
   yearlyTotal: number;
 };
 
 type QuoteCreateDialogProps = {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
+  open?: boolean;
+  onOpenChange?: (v: boolean) => void;
   companies: Doc<"companies">[];
+  leads?: Doc<"leads">[];
+  initialOpportunityId?: string;
+  onCreated?: (quoteId: Id<"quotes">) => void;
 };
 
 export default function QuoteCreateDialog({
-  open,
-  onOpenChange,
   companies,
+  leads = [],
+  initialOpportunityId,
+  onCreated,
 }: QuoteCreateDialogProps) {
   const catalog = useQuery(api.serviceCatalog.list, {});
   const createQuote = useMutation(api.quotes.create);
 
   const [companyId, setCompanyId] = useState("");
+  const [leadId, setLeadId] = useState("");
+  const [opportunityTitle, setOpportunityTitle] = useState("");
+  const [expectedCloseDate, setExpectedCloseDate] = useState("");
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [commercialModel, setCommercialModel] = useState<"payg" | "contracted">(
+    "payg",
+  );
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
-  const [discountPercent, setDiscountPercent] = useState("");
+  const [pricingModel, setPricingModel] = useState<
+    "flexible_total_commitment" | "monthly_minimum" | "discounted_usage"
+  >("flexible_total_commitment");
+  const [commitmentValue, setCommitmentValue] = useState("");
+  const [groupDiscounts, setGroupDiscounts] = useState<Record<string, string>>(
+    {},
+  );
   const [notes, setNotes] = useState("");
 
   // Add line item state
   const [selectedCatalogId, setSelectedCatalogId] = useState("");
   const [quantity, setQuantity] = useState("");
+  const [serviceDiscount, setServiceDiscount] = useState("");
+
+  useEffect(() => {
+    if (!initialOpportunityId) return;
+    const lead = leads.find((row) => row._id === initialOpportunityId);
+    if (!lead?.companyId) return;
+    setLeadId(lead._id);
+    setCompanyId(lead.companyId);
+  }, [initialOpportunityId, leads]);
 
   const addLineItem = () => {
     if (!selectedCatalogId || !quantity) {
@@ -72,9 +95,25 @@ export default function QuoteCreateDialog({
     const catalogItem = catalog?.find((c) => c._id === selectedCatalogId);
     if (!catalogItem) return;
 
-    const monthlyTotal = qty * catalogItem.monthlyPrice;
+    const discount =
+      commercialModel === "contracted"
+        ? Number(
+            serviceDiscount ||
+              (catalogItem.productGroup
+                ? groupDiscounts[catalogItem.productGroup]
+                : "") ||
+              0,
+          )
+        : 0;
+    if (!Number.isFinite(discount) || discount < 0 || discount > 100) {
+      toast.error("Discount must be between 0% and 100%");
+      return;
+    }
+    const monthlyUnitPrice =
+      catalogItem.monthlyPrice * ((100 - discount) / 100);
+    const monthlyTotal = qty * monthlyUnitPrice;
     const yearlyTotal = catalogItem.yearlyPrice
-      ? qty * catalogItem.yearlyPrice
+      ? qty * catalogItem.yearlyPrice * ((100 - discount) / 100)
       : monthlyTotal * 12;
 
     const newItem: LineItem = {
@@ -83,7 +122,9 @@ export default function QuoteCreateDialog({
       serviceCategory: catalogItem.serviceCategory,
       billingUnit: catalogItem.billingUnit,
       quantity: qty,
-      monthlyUnitPrice: catalogItem.monthlyPrice,
+      monthlyUnitPrice,
+      serviceDiscountPercent:
+        serviceDiscount === "" ? undefined : Number(serviceDiscount),
       monthlyTotal,
       yearlyTotal,
     };
@@ -91,32 +132,29 @@ export default function QuoteCreateDialog({
     setLineItems([...lineItems, newItem]);
     setSelectedCatalogId("");
     setQuantity("");
+    setServiceDiscount("");
   };
 
   const removeLineItem = (index: number) => {
     setLineItems(lineItems.filter((_, i) => i !== index));
   };
 
-  const monthlySubtotal = lineItems.reduce(
+  const monthlyGrandTotal = lineItems.reduce(
     (sum, li) => sum + li.monthlyTotal,
     0,
   );
-  const yearlySubtotal = lineItems.reduce(
+  const yearlyGrandTotal = lineItems.reduce(
     (sum, li) => sum + li.yearlyTotal,
     0,
   );
-  const discountValue = Math.min(
-    100,
-    Math.max(0, parseFloat(discountPercent) || 0),
-  );
-  const monthlyDiscountTotal = monthlySubtotal * (discountValue / 100);
-  const yearlyDiscountTotal = yearlySubtotal * (discountValue / 100);
-  const monthlyGrandTotal = monthlySubtotal - monthlyDiscountTotal;
-  const yearlyGrandTotal = yearlySubtotal - yearlyDiscountTotal;
 
   const handleCreate = async () => {
     if (!companyId) {
       toast.error("Please select a company");
+      return;
+    }
+    if (leadId === "new" && (!opportunityTitle.trim() || !expectedCloseDate)) {
+      toast.error("Complete the opportunity title and expected close date");
       return;
     }
     if (lineItems.length === 0) {
@@ -125,29 +163,78 @@ export default function QuoteCreateDialog({
     }
 
     try {
-      await createQuote({
+      const quoteId = await createQuote({
         companyId: companyId as Id<"companies">,
-        lineItems,
-        monthlyGrandTotal,
-        yearlyGrandTotal,
-        discountPercent: discountValue,
+        leadId:
+          leadId && leadId !== "new" ? (leadId as Id<"leads">) : undefined,
+        commercialModel,
+        contractTerms:
+          commercialModel === "contracted"
+            ? {
+                pricingModel,
+                contractValue:
+                  pricingModel === "flexible_total_commitment"
+                    ? Number(commitmentValue)
+                    : undefined,
+                monthlyMinimum:
+                  pricingModel === "monthly_minimum"
+                    ? Number(commitmentValue)
+                    : undefined,
+                groupDiscounts: Object.entries(groupDiscounts)
+                  .filter(([, value]) => value !== "")
+                  .map(([productGroup, value]) => ({
+                    productGroup,
+                    discountPercent: Number(value),
+                  })),
+              }
+            : undefined,
+        opportunity:
+          leadId === "new"
+            ? {
+                title: opportunityTitle.trim(),
+                expectedCloseDate: new Date(expectedCloseDate).toISOString(),
+                contactName: contactName.trim() || undefined,
+                contactEmail: contactEmail.trim() || undefined,
+                nextAction: "Review and send opportunity quote",
+              }
+            : undefined,
+        lineItems: lineItems.map((line) => ({
+          catalogItemId: line.catalogItemId,
+          itemName: line.itemName,
+          serviceCategory: line.serviceCategory,
+          billingUnit: line.billingUnit,
+          quantity: line.quantity,
+          monthlyUnitPrice: line.monthlyUnitPrice,
+          serviceDiscountPercent: line.serviceDiscountPercent,
+        })),
         notes: notes.trim() || undefined,
       });
       toast.success("Quote created");
       resetForm();
-      onOpenChange(false);
-    } catch {
-      toast.error("Failed to create quote");
+      onCreated?.(quoteId);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create quote",
+      );
     }
   };
 
   const resetForm = () => {
     setCompanyId("");
+    setLeadId("");
+    setOpportunityTitle("");
+    setExpectedCloseDate("");
+    setContactName("");
+    setContactEmail("");
+    setCommercialModel("payg");
+    setPricingModel("flexible_total_commitment");
+    setCommitmentValue("");
+    setGroupDiscounts({});
     setLineItems([]);
-    setDiscountPercent("");
     setNotes("");
     setSelectedCatalogId("");
     setQuantity("");
+    setServiceDiscount("");
   };
 
   // Group catalog by category for easier selection
@@ -159,236 +246,362 @@ export default function QuoteCreateDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        onOpenChange(v);
-        if (!v) resetForm();
-      }}
-    >
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Create Quote</DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-5">
-          {/* Company selection */}
-          <div className="space-y-2">
-            <Label>Company *</Label>
-            <Select value={companyId} onValueChange={setCompanyId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select company" />
-              </SelectTrigger>
-              <SelectContent>
-                {companies.map((c) => (
-                  <SelectItem key={c._id} value={c._id}>
-                    {c.name}
+    <div className="space-y-5">
+      <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+        Sequence: select an opportunity, prepare and send the quote, accept it,
+        then mark the opportunity won to onboard the customer.
+      </div>
+      <div className="space-y-2">
+        <Label>Opportunity *</Label>
+        <Select
+          value={leadId}
+          onValueChange={(value) => {
+            setLeadId(value);
+            const lead = leads.find((row) => row._id === value);
+            setCompanyId(lead?.companyId ?? "");
+          }}
+        >
+          <SelectTrigger aria-label="Opportunity">
+            <SelectValue placeholder="Select open opportunity" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="new">
+              Create a proposal opportunity automatically
+            </SelectItem>
+            {leads
+              .filter(
+                (lead) =>
+                  lead.companyId &&
+                  lead.stage !== "won" &&
+                  lead.stage !== "lost",
+              )
+              .map((lead) => (
+                <SelectItem key={lead._id} value={lead._id}>
+                  {lead.title}
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label>Commercial outcome *</Label>
+        <Select
+          value={commercialModel}
+          onValueChange={(value) =>
+            setCommercialModel(value as "payg" | "contracted")
+          }
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="payg">
+              Pay As You Go — catalogue price
+            </SelectItem>
+            <SelectItem value="contracted">
+              Contract — configure discounts after acceptance
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {commercialModel === "contracted" ? (
+        <div className="space-y-4 rounded-lg border p-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Contract pricing model</Label>
+              <Select
+                value={pricingModel}
+                onValueChange={(value) =>
+                  setPricingModel(value as typeof pricingModel)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="flexible_total_commitment">
+                    Total commitment
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Add line item */}
-          <div className="border rounded-lg p-4 space-y-3 bg-muted/20">
-            <h4 className="text-sm font-medium">Add Line Item</h4>
-            <div
-              className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_180px]"
-              data-testid="quote-line-item-grid"
-            >
-              <div className="min-w-0 space-y-2">
-                <Label className="text-xs">Catalog Item</Label>
-                <Select
-                  value={selectedCatalogId}
-                  onValueChange={setSelectedCatalogId}
-                >
-                  <SelectTrigger className="min-w-0">
-                    <SelectValue placeholder="Select from catalog" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[...catalogByCategory.entries()]
-                      .sort((a, b) => a[0].localeCompare(b[0]))
-                      .map(([category, items]) =>
-                        items.map((item) => (
-                          <SelectItem key={item._id} value={item._id}>
-                            <span
-                              className="block max-w-[min(70vw,520px)] truncate"
-                              data-testid="quote-catalog-option-label"
-                            >
-                              [{category}] {item.itemName} — $
-                              {item.monthlyPrice}/{item.billingUnit}
-                            </span>
-                          </SelectItem>
-                        )),
-                      )}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs">Quantity</Label>
-                <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
-                    placeholder="0"
-                  />
-                  <Button
-                    type="button"
-                    onClick={addLineItem}
-                    size="sm"
-                    className="shrink-0"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
+                  <SelectItem value="monthly_minimum">
+                    Monthly minimum
+                  </SelectItem>
+                  <SelectItem value="discounted_usage">
+                    Usage with discounts
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+            {pricingModel !== "discounted_usage" ? (
+              <div className="space-y-2">
+                <Label>
+                  {pricingModel === "monthly_minimum"
+                    ? "Monthly minimum"
+                    : "Contract value"}
+                </Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={commitmentValue}
+                  onChange={(event) => setCommitmentValue(event.target.value)}
+                />
+              </div>
+            ) : null}
           </div>
-
-          {/* Line items table */}
-          {lineItems.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex justify-end">
-                <div className="w-full max-w-[180px] space-y-2">
-                  <Label className="text-xs" htmlFor="quote-discount-percent">
-                    Discount %
-                  </Label>
+          <div>
+            <Label>Product-group discounts</Label>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {PRODUCT_GROUPS.map((group) => (
+                <div key={group.value} className="space-y-1">
+                  <Label className="text-xs">{group.label} %</Label>
                   <Input
-                    id="quote-discount-percent"
                     type="number"
                     min="0"
                     max="100"
-                    step="0.01"
-                    value={discountPercent}
-                    onChange={(event) => setDiscountPercent(event.target.value)}
+                    value={groupDiscounts[group.value] ?? ""}
+                    onChange={(event) =>
+                      setGroupDiscounts({
+                        ...groupDiscounts,
+                        [group.value]: event.target.value,
+                      })
+                    }
                     placeholder="0"
                   />
                 </div>
-              </div>
-              <div className="border rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/30">
-                      <th className="text-left p-2 font-medium">Item</th>
-                      <th className="text-left p-2 font-medium">Unit</th>
-                      <th className="text-right p-2 font-medium">Qty</th>
-                      <th className="text-right p-2 font-medium">Monthly</th>
-                      <th className="text-right p-2 font-medium">Yearly</th>
-                      <th className="p-2 w-8"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lineItems.map((li, idx) => (
-                      <tr key={idx} className="border-b last:border-0">
-                        <td className="p-2">
-                          <div className="font-medium">{li.itemName}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {li.serviceCategory}
-                          </div>
-                        </td>
-                        <td className="p-2 text-muted-foreground">
-                          {li.billingUnit}
-                        </td>
-                        <td className="p-2 text-right">{li.quantity}</td>
-                        <td className="p-2 text-right">
-                          {formatCurrency(li.monthlyTotal)}
-                        </td>
-                        <td className="p-2 text-right">
-                          {formatCurrency(li.yearlyTotal)}
-                        </td>
-                        <td className="p-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeLineItem(idx)}
-                            className="cursor-pointer"
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="border-t bg-muted/20">
-                    <tr>
-                      <td colSpan={3} className="p-2 font-semibold text-right">
-                        Subtotal
-                      </td>
-                      <td className="p-2 text-right font-bold">
-                        {formatCurrency(monthlySubtotal)}
-                      </td>
-                      <td className="p-2 text-right font-bold">
-                        {formatCurrency(yearlySubtotal)}
-                      </td>
-                      <td></td>
-                    </tr>
-                    {discountValue > 0 && (
-                      <tr>
-                        <td
-                          colSpan={3}
-                          className="p-2 font-semibold text-right"
-                        >
-                          Discount ({discountValue}%)
-                        </td>
-                        <td className="p-2 text-right font-bold text-emerald-700">
-                          -{formatCurrency(monthlyDiscountTotal)}
-                        </td>
-                        <td className="p-2 text-right font-bold text-emerald-700">
-                          -{formatCurrency(yearlyDiscountTotal)}
-                        </td>
-                        <td></td>
-                      </tr>
-                    )}
-                    <tr>
-                      <td colSpan={3} className="p-2 font-semibold text-right">
-                        Grand Total
-                      </td>
-                      <td className="p-2 text-right font-bold">
-                        {formatCurrency(monthlyGrandTotal)}
-                      </td>
-                      <td className="p-2 text-right font-bold">
-                        {formatCurrency(yearlyGrandTotal)}
-                      </td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+              ))}
             </div>
-          )}
+          </div>
+        </div>
+      ) : null}
+      {leadId === "new" ? (
+        <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
+          <div>
+            <div className="font-medium">New proposal opportunity</div>
+            <div className="text-sm text-muted-foreground">
+              The opportunity and this quote will be created together.
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Opportunity title *</Label>
+              <Input
+                value={opportunityTitle}
+                onChange={(event) => setOpportunityTitle(event.target.value)}
+                placeholder="Customer cloud expansion"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Expected close date *</Label>
+              <Input
+                type="date"
+                value={expectedCloseDate}
+                onChange={(event) => setExpectedCloseDate(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Primary contact</Label>
+              <Input
+                value={contactName}
+                onChange={(event) => setContactName(event.target.value)}
+                placeholder="Contact name"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Contact email</Label>
+              <Input
+                type="email"
+                value={contactEmail}
+                onChange={(event) => setContactEmail(event.target.value)}
+                placeholder="name@company.com"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {/* Company selection */}
+      <div className="space-y-2">
+        <Label>Company *</Label>
+        <Select
+          value={companyId}
+          onValueChange={setCompanyId}
+          disabled={Boolean(leadId && leadId !== "new")}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select company" />
+          </SelectTrigger>
+          <SelectContent>
+            {companies.map((c) => (
+              <SelectItem key={c._id} value={c._id}>
+                {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
-          {/* Notes */}
+      {/* Add line item */}
+      <div className="border rounded-lg p-4 space-y-3 bg-muted/20">
+        <h4 className="text-sm font-medium">Add Line Item</h4>
+        <div
+          className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_150px_150px]"
+          data-testid="quote-line-item-grid"
+        >
+          <div className="min-w-0 space-y-2">
+            <Label className="text-xs">Catalog Item</Label>
+            <Select
+              value={selectedCatalogId}
+              onValueChange={setSelectedCatalogId}
+            >
+              <SelectTrigger className="min-w-0" aria-label="Catalog item">
+                <SelectValue placeholder="Select from catalog" />
+              </SelectTrigger>
+              <SelectContent>
+                {[...catalogByCategory.entries()]
+                  .sort((a, b) => a[0].localeCompare(b[0]))
+                  .map(([category, items]) =>
+                    items.map((item) => (
+                      <SelectItem key={item._id} value={item._id}>
+                        <span
+                          className="block max-w-[min(70vw,520px)] truncate"
+                          data-testid="quote-catalog-option-label"
+                        >
+                          [{category}] {item.itemName} — ${item.monthlyPrice}/
+                          {item.billingUnit}
+                        </span>
+                      </SelectItem>
+                    )),
+                  )}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="space-y-2">
-            <Label>
-              Notes{" "}
-              <span className="text-xs text-muted-foreground">(optional)</span>
-            </Label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Additional terms or notes for this quote..."
-              rows={3}
+            <Label className="text-xs">Quantity</Label>
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                placeholder="0"
+              />
+              <Button
+                type="button"
+                onClick={addLineItem}
+                size="sm"
+                className="shrink-0"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs">Service override %</Label>
+            <Input
+              type="number"
+              min="0"
+              max="100"
+              disabled={commercialModel === "payg"}
+              value={serviceDiscount}
+              onChange={(event) => setServiceDiscount(event.target.value)}
+              placeholder={
+                commercialModel === "payg" ? "No discount" : "Optional"
+              }
             />
           </div>
-
-          {/* Create button */}
-          <Button
-            className="w-full"
-            onClick={handleCreate}
-            disabled={lineItems.length === 0}
-          >
-            Create Quote ({lineItems.length} item
-            {lineItems.length !== 1 ? "s" : ""} · $
-            {monthlyGrandTotal.toLocaleString(undefined, {
-              minimumFractionDigits: 2,
-            })}
-            /mo)
-          </Button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+
+      {/* Line items table */}
+      {lineItems.length > 0 && (
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/30">
+                <th className="text-left p-2 font-medium">Item</th>
+                <th className="text-left p-2 font-medium">Unit</th>
+                <th className="text-right p-2 font-medium">Qty</th>
+                <th className="text-right p-2 font-medium">Monthly</th>
+                <th className="text-right p-2 font-medium">Yearly</th>
+                <th className="p-2 w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {lineItems.map((li, idx) => (
+                <tr key={idx} className="border-b last:border-0">
+                  <td className="p-2">
+                    <div className="font-medium">{li.itemName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {li.serviceCategory}
+                    </div>
+                  </td>
+                  <td className="p-2 text-muted-foreground">
+                    {li.billingUnit}
+                  </td>
+                  <td className="p-2 text-right">{li.quantity}</td>
+                  <td className="p-2 text-right">
+                    {formatCurrency(li.monthlyTotal)}
+                  </td>
+                  <td className="p-2 text-right">
+                    {formatCurrency(li.yearlyTotal)}
+                  </td>
+                  <td className="p-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeLineItem(idx)}
+                      className="cursor-pointer"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="border-t bg-muted/20">
+              <tr>
+                <td colSpan={3} className="p-2 font-semibold text-right">
+                  Grand Total
+                </td>
+                <td className="p-2 text-right font-bold">
+                  {formatCurrency(monthlyGrandTotal)}
+                </td>
+                <td className="p-2 text-right font-bold">
+                  {formatCurrency(yearlyGrandTotal)}
+                </td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      {/* Notes */}
+      <div className="space-y-2">
+        <Label>
+          Notes{" "}
+          <span className="text-xs text-muted-foreground">(optional)</span>
+        </Label>
+        <Textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Additional terms or notes for this quote..."
+          rows={3}
+        />
+      </div>
+
+      {/* Create button */}
+      <Button
+        className="w-full"
+        onClick={handleCreate}
+        disabled={lineItems.length === 0}
+      >
+        Create Quote ({lineItems.length} item
+        {lineItems.length !== 1 ? "s" : ""} · $
+        {monthlyGrandTotal.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+        })}
+        /mo)
+      </Button>
+    </div>
   );
 }

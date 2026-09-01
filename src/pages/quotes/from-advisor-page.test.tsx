@@ -194,14 +194,23 @@ describe("QuoteFromAdvisorPage", () => {
 
     renderAdvisorQuotePage();
 
-    await user.click(screen.getByRole("button", { name: "Create Draft Quote" }));
+    await user.click(
+      screen.getByRole("button", { name: "Create Draft Quote" }),
+    );
 
     await waitFor(() => {
       expect(mocks.createQuote).toHaveBeenCalledWith({
         companyId: "company-1",
-        lineItems: [mocks.preview?.lineItemPreview],
-        monthlyGrandTotal: 120,
-        yearlyGrandTotal: 1200,
+        lineItems: [
+          {
+            catalogItemId: "catalog-1",
+            itemName: "Cloud Bastion Host",
+            serviceCategory: "CBH",
+            billingUnit: "flat fee",
+            quantity: 1,
+            monthlyUnitPrice: 120,
+          },
+        ],
         notes: expect.stringContaining("Cloud Advisor recommendation"),
       });
     });
@@ -212,8 +221,6 @@ describe("QuoteFromAdvisorPage", () => {
       "Source rule: compliance",
     );
     expect(screen.getByText("Quote Detail")).toBeInTheDocument();
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      "/quotes/quote-1",
-    );
+    expect(screen.getByTestId("location")).toHaveTextContent("/quotes/quote-1");
   });
 });

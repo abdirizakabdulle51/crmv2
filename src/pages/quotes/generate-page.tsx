@@ -32,7 +32,6 @@ export default function QuoteGenerateFromUsagePage() {
   );
   const [creating, setCreating] = useState(false);
   const [allowDuplicate, setAllowDuplicate] = useState(false);
-  const [discountPercent, setDiscountPercent] = useState("");
   const preview = useQuery(
     api.quotes.buildQuotePreviewFromUsage,
     companyId && month
@@ -51,17 +50,6 @@ export default function QuoteGenerateFromUsagePage() {
     navigate("/quotes");
   };
 
-  const discountValue = Math.min(
-    100,
-    Math.max(0, parseFloat(discountPercent) || 0),
-  );
-  const monthlySubtotal = preview?.monthlyGrandTotal ?? 0;
-  const yearlySubtotal = preview?.yearlyGrandTotal ?? 0;
-  const monthlyDiscountTotal = monthlySubtotal * (discountValue / 100);
-  const yearlyDiscountTotal = yearlySubtotal * (discountValue / 100);
-  const monthlyGrandTotal = monthlySubtotal - monthlyDiscountTotal;
-  const yearlyGrandTotal = yearlySubtotal - yearlyDiscountTotal;
-
   const handleCreate = async () => {
     if (!preview || !companyId || preview.lineItems.length === 0) {
       return;
@@ -76,10 +64,19 @@ export default function QuoteGenerateFromUsagePage() {
     try {
       await createQuote({
         companyId: companyId as Id<"companies">,
-        lineItems: preview.lineItems,
-        monthlyGrandTotal,
-        yearlyGrandTotal,
-        discountPercent: discountValue,
+        lineItems: preview.lineItems.map((line) => ({
+          catalogItemId: line.catalogItemId,
+          itemName: line.itemName,
+          serviceCategory: line.serviceCategory,
+          billingUnit: line.billingUnit,
+          quantity: line.quantity,
+          monthlyUnitPrice: line.monthlyUnitPrice,
+          ...(line.regionId ? { regionId: line.regionId } : {}),
+          ...(line.regionName ? { regionName: line.regionName } : {}),
+          ...(line.dataCenterName
+            ? { dataCenterName: line.dataCenterName }
+            : {}),
+        })),
         notes: `Generated from Usage Tracking for ${month}`,
         sourceMonth: month,
       });
@@ -295,86 +292,18 @@ export default function QuoteGenerateFromUsagePage() {
                           colSpan={3}
                           className="p-3 text-right font-semibold"
                         >
-                          Discount %
-                        </td>
-                        <td colSpan={2} className="p-3 text-right">
-                          <Input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.01"
-                            value={discountPercent}
-                            onChange={(event) =>
-                              setDiscountPercent(event.target.value)
-                            }
-                            placeholder="0"
-                            className="ml-auto w-[140px] text-right"
-                          />
-                        </td>
-                      </tr>
-                      <tr>
-                        <td
-                          colSpan={3}
-                          className="p-3 text-right font-semibold"
-                        >
-                          Subtotal
-                        </td>
-                        <td className="p-3 text-right font-bold">
-                          $
-                          {monthlySubtotal.toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
-                        </td>
-                        <td className="p-3 text-right font-bold">
-                          $
-                          {yearlySubtotal.toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
-                        </td>
-                      </tr>
-                      {discountValue > 0 && (
-                        <tr>
-                          <td
-                            colSpan={3}
-                            className="p-3 text-right font-semibold"
-                          >
-                            Discount ({discountValue}%)
-                          </td>
-                          <td className="p-3 text-right font-bold text-emerald-700">
-                            -$
-                            {monthlyDiscountTotal.toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </td>
-                          <td className="p-3 text-right font-bold text-emerald-700">
-                            -$
-                            {yearlyDiscountTotal.toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </td>
-                        </tr>
-                      )}
-                      <tr>
-                        <td
-                          colSpan={3}
-                          className="p-3 text-right font-semibold"
-                        >
                           Grand Total
                         </td>
                         <td className="p-3 text-right font-bold">
                           $
-                          {monthlyGrandTotal.toLocaleString(undefined, {
+                          {preview.monthlyGrandTotal.toLocaleString(undefined, {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}
                         </td>
                         <td className="p-3 text-right font-bold">
                           $
-                          {yearlyGrandTotal.toLocaleString(undefined, {
+                          {preview.yearlyGrandTotal.toLocaleString(undefined, {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}

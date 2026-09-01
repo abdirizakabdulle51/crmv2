@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -27,7 +27,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
       listExpenseCategories: "expenses.listExpenseCategories",
       createExpenseRequest: "expenses.createExpenseRequest",
     },
-    users: { listAll: "users.listAll" },
+    users: { listAll: "users.listAll", getCurrentUser: "users.getCurrentUser" },
   },
 }));
 
@@ -47,6 +47,7 @@ vi.mock("convex/react", () => ({
     if (query === "expenses.listExpenseRequests") return mocks.expenses;
     if (query === "expenses.listExpenseCategories") return mocks.categories;
     if (query === "users.listAll") return mocks.users;
+    if (query === "users.getCurrentUser") return mocks.users[0];
     if (query === "companies.list") return mocks.companies;
     if (query === "countries.list") return mocks.countries;
     return undefined;
@@ -66,6 +67,10 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("@/lib/crm-context.tsx", () => ({
+  useCrm: () => ({ currentUser: mocks.users[0] }),
+}));
+
 function user(id: string, name: string): Doc<"users"> {
   return {
     _id: id as Id<"users">,
@@ -74,6 +79,8 @@ function user(id: string, name: string): Doc<"users"> {
     name,
     email: `${id}@example.com`,
     role: "account_manager",
+    organizationScope: "country",
+    countryId: "country-1" as Id<"countries">,
   };
 }
 
@@ -183,7 +190,10 @@ describe("ExpensesPage", () => {
     mocks.toastError.mockReset();
     mocks.toastSuccess.mockReset();
     mocks.users = [user("user-1", "Amina"), user("user-2", "Omar")];
-    mocks.categories = [category("category-1", "Travel"), category("category-2", "Marketing")];
+    mocks.categories = [
+      category("category-1", "Travel"),
+      category("category-2", "Marketing"),
+    ];
     mocks.companies = [company("company-1", "Hormuud")];
     mocks.countries = [country("country-1", "Somalia")];
     mocks.expenses = [
@@ -203,8 +213,12 @@ describe("ExpensesPage", () => {
   it("renders the expenses route, header, summary cards, and rows", () => {
     renderExpensesPage();
 
-    expect(screen.getByTestId("location")).toHaveTextContent("/finance/expenses");
-    expect(screen.getByRole("heading", { name: "Expenses" })).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/finance/expenses",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Expenses" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Request, approve, and track operational expenses."),
     ).toBeInTheDocument();
@@ -263,8 +277,10 @@ describe("ExpensesPage", () => {
       }),
     );
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Expense draft created");
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      "/finance/expenses/expense-new",
+    await waitFor(() =>
+      expect(screen.getByTestId("location")).toHaveTextContent(
+        "/finance/expenses/expense-new",
+      ),
     );
   });
 

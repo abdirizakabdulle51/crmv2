@@ -7,6 +7,13 @@ import {
   canViewCompany,
   isCeoOrHob,
 } from "./authorization";
+import {
+  assertSupportedCurrency,
+  allocateMoney,
+  roundMoney,
+  sumMoney,
+  toCents,
+} from "./money";
 
 type ExpenseStatus = Doc<"expenseRequests">["status"];
 type FinanceReportScope = {
@@ -60,6 +67,11 @@ function monthFromTimestamp(timestamp: number) {
   return new Date(timestamp).toISOString().slice(0, 7);
 }
 
+function monthStartTimestamp(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return Date.UTC(year, monthNumber - 1, 1);
+}
+
 function currentMonth() {
   return monthFromTimestamp(Date.now());
 }
@@ -72,10 +84,7 @@ function isValidMonth(value: string) {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
 }
 
-function normalizeMonthRange(args: {
-  startMonth?: string;
-  endMonth?: string;
-}) {
+function normalizeMonthRange(args: { startMonth?: string; endMonth?: string }) {
   const startMonth = args.startMonth || currentYearStartMonth();
   const endMonth = args.endMonth || currentMonth();
   if (!isValidMonth(startMonth) || !isValidMonth(endMonth)) {
@@ -114,12 +123,10 @@ function monthsBetween(startMonth: string, endMonth: string) {
   return months;
 }
 
-function roundMoney(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
 function lineItemRegionLabel(item: Doc<"invoices">["lineItems"][number]) {
-  return item.regionName || item.dataCenterName || item.regionId || "Unassigned";
+  return (
+    item.regionName || item.dataCenterName || item.regionId || "Unassigned"
+  );
 }
 
 function paymentRegionAllocations(
@@ -128,11 +135,10 @@ function paymentRegionAllocations(
 ) {
   const regionBases = new Map<string, number>();
   for (const lineItem of invoice.lineItems) {
-    if (lineItem.monthlyTotal <= 0) continue;
     const label = lineItemRegionLabel(lineItem);
     regionBases.set(
       label,
-      roundMoney((regionBases.get(label) ?? 0) + lineItem.monthlyTotal),
+      (regionBases.get(label) ?? 0) + toCents(lineItem.monthlyTotal),
     );
   }
 
@@ -144,10 +150,11 @@ function paymentRegionAllocations(
     return [{ region: "Unassigned", amount: roundMoney(paymentAmount) }];
   }
 
-  return [...regionBases.entries()].map(([region, basis]) => ({
-    region,
-    amount: roundMoney((paymentAmount * basis) / totalBasis),
-  }));
+  const entries = [...regionBases.entries()].filter(([, basis]) => basis > 0);
+  return allocateMoney(
+    paymentAmount,
+    entries.map(([region, weight]) => ({ region, weight })),
+  ).map(({ region, amount }) => ({ region, amount }));
 }
 
 function displayUserName(user: Doc<"users"> | undefined) {
@@ -180,7 +187,8 @@ async function getReportScope(
   if (args.countryId && !isCeoOrHob(user)) {
     throw new ConvexError({
       code: "FORBIDDEN",
-      message: "Only CEO or Head of Business can filter finance reports by country",
+      message:
+        "Only CEO or Head of Business can filter finance reports by country",
     });
   }
 
@@ -267,6 +275,9 @@ export const summary = query({
         {
           month,
           income: 0,
+          recognizedRevenue: 0,
+          preCollected: 0,
+          expectedCollections: 0,
           expenses: 0,
           net: 0,
           paymentCount: 0,
@@ -274,10 +285,116 @@ export const summary = query({
         },
       ]),
     );
+    const countryPerformance = new Map<
+      Id<"countries">,
+      {
+        countryId: Id<"countries">;
+        countryName: string;
+        revenue: number;
+        collections: number;
+        expenses: number;
+      }
+    >();
+    const countryRow = (countryId: Id<"countries">) => {
+      const row = countryPerformance.get(countryId) ?? {
+        countryId,
+        countryName: scope.countryMap.get(countryId)?.name ?? "Unknown",
+        revenue: 0,
+        collections: 0,
+        expenses: 0,
+      };
+      countryPerformance.set(countryId, row);
+      return row;
+    };
 
     const invoices = await ctx.db.query("invoices").collect();
-    const invoiceMap = new Map(invoices.map((invoice) => [invoice._id, invoice]));
+    const invoiceMap = new Map(
+      invoices.map((invoice) => [invoice._id, invoice]),
+    );
     const payments = await ctx.db.query("invoicePayments").collect();
+    const paymentsByInvoice = new Map<Id<"invoices">, typeof payments>();
+    for (const payment of payments) {
+      const rows = paymentsByInvoice.get(payment.invoiceId) ?? [];
+      rows.push(payment);
+      paymentsByInvoice.set(payment.invoiceId, rows);
+    }
+    for (const invoice of invoices) {
+      if (
+        !scope.visibleCompanyIds.has(invoice.companyId) ||
+        invoice.status === "draft" ||
+        invoice.status === "void" ||
+        invoice.status === "cancelled" ||
+        !invoice.revenueAllocations?.length
+      )
+        continue;
+      const receivableAllocations =
+        invoice.receivableAllocations ?? invoice.revenueAllocations;
+      const paidAllocations = allocateMoney(
+        Math.min(invoice.amountPaid, invoice.grandTotal),
+        receivableAllocations.map((allocation) => ({
+          month: allocation.month,
+          weight: allocation.amount,
+        })),
+      );
+      const paidByMonth = new Map(
+        paidAllocations.map((allocation) => [
+          allocation.month,
+          allocation.amount,
+        ]),
+      );
+      const preCollectedByMonth = new Map<string, number>();
+      for (const payment of paymentsByInvoice.get(invoice._id) ?? []) {
+        for (const allocation of allocateMoney(
+          payment.amount,
+          receivableAllocations.map((row) => ({
+            month: row.month,
+            weight: row.amount,
+          })),
+        )) {
+          if (payment.paidAt < monthStartTimestamp(allocation.month)) {
+            preCollectedByMonth.set(
+              allocation.month,
+              sumMoney([
+                preCollectedByMonth.get(allocation.month) ?? 0,
+                allocation.amount,
+              ]),
+            );
+          }
+        }
+      }
+      for (const allocation of invoice.revenueAllocations) {
+        const row = monthly.get(allocation.month);
+        if (!row) continue;
+        row.recognizedRevenue = sumMoney([
+          row.recognizedRevenue,
+          allocation.amount,
+        ]);
+        const company = scope.companyMap.get(invoice.companyId);
+        if (company) {
+          const performance = countryRow(company.countryId);
+          performance.revenue = sumMoney([
+            performance.revenue,
+            allocation.amount,
+          ]);
+        }
+        const receivable =
+          receivableAllocations.find((row) => row.month === allocation.month)
+            ?.amount ?? allocation.amount;
+        const paid = paidByMonth.get(allocation.month) ?? 0;
+        if (invoice.billingTiming === "prepaid") {
+          row.preCollected = sumMoney([
+            row.preCollected,
+            preCollectedByMonth.get(allocation.month) ?? 0,
+          ]);
+        } else {
+          row.expectedCollections = sumMoney([
+            row.expectedCollections,
+            receivable,
+            -paid,
+          ]);
+        }
+      }
+    }
     const regionIncome = new Map<
       string,
       {
@@ -290,6 +407,7 @@ export const summary = query({
     for (const payment of payments) {
       const invoice = invoiceMap.get(payment.invoiceId);
       if (!invoice) continue;
+      assertSupportedCurrency(invoice.sellerCurrency);
       if (invoice.isTest || invoice.hiddenAt) continue;
       if (invoice.status === "void" || invoice.status === "cancelled") {
         continue;
@@ -302,6 +420,14 @@ export const summary = query({
       if (!row) continue;
       row.income = roundMoney(row.income + payment.amount);
       row.paymentCount += 1;
+      const company = scope.companyMap.get(invoice.companyId);
+      if (company) {
+        const performance = countryRow(company.countryId);
+        performance.collections = sumMoney([
+          performance.collections,
+          payment.amount,
+        ]);
+      }
 
       for (const allocation of paymentRegionAllocations(
         invoice,
@@ -322,7 +448,12 @@ export const summary = query({
 
     const categoryTotals = new Map<
       Id<"expenseCategories">,
-      { categoryId: Id<"expenseCategories">; categoryName: string; total: number; count: number }
+      {
+        categoryId: Id<"expenseCategories">;
+        categoryName: string;
+        total: number;
+        count: number;
+      }
     >();
     const statusSummary = new Map(
       EXPENSE_STATUSES.map((status) => [
@@ -333,13 +464,14 @@ export const summary = query({
     const expenses = await ctx.db.query("expenseRequests").collect();
     for (const expense of expenses) {
       if (!isVisibleExpenseForReport(expense, user, scope)) continue;
+      assertSupportedCurrency(expense.currency);
 
       const statusMonth = monthFromTimestamp(expense.expenseDate);
       if (monthInRange(statusMonth, startMonth, endMonth)) {
         const statusRow = statusSummary.get(expense.status);
         if (statusRow) {
           statusRow.count += 1;
-          statusRow.total = roundMoney(statusRow.total + expense.amount);
+          statusRow.total = sumMoney([statusRow.total, expense.amount]);
         }
       }
 
@@ -349,8 +481,16 @@ export const summary = query({
 
       const row = monthly.get(paidMonth);
       if (row) {
-        row.expenses = roundMoney(row.expenses + expense.amount);
+        row.expenses = sumMoney([row.expenses, expense.amount]);
         row.paidExpenseCount += 1;
+      }
+      const expenseCompany = expense.companyId
+        ? scope.companyMap.get(expense.companyId)
+        : undefined;
+      const expenseCountryId = expense.countryId ?? expenseCompany?.countryId;
+      if (expenseCountryId) {
+        const performance = countryRow(expenseCountryId);
+        performance.expenses = sumMoney([performance.expenses, expense.amount]);
       }
 
       const category = scope.categoryMap.get(expense.categoryId);
@@ -360,23 +500,40 @@ export const summary = query({
         total: 0,
         count: 0,
       };
-      existing.total = roundMoney(existing.total + expense.amount);
+      existing.total = sumMoney([existing.total, expense.amount]);
       existing.count += 1;
       categoryTotals.set(expense.categoryId, existing);
     }
 
     const monthlyRows = [...monthly.values()].map((row) => ({
       ...row,
-      net: roundMoney(row.income - row.expenses),
+      net: sumMoney([row.income, -row.expenses]),
     }));
     const totals = monthlyRows.reduce(
       (acc, row) => ({
-        income: roundMoney(acc.income + row.income),
-        expenses: roundMoney(acc.expenses + row.expenses),
-        net: roundMoney(acc.net + row.net),
+        income: sumMoney([acc.income, row.income]),
+        recognizedRevenue: sumMoney([
+          acc.recognizedRevenue,
+          row.recognizedRevenue,
+        ]),
+        preCollected: sumMoney([acc.preCollected, row.preCollected]),
+        expectedCollections: sumMoney([
+          acc.expectedCollections,
+          row.expectedCollections,
+        ]),
+        expenses: sumMoney([acc.expenses, row.expenses]),
+        net: sumMoney([acc.net, row.net]),
         paymentCount: acc.paymentCount + row.paymentCount,
       }),
-      { income: 0, expenses: 0, net: 0, paymentCount: 0 },
+      {
+        income: 0,
+        recognizedRevenue: 0,
+        preCollected: 0,
+        expectedCollections: 0,
+        expenses: 0,
+        net: 0,
+        paymentCount: 0,
+      },
     );
 
     return {
@@ -389,6 +546,12 @@ export const summary = query({
         (a, b) => b.total - a.total,
       ),
       expenseStatusSummary: [...statusSummary.values()],
+      countryPerformance: [...countryPerformance.values()]
+        .map((row) => ({
+          ...row,
+          net: sumMoney([row.collections, -row.expenses]),
+        }))
+        .sort((a, b) => b.net - a.net),
       incomeByRegion: [...regionIncome.values()]
         .filter((row) => row.region !== "Unassigned")
         .map((row) => ({
@@ -413,7 +576,9 @@ export const invoicePaymentsExport = query({
     assertCanViewFinanceReports(user);
     const scope = await getReportScope(ctx, user, args);
     const invoices = await ctx.db.query("invoices").collect();
-    const invoiceMap = new Map(invoices.map((invoice) => [invoice._id, invoice]));
+    const invoiceMap = new Map(
+      invoices.map((invoice) => [invoice._id, invoice]),
+    );
     const payments = await ctx.db.query("invoicePayments").collect();
 
     return payments
@@ -430,7 +595,9 @@ export const invoicePaymentsExport = query({
         if (!monthInRange(month, scope.startMonth, scope.endMonth)) return [];
 
         const company = scope.companyMap.get(invoice.companyId);
-        const country = company ? scope.countryMap.get(company.countryId) : undefined;
+        const country = company
+          ? scope.countryMap.get(company.countryId)
+          : undefined;
         const recordedBy = scope.userMap.get(payment.recordedBy);
 
         return [
@@ -471,7 +638,9 @@ export const invoicePaymentsByRegionExport = query({
     assertCanViewFinanceReports(user);
     const scope = await getReportScope(ctx, user, args);
     const invoices = await ctx.db.query("invoices").collect();
-    const invoiceMap = new Map(invoices.map((invoice) => [invoice._id, invoice]));
+    const invoiceMap = new Map(
+      invoices.map((invoice) => [invoice._id, invoice]),
+    );
     const payments = await ctx.db.query("invoicePayments").collect();
 
     return payments
@@ -488,7 +657,9 @@ export const invoicePaymentsByRegionExport = query({
         if (!monthInRange(month, scope.startMonth, scope.endMonth)) return [];
 
         const company = scope.companyMap.get(invoice.companyId);
-        const country = company ? scope.countryMap.get(company.countryId) : undefined;
+        const country = company
+          ? scope.countryMap.get(company.countryId)
+          : undefined;
         const recordedBy = scope.userMap.get(payment.recordedBy);
 
         return paymentRegionAllocations(invoice, payment.amount)
@@ -543,7 +714,9 @@ export const paidExpensesExport = query({
         const approvedBy = expense.approvedBy
           ? scope.userMap.get(expense.approvedBy)
           : undefined;
-        const paidBy = expense.paidBy ? scope.userMap.get(expense.paidBy) : undefined;
+        const paidBy = expense.paidBy
+          ? scope.userMap.get(expense.paidBy)
+          : undefined;
         const company = expense.companyId
           ? scope.companyMap.get(expense.companyId)
           : undefined;
@@ -565,6 +738,10 @@ export const paidExpensesExport = query({
             currency: expense.currency,
             paymentMethod: expense.paymentMethod ?? "",
             paymentReference: expense.paymentReference ?? "",
+            paymentTransactionId: expense.paymentTransactionId ?? "",
+            fundingAccountName: expense.fundingAccountName ?? "",
+            fundingProviderName: expense.fundingProviderName ?? "",
+            fundingAccountNumber: expense.fundingAccountNumber ?? "",
             approvedByName: displayUserName(approvedBy),
             approvedByEmail: displayUserEmail(approvedBy),
             paidByName: displayUserName(paidBy),

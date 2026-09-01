@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
+import { assertSupportedCurrency, roundMoney } from "./money";
 import {
   assertCanManageCompany,
   assertNotMonitoring,
@@ -114,7 +115,7 @@ function normalizeCurrency(value: string | undefined) {
       message: "Currency is required",
     });
   }
-  return normalized;
+  return assertSupportedCurrency(normalized);
 }
 
 function normalizeFinanceSettings(args: {
@@ -137,7 +138,8 @@ function normalizeFinanceSettings(args: {
   ) {
     throw new ConvexError({
       code: "BAD_REQUEST",
-      message: "Business approval limit must be greater than country approval limit",
+      message:
+        "Business approval limit must be greater than country approval limit",
     });
   }
   return {
@@ -156,7 +158,10 @@ function assertPositiveAmount(amount: number) {
   }
 }
 
-async function getCategoryOrThrow(ctx: Ctx, categoryId: Id<"expenseCategories">) {
+async function getCategoryOrThrow(
+  ctx: Ctx,
+  categoryId: Id<"expenseCategories">,
+) {
   const category = await ctx.db.get(categoryId);
   if (!category) {
     throw new ConvexError({
@@ -260,7 +265,23 @@ async function normalizeExpenseScope(
   },
 ) {
   const companyCountryId = await getCompanyCountryId(ctx, user, args.companyId);
-  const countryId = args.countryId ?? companyCountryId ?? user.countryId;
+  const isGlobal =
+    user.organizationScope === "global" ||
+    (user.organizationScope === undefined &&
+      isCeoOrHob(user) &&
+      !user.countryId);
+  const countryId = isGlobal
+    ? (args.countryId ?? companyCountryId)
+    : user.countryId;
+
+  if (!countryId) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: isGlobal
+        ? "Select the expense country"
+        : "Your team profile must be assigned to a country",
+    });
+  }
 
   if (
     companyCountryId !== undefined &&
@@ -273,7 +294,11 @@ async function normalizeExpenseScope(
     });
   }
 
-  if (!isCeoOrHob(user) && user.countryId && countryId !== user.countryId) {
+  if (
+    !isGlobal &&
+    args.countryId !== undefined &&
+    args.countryId !== countryId
+  ) {
     throw new ConvexError({
       code: "FORBIDDEN",
       message: "You can only create expenses in your country",
@@ -286,7 +311,11 @@ async function normalizeExpenseScope(
   };
 }
 
-async function canViewExpense(ctx: Ctx, user: Doc<"users">, expense: Doc<"expenseRequests">) {
+async function canViewExpense(
+  ctx: Ctx,
+  user: Doc<"users">,
+  expense: Doc<"expenseRequests">,
+) {
   if (isCeoOrHob(user) || expense.requestedBy === user._id) {
     return true;
   }
@@ -387,7 +416,8 @@ function assertCanArchiveReceipt(
   }
   throw new ConvexError({
     code: "FORBIDDEN",
-    message: "Only the uploader, CEO, or Head of Business can remove this receipt",
+    message:
+      "Only the uploader, CEO, or Head of Business can remove this receipt",
   });
 }
 
@@ -636,7 +666,7 @@ export const createExpenseRequest = mutation({
       title: normalizeRequiredText(args.title, "Expense title"),
       description: normalizeOptionalText(args.description),
       categoryId: args.categoryId,
-      amount: args.amount,
+      amount: roundMoney(args.amount),
       currency: normalizeCurrency(args.currency),
       expenseDate: args.expenseDate,
       vendor: normalizeOptionalText(args.vendor),
@@ -689,7 +719,7 @@ export const updateDraftExpenseRequest = mutation({
       title: normalizeRequiredText(args.title, "Expense title"),
       description: normalizeOptionalText(args.description),
       categoryId: args.categoryId,
-      amount: args.amount,
+      amount: roundMoney(args.amount),
       currency: normalizeCurrency(args.currency),
       expenseDate: args.expenseDate,
       vendor: normalizeOptionalText(args.vendor),
@@ -740,6 +770,7 @@ export const approveExpenseRequest = mutation({
   args: {
     expenseId: v.id("expenseRequests"),
     note: v.optional(v.string()),
+    fundingAccountId: v.optional(v.id("receivingAccounts")),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -747,20 +778,54 @@ export const approveExpenseRequest = mutation({
     assertExpenseStatus(expense, "submitted", "approved");
     await assertCanApproveExpense(ctx, user, expense);
     await assertReceiptRequirementSatisfied(ctx, expense, "approve");
+    const fundingAccount = args.fundingAccountId
+      ? await ctx.db.get(args.fundingAccountId)
+      : null;
+    if (
+      !fundingAccount ||
+      !fundingAccount.isActive ||
+      fundingAccount.usage === "incoming"
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select an active account that can fund expenses",
+      });
+    }
+    if (fundingAccount.currency !== expense.currency) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Funding account currency must be ${expense.currency}`,
+      });
+    }
+    const expenseCompany = expense.companyId
+      ? await ctx.db.get(expense.companyId)
+      : null;
+    const expenseCountryId = expense.countryId ?? expenseCompany?.countryId;
+    if (!expenseCountryId || fundingAccount.countryId !== expenseCountryId) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Funding account must belong to the expense country",
+      });
+    }
     const now = Date.now();
     const note = normalizeOptionalText(args.note);
     await ctx.db.patch(args.expenseId, {
       status: "approved",
       approvedAt: now,
       approvedBy: user._id,
+      fundingAccountId: fundingAccount._id,
+      fundingAccountName: fundingAccount.name,
+      fundingProviderName: fundingAccount.providerName,
+      fundingAccountNumber: fundingAccount.accountNumber,
+      fundingAccountType: fundingAccount.type,
       updatedAt: now,
     });
     await insertExpenseEvent(ctx, {
       expenseId: args.expenseId,
       type: "approved",
       message: note
-        ? `Expense request approved. Note: ${note}`
-        : "Expense request approved.",
+        ? `Expense request approved from ${fundingAccount.name}. Note: ${note}`
+        : `Expense request approved from ${fundingAccount.name}.`,
       actorId: user._id,
       now,
     });
@@ -799,28 +864,94 @@ export const rejectExpenseRequest = mutation({
 export const markExpensePaid = mutation({
   args: {
     expenseId: v.id("expenseRequests"),
-    paymentMethod: v.optional(v.string()),
     paymentReference: v.optional(v.string()),
+    paymentTransactionId: v.optional(v.string()),
+    fundingAccountId: v.optional(v.id("receivingAccounts")),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     assertCanMarkPaid(user);
     const expense = await getExpenseOrThrow(ctx, args.expenseId);
     assertExpenseStatus(expense, "approved", "marked paid");
-    const paymentMethod = normalizeOptionalText(args.paymentMethod);
+    const fundingAccountId = expense.fundingAccountId ?? args.fundingAccountId;
+    const fundingAccount = fundingAccountId
+      ? await ctx.db.get(fundingAccountId)
+      : null;
+    if (!fundingAccount) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select a funding account for this legacy approved expense",
+      });
+    }
+    if (!fundingAccount.isActive || fundingAccount.usage === "incoming") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Funding account is no longer active for expenses",
+      });
+    }
+    const expenseCompany = expense.companyId
+      ? await ctx.db.get(expense.companyId)
+      : null;
+    const expenseCountryId = expense.countryId ?? expenseCompany?.countryId;
+    if (!expenseCountryId || fundingAccount.countryId !== expenseCountryId) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Funding account must belong to the expense country",
+      });
+    }
+    if (fundingAccount.currency !== expense.currency) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Funding account currency must be ${expense.currency}`,
+      });
+    }
+    const paymentTransactionId = normalizeRequiredText(
+      args.paymentTransactionId ?? "",
+      "Payment transaction ID",
+    );
+    const duplicate = await ctx.db
+      .query("expenseRequests")
+      .withIndex("by_account_transaction", (q) =>
+        q
+          .eq("fundingAccountId", fundingAccount._id)
+          .eq("paymentTransactionId", paymentTransactionId),
+      )
+      .first();
+    if (duplicate && duplicate._id !== expense._id) {
+      throw new ConvexError({
+        code: "CONFLICT",
+        message:
+          "This transaction ID has already been used for the funding account",
+      });
+    }
+    const paymentMethod =
+      fundingAccount.type === "bank"
+        ? "Bank Transfer"
+        : fundingAccount.type === "mobile_money"
+          ? "Mobile Money"
+          : "Cash";
     const paymentReference = normalizeOptionalText(args.paymentReference);
     const now = Date.now();
     await ctx.db.patch(args.expenseId, {
       status: "paid",
       paidAt: now,
       paidBy: user._id,
+      fundingAccountId: fundingAccount._id,
+      fundingAccountName: expense.fundingAccountName ?? fundingAccount.name,
+      fundingProviderName:
+        expense.fundingProviderName ?? fundingAccount.providerName,
+      fundingAccountNumber:
+        expense.fundingAccountNumber ?? fundingAccount.accountNumber,
+      fundingAccountType: expense.fundingAccountType ?? fundingAccount.type,
       paymentMethod,
       paymentReference,
+      paymentTransactionId,
       updatedAt: now,
     });
     const details = [
       paymentMethod ? `Method: ${paymentMethod}` : undefined,
       paymentReference ? `Reference: ${paymentReference}` : undefined,
+      `Transaction ID: ${paymentTransactionId}`,
     ]
       .filter(Boolean)
       .join(". ");
@@ -853,7 +984,8 @@ export const cancelExpenseRequest = mutation({
     if (expense.requestedBy !== user._id && !isCeoOrHob(user)) {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only the requester, CEO, or Head of Business can cancel this expense",
+        message:
+          "Only the requester, CEO, or Head of Business can cancel this expense",
       });
     }
     const reason = normalizeRequiredText(args.reason, "Cancellation reason");

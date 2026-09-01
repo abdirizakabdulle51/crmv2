@@ -9,14 +9,16 @@ import {
 } from "./authorization";
 import { buildCloudAdvisorRecommendationKey } from "./cloudAdvisorKeys";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
+import {
+  calculateInvoiceTotals,
+  calculateLineItems,
+  multiplyMoney,
+  toCents,
+  withLineMoneyCents,
+} from "./money";
+import { usageBelongsToContract } from "./contractPricing";
 
 type Ctx = QueryCtx | MutationCtx;
-type DiscountApprovalLevel =
-  | "self"
-  | "account_manager"
-  | "country_gm"
-  | "head_of_business"
-  | "ceo";
 
 async function getCurrentUserOrThrow(ctx: Ctx): Promise<Doc<"users">> {
   const identity = await ctx.auth.getUserIdentity();
@@ -66,8 +68,7 @@ const lineItemValidator = v.object({
   billingUnit: v.string(),
   quantity: v.number(),
   monthlyUnitPrice: v.number(),
-  monthlyTotal: v.number(),
-  yearlyTotal: v.number(),
+  serviceDiscountPercent: v.optional(v.number()),
   regionId: v.optional(v.string()),
   regionName: v.optional(v.string()),
   dataCenterName: v.optional(v.string()),
@@ -83,182 +84,6 @@ function optionalRegionFields(entry: {
     ...(entry.regionName ? { regionName: entry.regionName } : {}),
     ...(entry.dataCenterName ? { dataCenterName: entry.dataCenterName } : {}),
   };
-}
-
-function roundMoney(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-function normalizedDiscountPercent(value?: number) {
-  if (value === undefined || !Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.min(100, Math.max(0, value));
-}
-
-function calculateQuoteTotals(
-  lineItems: Array<{
-    monthlyTotal: number;
-    yearlyTotal: number;
-  }>,
-  discountPercent?: number,
-) {
-  const normalizedDiscount = normalizedDiscountPercent(discountPercent);
-  const monthlySubtotal = roundMoney(
-    lineItems.reduce((sum, item) => sum + item.monthlyTotal, 0),
-  );
-  const yearlySubtotal = roundMoney(
-    lineItems.reduce((sum, item) => sum + item.yearlyTotal, 0),
-  );
-  const monthlyDiscountTotal = roundMoney(
-    monthlySubtotal * (normalizedDiscount / 100),
-  );
-  const yearlyDiscountTotal = roundMoney(
-    yearlySubtotal * (normalizedDiscount / 100),
-  );
-
-  return {
-    discountPercent: normalizedDiscount,
-    monthlySubtotal,
-    yearlySubtotal,
-    monthlyDiscountTotal,
-    yearlyDiscountTotal,
-    monthlyGrandTotal: roundMoney(monthlySubtotal - monthlyDiscountTotal),
-    yearlyGrandTotal: roundMoney(yearlySubtotal - yearlyDiscountTotal),
-  };
-}
-
-function discountApprovalLevelForPercent(
-  discountPercent: number,
-): DiscountApprovalLevel {
-  if (discountPercent <= 5) return "self";
-  if (discountPercent <= 10) return "account_manager";
-  if (discountPercent <= 15) return "country_gm";
-  if (discountPercent <= 25) return "head_of_business";
-  return "ceo";
-}
-
-function discountLimitForUser(user: Doc<"users">) {
-  switch (user.role) {
-    case "ceo":
-      return 50;
-    case "head_of_business":
-      return 25;
-    case "country_gm":
-      return 15;
-    case "account_manager":
-      return 10;
-    default:
-      return 5;
-  }
-}
-
-function discountLevelLabel(level: DiscountApprovalLevel) {
-  switch (level) {
-    case "account_manager":
-      return "Account Manager";
-    case "country_gm":
-      return "Country Manager";
-    case "head_of_business":
-      return "HOB";
-    case "ceo":
-      return "CEO";
-    default:
-      return "Team";
-  }
-}
-
-function assertDiscountCanProceed(quote: Doc<"quotes">) {
-  const discountPercent = quote.discountPercent ?? 0;
-  if (discountPercent <= 0) return;
-  if (quote.discountApprovalStatus === "pending") {
-    throw new ConvexError({
-      code: "BAD_REQUEST",
-      message:
-        "Discount approval is still pending. It must be approved before this quote can proceed.",
-    });
-  }
-  if (quote.discountApprovalStatus === "rejected") {
-    throw new ConvexError({
-      code: "BAD_REQUEST",
-      message:
-        "Discount approval was rejected. Change or remove the discount before this quote can proceed.",
-    });
-  }
-}
-
-async function findDiscountApprovers(
-  ctx: MutationCtx,
-  company: Doc<"companies">,
-  level: DiscountApprovalLevel,
-) {
-  const users = await ctx.db.query("users").collect();
-  const activeUsers = users.filter((user) => !user.isDisabled);
-
-  if (level === "account_manager" && company.accountManagerId) {
-    const accountManager = await ctx.db.get(company.accountManagerId);
-    if (accountManager && !accountManager.isDisabled) {
-      return [accountManager];
-    }
-  }
-
-  const roleOrder =
-    level === "account_manager"
-      ? ["account_manager", "country_gm", "head_of_business", "ceo"]
-      : level === "country_gm"
-        ? ["country_gm", "head_of_business", "ceo"]
-        : level === "head_of_business"
-          ? ["head_of_business", "ceo"]
-          : level === "ceo"
-            ? ["ceo"]
-            : [];
-
-  for (const role of roleOrder) {
-    const matches = activeUsers.filter((user) => {
-      if (user.role !== role) return false;
-      if (role === "country_gm") {
-        return user.countryId === company.countryId;
-      }
-      if (role === "account_manager") {
-        return user._id === company.accountManagerId;
-      }
-      return true;
-    });
-    if (matches.length > 0) return matches;
-  }
-
-  return [];
-}
-
-async function notifyDiscountApprovers(
-  ctx: MutationCtx,
-  args: {
-    quote: Doc<"quotes">;
-    company: Doc<"companies">;
-    requester: Doc<"users">;
-    level: DiscountApprovalLevel;
-    discountPercent: number;
-  },
-) {
-  const approvers = await findDiscountApprovers(ctx, args.company, args.level);
-  const now = Date.now();
-  await Promise.all(
-    approvers
-      .filter((approver) => approver._id !== args.requester._id)
-      .map((approver) =>
-        ctx.db.insert("notifications", {
-          recipientId: approver._id,
-          actorId: args.requester._id,
-          type: "quote_discount_approval_requested",
-          title: "Quote discount approval requested",
-          body: `${args.discountPercent}% discount for ${args.company.name} requires ${discountLevelLabel(args.level)} approval.`,
-          entityType: "quote",
-          entityId: args.quote._id,
-          href: `/quotes/${args.quote._id}`,
-          createdAt: now,
-        }),
-      ),
-  );
 }
 
 function normalizeCatalogName(value: string) {
@@ -322,6 +147,15 @@ async function nextQuoteNumber(ctx: MutationCtx, now: Date) {
   return quoteNumberForSequence(now, issuedThisYear.length + 1);
 }
 
+async function nextOpportunityNumber(ctx: MutationCtx, now: Date) {
+  const prefix = `OPP-${now.getUTCFullYear()}-`;
+  const opportunities = await ctx.db.query("leads").collect();
+  const count = opportunities.filter((lead) =>
+    lead.opportunityNumber?.startsWith(prefix),
+  ).length;
+  return `OPP-${now.getUTCFullYear()}-${String(count + 1).padStart(5, "0")}`;
+}
+
 /** List quotes by company */
 export const listByCompany = query({
   args: { companyId: v.id("companies") },
@@ -332,6 +166,30 @@ export const listByCompany = query({
     return await ctx.db
       .query("quotes")
       .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect();
+  },
+});
+
+export const listByLead = query({
+  args: { leadId: v.id("leads") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const lead = await ctx.db.get(args.leadId);
+    if (!lead) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Opportunity not found",
+      });
+    }
+    if (lead.companyId) {
+      const company = await getCompanyOrThrow(ctx, lead.companyId);
+      if (!canViewCompany(user, company)) {
+        throw new ConvexError({ code: "FORBIDDEN", message: "Access denied" });
+      }
+    }
+    return await ctx.db
+      .query("quotes")
+      .withIndex("by_lead", (q) => q.eq("leadId", args.leadId))
       .collect();
   },
 });
@@ -351,6 +209,30 @@ export const list = query({
       const company = companyMap.get(quote.companyId);
       return company ? canViewCompany(user, company) : false;
     });
+  },
+});
+
+export const transitionSummaries = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const companies = await ctx.db.query("companies").collect();
+    const visible = new Set(
+      companies
+        .filter((company) => canViewCompany(user, company))
+        .map((company) => company._id),
+    );
+    return (await ctx.db.query("quotes").collect())
+      .filter((quote) => visible.has(quote.companyId) && quote.leadId)
+      .map((quote) => ({
+        _id: quote._id,
+        _creationTime: quote._creationTime,
+        leadId: quote.leadId,
+        quoteNumber: quote.quoteNumber,
+        status: quote.status,
+        commercialModel: quote.commercialModel,
+        acceptedAt: quote.acceptedAt,
+      }));
   },
 });
 
@@ -376,12 +258,51 @@ export const buildQuotePreviewFromUsage = query({
     const company = await getCompanyOrThrow(ctx, args.companyId);
     assertCanManageCompany(user, company);
 
-    const entries = await ctx.db
+    const recordedEntries = await ctx.db
       .query("consumption")
       .withIndex("by_company_month", (q) =>
         q.eq("companyId", args.companyId).eq("month", args.month),
       )
       .collect();
+    const [year, monthNumber] = args.month.split("-").map(Number);
+    const monthStart = Date.UTC(year, monthNumber - 1, 1);
+    const monthEnd = Date.UTC(year, monthNumber, 1) - 1;
+    const contracts = (
+      await ctx.db
+        .query("customerContracts")
+        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+        .collect()
+    ).filter(
+      (contract) =>
+        contract.status === "active" &&
+        contract.startDate <= monthEnd &&
+        contract.endDate >= monthStart,
+    );
+    const contractCatalogIds = new Map<string, Set<string>>();
+    for (const contract of contracts) {
+      const lines = await ctx.db
+        .query("customerContractLineItems")
+        .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+        .collect();
+      contractCatalogIds.set(
+        contract._id,
+        new Set(
+          lines.flatMap((line) =>
+            line.catalogItemId ? [line.catalogItemId] : [],
+          ),
+        ),
+      );
+    }
+    const entries = recordedEntries.filter(
+      (entry) =>
+        !contracts.some((contract) =>
+          usageBelongsToContract(
+            entry,
+            contract,
+            contractCatalogIds.get(contract._id) ?? new Set(),
+          ),
+        ),
+    );
     const existingQuote = (
       await ctx.db
         .query("quotes")
@@ -419,7 +340,12 @@ export const buildQuotePreviewFromUsage = query({
         continue;
       }
 
-      const monthlyTotal = entry.quantity * catalogItem.monthlyPrice;
+      const [calculatedLine] = calculateLineItems([
+        {
+          quantity: entry.quantity,
+          monthlyUnitPrice: catalogItem.monthlyPrice,
+        },
+      ]);
       lineItems.push({
         catalogItemId: catalogItem._id,
         itemName: catalogItem.itemName,
@@ -427,25 +353,25 @@ export const buildQuotePreviewFromUsage = query({
         billingUnit: catalogItem.billingUnit,
         quantity: entry.quantity,
         monthlyUnitPrice: catalogItem.monthlyPrice,
-        monthlyTotal,
+        monthlyTotal: calculatedLine.monthlyTotal,
         yearlyTotal: catalogItem.yearlyPrice
-          ? entry.quantity * catalogItem.yearlyPrice
-          : monthlyTotal * 12,
+          ? calculateLineItems([
+              {
+                quantity: entry.quantity,
+                monthlyUnitPrice: catalogItem.yearlyPrice,
+              },
+            ])[0].monthlyTotal
+          : calculatedLine.yearlyTotal,
         ...optionalRegionFields(entry),
       });
     }
 
+    const totals = calculateInvoiceTotals(lineItems);
     return {
       lineItems,
       warnings,
-      monthlyGrandTotal: lineItems.reduce(
-        (sum, item) => sum + item.monthlyTotal,
-        0,
-      ),
-      yearlyGrandTotal: lineItems.reduce(
-        (sum, item) => sum + item.yearlyTotal,
-        0,
-      ),
+      monthlyGrandTotal: totals.monthlyTotal,
+      yearlyGrandTotal: totals.yearlyTotal,
       existingQuote: existingQuote
         ? {
             id: existingQuote._id,
@@ -527,7 +453,12 @@ export const buildQuotePreviewFromAdvisor = query({
     } else if (matchedCatalogItem) {
       if (isSafeQuantityOneRecommendation(recommendation, matchedCatalogItem)) {
         const quantity = 1;
-        const monthlyTotal = quantity * matchedCatalogItem.monthlyPrice;
+        const [calculated] = calculateLineItems([
+          {
+            quantity,
+            monthlyUnitPrice: matchedCatalogItem.monthlyPrice,
+          },
+        ]);
         lineItemPreview = {
           catalogItemId: matchedCatalogItem._id,
           itemName: matchedCatalogItem.itemName,
@@ -535,10 +466,14 @@ export const buildQuotePreviewFromAdvisor = query({
           billingUnit: matchedCatalogItem.billingUnit,
           quantity,
           monthlyUnitPrice: matchedCatalogItem.monthlyPrice,
-          monthlyTotal,
+          monthlyTotal: calculated.monthlyTotal,
           yearlyTotal: matchedCatalogItem.yearlyPrice
-            ? quantity * matchedCatalogItem.yearlyPrice
-            : monthlyTotal * 12,
+            ? multiplyMoney(
+                matchedCatalogItem.yearlyPrice,
+                quantity,
+                "Advisor preview yearly total",
+              )
+            : calculated.yearlyTotal,
         };
       } else {
         warnings.push(
@@ -575,10 +510,35 @@ export const buildQuotePreviewFromAdvisor = query({
 export const create = mutation({
   args: {
     companyId: v.id("companies"),
+    leadId: v.optional(v.id("leads")),
+    opportunity: v.optional(
+      v.object({
+        title: v.string(),
+        expectedCloseDate: v.string(),
+        contactName: v.optional(v.string()),
+        contactEmail: v.optional(v.string()),
+        source: v.optional(v.string()),
+        nextAction: v.optional(v.string()),
+      }),
+    ),
+    commercialModel: v.optional(
+      v.union(v.literal("payg"), v.literal("contracted")),
+    ),
+    contractTerms: v.optional(
+      v.object({
+        pricingModel: v.union(
+          v.literal("flexible_total_commitment"),
+          v.literal("monthly_minimum"),
+          v.literal("discounted_usage"),
+        ),
+        contractValue: v.optional(v.number()),
+        monthlyMinimum: v.optional(v.number()),
+        groupDiscounts: v.array(
+          v.object({ productGroup: v.string(), discountPercent: v.number() }),
+        ),
+      }),
+    ),
     lineItems: v.array(lineItemValidator),
-    monthlyGrandTotal: v.number(),
-    yearlyGrandTotal: v.number(),
-    discountPercent: v.optional(v.number()),
     notes: v.optional(v.string()),
     sourceMonth: v.optional(v.string()),
   },
@@ -587,68 +547,180 @@ export const create = mutation({
     const company = await getCompanyOrThrow(ctx, args.companyId);
     assertCanManageCompany(user, company);
     const now = new Date();
-    const totals = calculateQuoteTotals(args.lineItems, args.discountPercent);
-    if (totals.discountPercent > 50) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Discounts above 50% require CEO review outside CRM.",
+    let leadId = args.leadId;
+    let createdOpportunity = false;
+    if (leadId) {
+      const lead = await ctx.db.get(leadId);
+      if (!lead || lead.companyId !== company._id)
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Quote opportunity must belong to the selected organization",
+        });
+      if (lead.stage === "won" || lead.stage === "lost")
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Closed opportunities cannot receive new quotes",
+        });
+    }
+    if (!leadId) {
+      createdOpportunity = true;
+      leadId = await ctx.db.insert("leads", {
+        opportunityNumber: await nextOpportunityNumber(ctx, now),
+        title: args.opportunity?.title.trim() || `${company.name} opportunity`,
+        companyId: company._id,
+        countryId: company.countryId,
+        accountManagerId: company.accountManagerId,
+        stage: "proposal",
+        potentialValue: 0,
+        expectedCloseDate:
+          args.opportunity?.expectedCloseDate ??
+          new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        contactName: args.opportunity?.contactName,
+        contactEmail: args.opportunity?.contactEmail,
+        source: args.opportunity?.source,
+        nextAction:
+          args.opportunity?.nextAction ?? "Review and send opportunity quote",
+        createdAt: now.getTime(),
+        updatedAt: now.getTime(),
       });
     }
-    const approvalLevel = discountApprovalLevelForPercent(
-      totals.discountPercent,
+    if (args.commercialModel === "payg" && args.contractTerms)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "PAYG quotes cannot contain contract discounts",
+      });
+    if (
+      args.commercialModel === "contracted" &&
+      (!args.contractTerms ||
+        (args.contractTerms.pricingModel === "flexible_total_commitment" &&
+          (!args.contractTerms.contractValue ||
+            args.contractTerms.contractValue <= 0)) ||
+        (args.contractTerms.pricingModel === "monthly_minimum" &&
+          (!args.contractTerms.monthlyMinimum ||
+            args.contractTerms.monthlyMinimum <= 0)))
+    )
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Complete the contracted pricing terms before saving",
+      });
+    if (
+      args.commercialModel !== "contracted" &&
+      args.lineItems.some((line) => line.serviceDiscountPercent !== undefined)
+    )
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "PAYG quotes must use catalogue prices without discounts",
+      });
+    const groupRules = args.contractTerms?.groupDiscounts ?? [];
+    if (
+      new Set(groupRules.map((rule) => rule.productGroup)).size !==
+      groupRules.length
+    )
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Each product group can have only one discount",
+      });
+    const groupDiscounts = new Map(
+      groupRules.map((rule) => {
+        if (rule.discountPercent < 0 || rule.discountPercent > 100)
+          throw new ConvexError({
+            code: "BAD_REQUEST",
+            message: "Discounts must be between 0 and 100 percent",
+          });
+        return [rule.productGroup, rule.discountPercent] as const;
+      }),
     );
-    const isApprovedByRequester =
-      totals.discountPercent <= discountLimitForUser(user);
+    const lineItems = await Promise.all(
+      args.lineItems.map(async (line, index) => {
+        const catalogItem = await ctx.db.get(line.catalogItemId);
+        if (!catalogItem) {
+          throw new ConvexError({
+            code: "NOT_FOUND",
+            message: `Line item ${index + 1} catalog item not found`,
+          });
+        }
+        const discount =
+          line.serviceDiscountPercent ??
+          (catalogItem.productGroup
+            ? groupDiscounts.get(catalogItem.productGroup)
+            : undefined) ??
+          0;
+        if (discount < 0 || discount > 100)
+          throw new ConvexError({
+            code: "BAD_REQUEST",
+            message: "Discounts must be between 0 and 100 percent",
+          });
+        const discountedPrice = multiplyMoney(
+          catalogItem.monthlyPrice,
+          (100 - discount) / 100,
+          `Line item ${index + 1} discounted price`,
+        );
+        const [calculated] = calculateLineItems([
+          {
+            ...line,
+            itemName: catalogItem.itemName,
+            serviceCategory: catalogItem.serviceCategory,
+            billingUnit: catalogItem.billingUnit,
+            monthlyUnitPrice: discountedPrice,
+          },
+        ]);
+        return {
+          ...calculated,
+          serviceDiscountPercent:
+            line.serviceDiscountPercent === undefined ? undefined : discount,
+          yearlyTotal: catalogItem.yearlyPrice
+            ? multiplyMoney(
+                multiplyMoney(
+                  catalogItem.yearlyPrice,
+                  (100 - discount) / 100,
+                  `Line item ${index + 1} discounted yearly price`,
+                ),
+                line.quantity,
+                `Line item ${index + 1} yearly total`,
+              )
+            : calculated.yearlyTotal,
+        };
+      }),
+    );
+    const totals = calculateInvoiceTotals(lineItems);
+    if (createdOpportunity) {
+      await ctx.db.patch(leadId, {
+        potentialValue: totals.monthlyTotal,
+        updatedAt: now.getTime(),
+      });
+    }
     const quoteId = await ctx.db.insert("quotes", {
       companyId: args.companyId,
+      leadId,
+      commercialModel: args.commercialModel ?? "payg",
+      contractTerms: args.contractTerms,
       createdBy: user._id,
       quoteNumber: await nextQuoteNumber(ctx, now),
       date: now.toISOString().slice(0, 10),
       status: "draft",
-      lineItems: args.lineItems,
-      discountPercent: totals.discountPercent,
-      monthlySubtotal: totals.monthlySubtotal,
-      yearlySubtotal: totals.yearlySubtotal,
-      monthlyDiscountTotal: totals.monthlyDiscountTotal,
-      yearlyDiscountTotal: totals.yearlyDiscountTotal,
-      discountApprovalStatus:
-        totals.discountPercent <= 0
-          ? "not_required"
-          : isApprovedByRequester
-            ? totals.discountPercent <= 5
-              ? "not_required"
-              : "approved"
-            : "pending",
-      discountApprovalLevel: approvalLevel,
-      discountRequestedBy:
-        totals.discountPercent > 0 && !isApprovedByRequester
-          ? user._id
-          : undefined,
-      discountRequestedAt:
-        totals.discountPercent > 0 && !isApprovedByRequester
-          ? now.getTime()
-          : undefined,
-      discountApprovedBy:
-        totals.discountPercent > 5 && isApprovedByRequester
-          ? user._id
-          : undefined,
-      discountApprovedAt:
-        totals.discountPercent > 5 && isApprovedByRequester
-          ? now.getTime()
-          : undefined,
-      monthlyGrandTotal: totals.monthlyGrandTotal,
-      yearlyGrandTotal: totals.yearlyGrandTotal,
+      lineItems: lineItems.map(withLineMoneyCents),
+      monthlyGrandTotal: totals.monthlyTotal,
+      yearlyGrandTotal: totals.yearlyTotal,
+      monthlyGrandTotalCents: toCents(totals.monthlyTotal),
+      yearlyGrandTotalCents: toCents(totals.yearlyTotal),
       notes: args.notes,
       sourceMonth: args.sourceMonth,
     });
-    const quote = await ctx.db.get(quoteId);
-    if (quote && quote.discountApprovalStatus === "pending") {
-      await notifyDiscountApprovers(ctx, {
-        quote,
-        company,
-        requester: user,
-        level: approvalLevel,
-        discountPercent: totals.discountPercent,
+    const lead = await ctx.db.get(leadId);
+    if (lead) {
+      if (lead.stage !== "proposal" && lead.stage !== "negotiation") {
+        await ctx.db.patch(leadId, {
+          stage: "proposal",
+          updatedAt: now.getTime(),
+        });
+      }
+      await ctx.db.insert("activities", {
+        accountManagerId: lead.accountManagerId ?? user._id,
+        leadId,
+        type: "quote_created",
+        description: "Opportunity quote created",
+        date: now.toISOString(),
+        createdAt: now.getTime(),
       });
     }
     return quoteId;
@@ -664,6 +736,7 @@ export const updateStatus = mutation({
       v.literal("sent"),
       v.literal("accepted"),
     ),
+    acceptedByContact: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -672,196 +745,63 @@ export const updateStatus = mutation({
       throw new ConvexError({ code: "NOT_FOUND", message: "Quote not found" });
     }
     await assertCanManageQuote(ctx, user, quote);
-    if (args.status !== "draft") {
-      assertDiscountCanProceed(quote);
-    }
-    await ctx.db.patch(args.id, { status: args.status });
-  },
-});
-
-/** Update a draft quote discount and recompute totals */
-export const updateDiscount = mutation({
-  args: {
-    id: v.id("quotes"),
-    discountPercent: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUserOrThrow(ctx);
-    const quote = await ctx.db.get(args.id);
-    if (!quote) {
-      throw new ConvexError({ code: "NOT_FOUND", message: "Quote not found" });
-    }
-    await assertCanManageQuote(ctx, user, quote);
-    if (quote.status !== "draft") {
+    if (
+      args.status === "accepted" &&
+      quote.status !== "sent" &&
+      quote.status !== "accepted"
+    )
       throw new ConvexError({
         code: "BAD_REQUEST",
-        message: "Only draft quotes can be discounted",
+        message: "Send the quote before accepting it",
       });
-    }
-
-    const totals = calculateQuoteTotals(quote.lineItems, args.discountPercent);
-    if (totals.discountPercent > 50) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Discounts above 50% require CEO review outside CRM.",
-      });
-    }
-    const company = await getCompanyOrThrow(ctx, quote.companyId);
-    const approvalLevel = discountApprovalLevelForPercent(
-      totals.discountPercent,
-    );
-    const isApprovedByRequester =
-      totals.discountPercent <= discountLimitForUser(user);
-    const now = Date.now();
-    const approvalStatus =
-      totals.discountPercent <= 0
-        ? "not_required"
-        : isApprovedByRequester
-          ? totals.discountPercent <= 5
-            ? "not_required"
-            : "approved"
-          : "pending";
-    await ctx.db.patch(args.id, {
-      discountPercent: totals.discountPercent,
-      monthlySubtotal: totals.monthlySubtotal,
-      yearlySubtotal: totals.yearlySubtotal,
-      monthlyDiscountTotal: totals.monthlyDiscountTotal,
-      yearlyDiscountTotal: totals.yearlyDiscountTotal,
-      discountApprovalStatus: approvalStatus,
-      discountApprovalLevel: approvalLevel,
-      discountRequestedBy:
-        totals.discountPercent > 0 && approvalStatus === "pending"
-          ? user._id
-          : undefined,
-      discountRequestedAt:
-        totals.discountPercent > 0 && approvalStatus === "pending"
-          ? now
-          : undefined,
-      discountApprovedBy:
-        totals.discountPercent > 5 && approvalStatus === "approved"
-          ? user._id
-          : undefined,
-      discountApprovedAt:
-        totals.discountPercent > 5 && approvalStatus === "approved"
-          ? now
-          : undefined,
-      discountRejectedBy: undefined,
-      discountRejectedAt: undefined,
-      discountApprovalNote: undefined,
-      monthlyGrandTotal: totals.monthlyGrandTotal,
-      yearlyGrandTotal: totals.yearlyGrandTotal,
-    });
-    const updatedQuote = await ctx.db.get(args.id);
-    if (updatedQuote && approvalStatus === "pending") {
-      await notifyDiscountApprovers(ctx, {
-        quote: updatedQuote,
-        company,
-        requester: user,
-        level: approvalLevel,
-        discountPercent: totals.discountPercent,
-      });
-    }
-    return {
-      discountPercent: totals.discountPercent,
-      discountApprovalStatus: approvalStatus,
-      discountApprovalLevel: approvalLevel,
-    };
-  },
-});
-
-export const approveDiscount = mutation({
-  args: { id: v.id("quotes") },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUserOrThrow(ctx);
-    const quote = await ctx.db.get(args.id);
-    if (!quote) {
-      throw new ConvexError({ code: "NOT_FOUND", message: "Quote not found" });
-    }
-    await assertCanManageQuote(ctx, user, quote);
-    const discountPercent = quote.discountPercent ?? 0;
-    if (quote.discountApprovalStatus !== "pending" || discountPercent <= 0) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "This quote does not have a pending discount approval.",
-      });
-    }
-    if (discountLimitForUser(user) < discountPercent) {
-      throw new ConvexError({
-        code: "FORBIDDEN",
-        message: "Your role cannot approve this discount percentage.",
-      });
+    if (
+      quote.status === "accepted" &&
+      args.status !== "accepted" &&
+      quote.leadId
+    ) {
+      const lead = await ctx.db.get(quote.leadId);
+      if (lead?.stage === "won")
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message:
+            "Reopen the won opportunity before changing its accepted quote",
+        });
     }
     const now = Date.now();
     await ctx.db.patch(args.id, {
-      discountApprovalStatus: "approved",
-      discountApprovedBy: user._id,
-      discountApprovedAt: now,
-      discountRejectedBy: undefined,
-      discountRejectedAt: undefined,
-      discountApprovalNote: undefined,
+      status: args.status,
+      sentAt: args.status === "sent" ? (quote.sentAt ?? now) : quote.sentAt,
+      acceptedAt:
+        args.status === "accepted" ? (quote.acceptedAt ?? now) : undefined,
+      acceptedByContact:
+        args.status === "accepted"
+          ? args.acceptedByContact?.trim() || quote.acceptedByContact
+          : undefined,
     });
-    if (quote.discountRequestedBy && quote.discountRequestedBy !== user._id) {
-      await ctx.db.insert("notifications", {
-        recipientId: quote.discountRequestedBy,
-        actorId: user._id,
-        type: "quote_discount_approved",
-        title: "Quote discount approved",
-        body: `${discountPercent}% discount was approved.`,
-        entityType: "quote",
-        entityId: quote._id,
-        href: `/quotes/${quote._id}`,
-        createdAt: now,
-      });
-    }
-  },
-});
-
-export const rejectDiscount = mutation({
-  args: {
-    id: v.id("quotes"),
-    note: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUserOrThrow(ctx);
-    const quote = await ctx.db.get(args.id);
-    if (!quote) {
-      throw new ConvexError({ code: "NOT_FOUND", message: "Quote not found" });
-    }
-    await assertCanManageQuote(ctx, user, quote);
-    const discountPercent = quote.discountPercent ?? 0;
-    if (quote.discountApprovalStatus !== "pending" || discountPercent <= 0) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "This quote does not have a pending discount approval.",
-      });
-    }
-    if (discountLimitForUser(user) < discountPercent) {
-      throw new ConvexError({
-        code: "FORBIDDEN",
-        message: "Your role cannot reject this discount percentage.",
-      });
-    }
-    const now = Date.now();
-    await ctx.db.patch(args.id, {
-      discountApprovalStatus: "rejected",
-      discountRejectedBy: user._id,
-      discountRejectedAt: now,
-      discountApprovedBy: undefined,
-      discountApprovedAt: undefined,
-      discountApprovalNote: args.note?.trim() || undefined,
-    });
-    if (quote.discountRequestedBy && quote.discountRequestedBy !== user._id) {
-      await ctx.db.insert("notifications", {
-        recipientId: quote.discountRequestedBy,
-        actorId: user._id,
-        type: "quote_discount_rejected",
-        title: "Quote discount rejected",
-        body: `${discountPercent}% discount was rejected.`,
-        entityType: "quote",
-        entityId: quote._id,
-        href: `/quotes/${quote._id}`,
-        createdAt: now,
-      });
+    if (quote.leadId) {
+      const lead = await ctx.db.get(quote.leadId);
+      if (lead) {
+        const type =
+          args.status === "accepted"
+            ? "quote_accepted"
+            : args.status === "sent"
+              ? "quote_sent"
+              : "stage_changed";
+        await ctx.db.insert("activities", {
+          accountManagerId: lead.accountManagerId ?? user._id,
+          leadId: lead._id,
+          type,
+          description: `Quote ${quote.quoteNumber ?? quote._id} marked ${args.status}`,
+          date: new Date().toISOString(),
+          createdAt: Date.now(),
+        });
+        if (args.status === "sent" && lead.stage === "proposal") {
+          await ctx.db.patch(lead._id, {
+            stage: "negotiation",
+            updatedAt: Date.now(),
+          });
+        }
+      }
     }
   },
 });

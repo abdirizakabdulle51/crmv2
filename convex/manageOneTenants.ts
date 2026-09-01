@@ -3,6 +3,7 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { assertCanManageUsage, assertNotMonitoring } from "./authorization";
+import { multiplyMoney } from "./money";
 
 type UsageHintPricing = "auto" | "manual";
 
@@ -27,7 +28,11 @@ export type UsageHintLineItem = {
   regionId?: string;
   regionName?: string;
   dataCenterName?: string;
+  preserveAmountPrecision?: boolean;
 };
+
+const MIN_STORAGE_REMAINDER_GB = 0.05;
+const precisionPreservingLineItems = new WeakSet<object>();
 
 type UsageHintResource = {
   serviceId: string;
@@ -39,7 +44,6 @@ type ManageOneTenantDoc = Doc<"manageOneTenants">;
 type ManageOneHourlySnapshotDoc = Doc<"manageOneHourlySnapshots">;
 
 type ManageOneTenantWithLiveUsage = ManageOneTenantDoc & {
-  billingFromHourly?: boolean;
   liveUsageSyncedAt?: number;
   liveBmsInstances?: number;
   liveEcsCores?: number;
@@ -99,7 +103,7 @@ type UsageHintTenant = {
       id: string;
       name: string;
       resourceTypeName: string;
-      }[];
+    }[];
   };
   cloudBastionHosts?: {
     count: number;
@@ -291,7 +295,8 @@ function findCatalogItemForHint(
     return catalog.find(
       (item) =>
         item.serviceCategory === "VPN Gateway" &&
-        normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("VPN Gateway"),
+        normalizeCatalogMatch(item.itemName) ===
+          normalizeCatalogMatch("VPN Gateway"),
     );
   }
 
@@ -299,15 +304,18 @@ function findCatalogItemForHint(
     return catalog.find(
       (item) =>
         item.serviceCategory === "EVS" &&
-        normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("EVS - Disk Managed Fee"),
+        normalizeCatalogMatch(item.itemName) ===
+          normalizeCatalogMatch("EVS - Disk Managed Fee"),
     );
   }
 
   if (hint.serviceCategory === "CBH") {
     const matches = catalog.filter(
       (item) =>
-        normalizeCatalogMatch(item.itemName) === normalizeCatalogMatch("Cloud Bastion Host") &&
-        (item.serviceCategory === "CBH" || normalizeCatalogMatch(item.serviceCategory).includes("bastion")),
+        normalizeCatalogMatch(item.itemName) ===
+          normalizeCatalogMatch("Cloud Bastion Host") &&
+        (item.serviceCategory === "CBH" ||
+          normalizeCatalogMatch(item.serviceCategory).includes("bastion")),
     );
     return matches.length === 1 ? matches[0] : undefined;
   }
@@ -471,7 +479,6 @@ const HOURLY_RESOURCE_KEYS = new Set([
   "waf:waf.instance.100",
   "waf:waf.instance.500",
 ]);
-const MIN_STORAGE_REMAINDER_GB = 0.05;
 
 function resourceKey(resource: UsageHintResource) {
   return `${resource.serviceId}:${resource.resource}`;
@@ -493,7 +500,9 @@ function optionalSnapshotNumber(
   key: string,
 ): number | undefined {
   const value = (snapshot as unknown as Record<string, unknown>)[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function resourcesWithHourlyOverlay(
@@ -505,7 +514,15 @@ function resourcesWithHourlyOverlay(
     (resource) => !HOURLY_RESOURCE_KEYS.has(resourceKey(resource)),
   );
   const hasStructuredEcsBreakdown = (tenant.ecsFlavors ?? []).length > 0;
-  const wafBasicInstances = optionalSnapshotNumber(snapshot, "wafBasicInstances");
+  const hasStructuredEvsBreakdown = (tenant.evsVolumeTypes ?? []).length > 0;
+  const hasStructuredObsBreakdown = (tenant.obsBuckets ?? []).length > 0;
+  const hasStructuredVpnBreakdown = (tenant.vpnGateways?.count ?? 0) > 0;
+  const hasStructuredNatBreakdown =
+    (tenant.natGateways?.items ?? []).length > 0;
+  const wafBasicInstances = optionalSnapshotNumber(
+    snapshot,
+    "wafBasicInstances",
+  );
   const wafEnterpriseInstances = optionalSnapshotNumber(
     snapshot,
     "wafEnterpriseInstances",
@@ -521,17 +538,45 @@ function resourcesWithHourlyOverlay(
       "hybrid.resource.type.cce.cluster",
       optionalSnapshotNumber(snapshot, "cceNodes"),
     ),
-    hourlyResource("bms", "instances", optionalSnapshotNumber(snapshot, "bmsInstances")),
-    hourlyResource("evs", "gigabytes", snapshot.evsGb),
-    hourlyResource("sfs", "gigabytes", optionalSnapshotNumber(snapshot, "sfsGb")),
-    hourlyResource("csbs", "backup_capacity", optionalSnapshotNumber(snapshot, "csbsGb")),
-    hourlyResource("vbs", "volume_backup_capacity", optionalSnapshotNumber(snapshot, "vbsGb")),
-    hourlyResource("obsv3", "capacity", snapshot.obsGb),
+    hourlyResource(
+      "bms",
+      "instances",
+      optionalSnapshotNumber(snapshot, "bmsInstances"),
+    ),
+    options.forBilling && hasStructuredEvsBreakdown
+      ? undefined
+      : hourlyResource("evs", "gigabytes", snapshot.evsGb),
+    hourlyResource(
+      "sfs",
+      "gigabytes",
+      optionalSnapshotNumber(snapshot, "sfsGb"),
+    ),
+    hourlyResource(
+      "csbs",
+      "backup_capacity",
+      optionalSnapshotNumber(snapshot, "csbsGb"),
+    ),
+    hourlyResource(
+      "vbs",
+      "volume_backup_capacity",
+      optionalSnapshotNumber(snapshot, "vbsGb"),
+    ),
+    options.forBilling && hasStructuredObsBreakdown
+      ? undefined
+      : hourlyResource("obsv3", "capacity", snapshot.obsGb),
     hourlyResource("vpc", "publicIp", snapshot.publicIps),
-    hourlyResource("vpc", "endpoint", optionalSnapshotNumber(snapshot, "vpcepEndpoints")),
+    hourlyResource(
+      "vpc",
+      "endpoint",
+      optionalSnapshotNumber(snapshot, "vpcepEndpoints"),
+    ),
     hourlyResource("vpc", "loadbalancer", snapshot.loadBalancers),
-    hourlyResource("vpc", "vpn", snapshot.vpnGateways),
-    hourlyResource("vpc", "nat", snapshot.natGateways),
+    options.forBilling && hasStructuredVpnBreakdown
+      ? undefined
+      : hourlyResource("vpc", "vpn", snapshot.vpnGateways),
+    options.forBilling && hasStructuredNatBreakdown
+      ? undefined
+      : hourlyResource("vpc", "nat", snapshot.natGateways),
     hasWafTierBreakdown
       ? undefined
       : hourlyResource("waf", "waf.instance", snapshot.wafInstances),
@@ -553,7 +598,6 @@ function tenantWithHourlyUsage(
 
   return {
     ...tenant,
-    ...(options.forBilling ? { billingFromHourly: true } : {}),
     regionId: snapshot.regionId ?? tenant.regionId,
     regionName: snapshot.regionName ?? tenant.regionName,
     ecsUsed: snapshot.ecsInstances,
@@ -590,8 +634,7 @@ function aggregateHourlySnapshots(
       capturedAt: Math.max(aggregate.capturedAt, row.capturedAt),
       ecsInstances: aggregate.ecsInstances + row.ecsInstances,
       cceNodes: (aggregate.cceNodes ?? 0) + (row.cceNodes ?? 0),
-      bmsInstances:
-        (aggregate.bmsInstances ?? 0) + (row.bmsInstances ?? 0),
+      bmsInstances: (aggregate.bmsInstances ?? 0) + (row.bmsInstances ?? 0),
       ecsCores: aggregate.ecsCores + row.ecsCores,
       ecsRamGb: aggregate.ecsRamGb + row.ecsRamGb,
       evsGb: aggregate.evsGb + row.evsGb,
@@ -616,8 +659,8 @@ function aggregateHourlySnapshots(
   );
 }
 
-export async function tenantsWithLatestHourlyUsage(
-  ctx: QueryCtx | MutationCtx,
+async function tenantsWithLatestHourlyUsage(
+  ctx: QueryCtx,
   tenants: ManageOneTenantDoc[],
   options: { forBilling?: boolean } = {},
 ): Promise<ManageOneTenantWithLiveUsage[]> {
@@ -666,7 +709,6 @@ export function buildUsageHintsForCompany(
   );
 
   for (const tenant of tenants) {
-    const preferHourlyBilling = tenant.billingFromHourly === true;
     const tenantRegionFields = optionalRegionFields(tenant);
     const tenantResources = tenant.resources ?? [];
     const wafBasicQuantity = tenantResources
@@ -752,6 +794,47 @@ export function buildUsageHintsForCompany(
       });
     }
 
+    if (tenant.billingFromHourly) {
+      const hourlyObsTotal =
+        tenantResources.find(
+          (resource) =>
+            resource.serviceId === "obsv3" && resource.resource === "capacity",
+        )?.used ?? 0;
+      const structuredObsTotal = obsLineItems.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      );
+      const unclassifiedObsGb = hourlyObsTotal - structuredObsTotal;
+      if (unclassifiedObsGb > MIN_STORAGE_REMAINDER_GB) {
+        const pricedObsItems = obsLineItems.filter(
+          (item) => item.suggestedCatalogItemId,
+        );
+        const fallbackObsLineItem =
+          pricedObsItems.length === 1 ? pricedObsItems[0] : undefined;
+        const fallbackObsCatalogItem =
+          fallbackObsLineItem ? undefined : findStandardObsCatalogItem(catalog);
+        const suggestedCatalogItemId =
+          fallbackObsLineItem?.suggestedCatalogItemId ??
+          fallbackObsCatalogItem?._id;
+        const fallbackLineItem: UsageHintLineItem = {
+          label:
+            fallbackObsLineItem?.label ??
+            fallbackObsCatalogItem?.itemName ??
+            "Unclassified OBS",
+          serviceCategory: "OBS",
+          quantity: unclassifiedObsGb,
+          pricing: suggestedCatalogItemId ? "auto" : "manual",
+          ...(suggestedCatalogItemId
+            ? { suggestedCatalogItemId }
+            : { needsManualPricing: true }),
+          ...tenantRegionFields,
+          ...optionalRegionFields(fallbackObsLineItem ?? {}),
+        };
+        obsLineItems.push(fallbackLineItem);
+        precisionPreservingLineItems.add(fallbackLineItem);
+      }
+    }
+
     const cloudBastionHostCount = tenant.cloudBastionHosts?.count ?? 0;
     if (cloudBastionHostCount > 0) {
       const key = `CBH:${regionKey(tenantRegionFields)}`;
@@ -824,7 +907,10 @@ export function buildUsageHintsForCompany(
         continue;
       }
 
-      const catalogItem = findEcsCatalogItemForFlavor(flavor.flavorName, catalog);
+      const catalogItem = findEcsCatalogItemForFlavor(
+        flavor.flavorName,
+        catalog,
+      );
       const serviceCategory = catalogItem?.serviceCategory ?? "ECS";
 
       ecsLineItems.push({
@@ -864,100 +950,6 @@ export function buildUsageHintsForCompany(
       });
     }
 
-    if (preferHourlyBilling) {
-      const hourlyEvsTotal =
-        tenantResources.find(
-          (resource) =>
-            resource.serviceId === "evs" && resource.resource === "gigabytes",
-        )?.used ?? 0;
-      const structuredEvsTotal = evsLineItems.reduce(
-        (sum, item) => sum + item.quantity,
-        0,
-      );
-      const unclassifiedEvsGb = hourlyEvsTotal - structuredEvsTotal;
-      if (unclassifiedEvsGb > MIN_STORAGE_REMAINDER_GB) {
-        const pricedEvsStorageItems = evsLineItems.filter(
-          (item) =>
-            item.suggestedCatalogItemId &&
-            item.label !== "EVS - Disk Managed Fee",
-        );
-        const fallbackEvsItem =
-          pricedEvsStorageItems.length === 1
-            ? pricedEvsStorageItems[0]
-            : undefined;
-        evsLineItems.push({
-          label: fallbackEvsItem?.label ?? "Unclassified EVS",
-          quantity: unclassifiedEvsGb,
-          pricing: fallbackEvsItem ? "auto" : "manual",
-          ...(fallbackEvsItem?.suggestedCatalogItemId
-            ? { suggestedCatalogItemId: fallbackEvsItem.suggestedCatalogItemId }
-            : { needsManualPricing: true }),
-          ...tenantRegionFields,
-          ...optionalRegionFields(fallbackEvsItem ?? {}),
-        });
-      }
-
-      const hourlyObsTotal =
-        tenantResources.find(
-          (resource) =>
-            resource.serviceId === "obsv3" && resource.resource === "capacity",
-        )?.used ?? 0;
-      const structuredObsTotal = obsLineItems.reduce(
-        (sum, item) => sum + item.quantity,
-        0,
-      );
-      const unclassifiedObsGb = hourlyObsTotal - structuredObsTotal;
-      if (unclassifiedObsGb > MIN_STORAGE_REMAINDER_GB) {
-        const pricedObsItems = obsLineItems.filter(
-          (item) => item.suggestedCatalogItemId,
-        );
-        const fallbackObsLineItem =
-          pricedObsItems.length === 1
-            ? pricedObsItems[0]
-            : undefined;
-        const fallbackObsCatalogItem =
-          fallbackObsLineItem ? undefined : findStandardObsCatalogItem(catalog);
-        const suggestedCatalogItemId =
-          fallbackObsLineItem?.suggestedCatalogItemId ??
-          fallbackObsCatalogItem?._id;
-        obsLineItems.push({
-          label:
-            fallbackObsLineItem?.label ??
-            fallbackObsCatalogItem?.itemName ??
-            "Unclassified OBS",
-          serviceCategory: "OBS",
-          quantity: unclassifiedObsGb,
-          pricing: suggestedCatalogItemId ? "auto" : "manual",
-          ...(suggestedCatalogItemId
-            ? { suggestedCatalogItemId }
-            : { needsManualPricing: true }),
-          ...tenantRegionFields,
-          ...optionalRegionFields(fallbackObsLineItem ?? {}),
-        });
-      }
-
-      const hourlyNatTotal =
-        tenantResources.find(
-          (resource) =>
-            resource.serviceId === "vpc" && resource.resource === "nat",
-        )?.used ?? 0;
-      const structuredNatTotal = natGatewayLineItems.reduce(
-        (sum, item) => sum + item.quantity,
-        0,
-      );
-      const unclassifiedNatCount = hourlyNatTotal - structuredNatTotal;
-      if (unclassifiedNatCount > 0.0001) {
-        natGatewayLineItems.push({
-          label: "Unclassified NAT",
-          serviceCategory: "NAT",
-          quantity: unclassifiedNatCount,
-          pricing: "manual",
-          needsManualPricing: true,
-          ...tenantRegionFields,
-        });
-      }
-    }
-
     for (const bandwidth of tenant.eipBandwidths ?? []) {
       if (bandwidth.count <= 0) {
         continue;
@@ -989,8 +981,7 @@ export function buildUsageHintsForCompany(
       if (
         resource.serviceId === "cce" &&
         resource.resource === "hybrid.resource.type.cce.cluster" &&
-        ecsLineItems.some((item) => item.serviceCategory === "ECS-CCE") &&
-        !preferHourlyBilling
+        ecsLineItems.some((item) => item.serviceCategory === "ECS-CCE")
       ) {
         continue;
       }
@@ -1013,20 +1004,6 @@ export function buildUsageHintsForCompany(
         resource.serviceId === "obsv3" &&
         resource.resource === "capacity" &&
         obsLineItems.length > 0
-      ) {
-        continue;
-      }
-      if (
-        resource.serviceId === "evs" &&
-        resource.resource === "gigabytes" &&
-        evsLineItems.length > 0
-      ) {
-        continue;
-      }
-      if (
-        resource.serviceId === "vpc" &&
-        resource.resource === "nat" &&
-        natGatewayLineItems.length > 0
       ) {
         continue;
       }
@@ -1296,7 +1273,13 @@ export function buildBulkUsagePreview(
         catalogItemId: catalogItem._id,
         catalogItemName: catalogItem.itemName,
         quantity: lineItem.quantity,
-        amount: lineItem.quantity * catalogItem.monthlyPrice,
+        amount: precisionPreservingLineItems.has(lineItem)
+          ? catalogItem.monthlyPrice * lineItem.quantity
+          : multiplyMoney(
+              catalogItem.monthlyPrice,
+              lineItem.quantity,
+              `${catalogItem.itemName} usage preview`,
+            ),
         alreadyLogged: existingKeys.has(
           usagePreviewKey({
             serviceType,

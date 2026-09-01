@@ -3,6 +3,51 @@ import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
 import { assertCanManageUsage, assertNotMonitoring } from "./authorization";
+import { multiplyMoney, roundMoney, roundQuantity } from "./money";
+
+async function calculateConsumptionAmount(
+  ctx: MutationCtx,
+  args: {
+    amount?: number;
+    quantity?: number;
+    catalogItemId?: Doc<"serviceCatalog">["_id"];
+    isManualOverride?: boolean;
+  },
+) {
+  if (args.catalogItemId && !args.isManualOverride) {
+    if (args.quantity === undefined) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Quantity is required for catalog-priced usage",
+      });
+    }
+    const catalogItem = await ctx.db.get(args.catalogItemId);
+    if (!catalogItem) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Service catalog item not found",
+      });
+    }
+    return multiplyMoney(
+      catalogItem.monthlyPrice,
+      args.quantity,
+      "Usage charge",
+    );
+  }
+  if (args.amount === undefined) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Amount is required for manual usage",
+    });
+  }
+  if (args.amount < 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Usage amount cannot be negative",
+    });
+  }
+  return roundMoney(args.amount);
+}
 
 function trimOptional(value: string | undefined) {
   const trimmed = value?.trim();
@@ -105,8 +150,9 @@ export const create = mutation({
   args: {
     companyId: v.id("companies"),
     month: v.string(),
+    usageDate: v.optional(v.string()),
     serviceType: v.string(),
-    amount: v.number(),
+    amount: v.optional(v.number()),
     quantity: v.optional(v.number()),
     catalogItemId: v.optional(v.id("serviceCatalog")),
     isManualOverride: v.optional(v.boolean()),
@@ -117,12 +163,15 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const currentUser = await getCurrentUserOrThrow(ctx);
     await assertCanManageUsage(ctx, currentUser, args.companyId);
+    const amount = await calculateConsumptionAmount(ctx, args);
     return await ctx.db.insert("consumption", {
       companyId: args.companyId,
       month: args.month,
+      usageDate: args.usageDate,
       serviceType: args.serviceType,
-      amount: args.amount,
-      quantity: args.quantity,
+      amount,
+      quantity:
+        args.quantity === undefined ? undefined : roundQuantity(args.quantity),
       catalogItemId: args.catalogItemId,
       isManualOverride: args.isManualOverride,
       ...regionFieldsFromArgs(args),
@@ -135,12 +184,12 @@ export const bulkCreateFromManageOne = mutation({
   args: {
     companyId: v.id("companies"),
     month: v.string(),
+    usageDate: v.optional(v.string()),
     rows: v.array(
       v.object({
         serviceType: v.string(),
         catalogItemId: v.id("serviceCatalog"),
         quantity: v.number(),
-        amount: v.number(),
         regionId: v.optional(v.string()),
         regionName: v.optional(v.string()),
         dataCenterName: v.optional(v.string()),
@@ -153,12 +202,14 @@ export const bulkCreateFromManageOne = mutation({
 
     let inserted = 0;
     for (const row of args.rows) {
+      const amount = await calculateConsumptionAmount(ctx, row);
       await ctx.db.insert("consumption", {
         companyId: args.companyId,
         month: args.month,
+        usageDate: args.usageDate,
         serviceType: row.serviceType,
-        amount: row.amount,
-        quantity: row.quantity,
+        amount,
+        quantity: roundQuantity(row.quantity),
         catalogItemId: row.catalogItemId,
         isManualOverride: false,
         ...regionFieldsFromArgs(row),
@@ -177,6 +228,7 @@ export const bulkCreate = mutation({
       v.object({
         companyId: v.id("companies"),
         month: v.string(),
+        usageDate: v.optional(v.string()),
         serviceType: v.string(),
         amount: v.number(),
       }),
@@ -194,8 +246,10 @@ export const bulkCreate = mutation({
       await ctx.db.insert("consumption", {
         companyId: entry.companyId,
         month: entry.month,
+        usageDate: entry.usageDate,
         serviceType: entry.serviceType,
-        amount: entry.amount,
+        amount: roundMoney(entry.amount),
+        isManualOverride: true,
       });
     }
     return { inserted: args.entries.length };

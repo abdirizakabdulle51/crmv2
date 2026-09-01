@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Bar,
@@ -15,6 +15,15 @@ import {
 import { api } from "@/convex/_generated/api.js";
 import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { Button } from "@/components/ui/button.tsx";
+import { Input } from "@/components/ui/input.tsx";
+import { Label } from "@/components/ui/label.tsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.tsx";
 import {
   Card,
   CardContent,
@@ -39,7 +48,9 @@ import {
   DollarSign,
   FileText,
   Link2,
+  Loader2,
   Receipt,
+  ReceiptText,
   WalletCards,
 } from "lucide-react";
 import { useCrm } from "@/lib/crm-context.tsx";
@@ -49,6 +60,7 @@ import {
 } from "./_components/company-dialog.tsx";
 import { isDrMode } from "@/lib/dr-mode.ts";
 import { formatCurrency } from "@/lib/format.ts";
+import { toast } from "sonner";
 
 type TenantUsageHistoryRow = Doc<"tenantUsageHistory">;
 type Company = Doc<"companies">;
@@ -56,6 +68,7 @@ type Country = Doc<"countries">;
 type Sector = Doc<"sectors">;
 type User = Doc<"users">;
 type ManageOneTenant = Doc<"manageOneTenants">;
+type CustomerCredit = Doc<"customerCredits">;
 
 const CHART_GROUPS = [
   {
@@ -119,6 +132,10 @@ function canViewUsageHistory(role: string | undefined) {
   return role === "ceo" || role === "head_of_business" || role === "country_gm";
 }
 
+function canGrantOnboardingCredit(role: string | undefined) {
+  return role === "ceo" || role === "head_of_business";
+}
+
 function formatSyncLabel(value: number) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -156,6 +173,18 @@ function formatDateLabel(value?: number | null) {
     day: "numeric",
     year: "numeric",
   }).format(new Date(value));
+}
+
+function formatCreditPolicy(value: CustomerCredit["policy"]) {
+  return value === "first_invoice_only"
+    ? "First invoice only"
+    : "Carry forward";
+}
+
+function formatCreditAppliesTo(value: CustomerCredit["appliesTo"]) {
+  if (value === "contract") return "Contract invoices";
+  if (value === "non_contract") return "Non-contract invoices";
+  return "All invoices";
 }
 
 function formatDateKeyLabel(value: string) {
@@ -198,7 +227,9 @@ function invoiceSourceLabel(source: {
       periodStart && periodEnd && periodStart !== periodEnd
         ? `${periodStart} - ${periodEnd}`
         : periodStart;
-    return period ? `${source.contractNumber} · ${period}` : source.contractNumber;
+    return period
+      ? `${source.contractNumber} · ${period}`
+      : source.contractNumber;
   }
   if (source.sourceType === "quote" && source.sourceReference) {
     return `Quote ${source.sourceReference}`;
@@ -250,6 +281,7 @@ function HealthStatusBadge({
 
 function UsageHealthPanel({
   health,
+  billingHealth,
 }: {
   health:
     | {
@@ -280,21 +312,22 @@ function UsageHealthPanel({
             waf: number;
           };
         };
-        dailyBilling: {
-          latestUsageDate: string | null;
-          capturedThroughToday: boolean;
-          rowCount: number;
-          latestDayRowCount: number;
-          attachedRowCount: number;
-        };
-        catalog: {
-          missingPriceRowCount: number;
-          missingServices: string[];
-        };
+      }
+    | undefined;
+  billingHealth:
+    | {
+        latestUsageDate: string | null;
+        capturedThroughToday: boolean;
+        rowCount: number;
+        latestDayRowCount: number;
+        serviceRows: Array<{ serviceType: string; rowCount: number }>;
+        attachedRowCount: number;
+        missingPriceRowCount: number;
+        missingServices: string[];
       }
     | undefined;
 }) {
-  if (!health) {
+  if (!health || !billingHealth) {
     return (
       <Card>
         <CardHeader>
@@ -312,9 +345,9 @@ function UsageHealthPanel({
   const liveOk =
     Boolean(health.latestHourly.capturedAt) && !health.latestHourly.stale;
   const dailyOk =
-    Boolean(health.dailyBilling.latestUsageDate) &&
-    health.dailyBilling.capturedThroughToday;
-  const catalogOk = health.catalog.missingPriceRowCount === 0;
+    Boolean(billingHealth.latestUsageDate) &&
+    billingHealth.capturedThroughToday;
+  const catalogOk = billingHealth.missingPriceRowCount === 0;
   const linksOk =
     health.linkedTenantCount > 0 && health.unlinkedTenantCount === 0;
   const totals = health.latestHourly.totals;
@@ -365,13 +398,13 @@ function UsageHealthPanel({
               Latest daily usage date
             </div>
             <div className="mt-1 text-sm font-medium">
-              {health.dailyBilling.latestUsageDate ?? "-"}
+              {billingHealth.latestUsageDate ?? "-"}
             </div>
             <div className="mt-3 text-xs text-muted-foreground">
               Rows captured this month
             </div>
             <div className="mt-1 text-lg font-semibold">
-              {health.dailyBilling.rowCount}
+              {billingHealth.rowCount}
             </div>
           </div>
           <div className="rounded-md border p-3">
@@ -401,11 +434,11 @@ function UsageHealthPanel({
               Rows without catalog price
             </div>
             <div className="mt-1 text-lg font-semibold">
-              {health.catalog.missingPriceRowCount}
+              {billingHealth.missingPriceRowCount}
             </div>
             <div className="mt-2 text-xs text-muted-foreground">
-              {health.catalog.missingServices.length > 0
-                ? health.catalog.missingServices.join(", ")
+              {billingHealth.missingServices.length > 0
+                ? billingHealth.missingServices.join(", ")
                 : "No missing services"}
             </div>
           </div>
@@ -733,7 +766,8 @@ function BillingUsageSection({
         <CardHeader>
           <CardTitle>Billing & Usage</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Read-only view of customer balance, payments, and current month usage.
+            Read-only view of customer balance, payments, and current month
+            usage.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -787,7 +821,9 @@ function BillingUsageSection({
               icon={<DollarSign className="h-4 w-4" />}
             />
             <FinancialMetricCard
-              title={coverage ? "Remaining Contract Credit" : "Projected Month End"}
+              title={
+                coverage ? "Remaining Contract Credit" : "Projected Month End"
+              }
               value={
                 coverage
                   ? coverage.contractPeriodAmount > 0
@@ -944,7 +980,10 @@ function BillingUsageSection({
                   </thead>
                   <tbody>
                     {snapshot.chargeBreakdown.map((row) => (
-                      <tr key={row.serviceType} className="border-b last:border-0">
+                      <tr
+                        key={row.serviceType}
+                        className="border-b last:border-0"
+                      >
                         <td className="py-2 font-medium">{row.serviceType}</td>
                         <td className="py-2 text-right">
                           {row.unpricedCount > 0
@@ -1061,7 +1100,9 @@ function ContractCoveragePanel({
   coverage,
 }: {
   coverage: NonNullable<
-    NonNullable<Parameters<typeof BillingUsageSection>[0]["snapshot"]>["contractCoverage"]
+    NonNullable<
+      Parameters<typeof BillingUsageSection>[0]["snapshot"]
+    >["contractCoverage"]
   >;
 }) {
   const visibleRows = coverage.rows.filter(
@@ -1275,12 +1316,197 @@ function DetailItem({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+function OnboardingCreditSection({
+  companyId,
+  credits,
+  canGrant,
+}: {
+  companyId: Id<"companies">;
+  credits?: CustomerCredit[];
+  canGrant: boolean;
+}) {
+  const grantCredit = useMutation(api.customerCredits.grant);
+  const [amount, setAmount] = useState("");
+  const [policy, setPolicy] = useState<"first_invoice_only" | "carry_forward">(
+    "first_invoice_only",
+  );
+  const [appliesTo, setAppliesTo] = useState<
+    "all" | "contract" | "non_contract"
+  >("all");
+  const [pending, setPending] = useState(false);
+
+  const activeCreditExists = Boolean(
+    credits?.some(
+      (credit) =>
+        (credit.status === "available" || credit.status === "reserved") &&
+        credit.remainingAmount > 0,
+    ),
+  );
+
+  if ((!credits || credits.length === 0) && !canGrant) return null;
+
+  const handleGrantCredit = async () => {
+    const creditAmount = Number(amount);
+    if (!Number.isFinite(creditAmount) || creditAmount <= 0) return;
+
+    setPending(true);
+    try {
+      await grantCredit({
+        companyId,
+        amount: creditAmount,
+        policy,
+        appliesTo,
+        description: "Onboarding credit",
+      });
+      setAmount("");
+      toast.success("Onboarding credit granted");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not grant onboarding credit",
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Card className="mt-4 max-w-3xl">
+      <CardHeader>
+        <CardTitle>Onboarding Credit</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {credits?.map((credit) => (
+          <div
+            key={credit._id}
+            className="rounded-lg border bg-background/50 p-4"
+          >
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="font-medium">
+                  {formatCurrency(credit.remainingAmount)} remaining
+                </div>
+                {credit.description ? (
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    {credit.description}
+                  </div>
+                ) : null}
+              </div>
+              <Badge variant="secondary">{credit.status}</Badge>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <DetailItem
+                label="Original Amount"
+                value={formatCurrency(credit.originalAmount)}
+              />
+              <DetailItem
+                label="Remaining Amount"
+                value={formatCurrency(credit.remainingAmount)}
+              />
+              <DetailItem
+                label="Reserved Amount"
+                value={formatCurrency(credit.reservedAmount)}
+              />
+              <DetailItem label="Status" value={credit.status} />
+              <DetailItem
+                label="Policy"
+                value={formatCreditPolicy(credit.policy)}
+              />
+              <DetailItem
+                label="Applies To"
+                value={formatCreditAppliesTo(credit.appliesTo)}
+              />
+              {credit.expiresAt ? (
+                <DetailItem
+                  label="Expiry"
+                  value={formatDateLabel(credit.expiresAt)}
+                />
+              ) : null}
+            </div>
+          </div>
+        ))}
+        {canGrant ? (
+          <div className="grid gap-3 border-t pt-3 sm:grid-cols-4">
+            <div className="space-y-2">
+              <Label>Credit amount</Label>
+              <Input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                placeholder="0.00"
+                disabled={activeCreditExists}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Unused balance</Label>
+              <Select
+                value={policy}
+                onValueChange={(value) => setPolicy(value as typeof policy)}
+                disabled={activeCreditExists}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="first_invoice_only">
+                    First invoice only
+                  </SelectItem>
+                  <SelectItem value="carry_forward">Carry forward</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Applies to</Label>
+              <Select
+                value={appliesTo}
+                onValueChange={(value) =>
+                  setAppliesTo(value as typeof appliesTo)
+                }
+                disabled={activeCreditExists}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All invoices</SelectItem>
+                  <SelectItem value="contract">Contract invoices</SelectItem>
+                  <SelectItem value="non_contract">
+                    Non-contract invoices
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-end">
+              <Button
+                type="button"
+                disabled={
+                  activeCreditExists ||
+                  pending ||
+                  !amount ||
+                  Number(amount) <= 0
+                }
+                onClick={handleGrantCredit}
+              >
+                Grant credit
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function CompanyDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { currentUser } = useCrm();
   const companyId = id as Id<"companies"> | undefined;
   const canViewTrends = canViewUsageHistory(currentUser?.role);
+  const canGrantCredit = canGrantOnboardingCredit(currentUser?.role);
 
   const convexCompany = useQuery(
     api.companies.getById,
@@ -1308,6 +1534,18 @@ export default function CompanyDetailPage() {
     companyId && !isDrMode
       ? { companyId, month: currentMonthInputValue() }
       : "skip",
+  );
+  const customerCredits = useQuery(
+    api.customerCredits.listByCompany,
+    companyId && !isDrMode ? { companyId } : "skip",
+  );
+  const paygBilling = useQuery(
+    api.invoices.paygBillingStatus,
+    companyId && !isDrMode ? { companyId } : "skip",
+  );
+  const createPaygInvoice = useMutation(api.invoices.createPaygDraftFromUsage);
+  const [billingMonthPending, setBillingMonthPending] = useState<string | null>(
+    null,
   );
   const drCompany = useDrRow<Company>(
     isDrMode && companyId ? `/api/companies/${companyId}` : null,
@@ -1359,6 +1597,75 @@ export default function CompanyDetailPage() {
         <p className="mt-1 text-muted-foreground">{company.name}</p>
       </div>
 
+      {!isDrMode ? (
+        <Card className="max-w-5xl">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>Customer Billing</CardTitle>
+              <Badge variant="outline">
+                {(company.lifecycleStatus ?? "customer") !== "customer"
+                  ? "Not onboarded"
+                  : company.commercialModel === "contracted"
+                    ? "Contracted"
+                    : "Pay As You Go"}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {paygBilling?.length ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Completed usage cycles without an invoice. PAYG invoices use
+                  catalogue prices without discounts.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {paygBilling.map((cycle) => (
+                    <Button
+                      key={cycle.month}
+                      variant="outline"
+                      disabled={billingMonthPending !== null}
+                      onClick={async () => {
+                        if (!companyId) return;
+                        setBillingMonthPending(cycle.month);
+                        try {
+                          const invoiceId = await createPaygInvoice({
+                            companyId,
+                            month: cycle.month,
+                          });
+                          toast.success(
+                            `Draft invoice created for ${cycle.month}`,
+                          );
+                          navigate(`/invoices/${invoiceId}`);
+                        } catch (error) {
+                          toast.error(
+                            error instanceof Error
+                              ? error.message
+                              : "Could not create PAYG invoice",
+                          );
+                        } finally {
+                          setBillingMonthPending(null);
+                        }
+                      }}
+                    >
+                      {billingMonthPending === cycle.month ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <ReceiptText className="mr-2 h-4 w-4" />
+                      )}
+                      Invoice {cycle.month} ({cycle.usageEntries} usage entries)
+                    </Button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No completed usage cycles are currently missing invoices.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Tabs defaultValue="billing-usage" className="max-w-5xl">
         <TabsList className="grid h-auto w-full grid-cols-2 lg:grid-cols-4">
           <TabsTrigger value="billing-usage">Billing</TabsTrigger>
@@ -1404,6 +1711,22 @@ export default function CompanyDetailPage() {
                   value={company.contractStatus}
                 />
                 <DetailItem
+                  label="Customer Status"
+                  value={company.lifecycleStatus ?? "customer"}
+                />
+                {company.lifecycleStatus === "lost" && (
+                  <>
+                    <DetailItem
+                      label="Lost Reason"
+                      value={company.lostReason}
+                    />
+                    <DetailItem
+                      label="Lost Date"
+                      value={formatDateLabel(company.lostAt)}
+                    />
+                  </>
+                )}
+                <DetailItem
                   label="Payment Status"
                   value={company.paymentStatus}
                 />
@@ -1421,18 +1744,25 @@ export default function CompanyDetailPage() {
               </CardContent>
             </Card>
           ) : (
-            <Card className="max-w-3xl">
-              <CardContent className="pt-6">
-                <CompanyForm
-                  company={company}
-                  countries={countries}
-                  sectors={sectors}
-                  users={users}
-                  onFinished={goBack}
-                  showManageOneUsage={false}
-                />
-              </CardContent>
-            </Card>
+            <>
+              <Card className="max-w-3xl">
+                <CardContent className="pt-6">
+                  <CompanyForm
+                    company={company}
+                    countries={countries}
+                    sectors={sectors}
+                    users={users}
+                    onFinished={goBack}
+                    showManageOneUsage={false}
+                  />
+                </CardContent>
+              </Card>
+              <OnboardingCreditSection
+                companyId={company._id}
+                credits={customerCredits}
+                canGrant={canGrantCredit}
+              />
+            </>
           )}
         </TabsContent>
 
@@ -1455,7 +1785,10 @@ export default function CompanyDetailPage() {
 
         <TabsContent value="manageone-usage" className="mt-4">
           <div className="space-y-4">
-            <UsageHealthPanel health={usageHealth} />
+            <UsageHealthPanel
+              health={usageHealth}
+              billingHealth={billingSnapshot?.billingHealth}
+            />
             <ManageOneUsageCard manageOneTenants={manageOneTenants} />
           </div>
         </TabsContent>

@@ -108,7 +108,6 @@ export default function DailyUsagePage() {
           month,
           companyId:
             companyId === "all" ? undefined : (companyId as Id<"companies">),
-          includeRows: false,
         }
       : "skip",
   );
@@ -125,8 +124,11 @@ export default function DailyUsagePage() {
       : "skip",
     { initialNumItems: 50 },
   );
+  // The generated API types are from the pre-merge schema; the implementation below
+  // intentionally uses the merged health response shape.
   const health = useQuery(
-    api.dailyUsage.health,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    api.dailyUsage.health as any,
     shouldLoadHealth
       ? {
           month,
@@ -134,7 +136,8 @@ export default function DailyUsagePage() {
             companyId === "all" ? undefined : (companyId as Id<"companies">),
         }
       : "skip",
-  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ) as any;
 
   const rows = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();

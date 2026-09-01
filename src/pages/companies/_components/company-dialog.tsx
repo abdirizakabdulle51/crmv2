@@ -44,6 +44,7 @@ function formatManageOneDate(value: number) {
 type ContractStatus = "active" | "pending" | "expired" | "terminated";
 type PaymentStatus = "current" | "overdue" | "delinquent";
 type PaymentTermValue = "default" | "7" | "15" | "30";
+type LifecycleStatus = "prospect" | "customer" | "lost";
 type ManageOneTenant = Doc<"manageOneTenants">;
 type ManageOneTenantWithLiveUsage = ManageOneTenant & {
   liveUsageSyncedAt?: number;
@@ -201,6 +202,9 @@ export function CompanyForm({
   const [website, setWebsite] = useState("");
   const [contactName, setContactName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
+  const [lifecycleStatus, setLifecycleStatus] =
+    useState<LifecycleStatus>("customer");
+  const [lostReason, setLostReason] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -221,6 +225,8 @@ export function CompanyForm({
       setWebsite(company.website || "");
       setContactName(company.contactName || "");
       setContactEmail(company.contactEmail || "");
+      setLifecycleStatus(company.lifecycleStatus ?? "customer");
+      setLostReason(company.lostReason ?? "");
     } else {
       resetForm();
     }
@@ -244,6 +250,8 @@ export function CompanyForm({
     setWebsite("");
     setContactName("");
     setContactEmail("");
+    setLifecycleStatus("customer");
+    setLostReason("");
   };
 
   const handleSave = async () => {
@@ -268,6 +276,10 @@ export function CompanyForm({
       toast.error("Please assign an account manager");
       return;
     }
+    if (lifecycleStatus === "lost" && !lostReason.trim()) {
+      toast.error("Loss reason is required for a lost prospect");
+      return;
+    }
 
     try {
       const data = {
@@ -285,6 +297,8 @@ export function CompanyForm({
         website: website.trim() || undefined,
         contactName: contactName.trim() || undefined,
         contactEmail: contactEmail.trim() || undefined,
+        lifecycleStatus,
+        lostReason: lifecycleStatus === "lost" ? lostReason.trim() : undefined,
       };
 
       if (company) {
@@ -340,7 +354,9 @@ export function CompanyForm({
             placeholder="e.g. Acme Corporation"
             readOnly={!!company}
             aria-readonly={!!company}
-            className={company ? "bg-muted/40 text-muted-foreground" : undefined}
+            className={
+              company ? "bg-muted/40 text-muted-foreground" : undefined
+            }
           />
         </div>
 
@@ -420,6 +436,24 @@ export function CompanyForm({
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
+            <Label>Customer Status</Label>
+            <Select
+              value={lifecycleStatus}
+              onValueChange={(value) =>
+                setLifecycleStatus(value as LifecycleStatus)
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="prospect">Prospect</SelectItem>
+                <SelectItem value="customer">Customer</SelectItem>
+                <SelectItem value="lost">Lost prospect</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
             <Label>Payment Status</Label>
             <Select
               value={paymentStatus}
@@ -454,6 +488,23 @@ export function CompanyForm({
             </Select>
           </div>
         </div>
+
+        {lifecycleStatus === "lost" && (
+          <div className="space-y-2">
+            <Label>Loss Reason *</Label>
+            <Textarea
+              value={lostReason}
+              onChange={(event) => setLostReason(event.target.value)}
+              placeholder="Why was this prospect lost?"
+              rows={2}
+            />
+            {company?.lostAt && (
+              <p className="text-xs text-muted-foreground">
+                Lost on {new Date(company.lostAt).toLocaleDateString()}
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label>Website</Label>

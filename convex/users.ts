@@ -261,7 +261,10 @@ export const assignCountry = mutation({
       });
     }
     if (isCeoOrHob(currentUser)) {
-      await ctx.db.patch(args.userId, { countryId: args.countryId });
+      await ctx.db.patch(args.userId, {
+        countryId: args.countryId,
+        organizationScope: "country",
+      });
       return;
     }
     if (
@@ -277,6 +280,47 @@ export const assignCountry = mutation({
           "Country GMs can only manage Account Managers in their own country",
       });
     }
-    await ctx.db.patch(args.userId, { countryId: args.countryId });
+    await ctx.db.patch(args.userId, {
+      countryId: args.countryId,
+      organizationScope: "country",
+    });
+  },
+});
+
+export const setOrganizationScope = mutation({
+  args: {
+    userId: v.id("users"),
+    organizationScope: v.union(v.literal("country"), v.literal("global")),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity)
+      throw new ConvexError({
+        code: "UNAUTHENTICATED",
+        message: "User not logged in",
+      });
+    const currentUser = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!currentUser || !isCeoOrHob(currentUser))
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can assign global scope",
+      });
+    const target = await ctx.db.get(args.userId);
+    if (!target)
+      throw new ConvexError({ code: "NOT_FOUND", message: "User not found" });
+    if (args.organizationScope === "country" && !target.countryId)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Assign a country before selecting country scope",
+      });
+    await ctx.db.patch(args.userId, {
+      organizationScope: args.organizationScope,
+      ...(args.organizationScope === "global" ? { countryId: undefined } : {}),
+    });
   },
 });

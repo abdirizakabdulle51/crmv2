@@ -419,7 +419,6 @@ describe("role scoping", () => {
             serviceType: "EIP",
             catalogItemId,
             quantity: 2,
-            amount: 6,
             regionId: "hoa-mog-2",
             regionName: "Hoa-Mogadishu-2",
             dataCenterName: "Mogadishu DC 2",
@@ -459,7 +458,6 @@ describe("role scoping", () => {
             serviceType: "EIP",
             catalogItemId,
             quantity: 2,
-            amount: 6,
           },
         ],
       }),
@@ -605,6 +603,16 @@ describe("role scoping", () => {
         password: "Temporary123!",
         role: "account_manager",
         countryId: s.countryB,
+      }),
+    ).rejects.toThrow(/Country GMs|FORBIDDEN/i);
+    await expect(
+      asUser(t, s.gmA).action(api.auth.createTeamMember, {
+        name: "Global AM",
+        email: "global-am@example.com",
+        password: "Temporary123!",
+        role: "account_manager",
+        countryId: s.countryA,
+        organizationScope: "global",
       }),
     ).rejects.toThrow(/Country GMs|FORBIDDEN/i);
     await expect(

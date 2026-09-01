@@ -26,7 +26,15 @@ import {
   SelectValue,
 } from "@/components/ui/select.tsx";
 import { toast } from "sonner";
-import { Copy, KeyRound, Plus, ShieldCheck, Trash2, UserCheck, UserX } from "lucide-react";
+import {
+  Copy,
+  KeyRound,
+  Plus,
+  ShieldCheck,
+  Trash2,
+  UserCheck,
+  UserX,
+} from "lucide-react";
 import { useState } from "react";
 
 const ROLES: UserRole[] = [
@@ -51,6 +59,7 @@ export default function TeamPage() {
   const countries = useQuery(api.countries.list, {});
   const updateRole = useMutation(api.users.updateRole);
   const assignCountry = useMutation(api.users.assignCountry);
+  const setOrganizationScope = useMutation(api.users.setOrganizationScope);
   const createTeamMember = useAction(api.auth.createTeamMember);
   const resetTeamMemberPassword = useAction(api.auth.resetTeamMemberPassword);
   const disableTeamMember = useMutation(api.auth.disableTeamMember);
@@ -67,9 +76,14 @@ export default function TeamPage() {
   } | null>(null);
   const [deleteUserId, setDeleteUserId] = useState<Id<"users"> | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [togglingUserId, setTogglingUserId] = useState<Id<"users"> | null>(null);
+  const [togglingUserId, setTogglingUserId] = useState<Id<"users"> | null>(
+    null,
+  );
   const [tempPassword, setTempPassword] = useState(generateTemporaryPassword);
   const [createdPassword, setCreatedPassword] = useState<string | null>(null);
+  const [createScope, setCreateScope] = useState<"country" | "global">(
+    "country",
+  );
 
   if (!users || !countries) {
     return (
@@ -186,14 +200,18 @@ export default function TeamPage() {
       const password = String(formData.get("password") ?? "").trim();
       const role = String(formData.get("role")) as UserRole;
       const countryIdValue = String(formData.get("countryId") ?? "none");
+      const organizationScope = String(
+        formData.get("organizationScope") ?? "country",
+      ) as "country" | "global";
 
       const result = await createTeamMember({
         name,
         email,
         password,
         role,
+        organizationScope,
         countryId:
-          countryIdValue === "none"
+          organizationScope === "global" || countryIdValue === "none"
             ? undefined
             : (countryIdValue as Id<"countries">),
       });
@@ -246,6 +264,7 @@ export default function TeamPage() {
               if (!open) {
                 setCreatedPassword(null);
                 setTempPassword(generateTemporaryPassword());
+                setCreateScope("country");
               }
             }}
           >
@@ -265,6 +284,24 @@ export default function TeamPage() {
 
               <form className="space-y-4" onSubmit={handleCreateTeamMember}>
                 <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Company scope</Label>
+                    <Select
+                      name="organizationScope"
+                      value={createScope}
+                      onValueChange={(value) =>
+                        setCreateScope(value as typeof createScope)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="country">Country team</SelectItem>
+                        <SelectItem value="global">Global company</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="name">Name</Label>
                     <Input id="name" name="name" required />
@@ -290,7 +327,9 @@ export default function TeamPage() {
                       type="button"
                       variant="outline"
                       size="icon"
-                      onClick={() => setTempPassword(generateTemporaryPassword())}
+                      onClick={() =>
+                        setTempPassword(generateTemporaryPassword())
+                      }
                       title="Generate password"
                     >
                       <KeyRound className="size-4" />
@@ -315,22 +354,29 @@ export default function TeamPage() {
                     </Select>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label>Country</Label>
-                    <Select name="countryId" defaultValue="none">
-                      <SelectTrigger>
-                        <SelectValue placeholder="Assign country" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Unassigned</SelectItem>
-                        {countries.map((country) => (
-                          <SelectItem key={country._id} value={country._id}>
-                            {country.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {createScope === "country" ? (
+                    <div className="space-y-2">
+                      <Label>Country</Label>
+                      <Select name="countryId" defaultValue="none">
+                        <SelectTrigger>
+                          <SelectValue placeholder="Assign country" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Select country</SelectItem>
+                          {countries.map((country) => (
+                            <SelectItem key={country._id} value={country._id}>
+                              {country.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+                      Global team members select a country when creating
+                      country-specific records.
+                    </div>
+                  )}
                 </div>
 
                 {createdPassword && (
@@ -397,6 +443,34 @@ export default function TeamPage() {
                 {isAdmin ? (
                   <>
                     <Select
+                      value={
+                        user.organizationScope ??
+                        (user.countryId ? "country" : "global")
+                      }
+                      onValueChange={(value) =>
+                        void setOrganizationScope({
+                          userId: user._id,
+                          organizationScope: value as "country" | "global",
+                        })
+                          .then(() => toast.success("Company scope updated"))
+                          .catch((error) =>
+                            toast.error(
+                              error instanceof Error
+                                ? error.message
+                                : "Failed to update scope",
+                            ),
+                          )
+                      }
+                    >
+                      <SelectTrigger className="w-[150px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="country">Country team</SelectItem>
+                        <SelectItem value="global">Global</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select
                       value={user.role || "none"}
                       onValueChange={(val) => {
                         if (val !== "none") {
@@ -420,10 +494,7 @@ export default function TeamPage() {
                       value={user.countryId || "none"}
                       onValueChange={(val) => {
                         if (val !== "none") {
-                          handleCountryChange(
-                            user._id,
-                            val as Id<"countries">,
-                          );
+                          handleCountryChange(user._id, val as Id<"countries">);
                         }
                       }}
                     >
@@ -431,6 +502,9 @@ export default function TeamPage() {
                         <SelectValue placeholder="Assign country" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value="none" disabled>
+                          No country (global)
+                        </SelectItem>
                         {countries.map((c) => (
                           <SelectItem key={c._id} value={c._id}>
                             {c.name}
@@ -484,13 +558,11 @@ export default function TeamPage() {
                   </>
                 ) : (
                   <>
-                    <Badge variant="secondary">
-                      {getRoleLabel(user.role)}
-                    </Badge>
+                    <Badge variant="secondary">{getRoleLabel(user.role)}</Badge>
                     {user.countryId && (
                       <Badge variant="secondary">
-                        {countries.find((c) => c._id === user.countryId)?.name ||
-                          "Unknown"}
+                        {countries.find((c) => c._id === user.countryId)
+                          ?.name || "Unknown"}
                       </Badge>
                     )}
                   </>

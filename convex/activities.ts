@@ -103,6 +103,9 @@ export const create = mutation({
       v.literal("call"),
       v.literal("meeting"),
       v.literal("proposal_sent"),
+      v.literal("email"),
+      v.literal("note"),
+      v.literal("follow_up"),
     ),
     description: v.optional(v.string()),
     date: v.string(),
@@ -135,6 +138,7 @@ export const create = mutation({
       type: args.type,
       description: args.description,
       date: args.date,
+      createdAt: Date.now(),
     });
   },
 });

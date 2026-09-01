@@ -24,6 +24,7 @@ export type BillingFrequency =
   | "monthly"
   | "quarterly"
   | "every_3_months"
+  | "semiannual"
   | "yearly";
 export type ContractStatus =
   | "draft"
@@ -42,6 +43,12 @@ export type ContractFormState = {
   signedDate: string;
   currency: string;
   billingFrequency: BillingFrequency;
+  billingTiming: "prepaid" | "postpaid";
+  pricingBasis: "service_lines" | "total_contract";
+  contractValue: string;
+  defaultDiscountType: "none" | "percentage" | "amount";
+  defaultDiscountValue: string;
+  overagePricingPolicy: "current_catalog" | "frozen_catalog" | "custom";
   paymentTermDays: string;
   signedDocumentUrl: string;
   notes: string;
@@ -81,7 +88,9 @@ export function ContractDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{editing ? "Edit Contract" : "New Contract"}</DialogTitle>
+          <DialogTitle>
+            {editing ? "Edit Contract" : "New Contract"}
+          </DialogTitle>
         </DialogHeader>
         <form className="space-y-5" onSubmit={onSubmit}>
           <div className="grid gap-4 md:grid-cols-2">
@@ -123,23 +132,7 @@ export function ContractDialog({
               />
             </Field>
             <Field label="Status">
-              <Select
-                value={form.status}
-                onValueChange={(value) =>
-                  setForm({ ...form, status: value as ContractStatus })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(STATUS_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input value={STATUS_LABELS[form.status]} disabled />
             </Field>
             <Field label="Start date">
               <Input
@@ -208,6 +201,121 @@ export function ContractDialog({
                 }
                 placeholder="30"
               />
+            </Field>
+            <Field label="Billing timing">
+              <Select
+                value={form.billingTiming}
+                onValueChange={(value) =>
+                  setForm({
+                    ...form,
+                    billingTiming: value as "prepaid" | "postpaid",
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="prepaid">Prepaid</SelectItem>
+                  <SelectItem value="postpaid">Postpaid</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Pricing basis">
+              <Select
+                value={form.pricingBasis}
+                onValueChange={(value) =>
+                  setForm({
+                    ...form,
+                    pricingBasis: value as "service_lines" | "total_contract",
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="service_lines">Service lines</SelectItem>
+                  <SelectItem value="total_contract">
+                    Total contract value
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {form.pricingBasis === "total_contract" && (
+              <Field label="Total contract value">
+                <Input
+                  min={0}
+                  step="0.01"
+                  type="number"
+                  value={form.contractValue}
+                  onChange={(event) =>
+                    setForm({ ...form, contractValue: event.target.value })
+                  }
+                />
+              </Field>
+            )}
+            <Field label="Default service discount">
+              <Select
+                value={form.defaultDiscountType}
+                onValueChange={(value) =>
+                  setForm({
+                    ...form,
+                    defaultDiscountType:
+                      value as ContractFormState["defaultDiscountType"],
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No default discount</SelectItem>
+                  <SelectItem value="percentage">Percentage</SelectItem>
+                  <SelectItem value="amount">Fixed amount</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {form.defaultDiscountType !== "none" && (
+              <Field label="Default discount value">
+                <Input
+                  min={0}
+                  step="0.01"
+                  type="number"
+                  value={form.defaultDiscountValue}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      defaultDiscountValue: event.target.value,
+                    })
+                  }
+                />
+              </Field>
+            )}
+            <Field label="Overage pricing">
+              <Select
+                value={form.overagePricingPolicy}
+                onValueChange={(value) =>
+                  setForm({
+                    ...form,
+                    overagePricingPolicy:
+                      value as ContractFormState["overagePricingPolicy"],
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="current_catalog">
+                    Current catalog price
+                  </SelectItem>
+                  <SelectItem value="frozen_catalog">
+                    Catalog price at signing
+                  </SelectItem>
+                  <SelectItem value="custom">Custom line price</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
             <Field label="Signed document link">
               <Input

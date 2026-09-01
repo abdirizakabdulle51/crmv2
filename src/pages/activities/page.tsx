@@ -27,7 +27,10 @@ import ConfirmDeleteDialog from "@/components/confirm-delete-dialog.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 import { toast } from "sonner";
 
-const TYPE_CONFIG: Record<string, { label: string; icon: typeof Phone; color: string }> = {
+const TYPE_CONFIG: Record<
+  string,
+  { label: string; icon: typeof Phone; color: string }
+> = {
   call: {
     label: "Call",
     icon: Phone,
@@ -36,12 +39,63 @@ const TYPE_CONFIG: Record<string, { label: string; icon: typeof Phone; color: st
   meeting: {
     label: "Meeting",
     icon: Users,
-    color: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
+    color:
+      "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
   },
   proposal_sent: {
     label: "Proposal Sent",
     icon: FileText,
-    color: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+    color:
+      "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  },
+  email: {
+    label: "Email",
+    icon: FileText,
+    color: "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-400",
+  },
+  note: {
+    label: "Note",
+    icon: FileText,
+    color: "bg-muted text-muted-foreground",
+  },
+  follow_up: {
+    label: "Follow-up",
+    icon: Phone,
+    color: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+  },
+  stage_changed: {
+    label: "Stage Changed",
+    icon: FileText,
+    color: "bg-muted text-muted-foreground",
+  },
+  quote_created: {
+    label: "Quote Created",
+    icon: FileText,
+    color:
+      "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  },
+  quote_sent: {
+    label: "Quote Sent",
+    icon: FileText,
+    color:
+      "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  },
+  quote_accepted: {
+    label: "Quote Accepted",
+    icon: FileText,
+    color:
+      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  },
+  won: {
+    label: "Opportunity Won",
+    icon: FileText,
+    color:
+      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  },
+  lost: {
+    label: "Opportunity Lost",
+    icon: FileText,
+    color: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
   },
 };
 
@@ -85,7 +139,8 @@ export default function ActivitiesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Activity Log</h1>
           <p className="text-muted-foreground mt-1">
-            {filtered.length} {filtered.length === 1 ? "activity" : "activities"}
+            {filtered.length}{" "}
+            {filtered.length === 1 ? "activity" : "activities"}
           </p>
         </div>
         <Button onClick={() => setDialogOpen(true)}>
@@ -158,7 +213,9 @@ export default function ActivitiesPage() {
             return (
               <Card key={activity._id}>
                 <CardContent className="flex items-center gap-4 py-3">
-                  <div className={`rounded-md p-2 ${config?.color || "bg-muted"}`}>
+                  <div
+                    className={`rounded-md p-2 ${config?.color || "bg-muted"}`}
+                  >
                     <Icon className="h-4 w-4" />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -174,7 +231,11 @@ export default function ActivitiesPage() {
                     </div>
                     <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
                       <span>{am?.name || "Unknown"}</span>
-                      <span>{new Date(activity.date + "T00:00:00").toLocaleDateString()}</span>
+                      <span>
+                        {new Date(
+                          activity.date + "T00:00:00",
+                        ).toLocaleDateString()}
+                      </span>
                     </div>
                     {activity.description && (
                       <p className="text-xs text-muted-foreground mt-1 truncate">
@@ -207,7 +268,9 @@ export default function ActivitiesPage() {
 
       <ConfirmDeleteDialog
         open={!!deleteId}
-        onOpenChange={(v) => { if (!v) setDeleteId(null); }}
+        onOpenChange={(v) => {
+          if (!v) setDeleteId(null);
+        }}
         onConfirm={async () => {
           if (!deleteId) return;
           setDeleting(true);

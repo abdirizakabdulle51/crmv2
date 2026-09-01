@@ -6,35 +6,41 @@ import type { Doc, Id } from "@/convex/_generated/dataModel.d.ts";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Card, CardContent } from "@/components/ui/card.tsx";
+import { Skeleton } from "@/components/ui/skeleton.tsx";
+import {
+  ArrowLeft,
+  CheckCircle,
+  FileText,
+  Printer,
+  Send,
+  Trash2,
+  Percent,
+} from "lucide-react";
+import { toast } from "sonner";
+import { formatCurrency } from "@/lib/format.ts";
+import { Input } from "@/components/ui/input.tsx";
+import { Label } from "@/components/ui/label.tsx";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog.tsx";
-import { Input } from "@/components/ui/input.tsx";
-import { Label } from "@/components/ui/label.tsx";
-import { Skeleton } from "@/components/ui/skeleton.tsx";
-import {
-  ArrowLeft,
-  AlertTriangle,
-  CheckCircle,
-  FileText,
-  Loader2,
-  Percent,
-  Printer,
-  Send,
-  Trash2,
-  XCircle,
-} from "lucide-react";
-import { toast } from "sonner";
-import { formatCurrency } from "@/lib/format.ts";
-import { useCrm } from "@/lib/crm-context.tsx";
 
 type Quote = Doc<"quotes">;
-type DiscountApprovalStatus = NonNullable<Quote["discountApprovalStatus"]>;
 type DiscountApprovalLevel = NonNullable<Quote["discountApprovalLevel"]>;
+
+function discountLevelLabel(level?: DiscountApprovalLevel) {
+  switch (level) {
+    case "account_manager": return "Account Manager";
+    case "country_gm": return "Country Manager";
+    case "head_of_business": return "HOB";
+    case "ceo": return "CEO";
+    default: return "Team";
+  }
+}
 
 function statusBadge(status: string) {
   switch (status) {
@@ -57,62 +63,27 @@ function statusBadge(status: string) {
   }
 }
 
-function discountLimitForRole(role: Doc<"users">["role"]) {
-  switch (role) {
-    case "ceo":
-      return 50;
-    case "head_of_business":
-      return 25;
-    case "country_gm":
-      return 15;
-    case "account_manager":
-      return 10;
-    default:
-      return 5;
-  }
-}
-
-function discountLevelLabel(level?: DiscountApprovalLevel) {
-  switch (level) {
-    case "account_manager":
-      return "Account Manager";
-    case "country_gm":
-      return "Country Manager";
-    case "head_of_business":
-      return "HOB";
-    case "ceo":
-      return "CEO";
-    default:
-      return "Team";
-  }
-}
-
-function discountStatusForQuote(quote: Quote): DiscountApprovalStatus {
-  if ((quote.discountPercent ?? 0) <= 0) return "not_required";
-  return quote.discountApprovalStatus ?? "approved";
-}
-
 export default function QuoteDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const printRef = useRef<HTMLDivElement>(null);
-  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
-  const [discountDialogOpen, setDiscountDialogOpen] = useState(false);
-  const [discountInput, setDiscountInput] = useState("");
-  const [isSavingDiscount, setIsSavingDiscount] = useState(false);
-  const [isResolvingDiscount, setIsResolvingDiscount] = useState(false);
-  const { currentUser } = useCrm();
   const quote = useQuery(
     api.quotes.getById,
     id ? { id: id as Id<"quotes"> } : "skip",
   );
   const companies = useQuery(api.companies.list, {});
   const updateStatus = useMutation(api.quotes.updateStatus);
-  const updateDiscount = useMutation(api.quotes.updateDiscount);
-  const approveDiscount = useMutation(api.quotes.approveDiscount);
-  const rejectDiscount = useMutation(api.quotes.rejectDiscount);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updateDiscount = useMutation((api.quotes as any).updateDiscount);
   const removeQuote = useMutation(api.quotes.remove);
-  const createDraftInvoice = useMutation(api.invoices.createDraftFromQuote);
+  const [pending, setPending] = useState(false);
+  const [nextStatus, setNextStatus] = useState<
+    "draft" | "sent" | "accepted" | null
+  >(null);
+  const [acceptedByContact, setAcceptedByContact] = useState("");
+  const [discountDialogOpen, setDiscountDialogOpen] = useState(false);
+  const [discountInput, setDiscountInput] = useState("");
+  const [savingDiscount, setSavingDiscount] = useState(false);
 
   const returnToQuotes = () => {
     navigate("/quotes");
@@ -154,16 +125,28 @@ export default function QuoteDetailPage() {
     quote.monthlyDiscountTotal ?? monthlySubtotal - quote.monthlyGrandTotal;
   const yearlyDiscountTotal =
     quote.yearlyDiscountTotal ?? yearlySubtotal - quote.yearlyGrandTotal;
-  const discountApprovalStatus = discountStatusForQuote(quote);
-  const discountApprovalLevel = quote.discountApprovalLevel;
-  const discountBlocksProgress =
-    discountPercent > 0 &&
-    (discountApprovalStatus === "pending" ||
-      discountApprovalStatus === "rejected");
-  const canCurrentUserApproveDiscount =
-    discountApprovalStatus === "pending" &&
-    !!currentUser &&
-    discountLimitForRole(currentUser.role) >= discountPercent;
+
+  const handleApplyDiscount = async () => {
+    const discountPercent = Number.parseFloat(discountInput || "0");
+    if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100) {
+      toast.error("Discount must be between 0% and 100%");
+      return;
+    }
+    setSavingDiscount(true);
+    try {
+      const result = await updateDiscount({ id: quote._id, discountPercent });
+      toast.success(
+        discountPercent <= 0
+          ? "Discount removed"
+          : `Discount saved and sent for ${discountLevelLabel(result.discountApprovalLevel)} approval`,
+      );
+      setDiscountDialogOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save discount");
+    } finally {
+      setSavingDiscount(false);
+    }
+  };
 
   const handlePrint = () => {
     const printContent = printRef.current;
@@ -250,20 +233,6 @@ export default function QuoteDetailPage() {
               )
               .join("")}
             <tr class="totals">
-              <td colspan="5" class="text-right">Subtotal</td>
-              <td class="text-right">${formatCurrency(monthlySubtotal)}</td>
-              <td class="text-right">${formatCurrency(yearlySubtotal)}</td>
-            </tr>
-            ${
-              discountPercent > 0
-                ? `<tr class="totals">
-              <td colspan="5" class="text-right">Discount (${discountPercent}%)</td>
-              <td class="text-right">-${formatCurrency(monthlyDiscountTotal)}</td>
-              <td class="text-right">-${formatCurrency(yearlyDiscountTotal)}</td>
-            </tr>`
-                : ""
-            }
-            <tr class="totals">
               <td colspan="5" class="text-right">Grand Total</td>
               <td class="text-right">${formatCurrency(quote.monthlyGrandTotal)}</td>
               <td class="text-right">${formatCurrency(quote.yearlyGrandTotal)}</td>
@@ -280,104 +249,30 @@ export default function QuoteDetailPage() {
   };
 
   const handleStatusChange = async (status: "draft" | "sent" | "accepted") => {
+    setPending(true);
     try {
-      await updateStatus({ id: quote._id, status });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Could not update quote";
-      toast.error(message);
-    }
-  };
-
-  const openDiscountDialog = () => {
-    setDiscountInput(discountPercent > 0 ? String(discountPercent) : "");
-    setDiscountDialogOpen(true);
-  };
-
-  const handleApplyDiscount = async () => {
-    const parsedDiscount = Number.parseFloat(discountInput || "0");
-    if (!Number.isFinite(parsedDiscount) || parsedDiscount < 0) {
-      toast.error("Enter a discount from 0 to 100");
-      return;
-    }
-    if (parsedDiscount > 100) {
-      toast.error("Discount cannot be more than 100%");
-      return;
-    }
-
-    setIsSavingDiscount(true);
-    try {
-      const result = await updateDiscount({
+      await updateStatus({
         id: quote._id,
-        discountPercent: parsedDiscount,
+        status,
+        acceptedByContact:
+          status === "accepted"
+            ? acceptedByContact.trim() || undefined
+            : undefined,
       });
-      if (parsedDiscount <= 0) {
-        toast.success("Discount removed");
-      } else if (result.discountApprovalStatus === "pending") {
-        toast.success(
-          `Discount saved and sent for ${discountLevelLabel(result.discountApprovalLevel)} approval`,
-        );
-      } else {
-        toast.success("Discount approved and applied");
-      }
-      setDiscountDialogOpen(false);
+      toast.success(`Quote marked ${status}`);
+      setNextStatus(null);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Could not update discount";
-      toast.error(message);
+      toast.error(
+        error instanceof Error ? error.message : "Could not update quote",
+      );
     } finally {
-      setIsSavingDiscount(false);
+      setPending(false);
     }
   };
 
   const handleDelete = async () => {
     await removeQuote({ id: quote._id });
     returnToQuotes();
-  };
-
-  const handleCreateInvoice = async () => {
-    setIsCreatingInvoice(true);
-    try {
-      await createDraftInvoice({ quoteId: quote._id });
-      toast.success("Draft invoice created");
-      navigate("/invoices");
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Could not create draft invoice";
-      toast.error(message);
-    } finally {
-      setIsCreatingInvoice(false);
-    }
-  };
-
-  const handleApproveDiscount = async () => {
-    setIsResolvingDiscount(true);
-    try {
-      await approveDiscount({ id: quote._id });
-      toast.success("Discount approved");
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Could not approve discount";
-      toast.error(message);
-    } finally {
-      setIsResolvingDiscount(false);
-    }
-  };
-
-  const handleRejectDiscount = async () => {
-    setIsResolvingDiscount(true);
-    try {
-      await rejectDiscount({ id: quote._id });
-      toast.success("Discount rejected");
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Could not reject discount";
-      toast.error(message);
-    } finally {
-      setIsResolvingDiscount(false);
-    }
   };
 
   return (
@@ -406,16 +301,20 @@ export default function QuoteDetailPage() {
           <Button variant="secondary" onClick={handlePrint}>
             <Printer className="h-4 w-4 mr-2" /> Print / Export
           </Button>
-          {quote.status === "draft" && (
-            <Button variant="secondary" onClick={openDiscountDialog}>
-              <Percent className="h-4 w-4 mr-2" /> Discount
-            </Button>
-          )}
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setDiscountInput(discountPercent > 0 ? String(discountPercent) : "");
+              setDiscountDialogOpen(true);
+            }}
+          >
+            <Percent className="h-4 w-4 mr-2" /> Discount
+          </Button>
           {quote.status === "draft" && (
             <Button
               className="bg-blue-600 hover:bg-blue-700 text-white"
-              onClick={() => handleStatusChange("sent")}
-              disabled={discountBlocksProgress}
+              onClick={() => setNextStatus("sent")}
+              disabled={pending}
             >
               <Send className="h-4 w-4 mr-2" /> Mark as Sent
             </Button>
@@ -423,29 +322,43 @@ export default function QuoteDetailPage() {
           {quote.status === "sent" && (
             <Button
               className="bg-emerald-600 hover:bg-emerald-700 text-white"
-              onClick={() => handleStatusChange("accepted")}
+              onClick={() => setNextStatus("accepted")}
+              disabled={pending}
             >
               <CheckCircle className="h-4 w-4 mr-2" /> Mark as Accepted
             </Button>
           )}
-          {quote.status === "accepted" && (
+          {quote.status === "accepted" &&
+            quote.commercialModel === "contracted" && (
+              <Button
+                className="bg-cyan-600 hover:bg-cyan-700 text-white"
+                onClick={() =>
+                  navigate(
+                    `/finance/customer-contracts/new?quoteId=${quote._id}`,
+                  )
+                }
+              >
+                <FileText className="h-4 w-4 mr-2" /> Prepare Contract
+              </Button>
+            )}
+          {quote.status === "accepted" &&
+          quote.commercialModel !== "contracted" ? (
             <Button
-              className="bg-cyan-600 hover:bg-cyan-700 text-white"
-              onClick={handleCreateInvoice}
-              disabled={isCreatingInvoice || discountBlocksProgress}
+              onClick={() =>
+                navigate(
+                  quote.leadId ? `/pipeline/${quote.leadId}` : "/pipeline",
+                )
+              }
             >
-              {isCreatingInvoice ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <FileText className="h-4 w-4 mr-2" />
-              )}
-              {isCreatingInvoice ? "Creating..." : "Create Invoice"}
+              <CheckCircle className="h-4 w-4 mr-2" /> Continue to Won
+              Onboarding
             </Button>
-          )}
+          ) : null}
           {quote.status !== "draft" && (
             <Button
               variant="secondary"
-              onClick={() => handleStatusChange("draft")}
+              onClick={() => setNextStatus("draft")}
+              disabled={pending}
             >
               Revert to Draft
             </Button>
@@ -461,64 +374,6 @@ export default function QuoteDetailPage() {
           )}
         </div>
       </div>
-
-      {discountPercent > 0 && (
-        <Card
-          className={
-            discountApprovalStatus === "pending"
-              ? "border-amber-200 bg-amber-50"
-              : discountApprovalStatus === "rejected"
-                ? "border-red-200 bg-red-50"
-                : "border-emerald-200 bg-emerald-50"
-          }
-        >
-          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              {discountApprovalStatus === "rejected" ? (
-                <XCircle className="mt-0.5 h-5 w-5 text-red-600" />
-              ) : discountApprovalStatus === "pending" ? (
-                <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600" />
-              ) : (
-                <CheckCircle className="mt-0.5 h-5 w-5 text-emerald-600" />
-              )}
-              <div>
-                <div className="font-semibold">
-                  {discountApprovalStatus === "pending"
-                    ? "Discount approval pending"
-                    : discountApprovalStatus === "rejected"
-                      ? "Discount approval rejected"
-                      : "Discount approved"}
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {discountApprovalStatus === "not_required"
-                    ? `${discountPercent}% discount does not require higher approval.`
-                    : discountApprovalStatus === "approved"
-                      ? `${discountPercent}% discount has the required approval.`
-                      : `${discountPercent}% discount requires ${discountLevelLabel(discountApprovalLevel)} approval. This quote cannot be sent or invoiced while approval is pending or rejected.`}
-                </p>
-              </div>
-            </div>
-            {canCurrentUserApproveDiscount && (
-              <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={handleRejectDiscount}
-                  disabled={isResolvingDiscount}
-                >
-                  Reject
-                </Button>
-                <Button
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                  onClick={handleApproveDiscount}
-                  disabled={isResolvingDiscount}
-                >
-                  Approve
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       <Card>
         <CardContent className="p-4">
@@ -582,29 +437,19 @@ export default function QuoteDetailPage() {
                       {formatCurrency(yearlySubtotal)}
                     </td>
                   </tr>
-                  {discountPercent > 0 && (
+                  {discountPercent > 0 ? (
                     <tr>
                       <td colSpan={5} className="p-3 font-semibold text-right">
                         Discount ({discountPercent}%)
                       </td>
-                      <td className="p-3 text-right font-bold text-emerald-700">
-                        -{formatCurrency(monthlyDiscountTotal)}
-                      </td>
-                      <td className="p-3 text-right font-bold text-emerald-700">
-                        -{formatCurrency(yearlyDiscountTotal)}
-                      </td>
+                      <td className="p-3 text-right">-{formatCurrency(monthlyDiscountTotal)}</td>
+                      <td className="p-3 text-right">-{formatCurrency(yearlyDiscountTotal)}</td>
                     </tr>
-                  )}
+                  ) : null}
                   <tr>
-                    <td colSpan={5} className="p-3 font-semibold text-right">
-                      Grand Total
-                    </td>
-                    <td className="p-3 text-right font-bold">
-                      {formatCurrency(quote.monthlyGrandTotal)}
-                    </td>
-                    <td className="p-3 text-right font-bold">
-                      {formatCurrency(quote.yearlyGrandTotal)}
-                    </td>
+                    <td colSpan={5} className="p-3 font-semibold text-right">Grand Total</td>
+                    <td className="p-3 text-right font-bold">{formatCurrency(quote.monthlyGrandTotal)}</td>
+                    <td className="p-3 text-right font-bold">{formatCurrency(quote.yearlyGrandTotal)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -618,55 +463,70 @@ export default function QuoteDetailPage() {
           </div>
         </CardContent>
       </Card>
-
       <Dialog
-        open={discountDialogOpen}
-        onOpenChange={(open) => {
-          if (!isSavingDiscount) setDiscountDialogOpen(open);
-        }}
+        open={nextStatus !== null}
+        onOpenChange={(open) => !open && setNextStatus(null)}
       >
-        <DialogContent className="max-w-sm">
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {nextStatus === "accepted"
+                ? "Confirm customer acceptance"
+                : nextStatus === "sent"
+                  ? "Confirm quote was sent"
+                  : "Revert quote to draft"}
+            </DialogTitle>
+            <DialogDescription>
+              {nextStatus === "accepted"
+                ? "Confirm that the customer accepted this quote. The opportunity can then be completed as Won."
+                : nextStatus === "sent"
+                  ? "This records the quote as sent and advances its linked opportunity to Negotiation."
+                  : "This reopens the quote for changes; it does not automatically reverse the opportunity stage."}
+            </DialogDescription>
+          </DialogHeader>
+          {nextStatus === "accepted" ? (
+            <div className="space-y-2">
+              <Label>Accepted by</Label>
+              <Input
+                value={acceptedByContact}
+                onChange={(event) => setAcceptedByContact(event.target.value)}
+                placeholder="Customer contact name"
+              />
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNextStatus(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => nextStatus && handleStatusChange(nextStatus)}
+              disabled={pending}
+            >
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={discountDialogOpen} onOpenChange={setDiscountDialogOpen}>
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Apply Quote Discount</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="rounded-md border bg-muted/30 p-3 text-sm">
-              <div className="text-muted-foreground">Current subtotal</div>
-              <div className="font-semibold">{formatCurrency(monthlySubtotal)} / month</div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="quote-detail-discount">Discount percent</Label>
-              <Input
-                id="quote-detail-discount"
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                value={discountInput}
-                onChange={(event) => setDiscountInput(event.target.value)}
-                placeholder="Example: 10 or 15"
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              This applies only to this draft quote. It does not change catalog
-              prices, usage, or other invoices.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Approval rules: team up to 5%, Account Manager up to 10%, Country
-              Manager up to 15%, HOB up to 25%, CEO up to 50%.
-            </p>
+          <div className="space-y-2">
+            <Label htmlFor="quote-detail-discount">Discount percent</Label>
+            <Input
+              id="quote-detail-discount"
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={discountInput}
+              onChange={(event) => setDiscountInput(event.target.value)}
+            />
           </div>
           <DialogFooter>
-            <Button
-              variant="secondary"
-              onClick={() => setDiscountDialogOpen(false)}
-              disabled={isSavingDiscount}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleApplyDiscount} disabled={isSavingDiscount}>
-              {isSavingDiscount ? "Saving..." : "Apply Discount"}
-            </Button>
+            <Button variant="outline" onClick={() => setDiscountDialogOpen(false)} disabled={savingDiscount}>Cancel</Button>
+            <Button onClick={handleApplyDiscount} disabled={savingDiscount}>Apply Discount</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

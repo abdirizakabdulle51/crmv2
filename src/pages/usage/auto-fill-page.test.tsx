@@ -215,7 +215,6 @@ describe("UsageAutoFillPage", () => {
             serviceType: "EIP",
             catalogItemId: "catalog-1",
             quantity: 2,
-            amount: 718.8476,
             regionId: "hoa-mog-2",
             regionName: "Hoa-Mogadishu-2",
             dataCenterName: "Mogadishu DC 2",
@@ -224,7 +223,9 @@ describe("UsageAutoFillPage", () => {
             serviceType: "VPN",
             catalogItemId: "catalog-2",
             quantity: 1,
-            amount: 20,
+            regionId: undefined,
+            regionName: undefined,
+            dataCenterName: undefined,
           },
         ],
       });

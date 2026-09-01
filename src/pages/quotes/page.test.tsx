@@ -8,6 +8,7 @@ import QuotesPage from "./page.tsx";
 vi.mock("@/convex/_generated/api.js", () => ({
   api: {
     companies: { list: "companies.list" },
+    leads: { list: "leads.list" },
     quotes: {
       list: "quotes.list",
     },
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
   quotes: [] as Doc<"quotes">[],
   combinedQuotes: [] as Doc<"combinedQuotes">[],
+  leads: [] as Doc<"leads">[],
 }));
 
 vi.mock("convex/react", () => ({
@@ -32,6 +34,7 @@ vi.mock("convex/react", () => ({
     if (query === "quotes.list") {
       return mocks.quotes;
     }
+    if (query === "leads.list") return mocks.leads;
     if (query === "combinedQuotes.list") {
       return mocks.combinedQuotes;
     }

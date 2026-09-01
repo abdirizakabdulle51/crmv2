@@ -154,15 +154,11 @@ describe("DashboardPage", () => {
     const user = userEvent.setup();
     renderDashboard();
 
-    expect(
-      screen.getByText("Welcome back, Abdirizak Abdulle"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Executive Summary")).toBeInTheDocument();
+    expect(screen.getByText("High Level Overview")).toBeInTheDocument();
+    expect(screen.getByText("Overview Cards")).toBeInTheDocument();
     expect(
       screen.getByText("Executive Collection Summary"),
     ).toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Operational Details" }));
 
     expect(screen.getByText("43")).toBeInTheDocument();
     expect(screen.getByText("$24,190")).toBeInTheDocument();
@@ -182,7 +178,6 @@ describe("DashboardPage", () => {
     const user = userEvent.setup();
     renderDashboard();
 
-    await user.click(screen.getByRole("tab", { name: "Operational Details" }));
     await user.click(screen.getByRole("link", { name: /Tasks/i }));
     expect(screen.getByTestId("location")).toHaveTextContent("/tasks");
   });

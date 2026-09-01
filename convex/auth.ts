@@ -148,6 +148,9 @@ export const createTeamMember = action({
     email: v.string(),
     password: v.optional(v.string()),
     role: roleValidator,
+    organizationScope: v.optional(
+      v.union(v.literal("country"), v.literal("global")),
+    ),
     countryId: v.optional(v.id("countries")),
   },
   handler: async (
@@ -165,6 +168,7 @@ export const createTeamMember = action({
       if (
         currentUser.role !== "country_gm" ||
         args.role !== "account_manager" ||
+        args.organizationScope === "global" ||
         !currentUser.countryId ||
         args.countryId !== currentUser.countryId
       ) {
@@ -177,6 +181,14 @@ export const createTeamMember = action({
     }
 
     const email = normalizeEmail(args.email);
+    const organizationScope =
+      args.organizationScope ?? (args.countryId ? "country" : "global");
+    if (organizationScope === "country" && !args.countryId) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Country-scoped team members require a country",
+      });
+    }
     const password = args.password?.trim() || generateTemporaryPassword();
 
     if (password.length < 8) {
@@ -197,12 +209,16 @@ export const createTeamMember = action({
         | "monitoring";
       mustChangePassword: boolean;
       countryId?: Id<"countries">;
+      organizationScope: "country" | "global";
     } = {
       name: args.name.trim(),
       email,
       role: args.role,
       mustChangePassword: true,
-      ...(args.countryId ? { countryId: args.countryId } : {}),
+      organizationScope,
+      ...(organizationScope === "country" && args.countryId
+        ? { countryId: args.countryId }
+        : {}),
     };
 
     const { user }: { user: Doc<"users"> } = await createAccount(ctx, {
