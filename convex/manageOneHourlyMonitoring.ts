@@ -10,6 +10,7 @@ type Ctx = QueryCtx | MutationCtx;
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_RETENTION_DELETE_PER_SYNC = 200;
 const MAX_DRY_RUN_PAGE_SIZE = 1_000;
+const MAX_LATEST_ROWS = 100;
 const MOVEMENT_WINDOWS = [7, 14, 21, 28] as const;
 const MOVEMENT_HOUR_ROW_LIMIT = 5_000;
 const MONITORED_REGIONS = ["Hoa-Mogadishu-2", "Mogadishu-region-hq3"] as const;
@@ -372,7 +373,10 @@ export const latest = query({
     const user = await getCurrentUserOrThrow(ctx);
     assertCanViewMonitoring(user);
 
-    const limit = Math.min(Math.max(Math.floor(args.limit ?? 100), 1), 500);
+    const limit = Math.min(
+      Math.max(Math.floor(args.limit ?? MAX_LATEST_ROWS), 1),
+      MAX_LATEST_ROWS,
+    );
     const rows = await ctx.db
       .query("manageOneHourlySnapshots")
       .withIndex("by_hour")
