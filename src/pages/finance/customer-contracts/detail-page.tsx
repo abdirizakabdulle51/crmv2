@@ -1,9 +1,11 @@
 import {
+  Component,
   useMemo,
   useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import { useConvex, useMutation, useQuery } from "convex/react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -395,7 +397,38 @@ function CatalogItemCombobox({
   );
 }
 
-export default function CustomerContractDetailPage() {
+export class CustomerContractDetailErrorBoundary extends Component<
+  { children: ReactNode },
+  { message: string | null }
+> {
+  state: { message: string | null } = { message: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { message };
+  }
+
+  render() {
+    if (this.state.message) {
+      return (
+        <div className="space-y-4 p-6 md:p-8">
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+            <p className="font-medium">Billing validation required</p>
+            <p className="mt-1">
+              Contract pricing is unavailable until every used catalogue service
+              has the required metadata. Invoicing remains blocked.
+            </p>
+            <p className="mt-2 text-xs opacity-80">{this.state.message}</p>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+function CustomerContractDetailContent() {
   const navigate = useNavigate();
   const convex = useConvex();
   const { contractId } = useParams();
@@ -2025,6 +2058,14 @@ export default function CustomerContractDetailPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function CustomerContractDetailPage() {
+  return (
+    <CustomerContractDetailErrorBoundary>
+      <CustomerContractDetailContent />
+    </CustomerContractDetailErrorBoundary>
   );
 }
 
