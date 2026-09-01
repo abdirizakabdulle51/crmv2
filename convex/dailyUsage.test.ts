@@ -302,4 +302,147 @@ describe("daily usage capture helpers", () => {
     expect(row.monthlyUnitPrice).toBe(200);
     expect(row.estimatedAmount).toBe(6.45);
   });
+
+  it("matches the frozen production rollup baseline across catalogue and contract pricing", () => {
+    const companyId = "company1" as Id<"companies">;
+    const catalogId = "catalog-ecs" as Id<"serviceCatalog">;
+    const contractId = "contract1" as Id<"customerContracts">;
+    const contractLineId = "line1" as Id<"customerContractLineItems">;
+    const activeContract = contract({ _id: contractId, companyId });
+    const activeLine = contractLine({
+      _id: contractLineId,
+      contractId,
+      itemName: "Contract-only ECS",
+      serviceCategory: "ECS",
+      unit: "per instance/month",
+      billingUnit: "per instance/month",
+      includedQuantity: 300,
+      contractUnitPrice: 0.1,
+      overageUnitPrice: 0.2,
+      discountType: "percentage",
+      discountValue: 10,
+    });
+    const rows = buildMonthlyRollupRows({
+      rows: [
+        dailySnapshot({
+          _id: "catalog-row-a" as Id<"dailyUsageSnapshots">,
+          usageDate: "2026-08-01",
+          catalogItemId: catalogId,
+          itemName: "C6_2xlarge.4",
+          serviceType: "ECS",
+          serviceCategory: "ECS",
+          unit: "per instance/month",
+          quantity: 310,
+        }),
+        dailySnapshot({
+          _id: "catalog-row-b" as Id<"dailyUsageSnapshots">,
+          usageDate: "2026-08-02",
+          catalogItemId: catalogId,
+          itemName: "C6_2xlarge.4",
+          serviceType: "ECS",
+          serviceCategory: "ECS",
+          unit: "per instance/month",
+          quantity: 310,
+        }),
+        dailySnapshot({
+          _id: "contract-row-a" as Id<"dailyUsageSnapshots">,
+          usageDate: "2026-08-01",
+          catalogItemId: undefined,
+          itemName: "Contract-only ECS",
+          serviceType: "ECS",
+          serviceCategory: "ECS",
+          unit: "per instance/month",
+          quantity: 310,
+          sourceKey: "contract-row-a",
+        }),
+        dailySnapshot({
+          _id: "contract-row-b" as Id<"dailyUsageSnapshots">,
+          usageDate: "2026-08-02",
+          catalogItemId: undefined,
+          itemName: "Contract-only ECS",
+          serviceType: "ECS",
+          serviceCategory: "ECS",
+          unit: "per instance/month",
+          quantity: 310,
+          sourceKey: "contract-row-b",
+          lockedAt: 1785600000000,
+          invoiceId: "invoice1" as Id<"invoices">,
+        }),
+        dailySnapshot({
+          _id: "missing-price-row" as Id<"dailyUsageSnapshots">,
+          usageDate: "2026-08-02",
+          catalogItemId: undefined,
+          itemName: "Unknown ECS",
+          serviceType: "ECS",
+          serviceCategory: "ECS",
+          unit: "per instance/month",
+          quantity: 5,
+          sourceKey: "missing-price-row",
+        }),
+      ],
+      catalogById: new Map([
+        [
+          catalogId,
+          {
+            ...catalogItem(
+              catalogId,
+              "ECS",
+              "C6_2xlarge.4",
+              "per instance/month",
+            ),
+            monthlyPrice: 2,
+          },
+        ],
+      ]),
+      companyNameById: new Map([[companyId, "Mizan-Geomatic"]]),
+      month: "2026-08",
+      contractPricingByCompany: new Map([
+        [companyId, { contract: activeContract, lines: [activeLine] }],
+      ]),
+    });
+
+    expect(
+      rows.map((row) => ({
+        itemName: row.itemName,
+        capturedDays: row.capturedDays,
+        dailyQuantityTotal: row.dailyQuantityTotal,
+        billableQuantity: row.billableQuantity,
+        monthlyUnitPrice: row.monthlyUnitPrice,
+        estimatedAmount: row.estimatedAmount,
+        pricingSource: row.pricingSource,
+        unit: row.unit,
+      })),
+    ).toEqual([
+      {
+        itemName: "C6_2xlarge.4",
+        capturedDays: 2,
+        dailyQuantityTotal: 620,
+        billableQuantity: 20,
+        monthlyUnitPrice: 2,
+        estimatedAmount: 40,
+        pricingSource: "catalog",
+        unit: "per instance/month",
+      },
+      {
+        itemName: "Contract-only ECS",
+        capturedDays: 2,
+        dailyQuantityTotal: 620,
+        billableQuantity: 2 / 31,
+        monthlyUnitPrice: 27,
+        estimatedAmount: 1.87,
+        pricingSource: "contract",
+        unit: "contract/month",
+      },
+      {
+        itemName: "Unknown ECS",
+        capturedDays: 1,
+        dailyQuantityTotal: 5,
+        billableQuantity: 5 / 31,
+        monthlyUnitPrice: undefined,
+        estimatedAmount: undefined,
+        pricingSource: undefined,
+        unit: "per instance/month",
+      },
+    ]);
+  });
 });

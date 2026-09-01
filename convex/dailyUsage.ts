@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -97,10 +98,13 @@ function hourlyPriceForCategory(
   category: string,
   preferredItemName?: string,
 ) {
-  const categoryItems = catalog.filter((item) => item.serviceCategory === category);
+  const categoryItems = catalog.filter(
+    (item) => item.serviceCategory === category,
+  );
   if (preferredItemName) {
     const preferred = categoryItems.find(
-      (item) => normalizedKey(item.itemName) === normalizedKey(preferredItemName),
+      (item) =>
+        normalizedKey(item.itemName) === normalizedKey(preferredItemName),
     );
     if (preferred?.hourlyPrice !== undefined) return preferred.hourlyPrice;
   }
@@ -763,10 +767,9 @@ export const captureFromManageOneSnapshots = internalMutation({
       const existingRows = await ctx.db
         .query("dailyUsageSnapshots")
         .withIndex("by_company_month", (q) =>
-          q.eq("companyId", tenant.linkedCompanyId as Id<"companies">).eq(
-            "month",
-            month,
-          ),
+          q
+            .eq("companyId", tenant.linkedCompanyId as Id<"companies">)
+            .eq("month", month),
         )
         .collect();
       for (const existing of existingRows) {
@@ -814,6 +817,104 @@ export const listByCompanyMonth = query({
         q.eq("companyId", args.companyId).eq("month", args.month),
       )
       .collect();
+  },
+});
+
+export const listPage = query({
+  args: {
+    month: v.string(),
+    companyId: v.optional(v.id("companies")),
+    usageDate: v.optional(v.string()),
+    serviceType: v.optional(v.string()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const companies = args.companyId
+      ? [await assertCanManageUsage(ctx, user, args.companyId)]
+      : (await ctx.db.query("companies").collect()).filter((company) =>
+          canViewCompany(user, company),
+        );
+    const visibleCompanyIds = new Set(companies.map((company) => company._id));
+    const companyNameById = new Map(
+      companies.map((company) => [company._id, company.name]),
+    );
+    const paginationOpts = {
+      ...args.paginationOpts,
+      numItems: Math.min(args.paginationOpts.numItems, 100),
+    };
+    const query = args.companyId
+      ? ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_company_month_date", (q) => {
+            const scoped = q
+              .eq("companyId", args.companyId!)
+              .eq("month", args.month);
+            return args.usageDate
+              ? scoped.eq("usageDate", args.usageDate)
+              : scoped;
+          })
+      : args.usageDate
+        ? ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_month_date", (q) =>
+              q.eq("month", args.month).eq("usageDate", args.usageDate!),
+            )
+        : ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_month", (q) => q.eq("month", args.month));
+    const page = await query.order("desc").paginate(paginationOpts);
+    const rows = page.page
+      .filter(
+        (row) =>
+          row.month === args.month &&
+          visibleCompanyIds.has(row.companyId) &&
+          (!args.serviceType || row.serviceType === args.serviceType),
+      )
+      .map((row) => ({
+        ...row,
+        companyName: companyNameById.get(row.companyId) ?? "Unknown",
+      }));
+    return {
+      ...page,
+      page: rows,
+      pageSize: rows.length,
+    };
+  },
+});
+
+export const status = query({
+  args: { month: v.string() },
+  handler: async (ctx, args) => {
+    await getCurrentUserOrThrow(ctx);
+    const now = Date.now();
+    const businessDate = dateKeyForTimestamp(now);
+    const latestDailyRow = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_month_date", (q) => q.eq("month", args.month))
+      .order("desc")
+      .first();
+    const latestHourlyRows = await ctx.db
+      .query("manageOneHourlySnapshots")
+      .withIndex("by_hour")
+      .order("desc")
+      .take(500);
+    const latestHourlyCapturedAt =
+      latestHourlyRows.reduce(
+        (latest, row) => Math.max(latest, row.capturedAt),
+        0,
+      ) || null;
+
+    return {
+      month: args.month,
+      businessDate,
+      latestDailyUsageDate: latestDailyRow?.usageDate ?? null,
+      capturedThroughToday: latestDailyRow?.usageDate === businessDate,
+      latestHourlyCapturedAt,
+      hourlyStale:
+        latestHourlyCapturedAt === null ||
+        now - latestHourlyCapturedAt > HOURLY_STALE_MS,
+    };
   },
 });
 
@@ -1000,7 +1101,9 @@ export const review = query({
             .collect(),
     );
 
-    const visibleRows = rows.filter((row) => companyNameById.has(row.companyId));
+    const visibleRows = rows.filter((row) =>
+      companyNameById.has(row.companyId),
+    );
 
     const serviceTypes = [...new Set(visibleRows.map((row) => row.serviceType))]
       .filter(Boolean)
@@ -1102,7 +1205,9 @@ export const companyBillingSnapshot = query({
       .query("customerContracts")
       .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
       .collect();
-    const contractById = new Map(contracts.map((contract) => [contract._id, contract]));
+    const contractById = new Map(
+      contracts.map((contract) => [contract._id, contract]),
+    );
     const contractByNumber = new Map(
       contracts.map((contract) => [contract.contractNumber, contract]),
     );
@@ -1288,17 +1393,23 @@ export const companyBillingSnapshot = query({
     const projectedMonthEnd =
       dailySeries.length === 0
         ? null
-        : roundMoney((cumulative / dailySeries.length) * daysInMonth(args.month));
+        : roundMoney(
+            (cumulative / dailySeries.length) * daysInMonth(args.month),
+          );
     const hourlyRows = await ctx.db
       .query("manageOneHourlySnapshots")
       .withIndex("by_company_hour", (q) =>
         q.eq("linkedCompanyId", args.companyId).gte("capturedHour", monthStart),
       )
-      .collect();
+      .order("desc")
+      .take(720);
     const hourlyRowsForMonth = hourlyRows.filter(
       (row) => row.capturedHour <= monthEnd,
     );
-    const hourlyRowsByHour = new Map<number, Doc<"manageOneHourlySnapshots">[]>();
+    const hourlyRowsByHour = new Map<
+      number,
+      Doc<"manageOneHourlySnapshots">[]
+    >();
     for (const row of hourlyRowsForMonth) {
       const rowsForHour = hourlyRowsByHour.get(row.capturedHour) ?? [];
       rowsForHour.push(row);
@@ -1330,7 +1441,9 @@ export const companyBillingSnapshot = query({
         capturedDays: 0,
         unpricedCount: 0,
       };
-      existing.amount = roundMoney(existing.amount + (row.estimatedAmount ?? 0));
+      existing.amount = roundMoney(
+        existing.amount + (row.estimatedAmount ?? 0),
+      );
       existing.billableQuantity = roundMoney(
         existing.billableQuantity + row.billableQuantity,
       );
@@ -1356,8 +1469,9 @@ export const companyBillingSnapshot = query({
       latestUsageDate: usageDates[usageDates.length - 1] ?? null,
       dailySeries,
       hourlySeries,
-      chargeBreakdown: [...chargeBreakdownByService.values()]
-        .sort((a, b) => b.amount - a.amount),
+      chargeBreakdown: [...chargeBreakdownByService.values()].sort(
+        (a, b) => b.amount - a.amount,
+      ),
       openInvoices: openInvoices
         .sort((a, b) => b.createdAt - a.createdAt)
         .slice(0, 5)
@@ -1384,7 +1498,9 @@ export const companyBillingSnapshot = query({
   },
 });
 
-function latestSnapshotsByTenantRegion(rows: Doc<"manageOneHourlySnapshots">[]) {
+function latestSnapshotsByTenantRegion(
+  rows: Doc<"manageOneHourlySnapshots">[],
+) {
   const latest = new Map<string, Doc<"manageOneHourlySnapshots">>();
 
   for (const row of rows) {

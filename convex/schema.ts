@@ -576,7 +576,9 @@ export default defineSchema({
     .index("by_source_key", ["sourceKey"])
     .index("by_company_date", ["companyId", "usageDate"])
     .index("by_company_month", ["companyId", "month"])
+    .index("by_company_month_date", ["companyId", "month", "usageDate"])
     .index("by_month", ["month"])
+    .index("by_month_date", ["month", "usageDate"])
     .index("by_invoice", ["invoiceId"]),
 
   pingTargets: defineTable({

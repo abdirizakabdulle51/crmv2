@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMemo, useState } from "react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -95,40 +95,49 @@ export default function DailyUsagePage() {
   const [search, setSearch] = useState("");
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [showCapturedRows, setShowCapturedRows] = useState(false);
-  const [loadReview, setLoadReview] = useState(false);
+  const [showRollup, setShowRollup] = useState(false);
   const shouldLoadCapturedRows = showCapturedRows || companyId !== "all";
-
-  useEffect(() => {
-    setLoadReview(false);
-    const timer = window.setTimeout(() => setLoadReview(true), 300);
-    return () => window.clearTimeout(timer);
-  }, [month, companyId]);
+  const shouldLoadDetailedQueries = showRollup || companyId !== "all";
+  const status = useQuery(api.dailyUsage.status, { month });
 
   const review = useQuery(
     api.dailyUsage.review,
-    loadReview
+    shouldLoadDetailedQueries
       ? {
           month,
           companyId:
             companyId === "all" ? undefined : (companyId as Id<"companies">),
-          includeRows: shouldLoadCapturedRows,
+          includeRows: false,
         }
       : "skip",
   );
-  const health = useQuery(api.dailyUsage.health, {
-    month,
-    companyId: companyId === "all" ? undefined : (companyId as Id<"companies">),
-  });
+  const capturedRows = usePaginatedQuery(
+    api.dailyUsage.listPage,
+    shouldLoadCapturedRows
+      ? {
+          month,
+          companyId:
+            companyId === "all" ? undefined : (companyId as Id<"companies">),
+          usageDate: usageDate === "all" ? undefined : usageDate,
+          serviceType: serviceType === "all" ? undefined : serviceType,
+        }
+      : "skip",
+    { initialNumItems: 50 },
+  );
+  const health = useQuery(
+    api.dailyUsage.health,
+    shouldLoadDetailedQueries
+      ? {
+          month,
+          companyId:
+            companyId === "all" ? undefined : (companyId as Id<"companies">),
+        }
+      : "skip",
+  );
 
   const rows = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
-    return (review?.rows ?? []).filter((row) => {
-      if (serviceType !== "all" && row.serviceType !== serviceType) {
-        return false;
-      }
-      if (usageDate !== "all" && row.usageDate !== usageDate) {
-        return false;
-      }
+    return capturedRows.results.filter((row) => {
       if (!normalizedSearch) {
         return true;
       }
@@ -146,7 +155,7 @@ export default function DailyUsagePage() {
         .toLowerCase();
       return haystack.includes(normalizedSearch);
     });
-  }, [review?.rows, search, serviceType, usageDate]);
+  }, [capturedRows.results, search]);
 
   const rollupRows = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -172,7 +181,7 @@ export default function DailyUsagePage() {
     });
   }, [review?.rollup.rows, search, serviceType]);
 
-  const reviewLoading = !review;
+  const reviewLoading = shouldLoadDetailedQueries && !review;
   const totals = useMemo(() => {
     if (!shouldLoadCapturedRows && review?.summary) {
       return {
@@ -294,13 +303,33 @@ export default function DailyUsagePage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Snapshot rows" value={totals.rows} />
-        <SummaryCard label="Customers" value={totals.companyCount} />
-        <SummaryCard label="Services" value={totals.serviceCount} />
-        <SummaryCard label="Captured days" value={totals.dayCount} />
+        <SummaryCard
+          label="Snapshot rows"
+          value={shouldLoadDetailedQueries ? totals.rows : undefined}
+          valueText={shouldLoadDetailedQueries ? undefined : "-"}
+        />
+        <SummaryCard
+          label="Customers"
+          value={shouldLoadDetailedQueries ? totals.companyCount : undefined}
+          valueText={shouldLoadDetailedQueries ? undefined : "-"}
+        />
+        <SummaryCard
+          label="Services"
+          value={shouldLoadDetailedQueries ? totals.serviceCount : undefined}
+          valueText={shouldLoadDetailedQueries ? undefined : "-"}
+        />
+        <SummaryCard
+          label="Captured days"
+          value={shouldLoadDetailedQueries ? totals.dayCount : undefined}
+          valueText={shouldLoadDetailedQueries ? undefined : "-"}
+        />
       </div>
 
-      <DailyUsageHealthPanel health={health} />
+      {health ? (
+        <DailyUsageHealthPanel health={health} />
+      ) : (
+        <DailyUsageStatusPanel status={status} />
+      )}
 
       <Card>
         <CardHeader>
@@ -399,126 +428,149 @@ export default function DailyUsagePage() {
               {rollupTotals.unpricedRows} unpriced
             </Badge>
             <Badge variant="outline">{totals.attached} attached</Badge>
-            <Button
-              disabled={!canCreateDraft || creatingDraft}
-              size="sm"
-              onClick={handleCreateDraftInvoice}
-            >
-              <FileText className="mr-2 h-4 w-4" />
-              {creatingDraft ? "Creating..." : "Create Draft Invoice"}
-            </Button>
+            {showRollup ? (
+              <Button
+                disabled={!canCreateDraft || creatingDraft}
+                size="sm"
+                onClick={handleCreateDraftInvoice}
+              >
+                <FileText className="mr-2 h-4 w-4" />
+                {creatingDraft ? "Creating..." : "Create Draft Invoice"}
+              </Button>
+            ) : (
+              <Button size="sm" onClick={() => setShowRollup(true)}>
+                Load monthly rollup
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
-          {companyId === "all" ? (
-            <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-              Select one customer to create a draft invoice from the daily usage
-              rollup.
-            </div>
-          ) : null}
-          <div className="mb-4 grid gap-4 sm:grid-cols-3">
-            <SummaryCard
-              label="Estimated monthly total"
-              valueText={formatMoney(rollupTotals.estimatedAmount)}
-            />
-            <SummaryCard label="Priced rows" value={rollupTotals.pricedRows} />
-            <SummaryCard
-              label="Unpriced rows"
-              value={rollupTotals.unpricedRows}
-            />
-          </div>
-
-          {reviewLoading ? (
-            <div className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-3">
-                <Skeleton className="h-24" />
-                <Skeleton className="h-24" />
-                <Skeleton className="h-24" />
-              </div>
-              <Skeleton className="h-64" />
-            </div>
-          ) : rollupRows.length === 0 ? (
+          {!showRollup ? (
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
                   <Database className="h-6 w-6" />
                 </EmptyMedia>
-                <EmptyTitle>No monthly rollup rows yet.</EmptyTitle>
+                <EmptyTitle>Monthly rollup is deferred.</EmptyTitle>
                 <EmptyDescription>
-                  The preview appears once daily usage snapshots exist for the
-                  selected month and filters.
+                  Load the rollup when you need the monthly pricing preview.
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
-          ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full min-w-[1120px] text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-3 py-2">Customer</th>
-                    <th className="px-3 py-2">Service</th>
-                    <th className="px-3 py-2">Item</th>
-                    <th className="px-3 py-2">Region</th>
-                    <th className="px-3 py-2 text-right">Days</th>
-                    <th className="px-3 py-2 text-right">Daily Total</th>
-                    <th className="px-3 py-2 text-right">Billable Qty</th>
-                    <th className="px-3 py-2">Unit</th>
-                    <th className="px-3 py-2 text-right">Pricing</th>
+          ) : null}
+          {showRollup ? (
+            <>
+              {companyId === "all" ? (
+                <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+                  Select one customer to create a draft invoice from the daily usage
+                  rollup.
+                </div>
+              ) : null}
+              <div className="mb-4 grid gap-4 sm:grid-cols-3">
+                <SummaryCard
+                  label="Estimated monthly total"
+                  valueText={formatMoney(rollupTotals.estimatedAmount)}
+                />
+                <SummaryCard label="Priced rows" value={rollupTotals.pricedRows} />
+                <SummaryCard
+                  label="Unpriced rows"
+                  value={rollupTotals.unpricedRows}
+                />
+              </div>
+
+              {reviewLoading ? (
+                <div className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <Skeleton className="h-24" />
+                    <Skeleton className="h-24" />
+                    <Skeleton className="h-24" />
+                  </div>
+                  <Skeleton className="h-64" />
+                </div>
+              ) : rollupRows.length === 0 ? (
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <Database className="h-6 w-6" />
+                    </EmptyMedia>
+                    <EmptyTitle>No monthly rollup rows yet.</EmptyTitle>
+                    <EmptyDescription>
+                  The preview appears once daily usage snapshots exist for the
+                  selected month and filters.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : (
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full min-w-[1120px] text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-3 py-2">Customer</th>
+                        <th className="px-3 py-2">Service</th>
+                        <th className="px-3 py-2">Item</th>
+                        <th className="px-3 py-2">Region</th>
+                        <th className="px-3 py-2 text-right">Days</th>
+                        <th className="px-3 py-2 text-right">Daily Total</th>
+                        <th className="px-3 py-2 text-right">Billable Qty</th>
+                        <th className="px-3 py-2">Unit</th>
+                        <th className="px-3 py-2 text-right">Pricing</th>
                     <th className="px-3 py-2 text-right">Estimated Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rollupRows.map((row) => (
-                    <tr
-                      key={[
-                        row.companyId,
-                        row.serviceType,
-                        row.itemName,
-                        row.regionName ?? row.dataCenterName ?? "",
-                      ].join("|")}
-                      className="border-b last:border-0"
-                    >
-                      <td className="px-3 py-3 font-medium">
-                        {row.companyName}
-                      </td>
-                      <td className="px-3 py-3">
-                        <Badge variant="secondary">{row.serviceType}</Badge>
-                      </td>
-                      <td className="px-3 py-3">{row.itemName}</td>
-                      <td className="px-3 py-3 text-muted-foreground">
-                        {row.regionName ?? row.dataCenterName ?? "-"}
-                      </td>
-                      <td className="px-3 py-3 text-right">
-                        {row.capturedDays}
-                      </td>
-                      <td className="px-3 py-3 text-right">
-                        {formatQuantity(row.dailyQuantityTotal)}
-                      </td>
-                      <td className="px-3 py-3 text-right font-medium">
-                        {formatQuantity(row.billableQuantity)}
-                      </td>
-                      <td className="px-3 py-3 text-muted-foreground">
-                        {row.unit}
-                      </td>
-                      <td className="px-3 py-3 text-right">
-                        <div className="font-medium">
-                          {formatMoney(row.monthlyUnitPrice)}
-                        </div>
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          {row.pricingSource === "contract"
-                            ? `Contract ${row.contractNumber ?? ""}`.trim()
-                            : "Catalog"}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-right font-medium">
-                        {formatMoney(row.estimatedAmount)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rollupRows.map((row) => (
+                        <tr
+                          key={[
+                            row.companyId,
+                            row.serviceType,
+                            row.itemName,
+                            row.regionName ?? row.dataCenterName ?? "",
+                          ].join("|")}
+                          className="border-b last:border-0"
+                        >
+                          <td className="px-3 py-3 font-medium">
+                            {row.companyName}
+                          </td>
+                          <td className="px-3 py-3">
+                            <Badge variant="secondary">{row.serviceType}</Badge>
+                          </td>
+                          <td className="px-3 py-3">{row.itemName}</td>
+                          <td className="px-3 py-3 text-muted-foreground">
+                            {row.regionName ?? row.dataCenterName ?? "-"}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {row.capturedDays}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {formatQuantity(row.dailyQuantityTotal)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-medium">
+                            {formatQuantity(row.billableQuantity)}
+                          </td>
+                          <td className="px-3 py-3 text-muted-foreground">
+                            {row.unit}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            <div className="font-medium">
+                              {formatMoney(row.monthlyUnitPrice)}
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {row.pricingSource === "contract"
+                                ? `Contract ${row.contractNumber ?? ""}`.trim()
+                                : "Catalog"}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-right font-medium">
+                            {formatMoney(row.estimatedAmount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -561,6 +613,12 @@ export default function DailyUsagePage() {
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
+          ) : capturedRows.status === "LoadingFirstPage" ? (
+            <div className="space-y-3">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
           ) : rows.length === 0 ? (
             <Empty>
               <EmptyHeader>
@@ -640,6 +698,17 @@ export default function DailyUsagePage() {
                   ))}
                 </tbody>
               </table>
+              {capturedRows.status === "CanLoadMore" ? (
+                <div className="flex justify-center border-t p-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => capturedRows.loadMore(50)}
+                  >
+                    Load more rows
+                  </Button>
+                </div>
+              ) : null}
             </div>
           )}
         </CardContent>
@@ -676,6 +745,68 @@ function HealthBadge({ healthy, label }: { healthy: boolean; label: string }) {
       )}
       {label}
     </Badge>
+  );
+}
+
+function DailyUsageStatusPanel({
+  status,
+}: {
+  status:
+    | {
+        latestDailyUsageDate: string | null;
+        capturedThroughToday: boolean;
+        latestHourlyCapturedAt: number | null;
+        hourlyStale: boolean;
+      }
+    | undefined;
+}) {
+  if (!status) {
+    return <Skeleton className="h-40" />;
+  }
+
+  return (
+    <Card>
+      <CardHeader className="gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>Usage Data Status</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Lightweight status is available. Full monthly health checks are
+            deferred until the detailed review is requested.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <HealthBadge
+            healthy={
+              Boolean(status.latestHourlyCapturedAt) && !status.hourlyStale
+            }
+            label="Live snapshot"
+          />
+          <HealthBadge
+            healthy={
+              Boolean(status.latestDailyUsageDate) &&
+              status.capturedThroughToday
+            }
+            label="Billing snapshot"
+          />
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4 sm:grid-cols-2">
+        <div className="rounded-md border p-3">
+          <div className="text-xs text-muted-foreground">
+            Latest hourly capture
+          </div>
+          <div className="mt-1 font-semibold">
+            {formatTimestamp(status.latestHourlyCapturedAt ?? undefined)}
+          </div>
+        </div>
+        <div className="rounded-md border p-3">
+          <div className="text-xs text-muted-foreground">Latest usage date</div>
+          <div className="mt-1 font-semibold">
+            {status.latestDailyUsageDate ?? "-"}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
