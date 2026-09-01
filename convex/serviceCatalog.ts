@@ -8,6 +8,33 @@ import { PRODUCT_GROUPS } from "../src/lib/product-groups";
 
 const productGroups = new Set<string>(PRODUCT_GROUPS.map((group) => group.value));
 
+// Deliberately exact and fail-closed. This is for the one-time legacy migration;
+// new catalogue rows must continue to provide their metadata explicitly.
+export const LEGACY_CATALOGUE_MAPPING: Record<
+  string,
+  { productGroup: string; serviceCode: string }
+> = {
+  BMS: { productGroup: "compute", serviceCode: "BMS" },
+  ECS: { productGroup: "compute", serviceCode: "ECS" },
+  "ECS-CCE": { productGroup: "compute", serviceCode: "ECS-CCE" },
+  CSBS: { productGroup: "storage", serviceCode: "CSBS" },
+  EVS: { productGroup: "storage", serviceCode: "EVS" },
+  OBS: { productGroup: "storage", serviceCode: "OBS" },
+  SFS: { productGroup: "storage", serviceCode: "SFS" },
+  VBS: { productGroup: "storage", serviceCode: "VBS" },
+  EIP: { productGroup: "network", serviceCode: "EIP" },
+  ELB: { productGroup: "network", serviceCode: "ELB" },
+  NAT: { productGroup: "network", serviceCode: "NAT" },
+  VPCEP: { productGroup: "network", serviceCode: "VPCEP" },
+  VPN: { productGroup: "network", serviceCode: "VPN" },
+  "VPN Gateway": { productGroup: "network", serviceCode: "VPN" },
+  WAF: { productGroup: "security_compliance", serviceCode: "WAF" },
+  "Web App Firewall": {
+    productGroup: "security_compliance",
+    serviceCode: "WAF",
+  },
+};
+
 function normalizedProductGroup(value?: string) {
   if (value === undefined) return undefined;
   const normalized = value.trim();
@@ -103,6 +130,60 @@ export const classifyLegacyItems = internalMutation({
     return {
       updated,
       unclassified: items.filter((item) => !item.productGroup && !inferProductGroup(item)).length,
+    };
+  },
+});
+
+export const migrateLegacyMetadata = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const items = await ctx.db.query("serviceCatalog").collect();
+    let migratedRows = 0;
+    let migratedContractLines = 0;
+    const ambiguous: Array<{ id: string; itemName: string; serviceCategory: string }> = [];
+
+    for (const item of items) {
+      const mapping = LEGACY_CATALOGUE_MAPPING[item.serviceCategory.trim()];
+      if (!mapping) {
+        if (!item.productGroup || !item.serviceCode) {
+          ambiguous.push({
+            id: item._id,
+            itemName: item.itemName,
+            serviceCategory: item.serviceCategory,
+          });
+        }
+        continue;
+      }
+
+      const catalogPatch = {
+        ...(!item.productGroup ? { productGroup: mapping.productGroup } : {}),
+        ...(!item.serviceCode ? { serviceCode: mapping.serviceCode } : {}),
+      };
+      if (Object.keys(catalogPatch).length > 0) {
+        await ctx.db.patch(item._id, catalogPatch);
+        migratedRows += 1;
+      }
+
+      const lines = await ctx.db
+        .query("customerContractLineItems")
+        .withIndex("by_catalog_item", (q) => q.eq("catalogItemId", item._id))
+        .collect();
+      for (const line of lines) {
+        const linePatch = {
+          ...(!line.productGroup ? { productGroup: item.productGroup ?? mapping.productGroup } : {}),
+          ...(!line.serviceCode ? { serviceCode: item.serviceCode ?? mapping.serviceCode } : {}),
+        };
+        if (Object.keys(linePatch).length > 0) {
+          await ctx.db.patch(line._id, linePatch);
+          migratedContractLines += 1;
+        }
+      }
+    }
+
+    return {
+      migratedRows,
+      migratedContractLines,
+      ambiguous,
     };
   },
 });
