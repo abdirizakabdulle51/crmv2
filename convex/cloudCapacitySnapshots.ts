@@ -7,6 +7,7 @@ import { canViewCloudHealth } from "./authorization";
 
 const DEFAULT_CAPACITY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_DRY_RUN_PAGE_SIZE = 1_000;
+const MAX_REGION_HISTORY_POINTS = 90;
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -122,7 +123,10 @@ export const historyForRegion = query({
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     assertCanViewCloudHealth(user);
-    const limit = Math.min(args.limit ?? 5_000, 10_000);
+    const limit = Math.min(
+      Math.max(Math.floor(args.limit ?? MAX_REGION_HISTORY_POINTS), 1),
+      MAX_REGION_HISTORY_POINTS,
+    );
 
     const snapshots = await ctx.db
       .query("cloudCapacitySnapshots")
@@ -132,7 +136,18 @@ export const historyForRegion = query({
       .order("desc")
       .take(limit);
 
-    return snapshots.sort((a, b) => a.snapshotAt - b.snapshotAt);
+    return snapshots
+      .sort((a, b) => a.snapshotAt - b.snapshotAt)
+      .map((snapshot) => ({
+        regionId: snapshot.regionId,
+        cpuUsed: snapshot.cpuUsed,
+        cpuTotal: snapshot.cpuTotal,
+        memoryUsedGb: snapshot.memoryUsedGb,
+        memoryTotalGb: snapshot.memoryTotalGb,
+        storageUsedGb: snapshot.storageUsedGb,
+        storageTotalGb: snapshot.storageTotalGb,
+        snapshotAt: snapshot.snapshotAt,
+      }));
   },
 });
 

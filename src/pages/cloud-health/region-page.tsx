@@ -157,7 +157,9 @@ export default function CloudHealthRegionPage() {
   const capacity = useQuery(api.cloudCapacity.list, canView ? {} : "skip");
   const history = useQuery(
     api.cloudCapacitySnapshots.historyForRegion,
-    canView && decodedRegionId ? { regionId: decodedRegionId } : "skip",
+    canView && decodedRegionId
+      ? { regionId: decodedRegionId, limit: 90 }
+      : "skip",
   );
   const region = capacity?.find(
     (capacityRegion) => capacityRegion.regionId === decodedRegionId,
