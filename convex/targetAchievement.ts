@@ -8,6 +8,7 @@ import {
   isCeoOrHob,
 } from "./authorization";
 import { allocateMoney, sumMoney } from "./money";
+import { financialMonthStart, financialYear, historicalDateDay } from "./financialDates";
 
 type AchievementRow = {
   accountManagerId: Id<"users">;
@@ -17,7 +18,7 @@ type AchievementRow = {
 };
 
 function yearFromTimestamp(timestamp: number) {
-  return new Date(timestamp).getFullYear();
+  return financialYear(timestamp);
 }
 
 async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
@@ -77,7 +78,10 @@ export async function buildCollectedRevenueAchievement(
     amount: number,
     collectedAt: number,
   ) => {
-    if (yearFromTimestamp(collectedAt) !== year || amount <= 0) {
+    const collectedYear = invoice.isHistorical
+      ? Number(historicalDateDay(collectedAt).slice(0, 4))
+      : yearFromTimestamp(collectedAt);
+    if (collectedYear !== year || amount <= 0) {
       return;
     }
     const company = companyById.get(invoice.companyId);
@@ -108,14 +112,12 @@ export async function buildCollectedRevenueAchievement(
         })),
       );
       for (const allocation of allocations) {
-        const [allocationYear, allocationMonth] = allocation.month
-          .split("-")
-          .map(Number);
+        const allocationStart = financialMonthStart(allocation.month);
         addRow(
           invoice,
           allocation.amount,
-          collectedAt < Date.UTC(allocationYear, allocationMonth - 1, 1)
-            ? Date.UTC(allocationYear, allocationMonth - 1, 1)
+          collectedAt < allocationStart
+            ? allocationStart
             : collectedAt,
         );
       }

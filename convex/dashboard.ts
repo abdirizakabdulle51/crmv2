@@ -11,6 +11,7 @@ import { buildCollectedRevenueAchievement } from "./targetAchievement";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 import { roundMoney, sumMoney } from "./money";
 import { allocateMoney } from "./money";
+import { financialDay, financialMonth, financialMonthStart, historicalDateAsFinancialTimestamp } from "./financialDates";
 
 type LeadStage = Doc<"leads">["stage"];
 type Task = Doc<"tasks">;
@@ -184,11 +185,11 @@ function endOfYear(year: number) {
 }
 
 function monthKey(timestamp: number) {
-  return new Date(timestamp).toISOString().slice(0, 7);
+  return financialMonth(timestamp);
 }
 
 function dayKey(timestamp: number) {
-  return new Date(timestamp).toISOString().slice(0, 10);
+  return financialDay(timestamp);
 }
 
 function monthLabel(key: string) {
@@ -201,8 +202,7 @@ function monthLabel(key: string) {
 }
 
 function monthStartTimestamp(month: string) {
-  const [year, monthNumber] = month.split("-").map(Number);
-  return Date.UTC(year, monthNumber - 1, 1);
+  return financialMonthStart(month);
 }
 
 function dayLabel(key: string) {
@@ -598,7 +598,7 @@ async function buildFinanceActivity(
       sumMoney([paidByInvoiceId.get(invoice._id) ?? 0, payment.amount]),
     );
     addActivity(
-      payment.paidAt,
+      invoice.isHistorical ? historicalDateAsFinancialTimestamp(payment.paidAt) : payment.paidAt,
       companyCountryIds.get(invoice.companyId),
       "invoicesPaid",
       payment.amount,

@@ -594,6 +594,7 @@ describe("ExpenseDetailPage", () => {
 
     expect(mocks.markExpensePaid).toHaveBeenCalledWith({
       expenseId: "expense-1",
+      paidAt: expect.any(Number),
       paymentReference: "PAY-1",
       paymentTransactionId: "PAY-TX-1",
       fundingAccountId: undefined,

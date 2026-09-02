@@ -341,6 +341,7 @@ function InvoiceDetailContent() {
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [reconcilingLegacyPayment, setReconcilingLegacyPayment] = useState(false);
   const [cleanupAction, setCleanupAction] = useState<CleanupAction | null>(
     null,
   );
@@ -386,6 +387,7 @@ function InvoiceDetailContent() {
   );
   const issueInvoice = useMutation(api.invoices.issueInvoice);
   const recordPayment = useMutation(api.invoices.recordPayment);
+  const reconcileLegacyPayment = useMutation(api.invoices.reconcileLegacyPayment);
   const cancelDraftInvoice = useMutation(api.invoices.cancelDraftInvoice);
   const voidInvoice = useMutation(api.invoices.voidInvoice);
   const setInvoiceTestMode = useMutation(api.invoices.setInvoiceTestMode);
@@ -423,6 +425,8 @@ function InvoiceDetailContent() {
   const canRecordPayment = PAYABLE_STATUSES.has(invoice.status);
   const isCleanupAdmin =
     currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
+  const recordedPaymentTotal = payments.reduce((sum, payment) => sum + payment.amount, 0);
+  const legacyPaymentGap = Math.round((invoice.amountPaid - recordedPaymentTotal) * 100) / 100;
   const isTestHidden = Boolean(invoice.isTest || invoice.hiddenAt);
   const usersById = new Map(users.map((user) => [user._id, user]));
   const showRegionBreakdown = invoice.lineItems.some(hasLineItemRegion);
@@ -476,19 +480,29 @@ function InvoiceDetailContent() {
       toast.error("Enter a positive payment amount");
       return;
     }
+    if (reconcilingLegacyPayment && amount > legacyPaymentGap) {
+      toast.error(`Payment cannot exceed ${formatCurrency(legacyPaymentGap)}`);
+      return;
+    }
+    if (reconcilingLegacyPayment && (!receivingAccountId || !transactionId.trim())) {
+      toast.error("Select a receiving account and enter the transaction ID");
+      return;
+    }
     setIsRecordingPayment(true);
     try {
-      await recordPayment({
+      const common = {
         invoiceId: invoice._id,
         amount,
-        paidAt: parsePaymentDate(paymentDate),
-        method: paymentMethod,
+        paidAt: parsePaymentDate(paymentDate)!,
         reference: paymentReference.trim() || undefined,
         receivingAccountId: receivingAccountId as Id<"receivingAccounts">,
         transactionId: transactionId.trim(),
-      });
-      toast.success("Payment recorded");
+      };
+      if (reconcilingLegacyPayment) await reconcileLegacyPayment(common);
+      else await recordPayment({ ...common, method: paymentMethod });
+      toast.success(reconcilingLegacyPayment ? "Historical payment reconciled" : "Payment recorded");
       setPaymentDialogOpen(false);
+      setReconcilingLegacyPayment(false);
       resetPaymentForm();
     } catch (error) {
       const message =
@@ -707,6 +721,19 @@ function InvoiceDetailContent() {
             >
               <CreditCard className="mr-2 h-4 w-4" />
               Record Payment
+            </Button>
+          ) : null}
+          {isCleanupAdmin && legacyPaymentGap > 0 ? (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReconcilingLegacyPayment(true);
+                setPaymentAmount(String(legacyPaymentGap));
+                setPaymentDialogOpen(true);
+              }}
+              disabled={isRecordingPayment}
+            >
+              Reconcile Historical Payment
             </Button>
           ) : null}
           {isCleanupAdmin && invoice.status === "draft" ? (
@@ -1023,7 +1050,8 @@ function InvoiceDetailContent() {
       </Card>
 
       <RecordPaymentDialog
-        balanceDue={invoice.balanceDue}
+        balanceDue={reconcilingLegacyPayment ? legacyPaymentGap : invoice.balanceDue}
+        reconciliation={reconcilingLegacyPayment}
         amount={paymentAmount}
         date={paymentDate}
         method={paymentMethod}
@@ -1047,7 +1075,10 @@ function InvoiceDetailContent() {
         onOpenChange={(open) => {
           if (isRecordingPayment) return;
           setPaymentDialogOpen(open);
-          if (!open) resetPaymentForm();
+          if (!open) {
+            setReconcilingLegacyPayment(false);
+            resetPaymentForm();
+          }
         }}
         onSubmit={handleRecordPayment}
       />
@@ -1106,6 +1137,7 @@ function InvoiceDetailContent() {
 
 function RecordPaymentDialog({
   balanceDue,
+  reconciliation,
   amount,
   date,
   method,
@@ -1125,6 +1157,7 @@ function RecordPaymentDialog({
   onSubmit,
 }: {
   balanceDue: number;
+  reconciliation?: boolean;
   amount: string;
   date: string;
   method: string;
@@ -1158,11 +1191,11 @@ function RecordPaymentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Record Payment</DialogTitle>
+          <DialogTitle>{reconciliation ? "Reconcile Historical Payment" : "Record Payment"}</DialogTitle>
         </DialogHeader>
         <form className="space-y-4" onSubmit={onSubmit}>
           <div className="rounded-lg border bg-muted/30 p-3 text-sm">
-            <div className="text-muted-foreground">Current balance due</div>
+            <div className="text-muted-foreground">{reconciliation ? "Unrecorded paid amount" : "Current balance due"}</div>
             <div className="mt-1 text-xl font-bold">
               {formatCurrency(balanceDue)}
             </div>

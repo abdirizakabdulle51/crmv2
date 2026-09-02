@@ -2440,6 +2440,11 @@ describe("invoices", () => {
       api.invoices.createDraftFromContract,
       { contractId, sourceMonth: "2026-01" },
     );
+    const retryInvoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-01" },
+    );
+    expect(retryInvoiceId).toBe(invoiceId);
     const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
       invoiceId,
     });
@@ -2463,6 +2468,11 @@ describe("invoices", () => {
       api.invoices.createOverageDraftFromContract,
       { contractId, cycleStartMonth: "2026-01" },
     );
+    const retrySettlementId = await asUser(t, s.amA).mutation(
+      api.invoices.createOverageDraftFromContract,
+      { contractId, cycleStartMonth: "2026-01" },
+    );
+    expect(retrySettlementId).toBe(settlementId);
     const settlement = await asUser(t, s.amA).query(api.invoices.getById, {
       invoiceId: settlementId,
     });

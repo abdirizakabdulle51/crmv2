@@ -864,6 +864,7 @@ export const rejectExpenseRequest = mutation({
 export const markExpensePaid = mutation({
   args: {
     expenseId: v.id("expenseRequests"),
+    paidAt: v.optional(v.number()),
     paymentReference: v.optional(v.string()),
     paymentTransactionId: v.optional(v.string()),
     fundingAccountId: v.optional(v.id("receivingAccounts")),
@@ -932,9 +933,13 @@ export const markExpensePaid = mutation({
           : "Cash";
     const paymentReference = normalizeOptionalText(args.paymentReference);
     const now = Date.now();
+    const paidAt = args.paidAt ?? now;
+    if (paidAt > now) {
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Payment date cannot be in the future" });
+    }
     await ctx.db.patch(args.expenseId, {
       status: "paid",
-      paidAt: now,
+      paidAt,
       paidBy: user._id,
       fundingAccountId: fundingAccount._id,
       fundingAccountName: expense.fundingAccountName ?? fundingAccount.name,
@@ -961,6 +966,32 @@ export const markExpensePaid = mutation({
       message: details
         ? `Expense request marked paid. ${details}.`
         : "Expense request marked paid.",
+      actorId: user._id,
+      now,
+    });
+  },
+});
+
+export const reconcilePaidExpenseDate = mutation({
+  args: { expenseId: v.id("expenseRequests"), paidAt: v.number() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (!isCeoOrHob(user)) {
+      throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can reconcile payment dates" });
+    }
+    const expense = await getExpenseOrThrow(ctx, args.expenseId);
+    if (expense.status !== "paid" || expense.paidAt) {
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Only a paid expense with a missing payment date can be reconciled" });
+    }
+    const now = Date.now();
+    if (args.paidAt > now) {
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Payment date cannot be in the future" });
+    }
+    await ctx.db.patch(args.expenseId, { paidAt: args.paidAt, paidBy: user._id, updatedAt: now });
+    await insertExpenseEvent(ctx, {
+      expenseId: args.expenseId,
+      type: "updated",
+      message: "Historical payment date reconciled by finance leadership.",
       actorId: user._id,
       now,
     });
@@ -1083,7 +1114,7 @@ export const listExpenseRequests = query({
         visible.push(expense);
       }
     }
-    return visible.sort((a, b) => b.createdAt - a.createdAt);
+    return visible.sort((a, b) => b.expenseDate - a.expenseDate || b.createdAt - a.createdAt);
   },
 });
 
