@@ -577,6 +577,7 @@ function InvoiceDetailContent() {
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
             {statusBadge(invoice.status)}
+            {invoice.isHistorical ? <Badge>Historical · Odoo</Badge> : null}
             {isTestHidden ? <Badge variant="outline">Test/Hidden</Badge> : null}
           </div>
           <p className="mt-1 text-muted-foreground">
@@ -789,6 +790,15 @@ function InvoiceDetailContent() {
               </Button>
             ) : null}
             <Detail label="Source Month" value={invoice.sourceMonth} />
+            {invoice.isHistorical ? (
+              <>
+                <Detail label="Original Reference" value={invoice.originalReference} />
+                <Detail
+                  label="Coverage"
+                  value={`${invoice.historicalCoverageStartMonth ?? "-"} · ${invoice.historicalCoverageMonths ?? 0} month(s)`}
+                />
+              </>
+            ) : null}
           </CardContent>
         </Card>
       </div>

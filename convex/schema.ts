@@ -901,6 +901,13 @@ export default defineSchema({
     contractPeriodStartMonth: v.optional(v.string()),
     contractPeriodEndMonth: v.optional(v.string()),
     sourceQuoteId: v.optional(v.id("quotes")),
+    isHistorical: v.optional(v.boolean()),
+    sourceSystem: v.optional(v.string()),
+    originalReference: v.optional(v.string()),
+    normalizedOriginalReference: v.optional(v.string()),
+    historicalCoverageStartMonth: v.optional(v.string()),
+    historicalCoverageMonths: v.optional(v.number()),
+    historicalImportedAt: v.optional(v.number()),
     sourceMonth: v.optional(v.string()),
     sourceReference: v.optional(v.string()),
     cycleStartMonth: v.optional(v.string()),
@@ -1015,6 +1022,7 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_created_by", ["createdBy"])
     .index("by_source_quote", ["sourceQuoteId"])
+    .index("by_historical_identity", ["companyId", "sourceSystem", "normalizedOriginalReference"])
     .index("by_contract", ["contractId"])
     .index("by_invoice_number", ["invoiceNumber"]),
 

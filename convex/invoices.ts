@@ -2986,6 +2986,34 @@ export const listPayments = query({
   },
 });
 
+export function calculatePaymentApplication(
+  invoice: Doc<"invoices">,
+  requestedAmount: number,
+) {
+  const amount = roundMoney(requestedAmount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Payment amount must be positive",
+    });
+  }
+  const currentBalanceDue = roundMoney(invoice.balanceDue);
+  const appliedAmount = roundMoney(Math.min(amount, currentBalanceDue));
+  const extraServiceRevenueAmount = roundMoney(amount - appliedAmount);
+  const nextAmountPaid = sumMoney([invoice.amountPaid, appliedAmount]);
+  const nextBalanceDue = calculateBalance(invoice.grandTotal, nextAmountPaid);
+  const nextStatus: InvoiceStatus =
+    nextBalanceDue === 0 ? "paid" : "partially_paid";
+  return {
+    amount,
+    appliedAmount,
+    extraServiceRevenueAmount,
+    nextAmountPaid,
+    nextBalanceDue,
+    nextStatus,
+  };
+}
+
 export const recordPayment = mutation({
   args: {
     invoiceId: v.id("invoices"),
@@ -3002,22 +3030,11 @@ export const recordPayment = mutation({
     await assertCanAccessInvoice(ctx, user, invoice);
     assertPayable(invoice);
 
-    const amount = roundMoney(args.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Payment amount must be positive",
-      });
-    }
+    const payment = calculatePaymentApplication(invoice, args.amount);
+    const { amount, appliedAmount, extraServiceRevenueAmount, nextAmountPaid,
+      nextBalanceDue, nextStatus } = payment;
     const now = Date.now();
     const paidAt = args.paidAt ?? now;
-    const currentBalanceDue = roundMoney(invoice.balanceDue);
-    const appliedAmount = roundMoney(Math.min(amount, currentBalanceDue));
-    const extraServiceRevenueAmount = roundMoney(amount - appliedAmount);
-    const nextAmountPaid = sumMoney([invoice.amountPaid, appliedAmount]);
-    const nextBalanceDue = calculateBalance(invoice.grandTotal, nextAmountPaid);
-    const nextStatus: InvoiceStatus =
-      nextBalanceDue === 0 ? "paid" : "partially_paid";
     const method = trimOptional(args.method) ?? PAYMENT_METHOD_BANK_TRANSFER;
     if (!SUPPORTED_PAYMENT_METHODS.has(method)) {
       throw new ConvexError({
