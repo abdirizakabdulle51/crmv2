@@ -3160,6 +3160,74 @@ export const recordPayment = mutation({
   },
 });
 
+export const reconcileLegacyPayment = mutation({
+  args: {
+    invoiceId: v.id("invoices"),
+    amount: v.number(),
+    paidAt: v.number(),
+    receivingAccountId: v.id("receivingAccounts"),
+    transactionId: v.string(),
+    reference: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (!isCeoOrHob(user))
+      throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can reconcile historical payments" });
+    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
+    await assertCanAccessInvoice(ctx, user, invoice);
+    const payments = await ctx.db
+      .query("invoicePayments")
+      .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+      .collect();
+    const missing = roundMoney(invoice.amountPaid - sumMoney(payments.map((payment) => payment.amount)));
+    const amount = roundMoney(args.amount);
+    if (amount <= 0 || amount > missing)
+      throw new ConvexError({ code: "BAD_REQUEST", message: `Reconciliation amount cannot exceed ${formatMoney(missing)}` });
+    if (args.paidAt > Date.now())
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Payment date cannot be in the future" });
+    const account = await ctx.db.get(args.receivingAccountId);
+    const company = await ctx.db.get(invoice.companyId);
+    if (!account?.isActive || account.usage === "outgoing" || !company || account.countryId !== company.countryId)
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Select an active collection account in the customer's country" });
+    if (account.currency !== (invoice.sellerCurrency ?? "USD"))
+      throw new ConvexError({ code: "BAD_REQUEST", message: `Payment account currency must be ${invoice.sellerCurrency ?? "USD"}` });
+    const transactionId = trimOptional(args.transactionId);
+    if (!transactionId)
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Transaction ID is required" });
+    const duplicate = await ctx.db
+      .query("invoicePayments")
+      .withIndex("by_account_transaction", (q) => q.eq("receivingAccountId", account._id).eq("transactionId", transactionId))
+      .unique();
+    if (duplicate)
+      throw new ConvexError({ code: "CONFLICT", message: "This transaction ID is already recorded for the account" });
+    const now = Date.now();
+    await ctx.db.insert("invoicePayments", {
+      invoiceId: invoice._id,
+      receivingAccountId: account._id,
+      amount,
+      amountCents: toCents(amount),
+      paidAt: args.paidAt,
+      method: account.type === "bank" ? "Bank Transfer" : "Mobile Money",
+      reference: trimOptional(args.reference),
+      transactionId,
+      receivingBankName: account.providerName,
+      receivingAccountNumber: account.accountNumber,
+      receivingAccountName: account.accountHolderName,
+      receivingBankLocation: account.location,
+      receivingCurrencyNote: account.currency,
+      recordedBy: user._id,
+      createdAt: now,
+    });
+    await insertEvent(ctx, {
+      invoiceId: invoice._id,
+      type: "payment_recorded",
+      actorId: user._id,
+      message: `Historical payment of ${formatMoney(amount)} reconciled. Account: ${account.name}. Transaction ID: ${transactionId}.`,
+      now,
+    });
+  },
+});
+
 export const listEvents = query({
   args: { invoiceId: v.id("invoices") },
   handler: async (ctx, args) => {

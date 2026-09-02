@@ -14,6 +14,7 @@ import {
   sumMoney,
   toCents,
 } from "./money";
+import { financialMonth, financialMonthStart, financialYear } from "./financialDates";
 
 type ExpenseStatus = Doc<"expenseRequests">["status"];
 type FinanceReportScope = {
@@ -64,12 +65,11 @@ async function getCurrentUserOrThrow(ctx: QueryCtx): Promise<Doc<"users">> {
 }
 
 function monthFromTimestamp(timestamp: number) {
-  return new Date(timestamp).toISOString().slice(0, 7);
+  return financialMonth(timestamp);
 }
 
 function monthStartTimestamp(month: string) {
-  const [year, monthNumber] = month.split("-").map(Number);
-  return Date.UTC(year, monthNumber - 1, 1);
+  return financialMonthStart(month);
 }
 
 function currentMonth() {
@@ -77,7 +77,7 @@ function currentMonth() {
 }
 
 function currentYearStartMonth() {
-  return `${new Date().getUTCFullYear()}-01`;
+  return `${financialYear(Date.now())}-01`;
 }
 
 function isValidMonth(value: string) {
@@ -466,8 +466,12 @@ export const summary = query({
       if (!isVisibleExpenseForReport(expense, user, scope)) continue;
       assertSupportedCurrency(expense.currency);
 
-      const statusMonth = monthFromTimestamp(expense.expenseDate);
-      if (monthInRange(statusMonth, startMonth, endMonth)) {
+      const statusTimestamp =
+        expense.status === "paid" ? expense.paidAt : expense.expenseDate;
+      if (
+        statusTimestamp &&
+        monthInRange(monthFromTimestamp(statusTimestamp), startMonth, endMonth)
+      ) {
         const statusRow = statusSummary.get(expense.status);
         if (statusRow) {
           statusRow.count += 1;

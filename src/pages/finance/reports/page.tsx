@@ -751,6 +751,33 @@ export default function FinanceReportsPage({
         </Card>
       ) : null}
 
+      {view === "expenses" && hasData ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Monthly Paid Expenses</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Cash paid and expense requests grouped by payment date.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                  <XAxis dataKey="label" className="text-xs" />
+                  <YAxis yAxisId="amount" tickFormatter={formatCompact} className="text-xs" />
+                  <YAxis yAxisId="count" orientation="right" allowDecimals={false} className="text-xs" />
+                  <Tooltip formatter={(value, name) => name === "Paid amount" ? formatCurrency(Number(value)) : Number(value).toLocaleString()} />
+                  <Legend />
+                  <Bar yAxisId="amount" dataKey="expenses" name="Paid amount" fill="oklch(0.65 0.18 35)" radius={[4, 4, 0, 0]} />
+                  <Bar yAxisId="count" dataKey="paidExpenseCount" name="Paid requests" fill="oklch(0.6 0.14 250)" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {view === "country" ? (
         <Card>
           <CardHeader>

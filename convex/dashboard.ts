@@ -11,6 +11,7 @@ import { buildCollectedRevenueAchievement } from "./targetAchievement";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 import { roundMoney, sumMoney } from "./money";
 import { allocateMoney } from "./money";
+import { financialDay, financialMonth, financialMonthStart } from "./financialDates";
 
 type LeadStage = Doc<"leads">["stage"];
 type Task = Doc<"tasks">;
@@ -184,11 +185,11 @@ function endOfYear(year: number) {
 }
 
 function monthKey(timestamp: number) {
-  return new Date(timestamp).toISOString().slice(0, 7);
+  return financialMonth(timestamp);
 }
 
 function dayKey(timestamp: number) {
-  return new Date(timestamp).toISOString().slice(0, 10);
+  return financialDay(timestamp);
 }
 
 function monthLabel(key: string) {
@@ -201,8 +202,7 @@ function monthLabel(key: string) {
 }
 
 function monthStartTimestamp(month: string) {
-  const [year, monthNumber] = month.split("-").map(Number);
-  return Date.UTC(year, monthNumber - 1, 1);
+  return financialMonthStart(month);
 }
 
 function dayLabel(key: string) {
@@ -514,11 +514,6 @@ async function buildFinanceActivity(
   }
   const paidByInvoiceId = new Map<Id<"invoices">, number>();
   for (const invoice of invoices) {
-    const invoiceTimestamp =
-      invoice.sentAt ??
-      invoice.issueDate ??
-      invoice.lockedAt ??
-      invoice.createdAt;
     const countryId = companyCountryIds.get(invoice.companyId);
     if (invoice.revenueAllocations?.length) {
       const receivableAllocations =
@@ -579,12 +574,9 @@ async function buildFinanceActivity(
         }
       }
     } else {
-      addActivity(
-        invoiceTimestamp,
-        countryId,
-        "invoicesSent",
-        invoice.grandTotal,
-      );
+      if (invoice.sentAt) {
+        addActivity(invoice.sentAt, countryId, "invoicesSent", invoice.grandTotal);
+      }
     }
   }
 
@@ -613,12 +605,7 @@ async function buildFinanceActivity(
     if (unrecordedPaidAmount <= 0) {
       continue;
     }
-    addActivity(
-      invoice.updatedAt,
-      companyCountryIds.get(invoice.companyId),
-      "invoicesPaid",
-      unrecordedPaidAmount,
-    );
+    // updatedAt is an audit timestamp, not evidence of collection timing.
   }
 
   const expenses = (await ctx.db.query("expenseRequests").collect()).filter(
@@ -630,12 +617,9 @@ async function buildFinanceActivity(
       (expense.companyId
         ? companyCountryIds.get(expense.companyId)
         : undefined);
-    addActivity(
-      expense.paidAt ?? expense.expenseDate,
-      countryId,
-      "expenses",
-      expense.amount,
-    );
+    if (expense.paidAt) {
+      addActivity(expense.paidAt, countryId, "expenses", expense.amount);
+    }
   }
 
   const countryOptions = countries

@@ -278,6 +278,7 @@ export default function ExpenseDetailPage() {
   const rejectExpense = useMutation(api.expenses.rejectExpenseRequest);
   const cancelExpense = useMutation(api.expenses.cancelExpenseRequest);
   const markPaid = useMutation(api.expenses.markExpensePaid);
+  const reconcilePaidDate = useMutation(api.expenses.reconcilePaidExpenseDate);
   const archiveExpense = useMutation(api.expenses.archiveExpenseRequest);
   const generateReceiptUploadUrl = useMutation(
     api.expenses.generateReceiptUploadUrl,
@@ -289,10 +290,12 @@ export default function ExpenseDetailPage() {
   const [reasonAction, setReasonAction] = useState<ReasonAction>(null);
   const [reason, setReason] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [reconciliationOpen, setReconciliationOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [fundingAccountId, setFundingAccountId] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentTransactionId, setPaymentTransactionId] = useState("");
+  const [paymentDate, setPaymentDate] = useState(() => timestampToDateInput(Date.now()));
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [pendingReceiptAction, setPendingReceiptAction] = useState<
     string | null
@@ -467,6 +470,7 @@ export default function ExpenseDetailPage() {
     try {
       await markPaid({
         expenseId: expense._id,
+        paidAt: dateInputToTimestamp(paymentDate),
         paymentReference: paymentReference.trim() || undefined,
         paymentTransactionId: paymentTransactionId.trim(),
         fundingAccountId: expense.fundingAccountId
@@ -481,6 +485,22 @@ export default function ExpenseDetailPage() {
       toast.error(
         error instanceof Error ? error.message : "Failed to mark expense paid",
       );
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const handleReconcilePaidDate = async (event: FormEvent) => {
+    event.preventDefault();
+    const paidAt = dateInputToTimestamp(paymentDate);
+    if (!paidAt) return;
+    setPendingAction("reconcile-paid-date");
+    try {
+      await reconcilePaidDate({ expenseId: expense._id, paidAt });
+      toast.success("Historical payment date reconciled");
+      setReconciliationOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to reconcile payment date");
     } finally {
       setPendingAction(null);
     }
@@ -648,6 +668,11 @@ export default function ExpenseDetailPage() {
             <Button variant="outline" onClick={() => setPaymentOpen(true)}>
               <CreditCard className="mr-2 h-4 w-4" />
               Mark Paid
+            </Button>
+          ) : null}
+          {isAdmin && expense.status === "paid" && !expense.paidAt ? (
+            <Button variant="outline" onClick={() => setReconciliationOpen(true)}>
+              Reconcile Payment Date
             </Button>
           ) : null}
           {canCancel ? (
@@ -1112,6 +1137,17 @@ export default function ExpenseDetailPage() {
               </div>
             ) : null}
             <div className="space-y-2">
+              <Label htmlFor="expense-payment-date">Payment date</Label>
+              <Input
+                id="expense-payment-date"
+                type="date"
+                value={paymentDate}
+                max={timestampToDateInput(Date.now())}
+                onChange={(event) => setPaymentDate(event.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="payment-transaction-id">Transaction ID</Label>
               <Input
                 id="payment-transaction-id"
@@ -1151,6 +1187,22 @@ export default function ExpenseDetailPage() {
               >
                 {pendingAction === "paid" ? "Saving..." : "Mark Paid"}
               </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={reconciliationOpen} onOpenChange={setReconciliationOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Reconcile Historical Payment Date</DialogTitle></DialogHeader>
+          <form className="space-y-4" onSubmit={handleReconcilePaidDate}>
+            <p className="text-sm text-muted-foreground">Enter the date cash actually left the selected funding account. The reconciliation is recorded in the audit history.</p>
+            <div className="space-y-2">
+              <Label htmlFor="reconciled-payment-date">Actual payment date</Label>
+              <Input id="reconciled-payment-date" type="date" value={paymentDate} max={timestampToDateInput(Date.now())} onChange={(event) => setPaymentDate(event.target.value)} required />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setReconciliationOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={pendingAction === "reconcile-paid-date"}>Save Reconciliation</Button>
             </DialogFooter>
           </form>
         </DialogContent>

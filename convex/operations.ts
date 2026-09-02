@@ -14,13 +14,15 @@ export const healthOverview = query({
     if (!actor || !isCeoOrHob(actor))
       throw new ConvexError({ code: "FORBIDDEN", message: "Data Health is restricted to global leadership" });
 
-    const [companies, leads, quotes, contracts, invoices, consumption, tenants, profiles, runs] =
+    const [companies, leads, quotes, contracts, invoices, payments, expenses, consumption, tenants, profiles, runs] =
       await Promise.all([
         ctx.db.query("companies").collect(),
         ctx.db.query("leads").collect(),
         ctx.db.query("quotes").collect(),
         ctx.db.query("customerContracts").collect(),
         ctx.db.query("invoices").collect(),
+        ctx.db.query("invoicePayments").collect(),
+        ctx.db.query("expenseRequests").collect(),
         ctx.db.query("consumption").collect(),
         ctx.db.query("manageOneTenants").collect(),
         ctx.db.query("invoiceProfiles").collect(),
@@ -107,6 +109,32 @@ export const healthOverview = query({
     for (const names of duplicateGroups.values())
       if (names.length > 1)
         issues.push({ severity: "medium", type: "duplicate_company", message: `Possible duplicate companies: ${names.join(", ")}`, href: "/companies" });
+
+    const recordedByInvoice = new Map<string, number>();
+    for (const payment of payments)
+      recordedByInvoice.set(
+        payment.invoiceId,
+        (recordedByInvoice.get(payment.invoiceId) ?? 0) + payment.amount,
+      );
+    for (const invoice of invoices) {
+      const missing = Math.round((invoice.amountPaid - (recordedByInvoice.get(invoice._id) ?? 0)) * 100) / 100;
+      if (missing > 0)
+        issues.push({
+          severity: "high",
+          type: "unreconciled_collection",
+          message: `${invoice.invoiceNumber ?? "Invoice"} has ${missing.toFixed(2)} paid without a payment transaction`,
+          href: `/invoices/${invoice._id}`,
+        });
+    }
+    for (const expense of expenses) {
+      if (expense.status === "paid" && !expense.paidAt)
+        issues.push({
+          severity: "high",
+          type: "unreconciled_expense",
+          message: `${expense.title} is paid but has no payment date`,
+          href: `/finance/expenses/${expense._id}`,
+        });
+    }
 
     return {
       generatedAt: Date.now(),

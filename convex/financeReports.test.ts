@@ -475,6 +475,33 @@ describe("finance reports", () => {
     ).toMatchObject({ count: 1, total: 40 });
   });
 
+  it("uses payment date consistently for paid expense cards and status", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 90,
+      expenseDate: Date.UTC(2026, 5, 10),
+      paidAt: Date.UTC(2026, 7, 10),
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 30,
+      expenseDate: Date.UTC(2026, 7, 11),
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+
+    expect(report.totals.expenses).toBe(90);
+    expect(report.monthly[0]?.paidExpenseCount).toBe(1);
+    expect(
+      report.expenseStatusSummary.find((row) => row.status === "paid"),
+    ).toMatchObject({ count: 1, total: 90 });
+  });
+
   it("scopes reports for CEO HOB and Country GM and blocks Account Managers", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

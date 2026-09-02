@@ -207,7 +207,9 @@ export default function ExpensesPage() {
       }
       return true;
     })
-    .sort((a, b) => b.createdAt - a.createdAt);
+    .sort(
+      (a, b) => b.expenseDate - a.expenseDate || b.createdAt - a.createdAt,
+    );
 
   const openExpense = (expenseId: Id<"expenseRequests">) => {
     navigate(`/finance/expenses/${expenseId}`);
