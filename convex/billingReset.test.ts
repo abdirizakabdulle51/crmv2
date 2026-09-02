@@ -18,6 +18,14 @@ type ResetResult = {
   amendments: number;
   contractEvents: number;
 };
+type QuoteResetResult = {
+  quotes: number;
+  combinedQuotes: number;
+  taskQuoteRefsToClear: number;
+  quoteNotificationsToDelete: number;
+  invoiceQuoteRefs: number;
+  leadsPreserved: number;
+};
 
 const reset = (internal as unknown as {
   billingReset: {
@@ -48,6 +56,34 @@ async function seed(t: ReturnType<typeof convexTest>) {
     const catalogItemId = await ctx.db.insert("serviceCatalog", {
       itemName: "Compute", serviceCategory: "Compute", billingUnit: "instance/month",
       monthlyPrice: 10,
+    });
+    const leadId = await ctx.db.insert("leads", {
+      title: "Reset opportunity", companyId, countryId, accountManagerId: userId,
+      stage: "won", potentialValue: 20, expectedCloseDate: "2026-08-31",
+      lossReason: "Not lost",
+    });
+    const quoteId = await ctx.db.insert("quotes", {
+      companyId, leadId, createdBy: userId, date: "2026-08-01", status: "accepted",
+      lineItems: [{ catalogItemId, itemName: "Compute", serviceCategory: "Compute", billingUnit: "instance/month", quantity: 2, monthlyUnitPrice: 10, monthlyTotal: 20, yearlyTotal: 240 }],
+      monthlyGrandTotal: 20, yearlyGrandTotal: 240,
+    });
+    const taskId = await ctx.db.insert("tasks", {
+      title: "Quote task", status: "todo", priority: "medium", createdBy: userId,
+      companyId, leadId, quoteId, createdAt: 1, updatedAt: 1,
+    });
+    await ctx.db.insert("notifications", {
+      recipientId: userId, type: "quote_discount_approval_requested",
+      title: "Quote notification", entityType: "quote", entityId: quoteId,
+      href: `/quotes/${quoteId}`, createdAt: 1,
+    });
+    await ctx.db.insert("notifications", {
+      recipientId: userId, type: "task_assigned", title: "Task notification",
+      entityType: "task", entityId: taskId, href: `/tasks/${taskId}`, createdAt: 1,
+    });
+    await ctx.db.insert("combinedQuotes", {
+      parentCompanyName: "Reset Test Company", createdBy: userId, date: "2026-08-01",
+      status: "draft", lineItems: [], subtotal: 0, taxTotal: 0, discountTotal: 0,
+      grandTotal: 0, createdAt: 1, updatedAt: 1,
     });
     const invoiceId = await ctx.db.insert("invoices", {
       companyId, createdBy: userId, companyName: "Reset Test Company", status: "draft",
@@ -80,7 +116,7 @@ async function seed(t: ReturnType<typeof convexTest>) {
     await ctx.db.insert("customerContractLineItems", { contractId, catalogItemId, itemName: "Compute", serviceCategory: "Compute", includedQuantity: 1, unit: "instance", contractUnitPrice: 10, billingUnit: "instance/month", createdBy: userId, createdAt: 1, updatedAt: 1 });
     await ctx.db.insert("customerContractAmendments", { contractId, amendmentNumber: "A-1", type: "correction", effectiveDate: 1, summary: "Reset test", status: "draft", createdBy: userId, createdAt: 1, updatedAt: 1 });
     await ctx.db.insert("customerContractEvents", { contractId, actorId: userId, type: "created", message: "Reset test", createdAt: 1 });
-    return { companyId, tenantId, catalogItemId, invoiceId, contractId, creditId };
+    return { companyId, tenantId, catalogItemId, invoiceId, contractId, creditId, leadId, quoteId, taskId };
   });
 }
 
@@ -102,6 +138,11 @@ async function counts(t: ReturnType<typeof convexTest>) {
     tenants: await ctx.db.query("manageOneTenants").collect(),
     hourlySnapshots: (await ctx.db.query("manageOneHourlySnapshots").collect()).length,
     cloudCapacitySnapshots: (await ctx.db.query("cloudCapacitySnapshots").collect()).length,
+    quotes: (await ctx.db.query("quotes").collect()).length,
+    combinedQuotes: (await ctx.db.query("combinedQuotes").collect()).length,
+    tasks: await ctx.db.query("tasks").collect(),
+    leads: await ctx.db.query("leads").collect(),
+    notifications: await ctx.db.query("notifications").collect(),
   }));
 }
 
@@ -139,5 +180,48 @@ describe("billing reset maintenance mutation", () => {
     expect(after.tenants).toEqual(before.tenants);
     expect(after.hourlySnapshots).toBe(before.hourlySnapshots);
     expect(after.cloudCapacitySnapshots).toBe(before.cloudCapacitySnapshots);
+  });
+
+  it("resets quotes without deleting preserved workflow records", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+    const before = await counts(t);
+    const dryRun = await t.mutation(
+      (internal as unknown as { billingReset: { resetQuotesAndCombinedQuotes: FunctionReference<"mutation", "internal", ResetArgs, QuoteResetResult> } }).billingReset.resetQuotesAndCombinedQuotes,
+      { dryRun: true },
+    );
+    expect(dryRun).toMatchObject({ quotes: 1, combinedQuotes: 1, taskQuoteRefsToClear: 1, quoteNotificationsToDelete: 1, invoiceQuoteRefs: 0, leadsPreserved: 1 });
+    expect(await counts(t)).toEqual(before);
+    const resetQuotes = (internal as unknown as { billingReset: { resetQuotesAndCombinedQuotes: FunctionReference<"mutation", "internal", ResetArgs, QuoteResetResult> } }).billingReset.resetQuotesAndCombinedQuotes;
+    await expect(t.mutation(resetQuotes, { dryRun: false, confirm: "WRONG" })).rejects.toThrow("Exact confirmation required");
+    await t.mutation(resetQuotes, { dryRun: false, confirm: "RESET_QUOTES_AND_COMBINED_QUOTES" });
+    const after = await counts(t);
+    expect(after.quotes).toBe(0);
+    expect(after.combinedQuotes).toBe(0);
+    expect(after.tasks).toHaveLength(before.tasks.length);
+    expect(after.tasks[0].quoteId).toBeUndefined();
+    expect(after.tasks[0].title).toBe(before.tasks[0].title);
+    expect(after.leads).toEqual(before.leads);
+    expect(after.notifications).toHaveLength(1);
+    expect(after.notifications[0].entityType).toBe("task");
+    expect(after.companies).toBe(before.companies);
+    expect(after.catalog).toEqual(before.catalog);
+    expect(after.tenants).toEqual(before.tenants);
+    expect(after.invoices).toBe(1);
+    expect(after.contracts).toBe(1);
+    expect(seeded.quoteId).toBeDefined();
+  });
+
+  it("fails closed when an invoice references a quote", async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    await t.run(async (ctx) => {
+      const quote = (await ctx.db.query("quotes").collect())[0];
+      const invoice = (await ctx.db.query("invoices").collect())[0];
+      await ctx.db.patch(invoice._id, { sourceQuoteId: quote._id });
+    });
+    const resetQuotes = (internal as unknown as { billingReset: { resetQuotesAndCombinedQuotes: FunctionReference<"mutation", "internal", ResetArgs, QuoteResetResult> } }).billingReset.resetQuotesAndCombinedQuotes;
+    await expect(t.mutation(resetQuotes, { dryRun: false, confirm: "RESET_QUOTES_AND_COMBINED_QUOTES" })).rejects.toThrow("invoice(s) reference quotes");
+    expect(await counts(t)).toMatchObject({ quotes: 1, combinedQuotes: 1, invoices: 1 });
   });
 });

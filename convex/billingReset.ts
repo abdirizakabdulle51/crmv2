@@ -1,4 +1,5 @@
 import { internalMutation } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 
 const CONFIRMATION = "RESET_CONTRACTS_AND_INVOICES";
@@ -14,6 +15,17 @@ type ResetCounts = {
   lineItems: number;
   amendments: number;
   contractEvents: number;
+};
+
+const QUOTE_RESET_CONFIRMATION = "RESET_QUOTES_AND_COMBINED_QUOTES";
+
+type QuoteResetCounts = {
+  quotes: number;
+  combinedQuotes: number;
+  taskQuoteRefsToClear: number;
+  quoteNotificationsToDelete: number;
+  invoiceQuoteRefs: number;
+  leadsPreserved: number;
 };
 
 export const resetContractsAndInvoices = internalMutation({
@@ -104,6 +116,73 @@ export const resetContractsAndInvoices = internalMutation({
         for (const row of amendments) await ctx.db.delete(row._id);
         for (const row of events) await ctx.db.delete(row._id);
         await ctx.db.delete(contract._id);
+      }
+    }
+
+    return counts;
+  },
+});
+
+export const resetQuotesAndCombinedQuotes = internalMutation({
+  args: {
+    dryRun: v.boolean(),
+    confirm: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<QuoteResetCounts> => {
+    if (!args.dryRun && args.confirm !== QUOTE_RESET_CONFIRMATION) {
+      throw new Error(
+        `Exact confirmation required: ${QUOTE_RESET_CONFIRMATION}`,
+      );
+    }
+
+    const quotes = await ctx.db.query("quotes").collect();
+    const quoteIds = new Set(quotes.map((quote) => quote._id));
+    const tasks = await ctx.db.query("tasks").collect();
+    const taskQuoteRefs = tasks.filter(
+      (task) => task.quoteId !== undefined && quoteIds.has(task.quoteId),
+    );
+    const invoices = await ctx.db.query("invoices").collect();
+    const invoiceQuoteRefs = invoices.filter(
+      (invoice) => invoice.sourceQuoteId !== undefined,
+    );
+    const quoteNotifications: Array<{ _id: Id<"notifications"> }> = [];
+    for (const quote of quotes) {
+      const notifications = await ctx.db
+        .query("notifications")
+        .withIndex("by_entity", (q) =>
+          q.eq("entityType", "quote").eq("entityId", quote._id),
+        )
+        .collect();
+      quoteNotifications.push(...notifications);
+    }
+    const leads = await ctx.db.query("leads").collect();
+    const combinedQuotes = await ctx.db.query("combinedQuotes").collect();
+    const counts: QuoteResetCounts = {
+      quotes: quotes.length,
+      combinedQuotes: combinedQuotes.length,
+      taskQuoteRefsToClear: taskQuoteRefs.length,
+      quoteNotificationsToDelete: quoteNotifications.length,
+      invoiceQuoteRefs: invoiceQuoteRefs.length,
+      leadsPreserved: leads.length,
+    };
+
+    if (!args.dryRun) {
+      if (counts.invoiceQuoteRefs > 0) {
+        throw new Error(
+          `Refusing quote reset: ${counts.invoiceQuoteRefs} invoice(s) reference quotes being deleted`,
+        );
+      }
+      for (const task of taskQuoteRefs) {
+        await ctx.db.patch(task._id, { quoteId: undefined });
+      }
+      for (const notification of quoteNotifications) {
+        await ctx.db.delete(notification._id);
+      }
+      for (const quote of quotes) {
+        await ctx.db.delete(quote._id);
+      }
+      for (const quote of combinedQuotes) {
+        await ctx.db.delete(quote._id);
       }
     }
 
