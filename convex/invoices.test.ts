@@ -2220,6 +2220,11 @@ describe("invoices", () => {
       api.invoices.createDraftFromContract,
       { contractId, sourceMonth: "2026-07" },
     );
+    const retryInvoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-07" },
+    );
+    expect(retryInvoiceId).toBe(invoiceId);
     const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
       invoiceId,
     });

@@ -813,7 +813,7 @@ function CustomerContractDetailContent() {
         contractId: parsedContractId,
         sourceMonth: activeComparisonMonth,
       });
-      toast.success("Draft invoice created");
+      toast.success("Invoice ready");
       navigate(`/invoices/${invoiceId}`);
     } catch (error) {
       toast.error(
@@ -834,7 +834,7 @@ function CustomerContractDetailContent() {
         contractId: parsedContractId,
         cycleStartMonth: activeComparisonMonth,
       });
-      toast.success("Overage settlement draft created");
+      toast.success("Overage settlement ready");
       navigate(`/invoices/${invoiceId}`);
     } catch (error) {
       toast.error(

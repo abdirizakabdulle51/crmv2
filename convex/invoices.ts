@@ -994,6 +994,9 @@ async function createContractDraftInvoice(
     });
   }
 
+  const company = await getCompanyOrThrow(ctx, contract.companyId);
+  assertCanManageCompany(user, company);
+
   const duplicate = await findContractInvoiceForMonth(
     ctx,
     contract,
@@ -1006,9 +1009,6 @@ async function createContractDraftInvoice(
       message: `An invoice already exists for contract ${contract.contractNumber} and month ${sourceMonth}`,
     });
   }
-
-  const company = await getCompanyOrThrow(ctx, contract.companyId);
-  assertCanManageCompany(user, company);
 
   const lines = await ctx.db
     .query("customerContractLineItems")
@@ -1763,6 +1763,15 @@ export const createDraftFromContract = mutation({
       });
     }
 
+    const company = await getCompanyOrThrow(ctx, contract.companyId);
+    assertCanManageCompany(user, company);
+    const existing = await findContractInvoiceForMonth(
+      ctx,
+      contract,
+      args.sourceMonth,
+    );
+    if (existing) return existing._id;
+
     const result = await createContractDraftInvoice(ctx, {
       user,
       contract,
@@ -1990,6 +1999,15 @@ export const createOverageDraftFromContract = mutation({
         message: "Customer contract not found",
       });
     }
+    const company = await getCompanyOrThrow(ctx, contract.companyId);
+    assertCanManageCompany(user, company);
+    const existing = await findContractInvoiceForMonth(
+      ctx,
+      contract,
+      args.cycleStartMonth,
+      "overage_settlement",
+    );
+    if (existing) return existing._id;
     const result = await createContractDraftInvoice(ctx, {
       user,
       contract,
