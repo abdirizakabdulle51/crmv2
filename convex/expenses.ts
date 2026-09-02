@@ -973,14 +973,19 @@ export const markExpensePaid = mutation({
 });
 
 export const reconcilePaidExpenseDate = mutation({
-  args: { expenseId: v.id("expenseRequests"), paidAt: v.number() },
+  args: {
+    expenseId: v.id("expenseRequests"),
+    paidAt: v.number(),
+    reason: v.string(),
+  },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     if (!isCeoOrHob(user))
       throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can reconcile payment dates" });
     const expense = await getExpenseOrThrow(ctx, args.expenseId);
-    if (expense.status !== "paid" || expense.paidAt)
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Only a paid expense with a missing payment date can be reconciled" });
+    if (expense.status !== "paid")
+      throw new ConvexError({ code: "BAD_REQUEST", message: "Only paid expenses can have their payment date reconciled" });
+    const reason = normalizeRequiredText(args.reason, "Correction reason");
     const now = Date.now();
     if (args.paidAt > now)
       throw new ConvexError({ code: "BAD_REQUEST", message: "Payment date cannot be in the future" });
@@ -988,7 +993,7 @@ export const reconcilePaidExpenseDate = mutation({
     await insertExpenseEvent(ctx, {
       expenseId: args.expenseId,
       type: "updated",
-      message: "Historical payment date reconciled by finance leadership.",
+      message: `Payment date corrected from ${expense.paidAt ? new Date(expense.paidAt).toISOString().slice(0, 10) : "missing"} to ${new Date(args.paidAt).toISOString().slice(0, 10)}. Reason: ${reason}.`,
       actorId: user._id,
       now,
     });

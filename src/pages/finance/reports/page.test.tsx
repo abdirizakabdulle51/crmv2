@@ -146,16 +146,22 @@ function report(overrides = {}) {
       {
         month: "2026-08",
         income: 1000,
+        recognizedRevenue: 1000,
         expenses: 250,
+        incurredExpenses: 250,
         net: 750,
+        operatingNet: 750,
         paymentCount: 2,
         paidExpenseCount: 1,
       },
     ],
     totals: {
       income: 1000,
+      recognizedRevenue: 1000,
       expenses: 250,
+      incurredExpenses: 250,
       net: 750,
+      operatingNet: 750,
       paymentCount: 2,
     },
     topExpenseCategories: [
@@ -221,13 +227,13 @@ describe("FinanceReportsPage", () => {
     expect(
       screen.getByRole("heading", { name: "Finance Overview" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Income").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Expenses").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Net").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Collections").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Expenses incurred").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Operating net").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$1,000.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$250.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$750.00").length).toBeGreaterThan(0);
-    expect(screen.getByText("Monthly Income vs Expenses")).toBeInTheDocument();
+    expect(screen.getByText("Monthly Recognized Revenue vs Expenses Incurred")).toBeInTheDocument();
     expect(screen.getByTestId("chart")).toBeInTheDocument();
     expect(
       screen.queryByText("Income by Region / Data Center"),

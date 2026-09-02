@@ -481,13 +481,13 @@ export default function FinanceReportsPage({
               ["Net cash", formatCurrency(report.totals.net)],
             ]
           : [
-              ["Income", formatCurrency(report.totals.income)],
+              ["Collections", formatCurrency(report.totals.income)],
               [
                 "Recognized contract revenue",
                 formatCurrency(report.totals.recognizedRevenue ?? 0),
               ],
-              ["Expenses", formatCurrency(report.totals.expenses)],
-              ["Net", formatCurrency(report.totals.net)],
+              ["Expenses incurred", formatCurrency(report.totals.incurredExpenses ?? 0)],
+              ["Operating net", formatCurrency(report.totals.operatingNet ?? 0)],
             ];
 
   return (
@@ -650,7 +650,7 @@ export default function FinanceReportsPage({
             <CardTitle>
               {view === "revenue"
                 ? "Monthly Revenue and Collections"
-                : "Monthly Income vs Expenses"}
+                : "Monthly Recognized Revenue vs Expenses Incurred"}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -669,15 +669,15 @@ export default function FinanceReportsPage({
                   />
                   <Legend />
                   <Bar
-                    dataKey="income"
-                    name="Income"
+                    dataKey={view === "overview" ? "recognizedRevenue" : "income"}
+                    name={view === "overview" ? "Recognized revenue" : "Income"}
                     fill="oklch(0.6 0.18 170)"
                     radius={[4, 4, 0, 0]}
                   />
                   {view === "overview" ? (
                     <Bar
-                      dataKey="expenses"
-                      name="Expenses"
+                      dataKey="incurredExpenses"
+                      name="Expenses incurred"
                       fill="oklch(0.65 0.18 35)"
                       radius={[4, 4, 0, 0]}
                     />
@@ -696,8 +696,8 @@ export default function FinanceReportsPage({
                     <th className="px-3 py-3 text-right">Expected</th>
                     {view === "overview" ? (
                       <>
-                        <th className="px-3 py-3 text-right">Expenses</th>
-                        <th className="px-3 py-3 text-right">Net</th>
+                        <th className="px-3 py-3 text-right">Expenses incurred</th>
+                        <th className="px-3 py-3 text-right">Operating net</th>
                       </>
                     ) : null}
                     <th className="px-3 py-3 text-right">Payments</th>
@@ -727,10 +727,10 @@ export default function FinanceReportsPage({
                       {view === "overview" ? (
                         <>
                           <td className="px-3 py-3 text-right">
-                            {formatCurrency(row.expenses)}
+                            {formatCurrency(row.incurredExpenses ?? 0)}
                           </td>
                           <td className="px-3 py-3 text-right font-medium">
-                            {formatCurrency(row.net)}
+                            {formatCurrency(row.operatingNet ?? 0)}
                           </td>
                         </>
                       ) : null}

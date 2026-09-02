@@ -291,6 +291,7 @@ export default function ExpenseDetailPage() {
   const [reason, setReason] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [reconciliationOpen, setReconciliationOpen] = useState(false);
+  const [reconciliationReason, setReconciliationReason] = useState("");
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [fundingAccountId, setFundingAccountId] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
@@ -496,9 +497,18 @@ export default function ExpenseDetailPage() {
     if (!paidAt) return;
     setPendingAction("reconcile-paid-date");
     try {
-      await reconcilePaidDate({ expenseId: expense._id, paidAt });
-      toast.success("Historical payment date reconciled");
+      if (!reconciliationReason.trim()) {
+        toast.error("Correction reason is required");
+        return;
+      }
+      await reconcilePaidDate({
+        expenseId: expense._id,
+        paidAt,
+        reason: reconciliationReason.trim(),
+      });
+      toast.success("Payment date corrected");
       setReconciliationOpen(false);
+      setReconciliationReason("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to reconcile payment date");
     } finally {
@@ -670,9 +680,15 @@ export default function ExpenseDetailPage() {
               Mark Paid
             </Button>
           ) : null}
-          {isAdmin && expense.status === "paid" && !expense.paidAt ? (
-            <Button variant="outline" onClick={() => setReconciliationOpen(true)}>
-              Reconcile Payment Date
+          {isAdmin && expense.status === "paid" ? (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPaymentDate(timestampToDateInput(expense.paidAt ?? Date.now()));
+                setReconciliationOpen(true);
+              }}
+            >
+              Correct Payment Date
             </Button>
           ) : null}
           {canCancel ? (
@@ -1193,16 +1209,20 @@ export default function ExpenseDetailPage() {
       </Dialog>
       <Dialog open={reconciliationOpen} onOpenChange={setReconciliationOpen}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Reconcile Historical Payment Date</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Correct Payment Date</DialogTitle></DialogHeader>
           <form className="space-y-4" onSubmit={handleReconcilePaidDate}>
             <p className="text-sm text-muted-foreground">Enter the date cash actually left the selected funding account. The reconciliation is recorded in the audit history.</p>
             <div className="space-y-2">
               <Label htmlFor="reconciled-payment-date">Actual payment date</Label>
               <Input id="reconciled-payment-date" type="date" value={paymentDate} max={timestampToDateInput(Date.now())} onChange={(event) => setPaymentDate(event.target.value)} required />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="payment-date-reason">Reason for correction</Label>
+              <Input id="payment-date-reason" value={reconciliationReason} onChange={(event) => setReconciliationReason(event.target.value)} placeholder="Why is the stored payment date incorrect?" required />
+            </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setReconciliationOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={pendingAction === "reconcile-paid-date"}>Save Reconciliation</Button>
+              <Button type="submit" disabled={pendingAction === "reconcile-paid-date" || !reconciliationReason.trim()}>Save Correction</Button>
             </DialogFooter>
           </form>
         </DialogContent>
