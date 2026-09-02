@@ -263,17 +263,53 @@ describe("finance reports", () => {
         preCollected: 0,
         expectedCollections: 0,
         expenses: 125,
+        incurredExpenses: 125,
         net: 175,
+        operatingNet: -125,
         paymentCount: 1,
         paidExpenseCount: 1,
       },
     ]);
     expect(report.totals).toMatchObject({
       income: 300,
+      recognizedRevenue: 0,
       expenses: 125,
+      incurredExpenses: 125,
       net: 175,
+      operatingNet: -125,
       paymentCount: 1,
     });
+  });
+
+  it("uses expenseDate for incurred expenses while cash remains on paidAt", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 125,
+      expenseDate: Date.UTC(2026, 6, 31),
+      paidAt: Date.UTC(2026, 7, 2),
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-07",
+      endMonth: "2026-08",
+    });
+
+    expect(report.monthly).toEqual([
+      expect.objectContaining({
+        month: "2026-07",
+        incurredExpenses: 125,
+        expenses: 0,
+        operatingNet: -125,
+      }),
+      expect.objectContaining({
+        month: "2026-08",
+        incurredExpenses: 0,
+        expenses: 125,
+        operatingNet: 0,
+      }),
+    ]);
   });
 
   it("reports single region payment income fully to that region", async () => {

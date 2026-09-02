@@ -56,6 +56,9 @@ const mocks = vi.hoisted(() => ({
         monthly: Array<{
           month: string;
           income: number;
+          recognizedRevenue: number;
+          incurredExpenses: number;
+          operatingNet: number;
           expenses: number;
           net: number;
           paymentCount: number;
@@ -63,6 +66,9 @@ const mocks = vi.hoisted(() => ({
         }>;
         totals: {
           income: number;
+          recognizedRevenue: number;
+          incurredExpenses: number;
+          operatingNet: number;
           expenses: number;
           net: number;
           paymentCount: number;
@@ -146,6 +152,9 @@ function report(overrides = {}) {
       {
         month: "2026-08",
         income: 1000,
+        recognizedRevenue: 1000,
+        incurredExpenses: 250,
+        operatingNet: 750,
         expenses: 250,
         net: 750,
         paymentCount: 2,
@@ -154,6 +163,9 @@ function report(overrides = {}) {
     ],
     totals: {
       income: 1000,
+      recognizedRevenue: 1000,
+      incurredExpenses: 250,
+      operatingNet: 750,
       expenses: 250,
       net: 750,
       paymentCount: 2,
@@ -221,13 +233,13 @@ describe("FinanceReportsPage", () => {
     expect(
       screen.getByRole("heading", { name: "Finance Overview" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Income").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Expenses").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Net").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Collections").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Expenses incurred").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Operating net").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$1,000.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$250.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$750.00").length).toBeGreaterThan(0);
-    expect(screen.getByText("Monthly Income vs Expenses")).toBeInTheDocument();
+    expect(screen.getByText("Monthly Recognized Revenue vs Expenses Incurred")).toBeInTheDocument();
     expect(screen.getByTestId("chart")).toBeInTheDocument();
     expect(
       screen.queryByText("Income by Region / Data Center"),
@@ -302,13 +314,24 @@ describe("FinanceReportsPage", () => {
         {
           month: "2026-08",
           income: 0,
+          recognizedRevenue: 0,
+          incurredExpenses: 0,
+          operatingNet: 0,
           expenses: 0,
           net: 0,
           paymentCount: 0,
           paidExpenseCount: 0,
         },
       ],
-      totals: { income: 0, expenses: 0, net: 0, paymentCount: 0 },
+      totals: {
+        income: 0,
+        recognizedRevenue: 0,
+        incurredExpenses: 0,
+        operatingNet: 0,
+        expenses: 0,
+        net: 0,
+        paymentCount: 0,
+      },
       topExpenseCategories: [],
       incomeByRegion: [],
       expenseStatusSummary: [

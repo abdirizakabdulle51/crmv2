@@ -283,7 +283,9 @@ export const summary = query({
           preCollected: 0,
           expectedCollections: 0,
           expenses: 0,
+          incurredExpenses: 0,
           net: 0,
+          operatingNet: 0,
           paymentCount: 0,
           paidExpenseCount: 0,
         },
@@ -471,6 +473,16 @@ export const summary = query({
       assertSupportedCurrency(expense.currency);
 
       const statusTimestamp = expense.status === "paid" ? expense.paidAt : expense.expenseDate;
+      if (expense.status === "paid") {
+        const incurredMonth = monthFromTimestamp(expense.expenseDate);
+        const incurredRow = monthly.get(incurredMonth);
+        if (incurredRow) {
+          incurredRow.incurredExpenses = sumMoney([
+            incurredRow.incurredExpenses,
+            expense.amount,
+          ]);
+        }
+      }
       if (statusTimestamp && monthInRange(monthFromTimestamp(statusTimestamp), startMonth, endMonth)) {
         const statusRow = statusSummary.get(expense.status);
         if (statusRow) {
@@ -512,6 +524,7 @@ export const summary = query({
     const monthlyRows = [...monthly.values()].map((row) => ({
       ...row,
       net: sumMoney([row.income, -row.expenses]),
+      operatingNet: sumMoney([row.recognizedRevenue, -row.incurredExpenses]),
     }));
     const totals = monthlyRows.reduce(
       (acc, row) => ({
@@ -526,7 +539,9 @@ export const summary = query({
           row.expectedCollections,
         ]),
         expenses: sumMoney([acc.expenses, row.expenses]),
+        incurredExpenses: sumMoney([acc.incurredExpenses, row.incurredExpenses]),
         net: sumMoney([acc.net, row.net]),
+        operatingNet: sumMoney([acc.operatingNet, row.operatingNet]),
         paymentCount: acc.paymentCount + row.paymentCount,
       }),
       {
@@ -535,7 +550,9 @@ export const summary = query({
         preCollected: 0,
         expectedCollections: 0,
         expenses: 0,
+        incurredExpenses: 0,
         net: 0,
+        operatingNet: 0,
         paymentCount: 0,
       },
     );
