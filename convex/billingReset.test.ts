@@ -1,11 +1,33 @@
 import { describe, expect, it } from "vitest";
 import { convexTest } from "convex-test";
+import type { FunctionReference } from "convex/server";
 import { internal } from "./_generated/api";
 import schema from "./schema";
 import { modules } from "./test.setup";
 
+type ResetArgs = { dryRun: boolean; confirm?: string };
+type ResetResult = {
+  invoices: number;
+  invoicePayments: number;
+  invoiceEvents: number;
+  dailyUsageRowsToUnlock: number;
+  creditLedgerRefsToClear: number;
+  contracts: number;
+  groupDiscounts: number;
+  lineItems: number;
+  amendments: number;
+  contractEvents: number;
+};
+
 const reset = (internal as unknown as {
-  billingReset: { resetContractsAndInvoices: unknown };
+  billingReset: {
+    resetContractsAndInvoices: FunctionReference<
+      "mutation",
+      "internal",
+      ResetArgs,
+      ResetResult
+    >;
+  };
 }).billingReset.resetContractsAndInvoices;
 
 async function seed(t: ReturnType<typeof convexTest>) {
@@ -88,12 +110,12 @@ describe("billing reset maintenance mutation", () => {
     const t = convexTest(schema, modules);
     await seed(t);
     const before = await counts(t);
-    const dryRun = await t.mutation(reset as never, { dryRun: true });
+    const dryRun = await t.mutation(reset, { dryRun: true });
     expect(dryRun).toMatchObject({ invoices: 1, invoicePayments: 1, invoiceEvents: 1, dailyUsageRowsToUnlock: 1, creditLedgerRefsToClear: 1, contracts: 1, groupDiscounts: 1, lineItems: 1, amendments: 1, contractEvents: 1 });
     expect(await counts(t)).toEqual(before);
-    await expect(t.mutation(reset as never, { dryRun: false, confirm: "WRONG" })).rejects.toThrow("Exact confirmation required");
+    await expect(t.mutation(reset, { dryRun: false, confirm: "WRONG" })).rejects.toThrow("Exact confirmation required");
 
-    await t.mutation(reset as never, { dryRun: false, confirm: "RESET_CONTRACTS_AND_INVOICES" });
+    await t.mutation(reset, { dryRun: false, confirm: "RESET_CONTRACTS_AND_INVOICES" });
     const after = await counts(t);
     expect(after.invoices).toBe(0);
     expect(after.invoicePayments).toBe(0);
