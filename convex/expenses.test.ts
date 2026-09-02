@@ -660,7 +660,7 @@ describe("expenses", () => {
       api.expenses.listExpenseEvents,
       { expenseId },
     );
-    expect(events.at(-1)?.message).toContain(
+    expect(events[events.length - 1]?.message).toContain(
       `Payment date corrected from ${new Date(original!.paidAt!).toISOString().slice(0, 10)} to 2026-08-14. Reason: Correct bank posting date.`,
     );
   });
