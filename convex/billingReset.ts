@@ -28,6 +28,22 @@ type QuoteResetCounts = {
   leadsPreserved: number;
 };
 
+const SINGLE_CONTRACT_CONFIRMATION = "DELETE_SINGLE_CONTRACT_AND_INVOICES";
+
+type SingleContractResetCounts = {
+  contract: number;
+  invoices: number;
+  invoicePayments: number;
+  invoiceEvents: number;
+  dailyUsageRowsToUnlock: number;
+  creditLedgerRefsToClear: number;
+  groupDiscounts: number;
+  lineItems: number;
+  amendments: number;
+  contractEvents: number;
+  sourceContractMismatches: number;
+};
+
 export const resetContractsAndInvoices = internalMutation({
   args: {
     dryRun: v.boolean(),
@@ -186,6 +202,133 @@ export const resetQuotesAndCombinedQuotes = internalMutation({
       }
     }
 
+    return counts;
+  },
+});
+
+export const resetSingleContractAndInvoices = internalMutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    dryRun: v.boolean(),
+    confirm: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<SingleContractResetCounts> => {
+    if (
+      !args.dryRun &&
+      args.confirm !== SINGLE_CONTRACT_CONFIRMATION
+    ) {
+      throw new Error(
+        `Exact confirmation required: ${SINGLE_CONTRACT_CONFIRMATION}`,
+      );
+    }
+
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new Error(`Target contract not found: ${args.contractId}`);
+    }
+
+    const invoices = await ctx.db
+      .query("invoices")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    const sourceContractInvoices = await ctx.db
+      .query("invoices")
+      .withIndex("by_source_contract", (q) =>
+        q.eq("sourceContractId", args.contractId),
+      )
+      .collect();
+    const sourceContractMismatches = sourceContractInvoices.filter(
+      (invoice) => invoice.contractId !== args.contractId,
+    );
+    const invoicePayments = [];
+    const invoiceEvents = [];
+    const usageRows = [];
+    const creditRefs = [];
+    for (const invoice of invoices) {
+      if (
+        invoice.sourceContractId !== undefined &&
+        invoice.sourceContractId !== args.contractId
+      ) {
+        sourceContractMismatches.push(invoice);
+      }
+      invoicePayments.push(
+        ...(await ctx.db
+          .query("invoicePayments")
+          .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+          .collect()),
+      );
+      invoiceEvents.push(
+        ...(await ctx.db
+          .query("invoiceEvents")
+          .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+          .collect()),
+      );
+      usageRows.push(
+        ...(await ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+          .collect()),
+      );
+      creditRefs.push(
+        ...(await ctx.db
+          .query("customerCreditLedger")
+          .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+          .collect()),
+      );
+    }
+
+    const groupDiscounts = await ctx.db
+      .query("customerContractGroupDiscounts")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    const lineItems = await ctx.db
+      .query("customerContractLineItems")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    const amendments = await ctx.db
+      .query("customerContractAmendments")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+    const contractEvents = await ctx.db
+      .query("customerContractEvents")
+      .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
+      .collect();
+
+    const counts: SingleContractResetCounts = {
+      contract: 1,
+      invoices: invoices.length,
+      invoicePayments: invoicePayments.length,
+      invoiceEvents: invoiceEvents.length,
+      dailyUsageRowsToUnlock: usageRows.length,
+      creditLedgerRefsToClear: creditRefs.length,
+      groupDiscounts: groupDiscounts.length,
+      lineItems: lineItems.length,
+      amendments: amendments.length,
+      contractEvents: contractEvents.length,
+      sourceContractMismatches: sourceContractMismatches.length,
+    };
+
+    if (args.dryRun) return counts;
+    if (counts.sourceContractMismatches > 0) {
+      throw new Error(
+        `Refusing targeted contract cleanup: ${counts.sourceContractMismatches} invoice reference(s) do not identify the target contract through contractId`,
+      );
+    }
+
+    for (const payment of invoicePayments) await ctx.db.delete(payment._id);
+    for (const event of invoiceEvents) await ctx.db.delete(event._id);
+    for (const row of usageRows) {
+      await ctx.db.patch(row._id, { invoiceId: undefined, lockedAt: undefined });
+    }
+    for (const ledger of creditRefs) {
+      await ctx.db.patch(ledger._id, { invoiceId: undefined });
+    }
+    for (const invoice of invoices) await ctx.db.delete(invoice._id);
+    for (const row of groupDiscounts) await ctx.db.delete(row._id);
+    for (const row of lineItems) await ctx.db.delete(row._id);
+    for (const row of amendments) await ctx.db.delete(row._id);
+    for (const row of contractEvents) await ctx.db.delete(row._id);
+    await ctx.db.delete(contract._id);
     return counts;
   },
 });

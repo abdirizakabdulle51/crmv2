@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convexTest } from "convex-test";
 import type { FunctionReference } from "convex/server";
+import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import schema from "./schema";
 import { modules } from "./test.setup";
@@ -25,6 +26,24 @@ type QuoteResetResult = {
   quoteNotificationsToDelete: number;
   invoiceQuoteRefs: number;
   leadsPreserved: number;
+};
+type SingleContractResetArgs = {
+  contractId: Id<"customerContracts">;
+  dryRun: boolean;
+  confirm?: string;
+};
+type SingleContractResetResult = {
+  contract: number;
+  invoices: number;
+  invoicePayments: number;
+  invoiceEvents: number;
+  dailyUsageRowsToUnlock: number;
+  creditLedgerRefsToClear: number;
+  groupDiscounts: number;
+  lineItems: number;
+  amendments: number;
+  contractEvents: number;
+  sourceContractMismatches: number;
 };
 
 const reset = (internal as unknown as {
@@ -223,5 +242,155 @@ describe("billing reset maintenance mutation", () => {
     const resetQuotes = (internal as unknown as { billingReset: { resetQuotesAndCombinedQuotes: FunctionReference<"mutation", "internal", ResetArgs, QuoteResetResult> } }).billingReset.resetQuotesAndCombinedQuotes;
     await expect(t.mutation(resetQuotes, { dryRun: false, confirm: "RESET_QUOTES_AND_COMBINED_QUOTES" })).rejects.toThrow("invoice(s) reference quotes");
     expect(await counts(t)).toMatchObject({ quotes: 1, combinedQuotes: 1, invoices: 1 });
+  });
+
+  it("cleans only one contract and its directly linked invoice graph", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+    const unrelated = await t.run(async (ctx) => {
+      const contractId = await ctx.db.insert("customerContracts", {
+        companyId: seeded.companyId,
+        contractNumber: "CTR-UNRELATED",
+        title: "Unrelated Contract",
+        status: "draft",
+        startDate: 1,
+        endDate: 2,
+        currency: "USD",
+        billingFrequency: "monthly",
+        createdBy: (await ctx.db.query("users").first())!._id,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const invoiceId = await ctx.db.insert("invoices", {
+        companyId: seeded.companyId,
+        contractId,
+        createdBy: (await ctx.db.query("users").first())!._id,
+        companyName: "Reset Test Company",
+        status: "draft",
+        lineItems: [],
+        subtotal: 1,
+        monthlyTotal: 1,
+        yearlyTotal: 1,
+        grandTotal: 1,
+        amountPaid: 0,
+        balanceDue: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return { contractId, invoiceId };
+    });
+    await t.run((ctx) =>
+      ctx.db.patch(seeded.invoiceId, { contractId: seeded.contractId }),
+    );
+    const targeted = (internal as unknown as {
+      billingReset: {
+        resetSingleContractAndInvoices: FunctionReference<
+          "mutation",
+          "internal",
+          SingleContractResetArgs,
+          SingleContractResetResult
+        >;
+      };
+    }).billingReset.resetSingleContractAndInvoices;
+
+    const before = await counts(t);
+    const dryRun = await t.mutation(targeted, {
+      contractId: seeded.contractId,
+      dryRun: true,
+    });
+    expect(dryRun).toMatchObject({
+      contract: 1,
+      invoices: 1,
+      invoicePayments: 1,
+      invoiceEvents: 1,
+      dailyUsageRowsToUnlock: 1,
+      creditLedgerRefsToClear: 1,
+      groupDiscounts: 1,
+      lineItems: 1,
+      amendments: 1,
+      contractEvents: 1,
+      sourceContractMismatches: 0,
+    });
+    expect(await counts(t)).toEqual(before);
+    await expect(
+      t.mutation(targeted, {
+        contractId: seeded.contractId,
+        dryRun: false,
+        confirm: "WRONG",
+      }),
+    ).rejects.toThrow("Exact confirmation required");
+
+    await t.mutation(targeted, {
+      contractId: seeded.contractId,
+      dryRun: false,
+      confirm: "DELETE_SINGLE_CONTRACT_AND_INVOICES",
+    });
+    const after = await counts(t);
+    expect(after.contracts).toBe(1);
+    expect(after.invoices).toBe(1);
+    expect(after.invoicePayments).toBe(0);
+    expect(after.invoiceEvents).toBe(0);
+    expect(after.groupDiscounts).toBe(0);
+    expect(after.lineItems).toBe(0);
+    expect(after.amendments).toBe(0);
+    expect(after.contractEvents).toBe(0);
+    expect(after.dailyUsage).toHaveLength(before.dailyUsage.length);
+    expect(after.dailyUsage[0].quantity).toBe(before.dailyUsage[0].quantity);
+    expect(after.dailyUsage[0].invoiceId).toBeUndefined();
+    expect(after.dailyUsage[0].lockedAt).toBeUndefined();
+    expect(after.ledger).toHaveLength(before.ledger.length);
+    expect(after.ledger[0].invoiceId).toBeUndefined();
+    expect((await t.run((ctx) => ctx.db.get(unrelated.contractId)))?._id).toBe(
+      unrelated.contractId,
+    );
+    expect((await t.run((ctx) => ctx.db.get(unrelated.invoiceId)))?._id).toBe(
+      unrelated.invoiceId,
+    );
+  });
+
+  it("rejects a missing contract and source-contract mismatch before mutation", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seed(t);
+    const targeted = (internal as unknown as {
+      billingReset: {
+        resetSingleContractAndInvoices: FunctionReference<
+          "mutation",
+          "internal",
+          SingleContractResetArgs,
+          SingleContractResetResult
+        >;
+      };
+    }).billingReset.resetSingleContractAndInvoices;
+    const missingId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("customerContracts", {
+        companyId: seeded.companyId,
+        contractNumber: "CTR-MISSING",
+        title: "Deleted Contract",
+        status: "draft",
+        startDate: 1,
+        endDate: 2,
+        currency: "USD",
+        billingFrequency: "monthly",
+        createdBy: (await ctx.db.query("users").first())!._id,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.delete(id);
+      return id;
+    });
+    await expect(
+      t.mutation(targeted, { contractId: missingId, dryRun: true }),
+    ).rejects.toThrow("Target contract not found");
+    await t.run((ctx) =>
+      ctx.db.patch(seeded.invoiceId, { sourceContractId: seeded.contractId }),
+    );
+    await expect(
+      t.mutation(targeted, {
+        contractId: seeded.contractId,
+        dryRun: false,
+        confirm: "DELETE_SINGLE_CONTRACT_AND_INVOICES",
+      }),
+    ).rejects.toThrow("do not identify the target contract through contractId");
+    expect(await counts(t)).toMatchObject({ contracts: 1, invoices: 1 });
   });
 });

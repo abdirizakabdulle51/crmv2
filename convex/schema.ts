@@ -1022,6 +1022,7 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_created_by", ["createdBy"])
     .index("by_source_quote", ["sourceQuoteId"])
+    .index("by_source_contract", ["sourceContractId"])
     .index("by_historical_identity", ["companyId", "sourceSystem", "normalizedOriginalReference"])
     .index("by_contract", ["contractId"])
     .index("by_invoice_number", ["invoiceNumber"]),
