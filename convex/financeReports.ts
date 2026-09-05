@@ -281,6 +281,11 @@ export const summary = query({
           expenses: 0,
           incurredExpenses: 0,
           expenseReturns: 0,
+          openingBalances: 0,
+          capitalContributions: 0,
+          otherNonInvoiceInflows: 0,
+          otherCashInflows: 0,
+          totalCashInflows: 0,
           netExpenses: 0,
           net: 0,
           operatingNet: 0,
@@ -542,14 +547,26 @@ export const summary = query({
     }
 
     const expenseById = new Map(expenses.map((expense) => [expense._id, expense]));
+    const transactionById = new Map(accountTransactions.map((transaction) => [transaction._id, transaction]));
     for (const transaction of accountTransactions) {
-      if (!transaction.expenseId) continue;
-      const expense = expenseById.get(transaction.expenseId);
-      if (!expense || !isVisibleExpenseForReport(expense, user, scope)) continue;
+      if (scope.countryScope && transaction.countryId !== scope.countryScope) continue;
       const month = monthFromTimestamp(transaction.transactionDate);
       if (!monthInRange(month, startMonth, endMonth)) continue;
       const signed = transaction.direction === "incoming" ? transaction.amount : -transaction.amount;
       const row = monthly.get(month);
+      const original = transaction.relatedTransactionId
+        ? transactionById.get(transaction.relatedTransactionId)
+        : undefined;
+      const category = original?.type ?? transaction.type;
+      if (row) {
+        row.otherCashInflows = sumMoney([row.otherCashInflows, signed]);
+        if (category === "opening_balance") row.openingBalances = sumMoney([row.openingBalances, signed]);
+        if (category === "capital_contribution") row.capitalContributions = sumMoney([row.capitalContributions, signed]);
+        if (category === "other_non_invoice_inflow") row.otherNonInvoiceInflows = sumMoney([row.otherNonInvoiceInflows, signed]);
+      }
+      if (!transaction.expenseId) continue;
+      const expense = expenseById.get(transaction.expenseId);
+      if (!expense || !isVisibleExpenseForReport(expense, user, scope)) continue;
       if (row) row.expenseReturns = sumMoney([row.expenseReturns, signed]);
       const expenseCompany = expense.companyId ? scope.companyMap.get(expense.companyId) : undefined;
       const countryId = expense.countryId ?? expenseCompany?.countryId;
@@ -561,6 +578,7 @@ export const summary = query({
 
     const monthlyRows = [...monthly.values()].map((row) => ({
       ...row,
+      totalCashInflows: sumMoney([row.income, row.otherCashInflows]),
       netExpenses: sumMoney([row.expenses, -row.expenseReturns]),
       net: sumMoney([row.income, -row.expenses, row.expenseReturns]),
       operatingNet: sumMoney([row.recognizedRevenue, -row.incurredExpenses]),
@@ -583,6 +601,11 @@ export const summary = query({
           row.incurredExpenses,
         ]),
         expenseReturns: sumMoney([acc.expenseReturns, row.expenseReturns]),
+        openingBalances: sumMoney([acc.openingBalances, row.openingBalances]),
+        capitalContributions: sumMoney([acc.capitalContributions, row.capitalContributions]),
+        otherNonInvoiceInflows: sumMoney([acc.otherNonInvoiceInflows, row.otherNonInvoiceInflows]),
+        otherCashInflows: sumMoney([acc.otherCashInflows, row.otherCashInflows]),
+        totalCashInflows: sumMoney([acc.totalCashInflows, row.totalCashInflows]),
         netExpenses: sumMoney([acc.netExpenses, row.netExpenses]),
         net: sumMoney([acc.net, row.net]),
         operatingNet: sumMoney([acc.operatingNet, row.operatingNet]),
@@ -596,6 +619,11 @@ export const summary = query({
         expenses: 0,
         incurredExpenses: 0,
         expenseReturns: 0,
+        openingBalances: 0,
+        capitalContributions: 0,
+        otherNonInvoiceInflows: 0,
+        otherCashInflows: 0,
+        totalCashInflows: 0,
         netExpenses: 0,
         net: 0,
         operatingNet: 0,

@@ -54,6 +54,13 @@ function date(value: number) {
     value,
   );
 }
+const transactionLabel = (type: string) => ({
+  opening_balance: "Opening balance",
+  capital_contribution: "Capital contribution",
+  other_non_invoice_inflow: "Other account inflow",
+  expense_return: "Expense return",
+  reversal: "Reversal",
+}[type] ?? type);
 
 const emptyForm = {
   countryId: "",
@@ -141,6 +148,10 @@ export default function CollectionsPage({
           endDate: timestamp(endDate, true),
         }
       : "skip",
+  );
+  const balances = useQuery(
+    api.receivingAccounts.balances,
+    accountsMode ? { asOf: timestamp(endDate, true) } : "skip",
   );
   const createAccount = useMutation(api.receivingAccounts.create);
   const updateAccount = useMutation(api.receivingAccounts.update);
@@ -231,7 +242,7 @@ export default function CollectionsPage({
     }
   }
 
-  if (!accounts || !report || !countries || !institutions)
+  if (!accounts || !report || !countries || !institutions || (accountsMode && !balances))
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-9 w-64" />
@@ -307,7 +318,7 @@ export default function CollectionsPage({
 
       {!accountsMode ? (
         <>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-muted-foreground">
@@ -320,6 +331,12 @@ export default function CollectionsPage({
                       .map((total) => money(total.amount, total.currency))
                       .join(" · ")
                   : money(0)}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Other cash inflows</CardTitle></CardHeader>
+              <CardContent className="text-2xl font-bold">
+                {report.otherTotalsByCurrency.length ? report.otherTotalsByCurrency.map((total) => money(total.amount, total.currency)).join(" · ") : money(0)}
               </CardContent>
             </Card>
             <Card>
@@ -457,6 +474,16 @@ export default function CollectionsPage({
                   ) : null}
                 </tbody>
               </table>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle>Other incoming account transactions</CardTitle></CardHeader>
+            <CardContent className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b text-left text-muted-foreground"><th className="py-3 pr-4">Date</th><th className="pr-4">Type</th><th className="pr-4">Account</th><th className="pr-4">Transaction ID</th><th className="pr-4">Description</th><th className="text-right">Amount</th></tr></thead>
+                <tbody>{report.otherRows.map((row) => <tr key={row._id} className="border-b last:border-0"><td className="py-3 pr-4">{date(row.transactionDate)}</td><td className="pr-4">{transactionLabel(row.category)}</td><td className="pr-4">{row.accountName}</td><td className="pr-4 font-mono text-xs">{row.transactionId}</td><td className="pr-4">{row.description}</td><td className={`text-right font-medium ${row.signedAmount < 0 ? "text-destructive" : "text-emerald-600"}`}>{money(row.signedAmount, row.currency)}</td></tr>)}</tbody>
+              </table>
+              {report.otherRows.length === 0 ? <div className="py-10 text-center text-sm text-muted-foreground">No other account inflows in this period.</div> : null}
             </CardContent>
           </Card>
         </>
@@ -741,6 +768,18 @@ export default function CollectionsPage({
         </Card>
       ) : null}
 
+      {accountsMode && balances ? (
+        <Card>
+          <CardHeader><CardTitle>Account balances as of {date(timestamp(endDate, true))}</CardTitle></CardHeader>
+          <CardContent className="overflow-x-auto">
+            <div className="mb-4 flex flex-wrap gap-4">{balances.totalsByCurrency.map((total) => <div key={total.currency} className="rounded-lg border px-4 py-3"><div className="text-xs text-muted-foreground">Total {total.currency} balance</div><div className="text-xl font-bold">{money(total.balance, total.currency)}</div></div>)}</div>
+            <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Account</th><th>Country</th><th>Currency</th><th className="text-right">Money in</th><th className="text-right">Money out</th><th className="text-right">Balance</th><th className="text-right">Last transaction</th></tr></thead>
+              <tbody>{balances.rows.map((row) => <tr key={row.account._id} className="border-b"><td className="py-2"><div className="font-medium">{row.account.name}</div><div className="text-xs text-muted-foreground">{row.account.providerName} · {row.account.accountNumber}</div></td><td>{countries.find((country) => country._id === row.account.countryId)?.name ?? "—"}</td><td>{row.account.currency}</td><td className="text-right text-emerald-600">{money(row.moneyIn, row.account.currency)}</td><td className="text-right text-destructive">{money(row.moneyOut, row.account.currency)}</td><td className="text-right font-bold">{money(row.balance, row.account.currency)}</td><td className="text-right">{row.lastTransactionDate ? date(row.lastTransactionDate) : "—"}</td></tr>)}</tbody>
+            </table>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {accountsMode && ledger ? (
         <Card>
           <CardHeader>
@@ -759,6 +798,7 @@ export default function CollectionsPage({
                     <th>Description</th>
                     <th>Reference</th>
                     <th className="text-right">Amount</th>
+                    <th className="text-right">Running balance</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -772,6 +812,7 @@ export default function CollectionsPage({
                       >
                         {money(row.amount, ledger.account.currency)}
                       </td>
+                      <td className="text-right font-medium">{money(row.runningBalance ?? 0, ledger.account.currency)}</td>
                     </tr>
                   ))}
                 </tbody>

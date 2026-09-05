@@ -163,6 +163,11 @@ describe("finance accounts", () => {
       endDate: Date.UTC(2026, 7, 31),
     });
     expect(ledger.accountBalance).toBe(5000);
+    expect(ledger.rows.map((row) => row.date)).toEqual([...ledger.rows.map((row) => row.date)].sort((a, b) => a - b));
+    expect(ledger.rows.at(-1)?.runningBalance).toBe(5000);
+    expect((await asUser(t, s.ceo).query(api.receivingAccounts.balances, {
+      asOf: Date.UTC(2026, 7, 31),
+    })).rows.find((row) => row.account._id === accountId)).toMatchObject({ moneyIn: 5000, moneyOut: 0, balance: 5000 });
     expect((await asUser(t, s.ceo).query(api.receivingAccounts.collections, {
       startDate: Date.UTC(2026, 7, 1),
       endDate: Date.UTC(2026, 7, 31),

@@ -313,6 +313,7 @@ export default function FinanceReportsPage({
   const hasData =
     (report?.totals.income ?? 0) > 0 ||
     (report?.totals.recognizedRevenue ?? 0) > 0 ||
+    (report?.totals.otherCashInflows ?? 0) !== 0 ||
     (report?.totals.expenses ?? 0) > 0 ||
     (report?.expenseStatusSummary ?? []).some((row) => row.count > 0);
   const exportArgs = {
@@ -451,17 +452,14 @@ export default function FinanceReportsPage({
   const summaryCards =
     view === "revenue"
       ? [
-          ["Collected income", formatCurrency(report.totals.income)],
+          ["Invoice collections", formatCurrency(report.totals.income)],
+          ["Other cash inflows", formatCurrency(report.totals.otherCashInflows ?? 0)],
+          ["Total cash inflows", formatCurrency(report.totals.totalCashInflows ?? report.totals.income)],
           [
             "Recognized revenue",
             formatCurrency(report.totals.recognizedRevenue ?? 0),
           ],
-          ["Pre-collected", formatCurrency(report.totals.preCollected ?? 0)],
-          [
-            "Expected collections",
-            formatCurrency(report.totals.expectedCollections ?? 0),
-          ],
-          ["Payments", report.totals.paymentCount.toLocaleString()],
+          ["Capital contributions", formatCurrency(report.totals.capitalContributions ?? 0)],
         ]
       : view === "expenses"
         ? [
@@ -672,7 +670,7 @@ export default function FinanceReportsPage({
                   <Legend />
                   <Bar
                     dataKey={view === "overview" ? "recognizedRevenue" : "income"}
-                    name={view === "overview" ? "Recognized revenue" : "Income"}
+                    name={view === "overview" ? "Recognized revenue" : "Invoice collections"}
                     fill="oklch(0.6 0.18 170)"
                     radius={[4, 4, 0, 0]}
                   />
@@ -683,7 +681,9 @@ export default function FinanceReportsPage({
                       fill="oklch(0.65 0.18 35)"
                       radius={[4, 4, 0, 0]}
                     />
-                  ) : null}
+                  ) : (
+                    <Bar dataKey="otherCashInflows" name="Other cash inflows (not revenue)" fill="oklch(0.68 0.14 250)" radius={[4, 4, 0, 0]} />
+                  )}
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -693,6 +693,7 @@ export default function FinanceReportsPage({
                   <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-3 py-3">Month</th>
                     <th className="px-3 py-3 text-right">Income</th>
+                    {view === "revenue" ? <><th className="px-3 py-3 text-right">Other cash inflows</th><th className="px-3 py-3 text-right">Total bank inflows</th></> : null}
                     <th className="px-3 py-3 text-right">Recognized</th>
                     <th className="px-3 py-3 text-right">Pre-collected</th>
                     <th className="px-3 py-3 text-right">Expected</th>
@@ -717,6 +718,7 @@ export default function FinanceReportsPage({
                       <td className="px-3 py-3 text-right">
                         {formatCurrency(row.income)}
                       </td>
+                      {view === "revenue" ? <><td className="px-3 py-3 text-right">{formatCurrency(row.otherCashInflows ?? 0)}</td><td className="px-3 py-3 text-right font-medium">{formatCurrency(row.totalCashInflows ?? row.income)}</td></> : null}
                       <td className="px-3 py-3 text-right">
                         {formatCurrency(row.recognizedRevenue ?? 0)}
                       </td>

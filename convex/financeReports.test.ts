@@ -235,6 +235,52 @@ async function insertExpense(
 }
 
 describe("finance reports", () => {
+  it("shows non-invoice inflows separately without treating capital as revenue", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      const accountId = await ctx.db.insert("receivingAccounts", {
+        countryId: s.countryA,
+        name: "Capital account",
+        providerName: "Islamic Bank",
+        accountNumber: "CAP-1",
+        accountHolderName: "HTG",
+        type: "bank",
+        usage: "both",
+        currency: "USD",
+        isActive: true,
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "capital_contribution",
+        amount: 5000,
+        amountCents: 500000,
+        transactionDate: Date.UTC(2026, 7, 5),
+        transactionId: "CAPITAL-1",
+        description: "Initial investment",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 5),
+      });
+    });
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+    expect(report.totals).toMatchObject({
+      income: 0,
+      recognizedRevenue: 0,
+      capitalContributions: 5000,
+      otherCashInflows: 5000,
+      totalCashInflows: 5000,
+    });
+  });
+
   it("groups income by invoice payment paidAt and expenses by paidAt", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -265,6 +311,11 @@ describe("finance reports", () => {
         expenses: 125,
         incurredExpenses: 125,
         expenseReturns: 0,
+        openingBalances: 0,
+        capitalContributions: 0,
+        otherNonInvoiceInflows: 0,
+        otherCashInflows: 0,
+        totalCashInflows: 300,
         netExpenses: 125,
         net: 175,
         operatingNet: -125,

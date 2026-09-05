@@ -58,6 +58,9 @@ function canViewAccount(user: Doc<"users">, account: Doc<"receivingAccounts">) {
   );
 }
 
+const signedTransactionAmount = (transaction: Doc<"accountTransactions">) =>
+  transaction.direction === "incoming" ? transaction.amount : -transaction.amount;
+
 async function assertUniqueTransaction(
   ctx: MutationCtx,
   accountId: Doc<"receivingAccounts">["_id"],
@@ -660,14 +663,18 @@ export const collections = query({
   },
   handler: async (ctx, args) => {
     const user = await currentUser(ctx);
-    const payments = args.accountId
+    const [payments, accountTransactions] = await Promise.all([args.accountId
       ? await ctx.db
           .query("invoicePayments")
           .withIndex("by_receiving_account", (q) =>
             q.eq("receivingAccountId", args.accountId),
           )
           .collect()
-      : await ctx.db.query("invoicePayments").collect();
+      : await ctx.db.query("invoicePayments").collect(),
+      args.accountId
+        ? await ctx.db.query("accountTransactions").withIndex("by_account", (q) => q.eq("accountId", args.accountId!)).collect()
+        : await ctx.db.query("accountTransactions").collect(),
+    ]);
     const rows = [];
     for (const payment of payments) {
       if (payment.paidAt < args.startDate || payment.paidAt > args.endDate)
@@ -721,14 +728,74 @@ export const collections = query({
         row.currency,
         sumMoney([totalsByCurrency.get(row.currency) ?? 0, row.amount]),
       );
+    const transactionMap = new Map(accountTransactions.map((row) => [row._id, row]));
+    const otherRows = [];
+    for (const transaction of accountTransactions) {
+      if (transaction.transactionDate < args.startDate || transaction.transactionDate > args.endDate) continue;
+      const account = await ctx.db.get(transaction.accountId);
+      if (!account || !canViewAccount(user, account)) continue;
+      const original = transaction.relatedTransactionId
+        ? transactionMap.get(transaction.relatedTransactionId)
+        : undefined;
+      otherRows.push({
+        ...transaction,
+        category: original?.type ?? transaction.type,
+        accountName: account.name,
+        providerName: account.providerName,
+        signedAmount: signedTransactionAmount(transaction),
+      });
+    }
+    otherRows.sort((a, b) => b.transactionDate - a.transactionDate || b.createdAt - a.createdAt);
+    const otherTotalsByCurrency = new Map<string, number>();
+    for (const row of otherRows)
+      otherTotalsByCurrency.set(row.currency, sumMoney([otherTotalsByCurrency.get(row.currency) ?? 0, row.signedAmount]));
     return {
       rows,
+      otherRows,
       byAccount: [...byAccount.values()],
       totalsByCurrency: [...totalsByCurrency].map(([currency, amount]) => ({
         currency,
         amount,
       })),
+      otherTotalsByCurrency: [...otherTotalsByCurrency].map(([currency, amount]) => ({ currency, amount })),
     };
+  },
+});
+
+export const balances = query({
+  args: { asOf: v.number() },
+  handler: async (ctx, args) => {
+    const user = await currentUser(ctx);
+    const [allAccounts, allPayments, allExpenses, allTransactions] = await Promise.all([
+      ctx.db.query("receivingAccounts").collect(),
+      ctx.db.query("invoicePayments").collect(),
+      ctx.db.query("expenseRequests").collect(),
+      ctx.db.query("accountTransactions").collect(),
+    ]);
+    const accounts = allAccounts.filter((account) => canViewAccount(user, account));
+    const rows = accounts.map((account) => {
+      const payments = allPayments.filter((row) => row.receivingAccountId === account._id);
+      const expenses = allExpenses.filter((row) => row.fundingAccountId === account._id);
+      const transactions = allTransactions.filter((row) => row.accountId === account._id);
+      const moneyIn = sumMoney([
+        ...payments.filter((row) => row.paidAt <= args.asOf).map((row) => row.amount),
+        ...transactions.filter((row) => row.transactionDate <= args.asOf && row.direction === "incoming").map((row) => row.amount),
+      ]);
+      const moneyOut = sumMoney([
+        ...expenses.filter((row) => row.status === "paid" && !!row.paidAt && row.paidAt <= args.asOf).map((row) => row.amount),
+        ...transactions.filter((row) => row.transactionDate <= args.asOf && row.direction === "outgoing").map((row) => row.amount),
+      ]);
+      const dates = [
+        ...payments.map((row) => row.paidAt),
+        ...expenses.filter((row) => row.status === "paid" && row.paidAt).map((row) => row.paidAt!),
+        ...transactions.map((row) => row.transactionDate),
+      ].filter((date) => date <= args.asOf);
+      return { account, moneyIn, moneyOut, balance: sumMoney([moneyIn, -moneyOut]), lastTransactionDate: dates.length ? Math.max(...dates) : undefined };
+    });
+    rows.sort((a, b) => a.account.currency.localeCompare(b.account.currency) || a.account.name.localeCompare(b.account.name));
+    const totals = new Map<string, number>();
+    for (const row of rows) totals.set(row.account.currency, sumMoney([totals.get(row.account.currency) ?? 0, row.balance]));
+    return { rows, totalsByCurrency: [...totals].map(([currency, balance]) => ({ currency, balance })) };
   },
 });
 
@@ -771,6 +838,8 @@ export const ledger = query({
       description: string;
       reference: string;
       amount: number;
+      createdAt: number;
+      runningBalance?: number;
     }> = [];
     for (const payment of payments) {
       if (payment.paidAt < args.startDate || payment.paidAt > args.endDate)
@@ -784,6 +853,7 @@ export const ledger = query({
         description: `${invoice.invoiceNumber ?? "Invoice"} · ${invoice.companyName}`,
         reference: payment.transactionId ?? payment.reference ?? "",
         amount: payment.amount,
+        createdAt: payment.createdAt,
       });
     }
     for (const expense of expenses) {
@@ -802,6 +872,7 @@ export const ledger = query({
         reference:
           expense.paymentTransactionId ?? expense.paymentReference ?? "",
         amount: -expense.amount,
+        createdAt: expense.updatedAt,
       });
     }
     for (const transaction of accountTransactions) {
@@ -820,25 +891,26 @@ export const ledger = query({
           transaction.direction === "incoming"
             ? transaction.amount
             : -transaction.amount,
+        createdAt: transaction.createdAt,
       });
     }
-    rows.sort((a, b) => b.date - a.date);
-    const accountBalance = sumMoney([
-      ...payments.map((payment) => payment.amount),
+    rows.sort((a, b) => a.date - b.date || a.createdAt - b.createdAt);
+    let runningBalance = sumMoney([
+      ...payments.filter((payment) => payment.paidAt < args.startDate).map((payment) => payment.amount),
       ...expenses
-        .filter((expense) => expense.status === "paid")
+        .filter((expense) => expense.status === "paid" && !!expense.paidAt && expense.paidAt < args.startDate)
         .map((expense) => -expense.amount),
-      ...accountTransactions.map((transaction) =>
-        transaction.direction === "incoming"
-          ? transaction.amount
-          : -transaction.amount,
-      ),
+      ...accountTransactions.filter((transaction) => transaction.transactionDate < args.startDate).map(signedTransactionAmount),
     ]);
+    for (const row of rows) {
+      runningBalance = sumMoney([runningBalance, row.amount]);
+      row.runningBalance = runningBalance;
+    }
     return {
       account,
       rows,
       netMovement: sumMoney(rows.map((row) => row.amount)),
-      accountBalance,
+      accountBalance: runningBalance,
     };
   },
 });
