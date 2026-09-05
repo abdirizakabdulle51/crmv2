@@ -284,6 +284,8 @@ export const summary = query({
           expectedCollections: 0,
           expenses: 0,
           incurredExpenses: 0,
+          expenseReturns: 0,
+          netExpenses: 0,
           net: 0,
           operatingNet: 0,
           paymentCount: 0,
@@ -467,7 +469,22 @@ export const summary = query({
         { status, count: 0, total: 0 },
       ]),
     );
-    const expenses = await ctx.db.query("expenseRequests").collect();
+    const [expenses, accountTransactions] = await Promise.all([
+      ctx.db.query("expenseRequests").collect(),
+      ctx.db.query("accountTransactions").collect(),
+    ]);
+    const returnsByExpense = new Map<Id<"expenseRequests">, number>();
+    for (const transaction of accountTransactions) {
+      if (!transaction.expenseId) continue;
+      const signed =
+        transaction.direction === "incoming"
+          ? transaction.amount
+          : -transaction.amount;
+      returnsByExpense.set(
+        transaction.expenseId,
+        sumMoney([returnsByExpense.get(transaction.expenseId) ?? 0, signed]),
+      );
+    }
     for (const expense of expenses) {
       if (!isVisibleExpenseForReport(expense, user, scope)) continue;
       assertSupportedCurrency(expense.currency);
@@ -480,6 +497,7 @@ export const summary = query({
           incurredRow.incurredExpenses = sumMoney([
             incurredRow.incurredExpenses,
             expense.amount,
+            -(returnsByExpense.get(expense._id) ?? 0),
           ]);
         }
       }
@@ -516,14 +534,42 @@ export const summary = query({
         total: 0,
         count: 0,
       };
-      existing.total = sumMoney([existing.total, expense.amount]);
+      existing.total = sumMoney([
+        existing.total,
+        expense.amount,
+        -(returnsByExpense.get(expense._id) ?? 0),
+      ]);
       existing.count += 1;
       categoryTotals.set(expense.categoryId, existing);
     }
 
+    const expenseById = new Map(expenses.map((expense) => [expense._id, expense]));
+    for (const transaction of accountTransactions) {
+      if (!transaction.expenseId) continue;
+      const expense = expenseById.get(transaction.expenseId);
+      if (!expense || !isVisibleExpenseForReport(expense, user, scope)) continue;
+      const month = monthFromTimestamp(transaction.transactionDate);
+      if (!monthInRange(month, startMonth, endMonth)) continue;
+      const signed =
+        transaction.direction === "incoming"
+          ? transaction.amount
+          : -transaction.amount;
+      const row = monthly.get(month);
+      if (row) row.expenseReturns = sumMoney([row.expenseReturns, signed]);
+      const expenseCompany = expense.companyId
+        ? scope.companyMap.get(expense.companyId)
+        : undefined;
+      const countryId = expense.countryId ?? expenseCompany?.countryId;
+      if (countryId) {
+        const performance = countryRow(countryId);
+        performance.expenses = sumMoney([performance.expenses, -signed]);
+      }
+    }
+
     const monthlyRows = [...monthly.values()].map((row) => ({
       ...row,
-      net: sumMoney([row.income, -row.expenses]),
+      netExpenses: sumMoney([row.expenses, -row.expenseReturns]),
+      net: sumMoney([row.income, -row.expenses, row.expenseReturns]),
       operatingNet: sumMoney([row.recognizedRevenue, -row.incurredExpenses]),
     }));
     const totals = monthlyRows.reduce(
@@ -540,6 +586,8 @@ export const summary = query({
         ]),
         expenses: sumMoney([acc.expenses, row.expenses]),
         incurredExpenses: sumMoney([acc.incurredExpenses, row.incurredExpenses]),
+        expenseReturns: sumMoney([acc.expenseReturns, row.expenseReturns]),
+        netExpenses: sumMoney([acc.netExpenses, row.netExpenses]),
         net: sumMoney([acc.net, row.net]),
         operatingNet: sumMoney([acc.operatingNet, row.operatingNet]),
         paymentCount: acc.paymentCount + row.paymentCount,
@@ -551,6 +599,8 @@ export const summary = query({
         expectedCollections: 0,
         expenses: 0,
         incurredExpenses: 0,
+        expenseReturns: 0,
+        netExpenses: 0,
         net: 0,
         operatingNet: 0,
         paymentCount: 0,

@@ -1101,6 +1101,37 @@ export default defineSchema({
       filterFields: ["countryId", "isActive"],
     }),
 
+  accountTransactions: defineTable({
+    accountId: v.id("receivingAccounts"),
+    countryId: v.id("countries"),
+    currency: v.string(),
+    direction: v.union(v.literal("incoming"), v.literal("outgoing")),
+    type: v.union(
+      v.literal("expense_return"),
+      v.literal("opening_balance"),
+      v.literal("capital_contribution"),
+      v.literal("other_non_invoice_inflow"),
+      v.literal("reversal"),
+    ),
+    amount: v.number(),
+    amountCents: v.number(),
+    transactionDate: v.number(),
+    transactionId: v.string(),
+    expenseId: v.optional(v.id("expenseRequests")),
+    relatedTransactionId: v.optional(v.id("accountTransactions")),
+    source: v.optional(v.string()),
+    description: v.string(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    reversedAt: v.optional(v.number()),
+    reversedBy: v.optional(v.id("users")),
+    reversalReason: v.optional(v.string()),
+  })
+    .index("by_account", ["accountId"])
+    .index("by_account_transaction", ["accountId", "transactionId"])
+    .index("by_expense", ["expenseId"])
+    .index("by_type", ["type"]),
+
   invoiceEvents: defineTable({
     invoiceId: v.id("invoices"),
     type: v.union(
@@ -1223,6 +1254,8 @@ export default defineSchema({
       v.literal("updated"),
       v.literal("receipt_uploaded"),
       v.literal("receipt_removed"),
+      v.literal("return_recorded"),
+      v.literal("return_reversed"),
     ),
     message: v.string(),
     actorId: v.id("users"),

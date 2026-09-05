@@ -84,6 +84,19 @@ export default function CollectionsPage({
   const [search, setSearch] = useState("");
   const [countryFilter, setCountryFilter] = useState("all");
   const [bankOpen, setBankOpen] = useState(false);
+  const [inflowOpen, setInflowOpen] = useState(false);
+  const [inflowForm, setInflowForm] = useState({
+    accountId: "",
+    type: "capital_contribution" as
+      | "opening_balance"
+      | "capital_contribution"
+      | "other_non_invoice_inflow",
+    amount: "",
+    transactionDate: today(),
+    transactionId: "",
+    source: "",
+    description: "",
+  });
   const [editInstitutionId, setEditInstitutionId] =
     useState<Id<"financialInstitutions"> | null>(null);
   const [bankForm, setBankForm] = useState({
@@ -141,6 +154,9 @@ export default function CollectionsPage({
   const migrateLegacy = useMutation(
     api.receivingAccounts.migrateLegacyInstitutions,
   );
+  const recordNonInvoiceInflow = useMutation(
+    api.receivingAccounts.recordNonInvoiceInflow,
+  );
   const canManage =
     currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
 
@@ -190,6 +206,44 @@ export default function CollectionsPage({
     }
   }
 
+  async function saveInflow(event: React.FormEvent) {
+    event.preventDefault();
+    const amount = Number(inflowForm.amount);
+    if (!inflowForm.accountId || !Number.isFinite(amount) || amount <= 0) {
+      toast.error("Select an account and enter a positive amount");
+      return;
+    }
+    setPending(true);
+    try {
+      await recordNonInvoiceInflow({
+        accountId: inflowForm.accountId as Id<"receivingAccounts">,
+        type: inflowForm.type,
+        amount,
+        transactionDate: timestamp(inflowForm.transactionDate),
+        transactionId: inflowForm.transactionId,
+        source: inflowForm.source || undefined,
+        description: inflowForm.description,
+      });
+      toast.success("Account inflow recorded");
+      setInflowOpen(false);
+      setInflowForm({
+        accountId: "",
+        type: "capital_contribution",
+        amount: "",
+        transactionDate: today(),
+        transactionId: "",
+        source: "",
+        description: "",
+      });
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not record inflow",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
   if (!accounts || !report || !countries || !institutions)
     return (
       <div className="space-y-4 p-6 md:p-8">
@@ -213,6 +267,9 @@ export default function CollectionsPage({
         </div>
         {canManage && accountsMode ? (
           <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setInflowOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />Record account inflow
+            </Button>
             <Button
               variant="outline"
               onClick={async () => {
@@ -703,8 +760,13 @@ export default function CollectionsPage({
             <CardTitle>{ledger.account.name} ledger</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="mb-4 text-lg font-bold">
-              Net movement: {money(ledger.netMovement, ledger.account.currency)}
+            <div className="mb-4 flex flex-wrap gap-6 text-lg font-bold">
+              <span>
+                Account balance: {money(ledger.accountBalance, ledger.account.currency)}
+              </span>
+              <span>
+                Period movement: {money(ledger.netMovement, ledger.account.currency)}
+              </span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -735,6 +797,138 @@ export default function CollectionsPage({
           </CardContent>
         </Card>
       ) : null}
+
+      <Dialog open={inflowOpen} onOpenChange={setInflowOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Record Non-Invoice Inflow</DialogTitle>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={saveInflow}>
+            <div>
+              <Label>Receiving account</Label>
+              <Select
+                value={inflowForm.accountId}
+                onValueChange={(accountId) =>
+                  setInflowForm({ ...inflowForm, accountId })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts
+                    .filter(
+                      (account) =>
+                        account.isActive && account.usage !== "outgoing",
+                    )
+                    .map((account) => (
+                      <SelectItem key={account._id} value={account._id}>
+                        {account.name} · {account.currency}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Transaction type</Label>
+              <Select
+                value={inflowForm.type}
+                onValueChange={(type) =>
+                  setInflowForm({
+                    ...inflowForm,
+                    type: type as typeof inflowForm.type,
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="opening_balance">Opening balance</SelectItem>
+                  <SelectItem value="capital_contribution">
+                    Capital contribution / investment
+                  </SelectItem>
+                  <SelectItem value="other_non_invoice_inflow">
+                    Other non-invoice inflow
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Amount</Label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={inflowForm.amount}
+                  onChange={(event) =>
+                    setInflowForm({ ...inflowForm, amount: event.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <Label>Transaction date</Label>
+                <Input
+                  type="date"
+                  max={today()}
+                  value={inflowForm.transactionDate}
+                  onChange={(event) =>
+                    setInflowForm({
+                      ...inflowForm,
+                      transactionDate: event.target.value,
+                    })
+                  }
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Transaction ID</Label>
+              <Input
+                value={inflowForm.transactionId}
+                onChange={(event) =>
+                  setInflowForm({ ...inflowForm, transactionId: event.target.value })
+                }
+                required
+              />
+            </div>
+            <div>
+              <Label>Source / investor</Label>
+              <Input
+                value={inflowForm.source}
+                onChange={(event) =>
+                  setInflowForm({ ...inflowForm, source: event.target.value })
+                }
+              />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Input
+                value={inflowForm.description}
+                onChange={(event) =>
+                  setInflowForm({ ...inflowForm, description: event.target.value })
+                }
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setInflowOpen(false)}
+                disabled={pending}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={pending}>
+                {pending ? "Saving..." : "Record inflow"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

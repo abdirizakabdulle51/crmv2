@@ -264,6 +264,8 @@ describe("finance reports", () => {
         expectedCollections: 0,
         expenses: 125,
         incurredExpenses: 125,
+        expenseReturns: 0,
+        netExpenses: 125,
         net: 175,
         operatingNet: -125,
         paymentCount: 1,
@@ -915,5 +917,62 @@ describe("finance reports", () => {
         endMonth: "2026-08",
       }),
     ).rejects.toThrow("You do not have permission to view finance reports");
+  });
+
+  it("reports expense returns without changing cash or incurred-date semantics", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await insertExpense(t, s, {
+      status: "paid",
+      amount: 100,
+      companyId: s.companyA,
+      countryId: s.countryA,
+      expenseDate: Date.UTC(2026, 7, 5),
+      paidAt: Date.UTC(2026, 7, 10),
+    });
+    const accountId = await t.run((ctx) =>
+      ctx.db.insert("receivingAccounts", {
+        countryId: s.countryA,
+        name: "Somalia Collections",
+        providerName: "Somalia Bank",
+        accountNumber: "SO-REPORT-1",
+        accountHolderName: "HTG CLOUDS LIMITED",
+        type: "bank",
+        usage: "both",
+        currency: "USD",
+        isActive: true,
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    await t.run((ctx) =>
+      ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "expense_return",
+        amount: 40,
+        amountCents: 4000,
+        transactionDate: Date.UTC(2026, 7, 15),
+        transactionId: "RETURN-REPORT-40",
+        expenseId,
+        description: "Unused funds returned",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 15),
+      }),
+    );
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+    expect(report.totals.expenses).toBe(100);
+    expect(report.totals.expenseReturns).toBe(40);
+    expect(report.totals.netExpenses).toBe(60);
+    expect(report.totals.net).toBe(-60);
+    expect(report.totals.incurredExpenses).toBe(60);
+    expect(report.totals.operatingNet).toBe(-60);
   });
 });

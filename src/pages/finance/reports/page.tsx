@@ -314,6 +314,7 @@ export default function FinanceReportsPage({
     (report?.totals.income ?? 0) > 0 ||
     (report?.totals.recognizedRevenue ?? 0) > 0 ||
     (report?.totals.expenses ?? 0) > 0 ||
+    (report?.totals.expenseReturns ?? 0) > 0 ||
     (report?.expenseStatusSummary ?? []).some((row) => row.count > 0);
   const exportArgs = {
     startMonth,
@@ -465,7 +466,15 @@ export default function FinanceReportsPage({
         ]
       : view === "expenses"
         ? [
-            ["Paid expenses", formatCurrency(report.totals.expenses)],
+            ["Gross paid expenses", formatCurrency(report.totals.expenses)],
+            [
+              "Expense returns",
+              formatCurrency(report.totals.expenseReturns ?? 0),
+            ],
+            [
+              "Net paid expenses",
+              formatCurrency(report.totals.netExpenses ?? report.totals.expenses),
+            ],
             [
               "Paid expense requests",
               report.monthly
