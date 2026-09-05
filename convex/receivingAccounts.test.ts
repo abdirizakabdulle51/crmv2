@@ -216,7 +216,9 @@ describe("finance accounts", () => {
     expect(ledger.rows.map((row) => row.date)).toEqual([100, 200, 250]);
     expect(ledger.rows.map((row) => row.runningBalance)).toEqual([100, 150, 125]);
     expect(ledger.accountBalance).toBe(125);
-    expect(ledger.rows.at(-1)?.runningBalance).toBe(ledger.accountBalance);
+    expect(ledger.rows[ledger.rows.length - 1]?.runningBalance).toBe(
+      ledger.accountBalance,
+    );
   });
 
   it("rejects a new account transaction that reuses a historical bank transaction ID", async () => {
