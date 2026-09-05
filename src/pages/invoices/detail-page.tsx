@@ -480,20 +480,14 @@ function InvoiceDetailContent() {
       toast.error("Enter a positive payment amount");
       return;
     }
-    const maximumAmount = reconcilingLegacyPayment ? legacyPaymentGap : invoice.balanceDue;
-    if (amount > maximumAmount) {
-      toast.error(`Payment cannot exceed ${formatCurrency(maximumAmount)}`);
+    if (reconcilingLegacyPayment && amount > legacyPaymentGap) {
+      toast.error(`Payment cannot exceed ${formatCurrency(legacyPaymentGap)}`);
       return;
     }
-    if (!receivingAccountId) {
-      toast.error("Select the account that received the payment");
+    if (reconcilingLegacyPayment && (!receivingAccountId || !transactionId.trim())) {
+      toast.error("Select a receiving account and enter the transaction ID");
       return;
     }
-    if (!transactionId.trim()) {
-      toast.error("Enter the bank or provider transaction ID");
-      return;
-    }
-
     setIsRecordingPayment(true);
     try {
       const common = {
@@ -597,6 +591,7 @@ function InvoiceDetailContent() {
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
             {statusBadge(invoice.status)}
+            {invoice.isHistorical ? <Badge>Historical · Odoo</Badge> : null}
             {isTestHidden ? <Badge variant="outline">Test/Hidden</Badge> : null}
           </div>
           <p className="mt-1 text-muted-foreground">
@@ -822,6 +817,15 @@ function InvoiceDetailContent() {
               </Button>
             ) : null}
             <Detail label="Source Month" value={invoice.sourceMonth} />
+            {invoice.isHistorical ? (
+              <>
+                <Detail label="Original Reference" value={invoice.originalReference} />
+                <Detail
+                  label="Coverage"
+                  value={`${invoice.historicalCoverageStartMonth ?? "-"} · ${invoice.historicalCoverageMonths ?? 0} month(s)`}
+                />
+              </>
+            ) : null}
           </CardContent>
         </Card>
       </div>
@@ -1176,6 +1180,8 @@ function RecordPaymentDialog({
   const isOverBalance = Number.isFinite(numericAmount)
     ? numericAmount > balanceDue
     : false;
+  const appliedAmount = Math.min(numericAmount, balanceDue);
+  const extraServiceRevenueAmount = Math.max(numericAmount - balanceDue, 0);
   const accountType = method === "Bank Transfer" ? "bank" : "mobile_money";
   const eligibleAccounts = accounts.filter(
     (account) => account.type === accountType,
@@ -1207,9 +1213,12 @@ function RecordPaymentDialog({
               placeholder="0.00"
             />
             {isOverBalance ? (
-              <p className="text-xs text-destructive">
-                Payment cannot exceed the balance due.
-              </p>
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <div className="font-medium">This payment is above the invoice balance.</div>
+                <div className="mt-1">
+                  {formatCurrency(appliedAmount)} will be applied to the invoice. {formatCurrency(extraServiceRevenueAmount)} will be recorded as Extra Service Revenue and will not become customer credit.
+                </div>
+              </div>
             ) : null}
           </div>
 
@@ -1299,10 +1308,7 @@ function RecordPaymentDialog({
               type="submit"
               className="bg-cyan-600 text-white hover:bg-cyan-700"
               disabled={
-                pending ||
-                isOverBalance ||
-                !receivingAccountId ||
-                !transactionId.trim()
+                pending
               }
             >
               {pending ? (

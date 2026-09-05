@@ -11,6 +11,9 @@ vi.mock("@/convex/_generated/api.js", () => ({
     quotes: {
       getById: "quotes.getById",
       updateStatus: "quotes.updateStatus",
+      updateDiscount: "quotes.updateDiscount",
+      approveDiscount: "quotes.approveDiscount",
+      rejectDiscount: "quotes.rejectDiscount",
       remove: "quotes.remove",
     },
   },
@@ -20,6 +23,9 @@ const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
   quote: undefined as Doc<"quotes"> | undefined,
   updateStatus: vi.fn(),
+  updateDiscount: vi.fn(),
+  approveDiscount: vi.fn(),
+  rejectDiscount: vi.fn(),
   removeQuote: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -29,6 +35,15 @@ vi.mock("convex/react", () => ({
   useMutation: (mutation: string) => {
     if (mutation === "quotes.updateStatus") {
       return mocks.updateStatus;
+    }
+    if (mutation === "quotes.updateDiscount") {
+      return mocks.updateDiscount;
+    }
+    if (mutation === "quotes.approveDiscount") {
+      return mocks.approveDiscount;
+    }
+    if (mutation === "quotes.rejectDiscount") {
+      return mocks.rejectDiscount;
     }
     if (mutation === "quotes.remove") {
       return mocks.removeQuote;
@@ -166,8 +181,8 @@ describe("QuoteDetailPage", () => {
     expect(
       screen.getByText("Generated from Usage Tracking for 2026-07"),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("$6.00")).toHaveLength(2);
-    expect(screen.getAllByText("$72.00")).toHaveLength(2);
+    expect(screen.getAllByText("$6.00")).toHaveLength(3);
+    expect(screen.getAllByText("$72.00")).toHaveLength(3);
   });
 
   it("prints/exports through the existing popup document flow", async () => {
@@ -216,6 +231,34 @@ describe("QuoteDetailPage", () => {
       status: "sent",
     });
     expect(screen.getByTestId("location")).toHaveTextContent("/quotes/quote-1");
+  });
+
+  it("applies a discount to a draft quote from the discount button", async () => {
+    const user = userEvent.setup();
+    const aicc = company("company-1", "AICC");
+    mocks.companies = [aicc];
+    mocks.quote = quote(aicc._id);
+    mocks.updateDiscount.mockResolvedValue({
+      discountPercent: 15,
+      discountApprovalStatus: "pending",
+      discountApprovalLevel: "country_gm",
+    });
+
+    renderDetailPage();
+
+    await user.click(screen.getByRole("button", { name: "Discount" }));
+    await user.type(screen.getByLabelText("Discount percent"), "15");
+    await user.click(screen.getByRole("button", { name: "Apply Discount" }));
+
+    await waitFor(() => {
+      expect(mocks.updateDiscount).toHaveBeenCalledWith({
+        id: "quote-1",
+        discountPercent: 15,
+      });
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "Discount saved and sent for Country Manager approval",
+    );
   });
 
   it("deletes a draft quote and returns to the Quotes list", async () => {

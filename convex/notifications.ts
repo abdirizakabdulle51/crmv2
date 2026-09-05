@@ -9,6 +9,9 @@ const notificationTypeValidator = v.union(
   v.literal("task_report_to"),
   v.literal("task_status_changed"),
   v.literal("task_commented"),
+  v.literal("quote_discount_approval_requested"),
+  v.literal("quote_discount_approved"),
+  v.literal("quote_discount_rejected"),
 );
 
 async function getCurrentUserOrThrow(
@@ -132,8 +135,8 @@ export const createForRecipient = internalMutation({
     type: notificationTypeValidator,
     title: v.string(),
     body: v.optional(v.string()),
-    entityType: v.literal("task"),
-    entityId: v.id("tasks"),
+    entityType: v.union(v.literal("task"), v.literal("quote")),
+    entityId: v.union(v.id("tasks"), v.id("quotes")),
     href: v.string(),
   },
   handler: async (ctx, args) => {

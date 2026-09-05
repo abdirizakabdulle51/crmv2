@@ -8,7 +8,7 @@ import {
   isCeoOrHob,
 } from "./authorization";
 import { allocateMoney, sumMoney } from "./money";
-import { financialMonthStart, financialYear } from "./financialDates";
+import { financialMonthStart, financialYear, historicalDateDay } from "./financialDates";
 
 type AchievementRow = {
   accountManagerId: Id<"users">;
@@ -78,7 +78,10 @@ export async function buildCollectedRevenueAchievement(
     amount: number,
     collectedAt: number,
   ) => {
-    if (yearFromTimestamp(collectedAt) !== year || amount <= 0) {
+    const collectedYear = invoice.isHistorical
+      ? Number(historicalDateDay(collectedAt).slice(0, 4))
+      : yearFromTimestamp(collectedAt);
+    if (collectedYear !== year || amount <= 0) {
       return;
     }
     const company = companyById.get(invoice.companyId);
@@ -138,7 +141,7 @@ export async function buildCollectedRevenueAchievement(
   for (const invoice of invoices) {
     const recorded = recordedByInvoiceId.get(invoice._id) ?? 0;
     const unrecorded = sumMoney([invoice.amountPaid, -recorded]);
-    // Exclude legacy balances until their actual collection date is reconciled.
+    addCollection(invoice, unrecorded, invoice.updatedAt);
   }
 
   const byAccountManager: Record<string, number> = {};

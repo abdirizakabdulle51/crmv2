@@ -315,6 +315,7 @@ export default function FinanceReportsPage({
     (report?.totals.recognizedRevenue ?? 0) > 0 ||
     (report?.totals.otherCashInflows ?? 0) !== 0 ||
     (report?.totals.expenses ?? 0) > 0 ||
+    (report?.totals.expenseReturns ?? 0) > 0 ||
     (report?.expenseStatusSummary ?? []).some((row) => row.count > 0);
   const exportArgs = {
     startMonth,
@@ -452,20 +453,43 @@ export default function FinanceReportsPage({
   const summaryCards =
     view === "revenue"
       ? [
-          ["Invoice collections", formatCurrency(report.totals.income)],
-          ["Other cash inflows", formatCurrency(report.totals.otherCashInflows ?? 0)],
-          ["Total cash inflows", formatCurrency(report.totals.totalCashInflows ?? report.totals.income)],
+          ["Collected income", formatCurrency(report.totals.income)],
+          [
+            "Other cash inflows",
+            formatCurrency(report.totals.otherCashInflows ?? 0),
+          ],
+          [
+            "Total cash inflows",
+            formatCurrency(
+              report.totals.totalCashInflows ?? report.totals.income,
+            ),
+          ],
           [
             "Recognized revenue",
             formatCurrency(report.totals.recognizedRevenue ?? 0),
           ],
-          ["Capital contributions", formatCurrency(report.totals.capitalContributions ?? 0)],
+          ["Pre-collected", formatCurrency(report.totals.preCollected ?? 0)],
+          [
+            "Expected collections",
+            formatCurrency(report.totals.expectedCollections ?? 0),
+          ],
+          ["Payments", report.totals.paymentCount.toLocaleString()],
+          [
+            "Capital contributions",
+            formatCurrency(report.totals.capitalContributions ?? 0),
+          ],
         ]
       : view === "expenses"
         ? [
             ["Gross paid expenses", formatCurrency(report.totals.expenses)],
-            ["Expense returns", formatCurrency(report.totals.expenseReturns ?? 0)],
-            ["Net paid expenses", formatCurrency(report.totals.netExpenses ?? report.totals.expenses)],
+            [
+              "Expense returns",
+              formatCurrency(report.totals.expenseReturns ?? 0),
+            ],
+            [
+              "Net paid expenses",
+              formatCurrency(report.totals.netExpenses ?? report.totals.expenses),
+            ],
             [
               "Paid expense requests",
               report.monthly
@@ -670,7 +694,11 @@ export default function FinanceReportsPage({
                   <Legend />
                   <Bar
                     dataKey={view === "overview" ? "recognizedRevenue" : "income"}
-                    name={view === "overview" ? "Recognized revenue" : "Invoice collections"}
+                    name={
+                      view === "overview"
+                        ? "Recognized revenue"
+                        : "Invoice collections"
+                    }
                     fill="oklch(0.6 0.18 170)"
                     radius={[4, 4, 0, 0]}
                   />
@@ -682,7 +710,12 @@ export default function FinanceReportsPage({
                       radius={[4, 4, 0, 0]}
                     />
                   ) : (
-                    <Bar dataKey="otherCashInflows" name="Other cash inflows (not revenue)" fill="oklch(0.68 0.14 250)" radius={[4, 4, 0, 0]} />
+                    <Bar
+                      dataKey="otherCashInflows"
+                      name="Other cash inflows (not revenue)"
+                      fill="oklch(0.68 0.14 250)"
+                      radius={[4, 4, 0, 0]}
+                    />
                   )}
                 </BarChart>
               </ResponsiveContainer>
@@ -693,7 +726,16 @@ export default function FinanceReportsPage({
                   <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-3 py-3">Month</th>
                     <th className="px-3 py-3 text-right">Income</th>
-                    {view === "revenue" ? <><th className="px-3 py-3 text-right">Other cash inflows</th><th className="px-3 py-3 text-right">Total bank inflows</th></> : null}
+                    {view === "revenue" ? (
+                      <>
+                        <th className="px-3 py-3 text-right">
+                          Other cash inflows
+                        </th>
+                        <th className="px-3 py-3 text-right">
+                          Total cash inflows
+                        </th>
+                      </>
+                    ) : null}
                     <th className="px-3 py-3 text-right">Recognized</th>
                     <th className="px-3 py-3 text-right">Pre-collected</th>
                     <th className="px-3 py-3 text-right">Expected</th>
@@ -718,7 +760,18 @@ export default function FinanceReportsPage({
                       <td className="px-3 py-3 text-right">
                         {formatCurrency(row.income)}
                       </td>
-                      {view === "revenue" ? <><td className="px-3 py-3 text-right">{formatCurrency(row.otherCashInflows ?? 0)}</td><td className="px-3 py-3 text-right font-medium">{formatCurrency(row.totalCashInflows ?? row.income)}</td></> : null}
+                      {view === "revenue" ? (
+                        <>
+                          <td className="px-3 py-3 text-right">
+                            {formatCurrency(row.otherCashInflows ?? 0)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-medium">
+                            {formatCurrency(
+                              row.totalCashInflows ?? row.income,
+                            )}
+                          </td>
+                        </>
+                      ) : null}
                       <td className="px-3 py-3 text-right">
                         {formatCurrency(row.recognizedRevenue ?? 0)}
                       </td>
@@ -750,34 +803,6 @@ export default function FinanceReportsPage({
                   ))}
                 </tbody>
               </table>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {view === "expenses" && hasData ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Monthly Paid Expenses</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Cash paid and expense requests grouped by payment date.
-            </p>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[320px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="label" className="text-xs" />
-                  <YAxis yAxisId="amount" tickFormatter={formatCompact} className="text-xs" />
-                  <YAxis yAxisId="count" orientation="right" allowDecimals={false} className="text-xs" />
-                  <Tooltip formatter={(value, name) => name === "Paid requests" ? Number(value).toLocaleString() : formatCurrency(Number(value))} />
-                  <Legend />
-                  <Bar yAxisId="amount" dataKey="netExpenses" name="Net paid amount" fill="oklch(0.65 0.18 35)" radius={[4, 4, 0, 0]} />
-                  <Bar yAxisId="amount" dataKey="expenseReturns" name="Returns" fill="oklch(0.68 0.15 155)" radius={[4, 4, 0, 0]} />
-                  <Bar yAxisId="count" dataKey="paidExpenseCount" name="Paid requests" fill="oklch(0.6 0.14 250)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
             </div>
           </CardContent>
         </Card>

@@ -3004,6 +3004,34 @@ export const listPayments = query({
   },
 });
 
+export function calculatePaymentApplication(
+  invoice: Doc<"invoices">,
+  requestedAmount: number,
+) {
+  const amount = roundMoney(requestedAmount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Payment amount must be positive",
+    });
+  }
+  const currentBalanceDue = roundMoney(invoice.balanceDue);
+  const appliedAmount = roundMoney(Math.min(amount, currentBalanceDue));
+  const extraServiceRevenueAmount = roundMoney(amount - appliedAmount);
+  const nextAmountPaid = sumMoney([invoice.amountPaid, appliedAmount]);
+  const nextBalanceDue = calculateBalance(invoice.grandTotal, nextAmountPaid);
+  const nextStatus: InvoiceStatus =
+    nextBalanceDue === 0 ? "paid" : "partially_paid";
+  return {
+    amount,
+    appliedAmount,
+    extraServiceRevenueAmount,
+    nextAmountPaid,
+    nextBalanceDue,
+    nextStatus,
+  };
+}
+
 export const recordPayment = mutation({
   args: {
     invoiceId: v.id("invoices"),
@@ -3020,26 +3048,11 @@ export const recordPayment = mutation({
     await assertCanAccessInvoice(ctx, user, invoice);
     assertPayable(invoice);
 
-    const amount = roundMoney(args.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Payment amount must be positive",
-      });
-    }
-    if (amount > roundMoney(invoice.balanceDue)) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Payment cannot exceed the balance due",
-      });
-    }
-
+    const payment = calculatePaymentApplication(invoice, args.amount);
+    const { amount, appliedAmount, extraServiceRevenueAmount, nextAmountPaid,
+      nextBalanceDue, nextStatus } = payment;
     const now = Date.now();
     const paidAt = args.paidAt ?? now;
-    const nextAmountPaid = sumMoney([invoice.amountPaid, amount]);
-    const nextBalanceDue = calculateBalance(invoice.grandTotal, nextAmountPaid);
-    const nextStatus: InvoiceStatus =
-      nextBalanceDue === 0 ? "paid" : "partially_paid";
     const method = trimOptional(args.method) ?? PAYMENT_METHOD_BANK_TRANSFER;
     if (!SUPPORTED_PAYMENT_METHODS.has(method)) {
       throw new ConvexError({
@@ -3049,16 +3062,22 @@ export const recordPayment = mutation({
     }
     const reference = trimOptional(args.reference);
     const transactionId = trimOptional(args.transactionId);
-    const receivingAccount = args.receivingAccountId
-      ? await ctx.db.get(args.receivingAccountId)
-      : null;
-    if (!receivingAccount || !receivingAccount.isActive) {
+    if (transactionId && !args.receivingAccountId) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Select an active receiving account",
       });
     }
-    if (receivingAccount.usage === "outgoing") {
+    const receivingAccount = args.receivingAccountId
+      ? await ctx.db.get(args.receivingAccountId)
+      : null;
+    if (args.receivingAccountId && (!receivingAccount || !receivingAccount.isActive)) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select an active receiving account",
+      });
+    }
+    if (receivingAccount?.usage === "outgoing") {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Select an account enabled for customer collections",
@@ -3066,9 +3085,10 @@ export const recordPayment = mutation({
     }
     const paymentCompany = await ctx.db.get(invoice.companyId);
     if (
-      !paymentCompany ||
-      !receivingAccount.countryId ||
-      receivingAccount.countryId !== paymentCompany.countryId
+      receivingAccount &&
+      (!paymentCompany ||
+        !receivingAccount.countryId ||
+        receivingAccount.countryId !== paymentCompany.countryId)
     ) {
       throw new ConvexError({
         code: "BAD_REQUEST",
@@ -3077,33 +3097,35 @@ export const recordPayment = mutation({
     }
     const expectedType =
       method === PAYMENT_METHOD_BANK_TRANSFER ? "bank" : "mobile_money";
-    if (receivingAccount.type !== expectedType) {
+    if (receivingAccount && receivingAccount.type !== expectedType) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "The receiving account does not match the payment method",
       });
     }
-    if (!transactionId) {
+    if (args.receivingAccountId && !transactionId) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Bank or provider transaction ID is required",
       });
     }
     const invoiceCurrency = invoice.sellerCurrency ?? "USD";
-    if (receivingAccount.currency !== invoiceCurrency) {
+    if (receivingAccount && receivingAccount.currency !== invoiceCurrency) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: `Payment account currency must be ${invoiceCurrency}`,
       });
     }
-    const duplicate = await ctx.db
-      .query("invoicePayments")
-      .withIndex("by_account_transaction", (q) =>
-        q
-          .eq("receivingAccountId", receivingAccount._id)
-          .eq("transactionId", transactionId),
-      )
-      .first();
+    const duplicate = receivingAccount
+      ? await ctx.db
+          .query("invoicePayments")
+          .withIndex("by_account_transaction", (q) =>
+            q
+              .eq("receivingAccountId", receivingAccount._id)
+              .eq("transactionId", transactionId),
+          )
+          .first()
+      : null;
     if (duplicate) {
       throw new ConvexError({
         code: "CONFLICT",
@@ -3114,18 +3136,24 @@ export const recordPayment = mutation({
 
     await ctx.db.insert("invoicePayments", {
       invoiceId: args.invoiceId,
-      receivingAccountId: receivingAccount._id,
       amount,
+      appliedAmount,
+      ...(extraServiceRevenueAmount > 0 ? { extraServiceRevenueAmount } : {}),
       amountCents: toCents(amount),
       paidAt,
       method,
       reference,
-      transactionId,
-      receivingBankName: receivingAccount.providerName,
-      receivingAccountNumber: receivingAccount.accountNumber,
-      receivingAccountName: receivingAccount.accountHolderName,
-      receivingBankLocation: receivingAccount.location,
-      receivingCurrencyNote: receivingAccount.currency,
+      ...(receivingAccount
+        ? {
+            receivingAccountId: receivingAccount._id,
+            transactionId,
+            receivingBankName: receivingAccount.providerName,
+            receivingAccountNumber: receivingAccount.accountNumber,
+            receivingAccountName: receivingAccount.accountHolderName,
+            receivingBankLocation: receivingAccount.location,
+            receivingCurrencyNote: receivingAccount.currency,
+          }
+        : {}),
       recordedBy: user._id,
       createdAt: now,
     });
@@ -3141,9 +3169,12 @@ export const recordPayment = mutation({
 
     const details = [
       `Payment of ${formatMoney(amount)} recorded.`,
+      extraServiceRevenueAmount > 0
+        ? `Applied to invoice: ${formatMoney(appliedAmount)}. Extra Service Revenue: ${formatMoney(extraServiceRevenueAmount)}.`
+        : undefined,
       method ? `Method: ${method}.` : undefined,
-      `Account: ${receivingAccount.name}.`,
-      `Transaction ID: ${transactionId}.`,
+      receivingAccount ? `Account: ${receivingAccount.name}.` : undefined,
+      transactionId ? `Transaction ID: ${transactionId}.` : undefined,
       reference ? `Note: ${reference}.` : undefined,
       `Balance due: ${formatMoney(nextBalanceDue)}.`,
     ]
@@ -3171,35 +3202,36 @@ export const reconcileLegacyPayment = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
-    if (!isCeoOrHob(user))
+    if (!isCeoOrHob(user)) {
       throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can reconcile historical payments" });
+    }
     const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
     await assertCanAccessInvoice(ctx, user, invoice);
-    const payments = await ctx.db
-      .query("invoicePayments")
-      .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
-      .collect();
+    const payments = await ctx.db.query("invoicePayments").withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id)).collect();
     const missing = roundMoney(invoice.amountPaid - sumMoney(payments.map((payment) => payment.amount)));
     const amount = roundMoney(args.amount);
-    if (amount <= 0 || amount > missing)
+    if (amount <= 0 || amount > missing) {
       throw new ConvexError({ code: "BAD_REQUEST", message: `Reconciliation amount cannot exceed ${formatMoney(missing)}` });
-    if (args.paidAt > Date.now())
+    }
+    if (args.paidAt > Date.now()) {
       throw new ConvexError({ code: "BAD_REQUEST", message: "Payment date cannot be in the future" });
+    }
     const account = await ctx.db.get(args.receivingAccountId);
     const company = await ctx.db.get(invoice.companyId);
-    if (!account?.isActive || account.usage === "outgoing" || !company || account.countryId !== company.countryId)
+    if (!account?.isActive || account.usage === "outgoing" || !company || account.countryId !== company.countryId) {
       throw new ConvexError({ code: "BAD_REQUEST", message: "Select an active collection account in the customer's country" });
-    if (account.currency !== (invoice.sellerCurrency ?? "USD"))
+    }
+    if (account.currency !== (invoice.sellerCurrency ?? "USD")) {
       throw new ConvexError({ code: "BAD_REQUEST", message: `Payment account currency must be ${invoice.sellerCurrency ?? "USD"}` });
+    }
     const transactionId = trimOptional(args.transactionId);
-    if (!transactionId)
+    if (!transactionId) {
       throw new ConvexError({ code: "BAD_REQUEST", message: "Transaction ID is required" });
-    const duplicate = await ctx.db
-      .query("invoicePayments")
-      .withIndex("by_account_transaction", (q) => q.eq("receivingAccountId", account._id).eq("transactionId", transactionId))
-      .unique();
-    if (duplicate)
+    }
+    const duplicate = await ctx.db.query("invoicePayments").withIndex("by_account_transaction", (q) => q.eq("receivingAccountId", account._id).eq("transactionId", transactionId)).first();
+    if (duplicate) {
       throw new ConvexError({ code: "CONFLICT", message: "This transaction ID is already recorded for the account" });
+    }
     const now = Date.now();
     await ctx.db.insert("invoicePayments", {
       invoiceId: invoice._id,

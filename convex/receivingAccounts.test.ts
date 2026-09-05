@@ -1,7 +1,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
 import { api } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel.d.ts";
+import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import schema from "./schema";
 import { modules } from "./test.setup";
 
@@ -58,19 +58,225 @@ async function seed(t: ReturnType<typeof convexTest>) {
 }
 
 describe("finance accounts", () => {
-  it("records expense returns without changing the approved amount and reconciles the ledger", async () => {
+  async function createAccount(
+    t: ReturnType<typeof convexTest>,
+    s: Awaited<ReturnType<typeof seed>>,
+    overrides: Partial<{
+      usage: "incoming" | "outgoing" | "both";
+      currency: string;
+      isActive: boolean;
+    }> = {},
+  ) {
+    return await t.run((ctx) =>
+      ctx.db.insert("receivingAccounts", {
+        countryId: s.countryA,
+        name: "Operations USD",
+        providerName: "Somalia Bank",
+        accountNumber: "SO-100",
+        accountHolderName: "HTG CLOUDS LIMITED",
+        type: "bank",
+        usage: overrides.usage ?? "both",
+        currency: overrides.currency ?? "USD",
+        isActive: overrides.isActive ?? true,
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+  }
+
+  it("keeps non-invoice inflows in the account ledger, not collections", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
-    const accountId = await asUser(t, s.ceo).mutation(api.receivingAccounts.create, {
-      countryId: s.countryA,
-      institutionId: s.institutionId,
-      name: "Operations USD",
-      accountNumber: "RET-100",
-      accountHolderName: "HTG",
-      type: "bank",
-      usage: "both",
-      currency: "USD",
+    const accountId = await createAccount(t, s);
+
+    await asUser(t, s.ceo).mutation(api.receivingAccounts.recordNonInvoiceInflow, {
+      accountId,
+      type: "opening_balance",
+      amount: 500,
+      transactionDate: 1000,
+      transactionId: "OPEN-500",
+      description: "Opening balance",
     });
+    await asUser(t, s.ceo).mutation(api.receivingAccounts.recordNonInvoiceInflow, {
+      accountId,
+      type: "capital_contribution",
+      amount: 250,
+      transactionDate: 1000,
+      transactionId: "CAP-250",
+      description: "Capital contribution",
+    });
+
+    const ledger = await asUser(t, s.ceo).query(api.receivingAccounts.ledger, {
+      accountId,
+      startDate: 0,
+      endDate: Date.now(),
+    });
+    expect(ledger.accountBalance).toBe(750);
+    expect(ledger.rows).toHaveLength(2);
+
+    const collections = await asUser(t, s.ceo).query(api.receivingAccounts.collections, {
+      startDate: 0,
+      endDate: Date.now(),
+      accountId,
+    });
+    expect(collections.rows).toHaveLength(0);
+    expect(collections.totalsByCurrency).toHaveLength(0);
+
+    await expect(
+      asUser(t, s.ceo).mutation(api.receivingAccounts.recordNonInvoiceInflow, {
+        accountId,
+        type: "opening_balance",
+        amount: 1,
+        transactionDate: 1000,
+        transactionId: "OPEN-SECOND",
+        description: "Duplicate opening balance",
+      }),
+    ).rejects.toThrow("active opening balance");
+  });
+
+  it("returns as-of balances and chronological running ledger balances", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const accountId = await createAccount(t, s);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "opening_balance",
+        amount: 100,
+        amountCents: 10000,
+        transactionDate: 100,
+        transactionId: "ASOF-OPEN",
+        description: "Opening balance",
+        createdBy: s.ceo._id,
+        createdAt: 100,
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "capital_contribution",
+        amount: 50,
+        amountCents: 5000,
+        transactionDate: 200,
+        transactionId: "ASOF-CAPITAL",
+        description: "Capital contribution",
+        createdBy: s.ceo._id,
+        createdAt: 200,
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "outgoing",
+        type: "reversal",
+        amount: 25,
+        amountCents: 2500,
+        transactionDate: 250,
+        transactionId: "ASOF-REVERSAL",
+        description: "Applicable outgoing reversal",
+        createdBy: s.ceo._id,
+        createdAt: 250,
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "other_non_invoice_inflow",
+        amount: 1000,
+        amountCents: 100000,
+        transactionDate: 300,
+        transactionId: "ASOF-FUTURE",
+        description: "Future inflow",
+        createdBy: s.ceo._id,
+        createdAt: 300,
+      });
+    });
+
+    const balances = await asUser(t, s.ceo).query(
+      api.receivingAccounts.balances,
+      { asOf: 250 },
+    );
+    expect(balances.rows[0]).toMatchObject({
+      moneyIn: 150,
+      moneyOut: 25,
+      balance: 125,
+    });
+
+    const ledger = await asUser(t, s.ceo).query(api.receivingAccounts.ledger, {
+      accountId,
+      startDate: 0,
+      endDate: 250,
+    });
+    expect(ledger.rows.map((row) => row.date)).toEqual([100, 200, 250]);
+    expect(ledger.rows.map((row) => row.runningBalance)).toEqual([100, 150, 125]);
+    expect(ledger.accountBalance).toBe(125);
+    expect(ledger.rows[ledger.rows.length - 1]?.runningBalance).toBe(
+      ledger.accountBalance,
+    );
+  });
+
+  it("rejects a new account transaction that reuses a historical bank transaction ID", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const accountId = await createAccount(t, s);
+    const invoiceId = await t.run(async (ctx) => {
+      const sectorId = await ctx.db.insert("sectors", { name: "Banking" });
+      const companyId = await ctx.db.insert("companies", {
+        name: "Historical Company",
+        sectorId,
+        countryId: s.countryA,
+        contractStatus: "active",
+      });
+      return await ctx.db.insert("invoices", {
+        companyId,
+        createdBy: s.ceo._id,
+        status: "paid",
+        companyName: "Historical Company",
+        lineItems: [],
+        subtotal: 100,
+        monthlyTotal: 100,
+        yearlyTotal: 100,
+        grandTotal: 100,
+        amountPaid: 100,
+        balanceDue: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    await t.run((ctx) =>
+      ctx.db.insert("invoicePayments", {
+        invoiceId,
+        receivingAccountId: accountId,
+        amount: 100,
+        paidAt: 1000,
+        transactionId: "BANK-TRAN-001",
+        recordedBy: s.ceo._id,
+        createdAt: 1000,
+      }),
+    );
+
+    await expect(
+      asUser(t, s.ceo).mutation(api.receivingAccounts.recordNonInvoiceInflow, {
+        accountId,
+        type: "other_non_invoice_inflow",
+        amount: 25,
+        transactionDate: 1000,
+        transactionId: "BANK-TRAN-001",
+        description: "Duplicate bank transaction",
+      }),
+    ).rejects.toThrow("already recorded");
+  });
+
+  it("records, limits, and reverses expense returns without changing the expense", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const accountId = await createAccount(t, s);
     const expenseId = await t.run(async (ctx) => {
       const categoryId = await ctx.db.insert("expenseCategories", {
         name: "Operations",
@@ -80,107 +286,71 @@ describe("finance accounts", () => {
         updatedAt: 1,
       });
       return await ctx.db.insert("expenseRequests", {
-        title: "Field cash",
+        title: "Paid expense",
         categoryId,
         amount: 100,
         currency: "USD",
-        expenseDate: Date.UTC(2026, 7, 1),
+        expenseDate: 1000,
         requestedBy: s.ceo._id,
         countryId: s.countryA,
         status: "paid",
-        fundingAccountId: accountId,
-        fundingAccountName: "Operations USD",
-        fundingProviderName: "Somalia Bank",
-        fundingAccountNumber: "RET-100",
-        paidAt: Date.UTC(2026, 7, 2),
+        paidAt: 1000,
         paidBy: s.ceo._id,
-        paymentTransactionId: "PAY-100",
+        fundingAccountId: accountId,
+        paymentTransactionId: "EXPENSE-100",
         createdAt: 1,
         updatedAt: 1,
       });
     });
 
-    const returnId = await asUser(t, s.ceo).mutation(api.receivingAccounts.recordExpenseReturn, {
-      expenseId,
-      accountId,
-      amount: 10,
-      transactionDate: Date.UTC(2026, 7, 3),
-      transactionId: "RETURN-10",
-      reason: "Unused field cash",
-    });
-    const summary = await asUser(t, s.ceo).query(api.receivingAccounts.expenseReturns, { expenseId });
-    expect(summary).toMatchObject({ originalAmount: 100, returnedAmount: 10, actualAmount: 90 });
-    expect((await t.run((ctx) => ctx.db.get(expenseId)))?.amount).toBe(100);
-    expect((await asUser(t, s.ceo).query(api.receivingAccounts.ledger, {
-      accountId,
-      startDate: Date.UTC(2026, 7, 1),
-      endDate: Date.UTC(2026, 7, 31),
-    })).accountBalance).toBe(-90);
-    await expect(asUser(t, s.ceo).mutation(api.receivingAccounts.recordExpenseReturn, {
-      expenseId,
-      accountId,
-      amount: 91,
-      transactionDate: Date.UTC(2026, 7, 4),
-      transactionId: "RETURN-TOO-MUCH",
-      reason: "Invalid",
-    })).rejects.toThrow("cannot exceed");
+    const returnId = await asUser(t, s.ceo).mutation(
+      api.receivingAccounts.recordExpenseReturn,
+      {
+        expenseId,
+        accountId,
+        amount: 40,
+        transactionDate: 2000,
+        transactionId: "RETURN-40",
+        reason: "Unused funds returned",
+      },
+    );
+    const summary = await asUser(t, s.ceo).query(
+      api.receivingAccounts.expenseReturns,
+      { expenseId },
+    );
+    expect(summary.returnedAmount).toBe(40);
+    expect(summary.actualAmount).toBe(60);
+    expect(summary.entries).toHaveLength(1);
 
-    await asUser(t, s.ceo).mutation(api.receivingAccounts.reverseAccountTransaction, {
-      transactionId: returnId,
-      reversalTransactionId: "RETURN-10-REV",
-      transactionDate: Date.UTC(2026, 7, 4),
-      reason: "Wrong bank entry",
-    });
-    expect(await asUser(t, s.ceo).query(api.receivingAccounts.expenseReturns, { expenseId }))
-      .toMatchObject({ originalAmount: 100, returnedAmount: 0, actualAmount: 100 });
-  });
+    const original = await t.run((ctx) => ctx.db.get(expenseId));
+    expect(original).toMatchObject({ amount: 100, status: "paid" });
 
-  it("records opening capital separately from invoice collections", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seed(t);
-    const accountId = await asUser(t, s.ceo).mutation(api.receivingAccounts.create, {
-      countryId: s.countryA,
-      institutionId: s.institutionId,
-      name: "Capital USD",
-      accountNumber: "CAP-100",
-      accountHolderName: "HTG",
-      type: "bank",
-      usage: "incoming",
-      currency: "USD",
-    });
-    await asUser(t, s.ceo).mutation(api.receivingAccounts.recordNonInvoiceInflow, {
-      accountId,
-      type: "opening_balance",
-      amount: 5000,
-      transactionDate: Date.UTC(2026, 7, 1),
-      transactionId: "OPEN-5000",
-      source: "Shareholder investment",
-      description: "Initial account funding",
-    });
-    const ledger = await asUser(t, s.ceo).query(api.receivingAccounts.ledger, {
-      accountId,
-      startDate: Date.UTC(2026, 7, 1),
-      endDate: Date.UTC(2026, 7, 31),
-    });
-    expect(ledger.accountBalance).toBe(5000);
-    expect(ledger.rows.map((row) => row.date)).toEqual([...ledger.rows.map((row) => row.date)].sort((a, b) => a - b));
-    expect(ledger.rows.at(-1)?.runningBalance).toBe(5000);
-    expect((await asUser(t, s.ceo).query(api.receivingAccounts.balances, {
-      asOf: Date.UTC(2026, 7, 31),
-    })).rows.find((row) => row.account._id === accountId)).toMatchObject({ moneyIn: 5000, moneyOut: 0, balance: 5000 });
-    expect((await asUser(t, s.ceo).query(api.receivingAccounts.collections, {
-      startDate: Date.UTC(2026, 7, 1),
-      endDate: Date.UTC(2026, 7, 31),
-      accountId,
-    })).rows).toHaveLength(0);
-    await expect(asUser(t, s.ceo).mutation(api.receivingAccounts.recordNonInvoiceInflow, {
-      accountId,
-      type: "opening_balance",
-      amount: 1,
-      transactionDate: Date.UTC(2026, 7, 2),
-      transactionId: "OPEN-SECOND",
-      description: "Duplicate opening",
-    })).rejects.toThrow("already has an active opening balance");
+    await expect(
+      asUser(t, s.ceo).mutation(api.receivingAccounts.recordExpenseReturn, {
+        expenseId,
+        accountId,
+        amount: 61,
+        transactionDate: 2000,
+        transactionId: "RETURN-61",
+        reason: "Too much",
+      }),
+    ).rejects.toThrow("cannot exceed");
+
+    await asUser(t, s.ceo).mutation(
+      api.receivingAccounts.reverseAccountTransaction,
+      {
+        transactionId: returnId,
+        reversalTransactionId: "RETURN-40-REVERSAL",
+        transactionDate: 3000,
+        reason: "Return corrected",
+      },
+    );
+    const reversedSummary = await asUser(t, s.ceo).query(
+      api.receivingAccounts.expenseReturns,
+      { expenseId },
+    );
+    expect(reversedSummary.returnedAmount).toBe(0);
+    expect(reversedSummary.entries).toHaveLength(2);
   });
 
   it("registers country banks once and blocks country managers from managing them", async () => {

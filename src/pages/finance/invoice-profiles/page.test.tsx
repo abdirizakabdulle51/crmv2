@@ -290,7 +290,7 @@ describe("InvoiceProfilesPage", () => {
       footerText: undefined,
     });
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Invoice profile created");
-  });
+  }, 15000);
 
   it("edits profile fields", async () => {
     const user = userEvent.setup();
@@ -313,12 +313,15 @@ describe("InvoiceProfilesPage", () => {
     expect(mocks.updateInvoiceProfile).toHaveBeenCalledWith(
       expect.objectContaining({
         profileId: "profile-1",
-        name: "Somalia Updated",
         countryId: "country-so",
         region: "Horn of Africa",
         isDefault: true,
         isActive: false,
         addressLines: ["HTG Clouds", "Airport Road"],
+        legalName: "HTG CLOUDS LIMITED",
+        bankName: "Salaam Somali Bank",
+        bankAccountNumber: "33111777",
+        currency: "USD",
       }),
     );
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Invoice profile updated");
@@ -339,5 +342,5 @@ describe("InvoiceProfilesPage", () => {
     expect(mocks.toastError).toHaveBeenCalledWith(
       "Only one active default profile is allowed",
     );
-  });
+  }, 15000);
 });

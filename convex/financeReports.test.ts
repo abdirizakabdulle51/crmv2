@@ -235,16 +235,16 @@ async function insertExpense(
 }
 
 describe("finance reports", () => {
-  it("shows non-invoice inflows separately without treating capital as revenue", async () => {
+  it("reports non-invoice funding separately from collections and revenue", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     await t.run(async (ctx) => {
       const accountId = await ctx.db.insert("receivingAccounts", {
         countryId: s.countryA,
         name: "Capital account",
-        providerName: "Islamic Bank",
-        accountNumber: "CAP-1",
-        accountHolderName: "HTG",
+        providerName: "Somalia Bank",
+        accountNumber: "CAP-REPORT-1",
+        accountHolderName: "HTG CLOUDS LIMITED",
         type: "bank",
         usage: "both",
         currency: "USD",
@@ -262,12 +262,13 @@ describe("finance reports", () => {
         amount: 5000,
         amountCents: 500000,
         transactionDate: Date.UTC(2026, 7, 5),
-        transactionId: "CAPITAL-1",
+        transactionId: "CAPITAL-REPORT-1",
         description: "Initial investment",
         createdBy: s.ceo._id,
         createdAt: Date.UTC(2026, 7, 5),
       });
     });
+
     const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
       startMonth: "2026-08",
       endMonth: "2026-08",
@@ -279,6 +280,102 @@ describe("finance reports", () => {
       otherCashInflows: 5000,
       totalCashInflows: 5000,
     });
+  });
+
+  it("keeps returns separate and nets reversals against their original category", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await insertExpense(t, s, {
+      status: "paid",
+      amount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+    await t.run(async (ctx) => {
+      const accountId = await ctx.db.insert("receivingAccounts", {
+        countryId: s.countryA,
+        name: "Operations account",
+        providerName: "Somalia Bank",
+        accountNumber: "REV-REPORT-1",
+        accountHolderName: "HTG CLOUDS LIMITED",
+        type: "bank",
+        usage: "both",
+        currency: "USD",
+        isActive: true,
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const capitalId = await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "capital_contribution",
+        amount: 5000,
+        amountCents: 500000,
+        transactionDate: Date.UTC(2026, 7, 1),
+        transactionId: "CAPITAL-REVERSAL-1",
+        description: "Capital contribution",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 1),
+      });
+      const returnId = await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "expense_return",
+        amount: 40,
+        amountCents: 4000,
+        transactionDate: Date.UTC(2026, 7, 10),
+        transactionId: "EXPENSE-RETURN-1",
+        expenseId,
+        description: "Returned funds",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 10),
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "outgoing",
+        type: "reversal",
+        amount: 5000,
+        amountCents: 500000,
+        transactionDate: Date.UTC(2026, 7, 11),
+        transactionId: "CAPITAL-REVERSAL-1-R",
+        relatedTransactionId: capitalId,
+        description: "Reverse capital contribution",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 11),
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "outgoing",
+        type: "reversal",
+        amount: 40,
+        amountCents: 4000,
+        transactionDate: Date.UTC(2026, 7, 12),
+        transactionId: "EXPENSE-RETURN-1-R",
+        expenseId,
+        relatedTransactionId: returnId,
+        description: "Reverse expense return",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 12),
+      });
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+    expect(report.totals.capitalContributions).toBe(0);
+    expect(report.totals.otherCashInflows).toBe(0);
+    expect(report.totals.expenseReturns).toBe(0);
+    expect(report.totals.totalCashInflows).toBe(0);
+    expect(report.totals.recognizedRevenue).toBe(0);
   });
 
   it("groups income by invoice payment paidAt and expenses by paidAt", async () => {
@@ -325,10 +422,44 @@ describe("finance reports", () => {
     ]);
     expect(report.totals).toMatchObject({
       income: 300,
+      recognizedRevenue: 0,
       expenses: 125,
+      incurredExpenses: 125,
       net: 175,
+      operatingNet: -125,
       paymentCount: 1,
     });
+  });
+
+  it("uses expenseDate for incurred expenses while cash remains on paidAt", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 125,
+      expenseDate: Date.UTC(2026, 6, 31),
+      paidAt: Date.UTC(2026, 7, 2),
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-07",
+      endMonth: "2026-08",
+    });
+
+    expect(report.monthly).toEqual([
+      expect.objectContaining({
+        month: "2026-07",
+        incurredExpenses: 125,
+        expenses: 0,
+        operatingNet: -125,
+      }),
+      expect.objectContaining({
+        month: "2026-08",
+        incurredExpenses: 0,
+        expenses: 125,
+        operatingNet: 0,
+      }),
+    ]);
   });
 
   it("reports single region payment income fully to that region", async () => {
@@ -406,7 +537,7 @@ describe("finance reports", () => {
     expect(report.totals.income).toBe(50);
   });
 
-  it("uses Unassigned for missing regions and legacy invoices without line totals", async () => {
+  it("excludes Unassigned from region income while keeping it in totals", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     await insertInvoiceWithPayment(t, {
@@ -432,14 +563,7 @@ describe("finance reports", () => {
       endMonth: "2026-08",
     });
 
-    expect(report.incomeByRegion).toEqual([
-      {
-        region: "Unassigned",
-        income: 100,
-        paymentCount: 2,
-        invoiceCount: 2,
-      },
-    ]);
+    expect(report.incomeByRegion).toEqual([]);
     expect(report.totals.income).toBe(100);
   });
 
@@ -528,33 +652,6 @@ describe("finance reports", () => {
     expect(
       report.expenseStatusSummary.find((row) => row.status === "submitted"),
     ).toMatchObject({ count: 1, total: 40 });
-  });
-
-  it("uses payment date consistently for paid expense cards and status", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seed(t);
-    await insertExpense(t, s, {
-      status: "paid",
-      amount: 90,
-      expenseDate: Date.UTC(2026, 5, 10),
-      paidAt: Date.UTC(2026, 7, 10),
-    });
-    await insertExpense(t, s, {
-      status: "paid",
-      amount: 30,
-      expenseDate: Date.UTC(2026, 7, 11),
-    });
-
-    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
-      startMonth: "2026-08",
-      endMonth: "2026-08",
-    });
-
-    expect(report.totals.expenses).toBe(90);
-    expect(report.monthly[0]?.paidExpenseCount).toBe(1);
-    expect(
-      report.expenseStatusSummary.find((row) => row.status === "paid"),
-    ).toMatchObject({ count: 1, total: 90 });
   });
 
   it("scopes reports for CEO HOB and Country GM and blocks Account Managers", async () => {
@@ -792,7 +889,7 @@ describe("finance reports", () => {
     });
   });
 
-  it("exports Unassigned for legacy invoice region income", async () => {
+  it("excludes Unassigned from legacy invoice region income export", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     await insertInvoiceWithPayment(t, {
@@ -810,12 +907,7 @@ describe("finance reports", () => {
       },
     );
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      region: "Unassigned",
-      allocatedAmount: 80,
-      originalPaymentAmount: 80,
-    });
+    expect(rows).toEqual([]);
   });
 
   it("excludes test hidden void and cancelled invoices from payment export", async () => {
@@ -973,5 +1065,62 @@ describe("finance reports", () => {
         endMonth: "2026-08",
       }),
     ).rejects.toThrow("You do not have permission to view finance reports");
+  });
+
+  it("reports expense returns without changing cash or incurred-date semantics", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await insertExpense(t, s, {
+      status: "paid",
+      amount: 100,
+      companyId: s.companyA,
+      countryId: s.countryA,
+      expenseDate: Date.UTC(2026, 7, 5),
+      paidAt: Date.UTC(2026, 7, 10),
+    });
+    const accountId = await t.run((ctx) =>
+      ctx.db.insert("receivingAccounts", {
+        countryId: s.countryA,
+        name: "Somalia Collections",
+        providerName: "Somalia Bank",
+        accountNumber: "SO-REPORT-1",
+        accountHolderName: "HTG CLOUDS LIMITED",
+        type: "bank",
+        usage: "both",
+        currency: "USD",
+        isActive: true,
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    await t.run((ctx) =>
+      ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "expense_return",
+        amount: 40,
+        amountCents: 4000,
+        transactionDate: Date.UTC(2026, 7, 15),
+        transactionId: "RETURN-REPORT-40",
+        expenseId,
+        description: "Unused funds returned",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 15),
+      }),
+    );
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+    expect(report.totals.expenses).toBe(100);
+    expect(report.totals.expenseReturns).toBe(40);
+    expect(report.totals.netExpenses).toBe(60);
+    expect(report.totals.net).toBe(-60);
+    expect(report.totals.incurredExpenses).toBe(60);
+    expect(report.totals.operatingNet).toBe(-60);
   });
 });

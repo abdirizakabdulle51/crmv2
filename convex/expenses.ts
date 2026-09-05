@@ -980,15 +980,18 @@ export const reconcilePaidExpenseDate = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
-    if (!isCeoOrHob(user))
+    if (!isCeoOrHob(user)) {
       throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can reconcile payment dates" });
+    }
     const expense = await getExpenseOrThrow(ctx, args.expenseId);
-    if (expense.status !== "paid")
+    if (expense.status !== "paid") {
       throw new ConvexError({ code: "BAD_REQUEST", message: "Only paid expenses can have their payment date reconciled" });
+    }
     const reason = normalizeRequiredText(args.reason, "Correction reason");
     const now = Date.now();
-    if (args.paidAt > now)
+    if (args.paidAt > now) {
       throw new ConvexError({ code: "BAD_REQUEST", message: "Payment date cannot be in the future" });
+    }
     await ctx.db.patch(args.expenseId, { paidAt: args.paidAt, paidBy: user._id, updatedAt: now });
     await insertExpenseEvent(ctx, {
       expenseId: args.expenseId,
@@ -1116,9 +1119,7 @@ export const listExpenseRequests = query({
         visible.push(expense);
       }
     }
-    return visible.sort(
-      (a, b) => b.expenseDate - a.expenseDate || b.createdAt - a.createdAt,
-    );
+    return visible.sort((a, b) => b.expenseDate - a.expenseDate || b.createdAt - a.createdAt);
   },
 });
 

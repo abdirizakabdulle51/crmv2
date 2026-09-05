@@ -22,11 +22,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
   api: {
     companies: { list: "companies.list" },
     countries: { list: "countries.list" },
-    receivingAccounts: {
-      list: "receivingAccounts.list",
-      expenseReturns: "receivingAccounts.expenseReturns",
-      recordExpenseReturn: "receivingAccounts.recordExpenseReturn",
-    },
+    receivingAccounts: { list: "receivingAccounts.list" },
     expenses: {
       getExpenseRequest: "expenses.getExpenseRequest",
       getFinanceSettings: "expenses.getFinanceSettings",
@@ -63,19 +59,12 @@ const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
   countries: [] as Doc<"countries">[],
   fundingAccounts: [] as Doc<"receivingAccounts">[],
-  expenseReturns: {
-    originalAmount: 25,
-    returnedAmount: 0,
-    actualAmount: 25,
-    entries: [],
-  },
   updateDraftExpenseRequest: vi.fn(),
   submitExpenseRequest: vi.fn(),
   approveExpenseRequest: vi.fn(),
   rejectExpenseRequest: vi.fn(),
   cancelExpenseRequest: vi.fn(),
   markExpensePaid: vi.fn(),
-  recordExpenseReturn: vi.fn(),
   generateReceiptUploadUrl: vi.fn(),
   saveReceiptMetadata: vi.fn(),
   archiveReceipt: vi.fn(),
@@ -100,7 +89,6 @@ vi.mock("convex/react", () => ({
     if (query === "companies.list") return mocks.companies;
     if (query === "countries.list") return mocks.countries;
     if (query === "receivingAccounts.list") return mocks.fundingAccounts;
-    if (query === "receivingAccounts.expenseReturns") return mocks.expenseReturns;
     return undefined;
   },
   useMutation: (mutation: string) => {
@@ -115,7 +103,6 @@ vi.mock("convex/react", () => ({
     if (mutation === "expenses.cancelExpenseRequest")
       return mocks.cancelExpenseRequest;
     if (mutation === "expenses.markExpensePaid") return mocks.markExpensePaid;
-    if (mutation === "receivingAccounts.recordExpenseReturn") return mocks.recordExpenseReturn;
     if (mutation === "expenses.generateReceiptUploadUrl")
       return mocks.generateReceiptUploadUrl;
     if (mutation === "expenses.saveReceiptMetadata")
@@ -348,7 +335,7 @@ describe("ExpenseDetailPage", () => {
       screen.getByRole("heading", { name: "Customer visit taxi" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Travel")).toBeInTheDocument();
-    expect(screen.getAllByText("$25.00")).not.toHaveLength(0);
+    expect(screen.getByText("$25.00")).toBeInTheDocument();
     expect(screen.getByText("Amina")).toBeInTheDocument();
     expect(screen.getByText("Hormuud")).toBeInTheDocument();
     expect(screen.getByText("Taxi to customer meeting")).toBeInTheDocument();

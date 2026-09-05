@@ -58,8 +58,11 @@ function canViewAccount(user: Doc<"users">, account: Doc<"receivingAccounts">) {
   );
 }
 
-const signedTransactionAmount = (transaction: Doc<"accountTransactions">) =>
-  transaction.direction === "incoming" ? transaction.amount : -transaction.amount;
+function signedTransactionAmount(transaction: Doc<"accountTransactions">) {
+  return transaction.direction === "incoming"
+    ? transaction.amount
+    : -transaction.amount;
+}
 
 async function assertUniqueTransaction(
   ctx: MutationCtx,
@@ -67,18 +70,30 @@ async function assertUniqueTransaction(
   transactionId: string,
 ) {
   const [accountTransaction, invoicePayment, expense] = await Promise.all([
-    ctx.db.query("accountTransactions").withIndex("by_account_transaction", (q) =>
-      q.eq("accountId", accountId).eq("transactionId", transactionId),
-    ).first(),
-    ctx.db.query("invoicePayments").withIndex("by_account_transaction", (q) =>
-      q.eq("receivingAccountId", accountId).eq("transactionId", transactionId),
-    ).first(),
-    ctx.db.query("expenseRequests").withIndex("by_account_transaction", (q) =>
-      q.eq("fundingAccountId", accountId).eq("paymentTransactionId", transactionId),
-    ).first(),
+    ctx.db
+      .query("accountTransactions")
+      .withIndex("by_account_transaction", (q) =>
+        q.eq("accountId", accountId).eq("transactionId", transactionId),
+      )
+      .first(),
+    ctx.db
+      .query("invoicePayments")
+      .withIndex("by_account_transaction", (q) =>
+        q.eq("receivingAccountId", accountId).eq("transactionId", transactionId),
+      )
+      .first(),
+    ctx.db
+      .query("expenseRequests")
+      .withIndex("by_account_transaction", (q) =>
+        q.eq("fundingAccountId", accountId).eq("paymentTransactionId", transactionId),
+      )
+      .first(),
   ]);
   if (accountTransaction || invoicePayment || expense)
-    throw new ConvexError({ code: "CONFLICT", message: "This transaction ID is already recorded for the account" });
+    throw new ConvexError({
+      code: "CONFLICT",
+      message: "This transaction ID is already recorded for the account",
+    });
 }
 
 async function insertAccountTransaction(
@@ -87,7 +102,12 @@ async function insertAccountTransaction(
     account: Doc<"receivingAccounts">;
     user: Doc<"users">;
     direction: "incoming" | "outgoing";
-    type: "expense_return" | "opening_balance" | "capital_contribution" | "other_non_invoice_inflow" | "reversal";
+    type:
+      | "expense_return"
+      | "opening_balance"
+      | "capital_contribution"
+      | "other_non_invoice_inflow"
+      | "reversal";
     amount: number;
     transactionDate: number;
     transactionId: string;
@@ -99,9 +119,15 @@ async function insertAccountTransaction(
 ) {
   const amount = roundMoney(args.amount);
   if (!Number.isFinite(amount) || amount <= 0)
-    throw new ConvexError({ code: "BAD_REQUEST", message: "Transaction amount must be positive" });
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Transaction amount must be positive",
+    });
   if (args.transactionDate > Date.now())
-    throw new ConvexError({ code: "BAD_REQUEST", message: "Transaction date cannot be in the future" });
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Transaction date cannot be in the future",
+    });
   const transactionId = required(args.transactionId, "Transaction ID");
   await assertUniqueTransaction(ctx, args.account._id, transactionId);
   return await ctx.db.insert("accountTransactions", {
@@ -496,19 +522,29 @@ export const recordNonInvoiceInflow = mutation({
   handler: async (ctx, args) => {
     const user = await currentUser(ctx);
     if (!isCeoOrHob(user))
-      throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can record non-invoice inflows" });
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can record non-invoice inflows",
+      });
     const account = await ctx.db.get(args.accountId);
     if (!account?.isActive || !account.countryId || account.usage === "outgoing")
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Select an active account enabled for incoming funds" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select an active account enabled for incoming funds",
+      });
     assertSupportedCurrency(account.currency);
     if (args.type === "opening_balance") {
-      const openings = await ctx.db.query("accountTransactions").withIndex("by_account", (q) =>
-        q.eq("accountId", account._id),
-      ).collect();
+      const openings = await ctx.db
+        .query("accountTransactions")
+        .withIndex("by_account", (q) => q.eq("accountId", account._id))
+        .collect();
       if (openings.some((entry) => entry.type === "opening_balance" && !entry.reversedAt))
-        throw new ConvexError({ code: "CONFLICT", message: "This account already has an active opening balance" });
+        throw new ConvexError({
+          code: "CONFLICT",
+          message: "This account already has an active opening balance",
+        });
     }
-    const transactionId = await insertAccountTransaction(ctx, {
+    return await insertAccountTransaction(ctx, {
       account,
       user,
       direction: "incoming",
@@ -534,31 +570,52 @@ export const recordExpenseReturn = mutation({
   handler: async (ctx, args) => {
     const user = await currentUser(ctx);
     if (!isCeoOrHob(user))
-      throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can record expense returns" });
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can record expense returns",
+      });
     const [expense, account] = await Promise.all([
       ctx.db.get(args.expenseId),
       ctx.db.get(args.accountId),
     ]);
     if (!expense || expense.status !== "paid")
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Only a paid expense can receive a return" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only a paid expense can receive a return",
+      });
     if (!account?.isActive || !account.countryId || account.usage === "outgoing")
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Select an active account enabled for incoming funds" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Select an active account enabled for incoming funds",
+      });
     const expenseCompany = expense.companyId ? await ctx.db.get(expense.companyId) : null;
     const expenseCountryId = expense.countryId ?? expenseCompany?.countryId;
     if (!expenseCountryId || account.countryId !== expenseCountryId)
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Return account must belong to the expense country" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Return account must belong to the expense country",
+      });
     if (account.currency !== expense.currency)
-      throw new ConvexError({ code: "BAD_REQUEST", message: `Return account currency must be ${expense.currency}` });
-    const entries = await ctx.db.query("accountTransactions").withIndex("by_expense", (q) =>
-      q.eq("expenseId", expense._id),
-    ).collect();
-    const returned = sumMoney(entries.map((entry) =>
-      entry.direction === "incoming" ? entry.amount : -entry.amount,
-    ));
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Return account currency must be ${expense.currency}`,
+      });
+    const entries = await ctx.db
+      .query("accountTransactions")
+      .withIndex("by_expense", (q) => q.eq("expenseId", expense._id))
+      .collect();
+    const returned = sumMoney(
+      entries.map((entry) =>
+        entry.direction === "incoming" ? entry.amount : -entry.amount,
+      ),
+    );
     const amount = roundMoney(args.amount);
     if (amount > roundMoney(expense.amount - returned))
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Total returns cannot exceed the original paid expense" });
-    const recordedTransactionId = await insertAccountTransaction(ctx, {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Total returns cannot exceed the original paid expense",
+      });
+    const transactionId = await insertAccountTransaction(ctx, {
       account,
       user,
       direction: "incoming",
@@ -576,7 +633,7 @@ export const recordExpenseReturn = mutation({
       actorId: user._id,
       createdAt: Date.now(),
     });
-    return recordedTransactionId;
+    return transactionId;
   },
 });
 
@@ -594,13 +651,19 @@ export const expenseReturns = query({
       (!user.countryId || expense.countryId !== user.countryId) &&
       (!company || !canViewCompany(user, company))
     )
-      throw new ConvexError({ code: "FORBIDDEN", message: "You cannot view this expense" });
-    const entries = await ctx.db.query("accountTransactions").withIndex("by_expense", (q) =>
-      q.eq("expenseId", expense._id),
-    ).collect();
-    const returnedAmount = sumMoney(entries.map((entry) =>
-      entry.direction === "incoming" ? entry.amount : -entry.amount,
-    ));
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "You cannot view this expense",
+      });
+    const entries = await ctx.db
+      .query("accountTransactions")
+      .withIndex("by_expense", (q) => q.eq("expenseId", expense._id))
+      .collect();
+    const returnedAmount = sumMoney(
+      entries.map((entry) =>
+        entry.direction === "incoming" ? entry.amount : -entry.amount,
+      ),
+    );
     return {
       originalAmount: expense.amount,
       returnedAmount,
@@ -620,7 +683,10 @@ export const reverseAccountTransaction = mutation({
   handler: async (ctx, args) => {
     const user = await currentUser(ctx);
     if (!isCeoOrHob(user))
-      throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can reverse account transactions" });
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can reverse account transactions",
+      });
     const original = await ctx.db.get(args.transactionId);
     if (!original || original.type === "reversal" || original.reversedAt)
       throw new ConvexError({ code: "BAD_REQUEST", message: "Transaction cannot be reversed" });
@@ -641,7 +707,11 @@ export const reverseAccountTransaction = mutation({
       description: `Reversal of ${original.transactionId}: ${reason}`,
     });
     const now = Date.now();
-    await ctx.db.patch(original._id, { reversedAt: now, reversedBy: user._id, reversalReason: reason });
+    await ctx.db.patch(original._id, {
+      reversedAt: now,
+      reversedBy: user._id,
+      reversalReason: reason,
+    });
     if (original.expenseId) {
       await ctx.db.insert("expenseEvents", {
         expenseId: original.expenseId,
@@ -663,17 +733,23 @@ export const collections = query({
   },
   handler: async (ctx, args) => {
     const user = await currentUser(ctx);
-    const [payments, accountTransactions] = await Promise.all([args.accountId
-      ? await ctx.db
-          .query("invoicePayments")
-          .withIndex("by_receiving_account", (q) =>
-            q.eq("receivingAccountId", args.accountId),
-          )
-          .collect()
-      : await ctx.db.query("invoicePayments").collect(),
+    const [payments, accountTransactions] = await Promise.all([
       args.accountId
-        ? await ctx.db.query("accountTransactions").withIndex("by_account", (q) => q.eq("accountId", args.accountId!)).collect()
-        : await ctx.db.query("accountTransactions").collect(),
+        ? ctx.db
+            .query("invoicePayments")
+            .withIndex("by_receiving_account", (q) =>
+              q.eq("receivingAccountId", args.accountId),
+            )
+            .collect()
+        : ctx.db.query("invoicePayments").collect(),
+      args.accountId
+        ? ctx.db
+            .query("accountTransactions")
+            .withIndex("by_account", (q) =>
+              q.eq("accountId", args.accountId!),
+            )
+            .collect()
+        : ctx.db.query("accountTransactions").collect(),
     ]);
     const rows = [];
     for (const payment of payments) {
@@ -728,10 +804,16 @@ export const collections = query({
         row.currency,
         sumMoney([totalsByCurrency.get(row.currency) ?? 0, row.amount]),
       );
-    const transactionMap = new Map(accountTransactions.map((row) => [row._id, row]));
+    const transactionMap = new Map(
+      accountTransactions.map((transaction) => [transaction._id, transaction]),
+    );
     const otherRows = [];
     for (const transaction of accountTransactions) {
-      if (transaction.transactionDate < args.startDate || transaction.transactionDate > args.endDate) continue;
+      if (
+        transaction.transactionDate < args.startDate ||
+        transaction.transactionDate > args.endDate
+      )
+        continue;
       const account = await ctx.db.get(transaction.accountId);
       if (!account || !canViewAccount(user, account)) continue;
       const original = transaction.relatedTransactionId
@@ -740,15 +822,26 @@ export const collections = query({
       otherRows.push({
         ...transaction,
         category: original?.type ?? transaction.type,
+        isReversal: transaction.type === "reversal",
         accountName: account.name,
         providerName: account.providerName,
         signedAmount: signedTransactionAmount(transaction),
       });
     }
-    otherRows.sort((a, b) => b.transactionDate - a.transactionDate || b.createdAt - a.createdAt);
+    otherRows.sort(
+      (a, b) =>
+        b.transactionDate - a.transactionDate || b.createdAt - a.createdAt,
+    );
     const otherTotalsByCurrency = new Map<string, number>();
-    for (const row of otherRows)
-      otherTotalsByCurrency.set(row.currency, sumMoney([otherTotalsByCurrency.get(row.currency) ?? 0, row.signedAmount]));
+    for (const row of otherRows) {
+      otherTotalsByCurrency.set(
+        row.currency,
+        sumMoney([
+          otherTotalsByCurrency.get(row.currency) ?? 0,
+          row.signedAmount,
+        ]),
+      );
+    }
     return {
       rows,
       otherRows,
@@ -757,7 +850,9 @@ export const collections = query({
         currency,
         amount,
       })),
-      otherTotalsByCurrency: [...otherTotalsByCurrency].map(([currency, amount]) => ({ currency, amount })),
+      otherTotalsByCurrency: [...otherTotalsByCurrency].map(
+        ([currency, amount]) => ({ currency, amount }),
+      ),
     };
   },
 });
@@ -766,36 +861,76 @@ export const balances = query({
   args: { asOf: v.number() },
   handler: async (ctx, args) => {
     const user = await currentUser(ctx);
-    const [allAccounts, allPayments, allExpenses, allTransactions] = await Promise.all([
-      ctx.db.query("receivingAccounts").collect(),
-      ctx.db.query("invoicePayments").collect(),
-      ctx.db.query("expenseRequests").collect(),
-      ctx.db.query("accountTransactions").collect(),
-    ]);
+    const [allAccounts, allPayments, allExpenses, allTransactions] =
+      await Promise.all([
+        ctx.db.query("receivingAccounts").collect(),
+        ctx.db.query("invoicePayments").collect(),
+        ctx.db.query("expenseRequests").collect(),
+        ctx.db.query("accountTransactions").collect(),
+      ]);
     const accounts = allAccounts.filter((account) => canViewAccount(user, account));
     const rows = accounts.map((account) => {
-      const payments = allPayments.filter((row) => row.receivingAccountId === account._id);
-      const expenses = allExpenses.filter((row) => row.fundingAccountId === account._id);
-      const transactions = allTransactions.filter((row) => row.accountId === account._id);
+      const payments = allPayments.filter(
+        (payment) =>
+          payment.receivingAccountId === account._id &&
+          payment.paidAt <= args.asOf,
+      );
+      const expenses = allExpenses.filter(
+        (expense) =>
+          expense.fundingAccountId === account._id &&
+          expense.status === "paid" &&
+          expense.paidAt !== undefined &&
+          expense.paidAt <= args.asOf,
+      );
+      const transactions = allTransactions.filter(
+        (transaction) =>
+          transaction.accountId === account._id &&
+          transaction.transactionDate <= args.asOf,
+      );
       const moneyIn = sumMoney([
-        ...payments.filter((row) => row.paidAt <= args.asOf).map((row) => row.amount),
-        ...transactions.filter((row) => row.transactionDate <= args.asOf && row.direction === "incoming").map((row) => row.amount),
+        ...payments.map((payment) => payment.amount),
+        ...transactions
+          .filter((transaction) => transaction.direction === "incoming")
+          .map((transaction) => transaction.amount),
       ]);
       const moneyOut = sumMoney([
-        ...expenses.filter((row) => row.status === "paid" && !!row.paidAt && row.paidAt <= args.asOf).map((row) => row.amount),
-        ...transactions.filter((row) => row.transactionDate <= args.asOf && row.direction === "outgoing").map((row) => row.amount),
+        ...expenses.map((expense) => expense.amount),
+        ...transactions
+          .filter((transaction) => transaction.direction === "outgoing")
+          .map((transaction) => transaction.amount),
       ]);
       const dates = [
-        ...payments.map((row) => row.paidAt),
-        ...expenses.filter((row) => row.status === "paid" && row.paidAt).map((row) => row.paidAt!),
-        ...transactions.map((row) => row.transactionDate),
-      ].filter((date) => date <= args.asOf);
-      return { account, moneyIn, moneyOut, balance: sumMoney([moneyIn, -moneyOut]), lastTransactionDate: dates.length ? Math.max(...dates) : undefined };
+        ...payments.map((payment) => payment.paidAt),
+        ...expenses.map((expense) => expense.paidAt!),
+        ...transactions.map((transaction) => transaction.transactionDate),
+      ];
+      return {
+        account,
+        moneyIn,
+        moneyOut,
+        balance: sumMoney([moneyIn, -moneyOut]),
+        lastTransactionDate: dates.length ? Math.max(...dates) : undefined,
+      };
     });
-    rows.sort((a, b) => a.account.currency.localeCompare(b.account.currency) || a.account.name.localeCompare(b.account.name));
+    rows.sort(
+      (a, b) =>
+        a.account.currency.localeCompare(b.account.currency) ||
+        a.account.name.localeCompare(b.account.name),
+    );
     const totals = new Map<string, number>();
-    for (const row of rows) totals.set(row.account.currency, sumMoney([totals.get(row.account.currency) ?? 0, row.balance]));
-    return { rows, totalsByCurrency: [...totals].map(([currency, balance]) => ({ currency, balance })) };
+    for (const row of rows) {
+      totals.set(
+        row.account.currency,
+        sumMoney([totals.get(row.account.currency) ?? 0, row.balance]),
+      );
+    }
+    return {
+      rows,
+      totalsByCurrency: [...totals].map(([currency, balance]) => ({
+        currency,
+        balance,
+      })),
+    };
   },
 });
 
@@ -894,13 +1029,27 @@ export const ledger = query({
         createdAt: transaction.createdAt,
       });
     }
-    rows.sort((a, b) => a.date - b.date || a.createdAt - b.createdAt);
+    rows.sort(
+      (a, b) =>
+        a.date - b.date ||
+        a.createdAt - b.createdAt ||
+        a.key.localeCompare(b.key),
+    );
     let runningBalance = sumMoney([
-      ...payments.filter((payment) => payment.paidAt < args.startDate).map((payment) => payment.amount),
+      ...payments
+        .filter((payment) => payment.paidAt < args.startDate)
+        .map((payment) => payment.amount),
       ...expenses
-        .filter((expense) => expense.status === "paid" && !!expense.paidAt && expense.paidAt < args.startDate)
+        .filter(
+          (expense) =>
+            expense.status === "paid" &&
+            expense.paidAt !== undefined &&
+            expense.paidAt < args.startDate,
+        )
         .map((expense) => -expense.amount),
-      ...accountTransactions.filter((transaction) => transaction.transactionDate < args.startDate).map(signedTransactionAmount),
+      ...accountTransactions
+        .filter((transaction) => transaction.transactionDate < args.startDate)
+        .map(signedTransactionAmount),
     ]);
     for (const row of rows) {
       runningBalance = sumMoney([runningBalance, row.amount]);

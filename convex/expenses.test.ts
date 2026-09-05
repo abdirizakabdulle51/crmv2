@@ -612,6 +612,59 @@ describe("expenses", () => {
     ]);
   });
 
+  it("requires a reason and audits CEO payment-date corrections", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await createSubmittedExpense(t, s);
+    await asUser(t, s.ceo).mutation(api.expenses.approveExpenseRequest, {
+      expenseId,
+      fundingAccountId: s.fundingAccount,
+    });
+    await asUser(t, s.ceo).mutation(api.expenses.markExpensePaid, {
+      expenseId,
+      paymentTransactionId: "PAY-CORRECTION-1",
+    });
+
+    const original = await t.run((ctx) => ctx.db.get(expenseId));
+    await expect(
+      asUser(t, s.ceo).mutation(api.expenses.reconcilePaidExpenseDate, {
+        expenseId,
+        paidAt: Date.UTC(2026, 7, 14),
+        reason: "   ",
+      }),
+    ).rejects.toThrow("Correction reason is required");
+    await expect(
+      asUser(t, s.amA).mutation(api.expenses.reconcilePaidExpenseDate, {
+        expenseId,
+        paidAt: Date.UTC(2026, 7, 14),
+        reason: "Correct bank posting date",
+      }),
+    ).rejects.toThrow();
+
+    await asUser(t, s.ceo).mutation(api.expenses.reconcilePaidExpenseDate, {
+      expenseId,
+      paidAt: Date.UTC(2026, 7, 14),
+      reason: "Correct bank posting date",
+    });
+    const corrected = await t.run((ctx) => ctx.db.get(expenseId));
+    const { updatedAt: _originalUpdatedAt, ...unchangedFields } = original!;
+    expect(corrected).toMatchObject({
+      ...unchangedFields,
+      paidAt: Date.UTC(2026, 7, 14),
+      paidBy: s.ceo._id,
+    });
+    expect(corrected?.amount).toBe(original?.amount);
+    expect(corrected?.status).toBe("paid");
+
+    const events = await asUser(t, s.ceo).query(
+      api.expenses.listExpenseEvents,
+      { expenseId },
+    );
+    expect(events[events.length - 1]?.message).toContain(
+      `Payment date corrected from ${new Date(original!.paidAt!).toISOString().slice(0, 10)} to 2026-08-14. Reason: Correct bank posting date.`,
+    );
+  });
+
   it("blocks submitting receipt-required expenses until a receipt is uploaded", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

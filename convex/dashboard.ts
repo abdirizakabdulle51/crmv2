@@ -11,7 +11,7 @@ import { buildCollectedRevenueAchievement } from "./targetAchievement";
 import { generateRecommendations } from "../src/lib/recommendations/rules";
 import { roundMoney, sumMoney } from "./money";
 import { allocateMoney } from "./money";
-import { financialDay, financialMonth, financialMonthStart } from "./financialDates";
+import { financialDay, financialMonth, financialMonthStart, historicalDateAsFinancialTimestamp } from "./financialDates";
 
 type LeadStage = Doc<"leads">["stage"];
 type Task = Doc<"tasks">;
@@ -514,6 +514,11 @@ async function buildFinanceActivity(
   }
   const paidByInvoiceId = new Map<Id<"invoices">, number>();
   for (const invoice of invoices) {
+    const invoiceTimestamp =
+      invoice.sentAt ??
+      invoice.issueDate ??
+      invoice.lockedAt ??
+      invoice.createdAt;
     const countryId = companyCountryIds.get(invoice.companyId);
     if (invoice.revenueAllocations?.length) {
       const receivableAllocations =
@@ -574,9 +579,12 @@ async function buildFinanceActivity(
         }
       }
     } else {
-      if (invoice.sentAt) {
-        addActivity(invoice.sentAt, countryId, "invoicesSent", invoice.grandTotal);
-      }
+      addActivity(
+        invoiceTimestamp,
+        countryId,
+        "invoicesSent",
+        invoice.grandTotal,
+      );
     }
   }
 
@@ -590,7 +598,7 @@ async function buildFinanceActivity(
       sumMoney([paidByInvoiceId.get(invoice._id) ?? 0, payment.amount]),
     );
     addActivity(
-      payment.paidAt,
+      invoice.isHistorical ? historicalDateAsFinancialTimestamp(payment.paidAt) : payment.paidAt,
       companyCountryIds.get(invoice.companyId),
       "invoicesPaid",
       payment.amount,
@@ -605,7 +613,12 @@ async function buildFinanceActivity(
     if (unrecordedPaidAmount <= 0) {
       continue;
     }
-    // updatedAt is an audit timestamp, not evidence of collection timing.
+    addActivity(
+      invoice.updatedAt,
+      companyCountryIds.get(invoice.companyId),
+      "invoicesPaid",
+      unrecordedPaidAmount,
+    );
   }
 
   const expenses = (await ctx.db.query("expenseRequests").collect()).filter(
@@ -617,9 +630,12 @@ async function buildFinanceActivity(
       (expense.companyId
         ? companyCountryIds.get(expense.companyId)
         : undefined);
-    if (expense.paidAt) {
-      addActivity(expense.paidAt, countryId, "expenses", expense.amount);
-    }
+    addActivity(
+      expense.paidAt ?? expense.expenseDate,
+      countryId,
+      "expenses",
+      expense.amount,
+    );
   }
 
   const countryOptions = countries

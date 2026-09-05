@@ -14,6 +14,7 @@ import {
   Printer,
   Send,
   Trash2,
+  Percent,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/format.ts";
@@ -29,6 +30,17 @@ import {
 } from "@/components/ui/dialog.tsx";
 
 type Quote = Doc<"quotes">;
+type DiscountApprovalLevel = NonNullable<Quote["discountApprovalLevel"]>;
+
+function discountLevelLabel(level?: DiscountApprovalLevel) {
+  switch (level) {
+    case "account_manager": return "Account Manager";
+    case "country_gm": return "Country Manager";
+    case "head_of_business": return "HOB";
+    case "ceo": return "CEO";
+    default: return "Team";
+  }
+}
 
 function statusBadge(status: string) {
   switch (status) {
@@ -61,12 +73,17 @@ export default function QuoteDetailPage() {
   );
   const companies = useQuery(api.companies.list, {});
   const updateStatus = useMutation(api.quotes.updateStatus);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updateDiscount = useMutation((api.quotes as any).updateDiscount);
   const removeQuote = useMutation(api.quotes.remove);
   const [pending, setPending] = useState(false);
   const [nextStatus, setNextStatus] = useState<
     "draft" | "sent" | "accepted" | null
   >(null);
   const [acceptedByContact, setAcceptedByContact] = useState("");
+  const [discountDialogOpen, setDiscountDialogOpen] = useState(false);
+  const [discountInput, setDiscountInput] = useState("");
+  const [savingDiscount, setSavingDiscount] = useState(false);
 
   const returnToQuotes = () => {
     navigate("/quotes");
@@ -97,6 +114,39 @@ export default function QuoteDetailPage() {
   const companyName =
     companies.find((company) => company._id === quote.companyId)?.name ??
     "Unknown";
+  const monthlySubtotal =
+    quote.monthlySubtotal ??
+    quote.lineItems.reduce((sum, lineItem) => sum + lineItem.monthlyTotal, 0);
+  const yearlySubtotal =
+    quote.yearlySubtotal ??
+    quote.lineItems.reduce((sum, lineItem) => sum + lineItem.yearlyTotal, 0);
+  const discountPercent = quote.discountPercent ?? 0;
+  const monthlyDiscountTotal =
+    quote.monthlyDiscountTotal ?? monthlySubtotal - quote.monthlyGrandTotal;
+  const yearlyDiscountTotal =
+    quote.yearlyDiscountTotal ?? yearlySubtotal - quote.yearlyGrandTotal;
+
+  const handleApplyDiscount = async () => {
+    const discountPercent = Number.parseFloat(discountInput || "0");
+    if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100) {
+      toast.error("Discount must be between 0% and 100%");
+      return;
+    }
+    setSavingDiscount(true);
+    try {
+      const result = await updateDiscount({ id: quote._id, discountPercent });
+      toast.success(
+        discountPercent <= 0
+          ? "Discount removed"
+          : `Discount saved and sent for ${discountLevelLabel(result.discountApprovalLevel)} approval`,
+      );
+      setDiscountDialogOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save discount");
+    } finally {
+      setSavingDiscount(false);
+    }
+  };
 
   const handlePrint = () => {
     const printContent = printRef.current;
@@ -251,6 +301,15 @@ export default function QuoteDetailPage() {
           <Button variant="secondary" onClick={handlePrint}>
             <Printer className="h-4 w-4 mr-2" /> Print / Export
           </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setDiscountInput(discountPercent > 0 ? String(discountPercent) : "");
+              setDiscountDialogOpen(true);
+            }}
+          >
+            <Percent className="h-4 w-4 mr-2" /> Discount
+          </Button>
           {quote.status === "draft" && (
             <Button
               className="bg-blue-600 hover:bg-blue-700 text-white"
@@ -369,14 +428,28 @@ export default function QuoteDetailPage() {
                 <tfoot className="border-t bg-muted/20">
                   <tr>
                     <td colSpan={5} className="p-3 font-semibold text-right">
-                      Grand Total
+                      Subtotal
                     </td>
                     <td className="p-3 text-right font-bold">
-                      {formatCurrency(quote.monthlyGrandTotal)}
+                      {formatCurrency(monthlySubtotal)}
                     </td>
                     <td className="p-3 text-right font-bold">
-                      {formatCurrency(quote.yearlyGrandTotal)}
+                      {formatCurrency(yearlySubtotal)}
                     </td>
+                  </tr>
+                  {discountPercent > 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-3 font-semibold text-right">
+                        Discount ({discountPercent}%)
+                      </td>
+                      <td className="p-3 text-right">-{formatCurrency(monthlyDiscountTotal)}</td>
+                      <td className="p-3 text-right">-{formatCurrency(yearlyDiscountTotal)}</td>
+                    </tr>
+                  ) : null}
+                  <tr>
+                    <td colSpan={5} className="p-3 font-semibold text-right">Grand Total</td>
+                    <td className="p-3 text-right font-bold">{formatCurrency(quote.monthlyGrandTotal)}</td>
+                    <td className="p-3 text-right font-bold">{formatCurrency(quote.yearlyGrandTotal)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -431,6 +504,29 @@ export default function QuoteDetailPage() {
             >
               Confirm
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={discountDialogOpen} onOpenChange={setDiscountDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apply Quote Discount</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="quote-detail-discount">Discount percent</Label>
+            <Input
+              id="quote-detail-discount"
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={discountInput}
+              onChange={(event) => setDiscountInput(event.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDiscountDialogOpen(false)} disabled={savingDiscount}>Cancel</Button>
+            <Button onClick={handleApplyDiscount} disabled={savingDiscount}>Apply Discount</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -278,6 +278,11 @@ export default function ExpenseDetailPage() {
     api.receivingAccounts.expenseReturns,
     expense ? { expenseId: expense._id } : "skip",
   );
+  const displayedReturnSummary = returnSummary ?? {
+    returnedAmount: 0,
+    actualAmount: expense?.amount ?? 0,
+    entries: [],
+  };
 
   const updateDraft = useMutation(api.expenses.updateDraftExpenseRequest);
   const submitExpense = useMutation(api.expenses.submitExpenseRequest);
@@ -286,7 +291,9 @@ export default function ExpenseDetailPage() {
   const cancelExpense = useMutation(api.expenses.cancelExpenseRequest);
   const markPaid = useMutation(api.expenses.markExpensePaid);
   const reconcilePaidDate = useMutation(api.expenses.reconcilePaidExpenseDate);
-  const recordExpenseReturn = useMutation(api.receivingAccounts.recordExpenseReturn);
+  const recordExpenseReturn = useMutation(
+    api.receivingAccounts.recordExpenseReturn,
+  );
   const archiveExpense = useMutation(api.expenses.archiveExpenseRequest);
   const generateReceiptUploadUrl = useMutation(
     api.expenses.generateReceiptUploadUrl,
@@ -298,8 +305,6 @@ export default function ExpenseDetailPage() {
   const [reasonAction, setReasonAction] = useState<ReasonAction>(null);
   const [reason, setReason] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
-  const [reconciliationOpen, setReconciliationOpen] = useState(false);
-  const [reconciliationReason, setReconciliationReason] = useState("");
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnForm, setReturnForm] = useState({
     accountId: "",
@@ -313,6 +318,8 @@ export default function ExpenseDetailPage() {
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentTransactionId, setPaymentTransactionId] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => timestampToDateInput(Date.now()));
+  const [reconciliationOpen, setReconciliationOpen] = useState(false);
+  const [reconciliationReason, setReconciliationReason] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [pendingReceiptAction, setPendingReceiptAction] = useState<
     string | null
@@ -346,8 +353,6 @@ export default function ExpenseDetailPage() {
     !companies ||
     !countries ||
     !fundingAccounts ||
-    !returnAccounts ||
-    !returnSummary ||
     currentUser === undefined
   ) {
     return (
@@ -512,18 +517,14 @@ export default function ExpenseDetailPage() {
   const handleReconcilePaidDate = async (event: FormEvent) => {
     event.preventDefault();
     const paidAt = dateInputToTimestamp(paymentDate);
-    if (!paidAt) return;
+    if (paidAt === undefined) return;
+    if (!reconciliationReason.trim()) {
+      toast.error("Correction reason is required");
+      return;
+    }
     setPendingAction("reconcile-paid-date");
     try {
-      if (!reconciliationReason.trim()) {
-        toast.error("Correction reason is required");
-        return;
-      }
-      await reconcilePaidDate({
-        expenseId: expense._id,
-        paidAt,
-        reason: reconciliationReason.trim(),
-      });
+      await reconcilePaidDate({ expenseId: expense._id, paidAt, reason: reconciliationReason.trim() });
       toast.success("Payment date corrected");
       setReconciliationOpen(false);
       setReconciliationReason("");
@@ -538,7 +539,12 @@ export default function ExpenseDetailPage() {
     event.preventDefault();
     const amount = Number(returnForm.amount);
     const transactionDate = dateInputToTimestamp(returnForm.transactionDate);
-    if (!returnForm.accountId || !transactionDate || !Number.isFinite(amount) || amount <= 0) {
+    if (
+      !returnForm.accountId ||
+      transactionDate === undefined ||
+      !Number.isFinite(amount) ||
+      amount <= 0
+    ) {
       toast.error("Select an account, date, and positive amount");
       return;
     }
@@ -554,9 +560,17 @@ export default function ExpenseDetailPage() {
       });
       toast.success("Expense return recorded");
       setReturnOpen(false);
-      setReturnForm({ accountId: "", amount: "", transactionDate: timestampToDateInput(Date.now()), transactionId: "", reason: "" });
+      setReturnForm({
+        accountId: "",
+        amount: "",
+        transactionDate: timestampToDateInput(Date.now()),
+        transactionId: "",
+        reason: "",
+      });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to record expense return");
+      toast.error(
+        error instanceof Error ? error.message : "Failed to record expense return",
+      );
     } finally {
       setPendingAction(null);
     }
@@ -728,7 +742,9 @@ export default function ExpenseDetailPage() {
           ) : null}
           {isAdmin && expense.status === "paid" ? (
             <>
-              <Button variant="outline" onClick={() => setReturnOpen(true)}>Record Return</Button>
+              <Button variant="outline" onClick={() => setReturnOpen(true)}>
+                Record Return
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => {
@@ -800,14 +816,24 @@ export default function ExpenseDetailPage() {
               label="Approved / paid amount"
               value={formatMoney(expense.amount, expense.currency)}
             />
-            <Detail
-              label="Returned amount"
-              value={formatMoney(returnSummary.returnedAmount, expense.currency)}
-            />
-            <Detail
-              label="Actual expense"
-              value={formatMoney(returnSummary.actualAmount, expense.currency)}
-            />
+            {expense.status === "paid" ? (
+              <>
+                <Detail
+                  label="Returned amount"
+                  value={formatMoney(
+                    displayedReturnSummary.returnedAmount,
+                    expense.currency,
+                  )}
+                />
+                <Detail
+                  label="Actual expense"
+                  value={formatMoney(
+                    displayedReturnSummary.actualAmount,
+                    expense.currency,
+                  )}
+                />
+              </>
+            ) : null}
             <Detail
               label="Requester"
               value={userDisplay(userMap.get(expense.requestedBy))}
@@ -860,15 +886,6 @@ export default function ExpenseDetailPage() {
         </Card>
       </div>
 
-      {returnSummary.entries.length > 0 ? (
-        <Card>
-          <CardHeader><CardTitle>Expense Return History</CardTitle></CardHeader>
-          <CardContent className="overflow-x-auto">
-            <table className="w-full text-sm"><thead><tr className="border-b text-left text-muted-foreground"><th className="py-2">Date</th><th>Transaction ID</th><th>Description</th><th className="text-right">Amount</th></tr></thead><tbody>{returnSummary.entries.map((entry) => <tr key={entry._id} className="border-b last:border-0"><td className="py-2">{formatDate(entry.transactionDate)}</td><td className="font-mono text-xs">{entry.transactionId}</td><td>{entry.description}</td><td className={`text-right font-medium ${entry.direction === "incoming" ? "text-emerald-600" : "text-destructive"}`}>{entry.direction === "incoming" ? "+" : "-"}{formatMoney(entry.amount, entry.currency)}</td></tr>)}</tbody></table>
-          </CardContent>
-        </Card>
-      ) : null}
-
       {expense.description ? (
         <Card>
           <CardHeader>
@@ -878,6 +895,41 @@ export default function ExpenseDetailPage() {
             <p className="text-sm text-muted-foreground">
               {expense.description}
             </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {displayedReturnSummary.entries.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Expense Return History</CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-muted-foreground">
+                  <th className="py-2">Date</th>
+                  <th>Transaction ID</th>
+                  <th>Description</th>
+                  <th className="text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayedReturnSummary.entries.map((entry) => (
+                  <tr key={entry._id} className="border-b last:border-0">
+                    <td className="py-2">{formatDate(entry.transactionDate)}</td>
+                    <td className="font-mono text-xs">{entry.transactionId}</td>
+                    <td>{entry.description}</td>
+                    <td
+                      className={`text-right font-medium ${entry.direction === "incoming" ? "text-emerald-600" : "text-destructive"}`}
+                    >
+                      {entry.direction === "incoming" ? "+" : "-"}
+                      {formatMoney(entry.amount, entry.currency)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </CardContent>
         </Card>
       ) : null}
@@ -1220,14 +1272,7 @@ export default function ExpenseDetailPage() {
             ) : null}
             <div className="space-y-2">
               <Label htmlFor="expense-payment-date">Payment date</Label>
-              <Input
-                id="expense-payment-date"
-                type="date"
-                value={paymentDate}
-                max={timestampToDateInput(Date.now())}
-                onChange={(event) => setPaymentDate(event.target.value)}
-                required
-              />
+              <Input id="expense-payment-date" type="date" value={paymentDate} max={timestampToDateInput(Date.now())} onChange={(event) => setPaymentDate(event.target.value)} required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="payment-transaction-id">Transaction ID</Label>
@@ -1273,36 +1318,125 @@ export default function ExpenseDetailPage() {
           </form>
         </DialogContent>
       </Dialog>
-      <Dialog open={reconciliationOpen} onOpenChange={setReconciliationOpen}>
+      <Dialog open={returnOpen} onOpenChange={setReturnOpen}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Correct Payment Date</DialogTitle></DialogHeader>
-          <form className="space-y-4" onSubmit={handleReconcilePaidDate}>
-            <p className="text-sm text-muted-foreground">Enter the date cash actually left the selected funding account. The reconciliation is recorded in the audit history.</p>
-            <div className="space-y-2">
-              <Label htmlFor="reconciled-payment-date">Actual payment date</Label>
-              <Input id="reconciled-payment-date" type="date" value={paymentDate} max={timestampToDateInput(Date.now())} onChange={(event) => setPaymentDate(event.target.value)} required />
+          <DialogHeader>
+            <DialogTitle>Record Expense Return</DialogTitle>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleExpenseReturn}>
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              <span className="text-muted-foreground">
+                Original approved and paid amount
+              </span>
+              <div className="mt-1 text-xl font-bold">
+                {formatMoney(expense.amount, expense.currency)}
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="payment-date-reason">Reason for correction</Label>
-              <Input id="payment-date-reason" value={reconciliationReason} onChange={(event) => setReconciliationReason(event.target.value)} placeholder="Why is the stored payment date incorrect?" required />
+            <div>
+              <Label>Account receiving return</Label>
+              <Select
+                value={returnForm.accountId}
+                onValueChange={(accountId) =>
+                  setReturnForm({ ...returnForm, accountId })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(returnAccounts ?? [])
+                    .filter(
+                      (account) =>
+                        account.countryId === expenseCountryId &&
+                        account.currency === expense.currency,
+                    )
+                    .map((account) => (
+                      <SelectItem key={account._id} value={account._id}>
+                        {account.name} · {account.accountNumber}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Returned amount</Label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  max={displayedReturnSummary.actualAmount}
+                  step="0.01"
+                  value={returnForm.amount}
+                  onChange={(event) =>
+                    setReturnForm({ ...returnForm, amount: event.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <Label>Return date</Label>
+                <Input
+                  type="date"
+                  max={timestampToDateInput(Date.now())}
+                  value={returnForm.transactionDate}
+                  onChange={(event) =>
+                    setReturnForm({
+                      ...returnForm,
+                      transactionDate: event.target.value,
+                    })
+                  }
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Bank transaction ID</Label>
+              <Input
+                value={returnForm.transactionId}
+                onChange={(event) =>
+                  setReturnForm({ ...returnForm, transactionId: event.target.value })
+                }
+                required
+              />
+            </div>
+            <div>
+              <Label>Reason</Label>
+              <Input
+                value={returnForm.reason}
+                onChange={(event) =>
+                  setReturnForm({ ...returnForm, reason: event.target.value })
+                }
+                placeholder="Unused funds returned"
+                required
+              />
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setReconciliationOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={pendingAction === "reconcile-paid-date" || !reconciliationReason.trim()}>Save Correction</Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setReturnOpen(false)}
+                disabled={pendingAction === "expense-return"}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={pendingAction === "expense-return"}
+              >
+                {pendingAction === "expense-return" ? "Saving..." : "Record return"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
-      <Dialog open={returnOpen} onOpenChange={setReturnOpen}>
+      <Dialog open={reconciliationOpen} onOpenChange={setReconciliationOpen}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Record Expense Return</DialogTitle></DialogHeader>
-          <form className="space-y-4" onSubmit={handleExpenseReturn}>
-            <div className="rounded-lg border bg-muted/30 p-3 text-sm"><span className="text-muted-foreground">Original approved and paid amount</span><div className="mt-1 text-xl font-bold">{formatMoney(expense.amount, expense.currency)}</div></div>
-            <div><Label>Account receiving return</Label><Select value={returnForm.accountId} onValueChange={(accountId) => setReturnForm({ ...returnForm, accountId })}><SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger><SelectContent>{returnAccounts.filter((account) => account.countryId === expense.countryId && account.currency === expense.currency).map((account) => <SelectItem key={account._id} value={account._id}>{account.name} · {account.accountNumber}</SelectItem>)}</SelectContent></Select></div>
-            <div className="grid grid-cols-2 gap-3"><div><Label>Returned amount</Label><Input type="number" min="0.01" max={returnSummary.actualAmount} step="0.01" value={returnForm.amount} onChange={(event) => setReturnForm({ ...returnForm, amount: event.target.value })} required /></div><div><Label>Return date</Label><Input type="date" max={timestampToDateInput(Date.now())} value={returnForm.transactionDate} onChange={(event) => setReturnForm({ ...returnForm, transactionDate: event.target.value })} required /></div></div>
-            <div><Label>Bank transaction ID</Label><Input value={returnForm.transactionId} onChange={(event) => setReturnForm({ ...returnForm, transactionId: event.target.value })} required /></div>
-            <div><Label>Reason</Label><Input value={returnForm.reason} onChange={(event) => setReturnForm({ ...returnForm, reason: event.target.value })} placeholder="Unused funds returned" required /></div>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setReturnOpen(false)} disabled={pendingAction === "expense-return"}>Cancel</Button><Button type="submit" disabled={pendingAction === "expense-return"}>Record return</Button></DialogFooter>
+          <DialogHeader><DialogTitle>Correct Payment Date</DialogTitle></DialogHeader>
+          <form className="space-y-4" onSubmit={handleReconcilePaidDate}>
+            <p className="text-sm text-muted-foreground">Enter the date cash actually left the selected funding account.</p>
+            <div className="space-y-2"><Label htmlFor="reconciled-payment-date">Actual payment date</Label><Input id="reconciled-payment-date" type="date" value={paymentDate} max={timestampToDateInput(Date.now())} onChange={(event) => setPaymentDate(event.target.value)} required /></div>
+            <div className="space-y-2"><Label htmlFor="payment-date-reason">Reason for correction</Label><Input id="payment-date-reason" value={reconciliationReason} onChange={(event) => setReconciliationReason(event.target.value)} placeholder="Why is the stored payment date incorrect?" required /></div>
+            <DialogFooter><Button type="button" variant="outline" onClick={() => setReconciliationOpen(false)}>Cancel</Button><Button type="submit" disabled={pendingAction === "reconcile-paid-date" || !reconciliationReason.trim()}>Save Correction</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

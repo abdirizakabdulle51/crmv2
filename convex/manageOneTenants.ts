@@ -28,7 +28,11 @@ export type UsageHintLineItem = {
   regionId?: string;
   regionName?: string;
   dataCenterName?: string;
+  preserveAmountPrecision?: boolean;
 };
+
+const MIN_STORAGE_REMAINDER_GB = 0.05;
+const precisionPreservingLineItems = new WeakSet<object>();
 
 type UsageHintResource = {
   serviceId: string;
@@ -47,6 +51,7 @@ type ManageOneTenantWithLiveUsage = ManageOneTenantDoc & {
 };
 
 type UsageHintTenant = {
+  billingFromHourly?: boolean;
   regionId?: string;
   regionName?: string;
   resources?: UsageHintResource[];
@@ -414,6 +419,18 @@ function findObsCatalogItem(
   )[0];
 }
 
+function findStandardObsCatalogItem(catalog: UsageHintCatalogItem[]) {
+  return findObsCatalogItem(
+    {
+      bucketName: "unclassified",
+      totalGb: 0,
+      catalogItemName: "Fusion bucket",
+      storageClass: "Standard",
+    },
+    catalog,
+  );
+}
+
 function optionalRegionFields(source: {
   regionId?: string;
   regionName?: string;
@@ -775,6 +792,47 @@ export function buildUsageHintsForCompany(
         ...(!catalogItem ? { needsManualPricing: true } : {}),
         ...bucketRegionFields,
       });
+    }
+
+    if (tenant.billingFromHourly) {
+      const hourlyObsTotal =
+        tenantResources.find(
+          (resource) =>
+            resource.serviceId === "obsv3" && resource.resource === "capacity",
+        )?.used ?? 0;
+      const structuredObsTotal = obsLineItems.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      );
+      const unclassifiedObsGb = hourlyObsTotal - structuredObsTotal;
+      if (unclassifiedObsGb > MIN_STORAGE_REMAINDER_GB) {
+        const pricedObsItems = obsLineItems.filter(
+          (item) => item.suggestedCatalogItemId,
+        );
+        const fallbackObsLineItem =
+          pricedObsItems.length === 1 ? pricedObsItems[0] : undefined;
+        const fallbackObsCatalogItem =
+          fallbackObsLineItem ? undefined : findStandardObsCatalogItem(catalog);
+        const suggestedCatalogItemId =
+          fallbackObsLineItem?.suggestedCatalogItemId ??
+          fallbackObsCatalogItem?._id;
+        const fallbackLineItem: UsageHintLineItem = {
+          label:
+            fallbackObsLineItem?.label ??
+            fallbackObsCatalogItem?.itemName ??
+            "Unclassified OBS",
+          serviceCategory: "OBS",
+          quantity: unclassifiedObsGb,
+          pricing: suggestedCatalogItemId ? "auto" : "manual",
+          ...(suggestedCatalogItemId
+            ? { suggestedCatalogItemId }
+            : { needsManualPricing: true }),
+          ...tenantRegionFields,
+          ...optionalRegionFields(fallbackObsLineItem ?? {}),
+        };
+        obsLineItems.push(fallbackLineItem);
+        precisionPreservingLineItems.add(fallbackLineItem);
+      }
     }
 
     const cloudBastionHostCount = tenant.cloudBastionHosts?.count ?? 0;
@@ -1215,11 +1273,13 @@ export function buildBulkUsagePreview(
         catalogItemId: catalogItem._id,
         catalogItemName: catalogItem.itemName,
         quantity: lineItem.quantity,
-        amount: multiplyMoney(
-          catalogItem.monthlyPrice,
-          lineItem.quantity,
-          `${catalogItem.itemName} usage preview`,
-        ),
+        amount: precisionPreservingLineItems.has(lineItem)
+          ? catalogItem.monthlyPrice * lineItem.quantity
+          : multiplyMoney(
+              catalogItem.monthlyPrice,
+              lineItem.quantity,
+              `${catalogItem.itemName} usage preview`,
+            ),
         alreadyLogged: existingKeys.has(
           usagePreviewKey({
             serviceType,

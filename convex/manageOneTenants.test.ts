@@ -480,6 +480,67 @@ describe("buildUsageHintsForCompany", () => {
     expect(preview.needsManualEntry).toEqual([]);
   });
 
+  it("defaults unclassified OBS hourly capacity to standard bucket pricing", () => {
+    const catalog = [
+      catalogItem(
+        "obs-standard",
+        "OBS",
+        "Fusion bucket",
+        "per GB/month",
+        0.012,
+        "Standard",
+      ),
+      catalogItem(
+        "obs-archive",
+        "OBS",
+        "Fusion bucket",
+        "per GB/month",
+        0.0035,
+        "Archive",
+      ),
+    ];
+    const hints = buildUsageHintsForCompany(
+      [
+        {
+          billingFromHourly: true,
+          resources: [
+            { serviceId: "obsv3", resource: "capacity", used: 1354.9 },
+          ],
+          regionName: "Mogadishu-region-hq3",
+        },
+      ],
+      catalog,
+    );
+    const preview = buildBulkUsagePreview(hints, catalog, []);
+
+    expect(hints.find((hint) => hint.serviceCategory === "OBS")).toEqual({
+      serviceCategory: "OBS",
+      quantity: 1354.9,
+      pricing: "auto",
+      lineItems: [
+        {
+          label: "Fusion bucket",
+          serviceCategory: "OBS",
+          quantity: 1354.9,
+          pricing: "auto",
+          suggestedCatalogItemId: "obs-standard",
+          regionName: "Mogadishu-region-hq3",
+        },
+      ],
+    });
+    expect(preview.rows).toContainEqual(
+      expect.objectContaining({
+        serviceType: "OBS",
+        catalogItemId: "obs-standard",
+        catalogItemName: "Fusion bucket",
+        quantity: 1354.9,
+        amount: 16.2588,
+        regionName: "Mogadishu-region-hq3",
+      }),
+    );
+    expect(preview.needsManualEntry).toEqual([]);
+  });
+
   it("auto-prices EVS disk managed fee and Cloud Bastion Host breakdowns", () => {
     const hints = buildUsageHintsForCompany(
       [

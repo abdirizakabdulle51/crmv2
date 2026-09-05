@@ -334,7 +334,7 @@ export default function ManageOneHourlyPage() {
   const canView = canViewCloudHealth(currentUser?.role);
   const snapshots = useQuery(
     api.manageOneHourlyMonitoring.latest,
-    canView ? { limit: 500 } : "skip",
+    canView ? { limit: 100 } : "skip",
   ) as Snapshot[] | undefined;
   const latestRun = useQuery(
     api.manageOneHourlyMonitoring.latestRun,

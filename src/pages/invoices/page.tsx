@@ -12,6 +12,12 @@ import {
   CardTitle,
 } from "@/components/ui/card.tsx";
 import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu.tsx";
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -28,7 +34,7 @@ import {
 } from "@/components/ui/select.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { formatCurrency } from "@/lib/format.ts";
-import { FileText, Eye } from "lucide-react";
+import { ChevronDown, FileText, Eye } from "lucide-react";
 
 type Invoice = Doc<"invoices">;
 type InvoiceStatus = Invoice["status"];
@@ -44,6 +50,10 @@ const STATUS_OPTIONS: Array<{ value: "all" | InvoiceStatus; label: string }> = [
   { value: "void", label: "Void" },
   { value: "cancelled", label: "Cancelled" },
 ];
+const STATUS_FILTER_OPTIONS = STATUS_OPTIONS.filter(
+  (option): option is { value: InvoiceStatus; label: string } =>
+    option.value !== "all",
+);
 
 function formatDate(value?: number) {
   if (!value) return "-";
@@ -98,6 +108,16 @@ function statusBadge(status: InvoiceStatus) {
   }
 }
 
+function statusFilterLabel(selectedStatuses: InvoiceStatus[]) {
+  if (selectedStatuses.length === 0) {
+    return "All Statuses";
+  }
+  if (selectedStatuses.length === 1) {
+    return statusLabel(selectedStatuses[0]);
+  }
+  return `${selectedStatuses.length} Statuses`;
+}
+
 export default function InvoicesPage() {
   const navigate = useNavigate();
   const currentUser = useQuery(api.users.getCurrentUser, {});
@@ -108,9 +128,9 @@ export default function InvoicesPage() {
     includeTestHidden: canIncludeTestHidden ? includeTestHidden : false,
   });
   const companies = useQuery(api.companies.list, {});
-  const [statusFilter, setStatusFilter] = useState<"all" | InvoiceStatus>(
-    "all",
-  );
+  const [selectedStatusFilters, setSelectedStatusFilters] = useState<
+    InvoiceStatus[]
+  >([]);
   const [companyFilter, setCompanyFilter] = useState("all");
   const [search, setSearch] = useState("");
 
@@ -166,7 +186,10 @@ export default function InvoicesPage() {
   const normalizedSearch = search.trim().toLowerCase();
   const filteredInvoices = invoices
     .filter((invoice) => {
-      if (statusFilter !== "all" && invoice.status !== statusFilter) {
+      if (
+        selectedStatusFilters.length > 0 &&
+        !selectedStatusFilters.includes(invoice.status)
+      ) {
         return false;
       }
       if (companyFilter !== "all" && invoice.companyId !== companyFilter) {
@@ -258,23 +281,45 @@ export default function InvoicesPage() {
           placeholder="Search invoices or customers..."
           className="lg:max-w-sm"
         />
-        <Select
-          value={statusFilter}
-          onValueChange={(value) =>
-            setStatusFilter(value as "all" | InvoiceStatus)
-          }
-        >
-          <SelectTrigger className="w-[190px]" aria-label="Filter by status">
-            <SelectValue placeholder="All Statuses" />
-          </SelectTrigger>
-          <SelectContent>
-            {STATUS_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-[190px] justify-between font-normal"
+              aria-label="Filter by status"
+            >
+              {statusFilterLabel(selectedStatusFilters)}
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-[190px]">
+            <DropdownMenuCheckboxItem
+              checked={selectedStatusFilters.length === 0}
+              onCheckedChange={() => setSelectedStatusFilters([])}
+            >
+              All Statuses
+            </DropdownMenuCheckboxItem>
+            {STATUS_FILTER_OPTIONS.map((option) => (
+              <DropdownMenuCheckboxItem
+                key={option.value}
+                checked={selectedStatusFilters.includes(option.value)}
+                onCheckedChange={(checked) => {
+                  setSelectedStatusFilters((current) => {
+                    if (checked) {
+                      return current.includes(option.value)
+                        ? current
+                        : [...current, option.value];
+                    }
+                    return current.filter((status) => status !== option.value);
+                  });
+                }}
+              >
                 {option.label}
-              </SelectItem>
+              </DropdownMenuCheckboxItem>
             ))}
-          </SelectContent>
-        </Select>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Select value={companyFilter} onValueChange={setCompanyFilter}>
           <SelectTrigger className="w-[220px]" aria-label="Filter by company">
             <SelectValue placeholder="All Companies" />

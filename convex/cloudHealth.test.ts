@@ -1191,11 +1191,11 @@ describe("Cloud Health", () => {
     );
     expect(linkedMonitoringAlarm).toMatchObject({
       csn: 234900364,
-      linkedCompanyName: null,
-      tenant: "",
-      vdcName: "",
+      linkedCompanyId: companyId,
+      linkedCompanyName: "WAAFI",
+      tenant: "WAAFI",
+      vdcName: "WAAFI",
     });
-    expect(linkedMonitoringAlarm).not.toHaveProperty("linkedCompanyId");
 
     const regionAlarms = await asUser(t, users.hob).query(
       api.cloudAlarms.listActiveByRegion,
@@ -1215,11 +1215,11 @@ describe("Cloud Health", () => {
     );
     expect(linkedMonitoringRegionAlarm).toMatchObject({
       csn: 234900364,
-      linkedCompanyName: null,
-      tenant: "",
-      vdcName: "",
+      linkedCompanyId: companyId,
+      linkedCompanyName: "WAAFI",
+      tenant: "WAAFI",
+      vdcName: "WAAFI",
     });
-    expect(linkedMonitoringRegionAlarm).not.toHaveProperty("linkedCompanyId");
 
     const secondSync = await t.mutation(internal.cloudAlarms.bulkSync, {
       syncedAt: 1785520300000,

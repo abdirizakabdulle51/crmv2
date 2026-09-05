@@ -328,6 +328,10 @@ function ExecutiveCollectionSummaryCard({
         <p className="text-sm text-muted-foreground">
           Invoice collection status for valid CRM invoices
         </p>
+        <p className="text-xs text-muted-foreground">
+          Counts only valid issued invoices. Draft, cancelled, void, and test
+          invoices are not included.
+        </p>
       </CardHeader>
       <CardContent>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

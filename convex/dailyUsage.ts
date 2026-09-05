@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import {
   internalMutation,
   internalQuery,
@@ -1365,6 +1366,95 @@ export const listByCompanyMonth = query({
         q.eq("companyId", args.companyId).eq("month", args.month),
       )
       .collect();
+  },
+});
+
+export const listPage = query({
+  args: {
+    month: v.string(),
+    companyId: v.optional(v.id("companies")),
+    usageDate: v.optional(v.string()),
+    serviceType: v.optional(v.string()),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const companies = args.companyId
+      ? [await assertCanManageUsage(ctx, user, args.companyId)]
+      : (await ctx.db.query("companies").collect()).filter((company) =>
+          canViewCompany(user, company),
+        );
+    const visibleCompanyIds = new Set(companies.map((company) => company._id));
+    const companyNameById = new Map(
+      companies.map((company) => [company._id, company.name]),
+    );
+    const paginationOpts = {
+      ...args.paginationOpts,
+      numItems: Math.min(args.paginationOpts.numItems, 100),
+    };
+    const query = args.companyId
+      ? ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_company_month_date", (q) => {
+            const scoped = q
+              .eq("companyId", args.companyId!)
+              .eq("month", args.month);
+            return args.usageDate
+              ? scoped.eq("usageDate", args.usageDate)
+              : scoped;
+          })
+      : args.usageDate
+        ? ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_month_date", (q) =>
+              q.eq("month", args.month).eq("usageDate", args.usageDate!),
+            )
+        : ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_month", (q) => q.eq("month", args.month));
+    const page = await query.order("desc").paginate(paginationOpts);
+    const rows = page.page
+      .filter(
+        (row) =>
+          row.month === args.month &&
+          visibleCompanyIds.has(row.companyId) &&
+          (!args.serviceType || row.serviceType === args.serviceType),
+      )
+      .map((row) => ({
+        ...row,
+        companyName: companyNameById.get(row.companyId) ?? "Unknown",
+      }));
+    return { ...page, page: rows, pageSize: rows.length };
+  },
+});
+
+export const status = query({
+  args: { month: v.string() },
+  handler: async (ctx, args) => {
+    await getCurrentUserOrThrow(ctx);
+    const now = Date.now();
+    const businessDate = dateKeyForTimestamp(now);
+    const latestDailyRow = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_month_date", (q) => q.eq("month", args.month))
+      .order("desc")
+      .first();
+    const latestHourlyRow = await ctx.db
+      .query("manageOneHourlySnapshots")
+      .withIndex("by_hour")
+      .order("desc")
+      .first();
+    const latestHourlyCapturedAt = latestHourlyRow?.capturedAt ?? null;
+    return {
+      month: args.month,
+      businessDate,
+      latestDailyUsageDate: latestDailyRow?.usageDate ?? null,
+      capturedThroughToday: latestDailyRow?.usageDate === businessDate,
+      latestHourlyCapturedAt,
+      hourlyStale:
+        latestHourlyCapturedAt === null ||
+        now - latestHourlyCapturedAt > HOURLY_STALE_MS,
+    };
   },
 });
 

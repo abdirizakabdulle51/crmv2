@@ -141,6 +141,13 @@ function renderInvoicesPage() {
 
 async function chooseSelectOption(label: RegExp | string, option: string) {
   const user = userEvent.setup();
+  if (label.toString().includes("status")) {
+    await user.click(screen.getByRole("button", { name: label }));
+    await user.click(
+      await screen.findByRole("menuitemcheckbox", { name: option }),
+    );
+    return;
+  }
   await user.click(screen.getByRole("combobox", { name: label }));
   await user.click(await screen.findByRole("option", { name: option }));
 }

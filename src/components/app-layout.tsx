@@ -68,6 +68,11 @@ const NAV_ITEMS = [
   { to: "/finance/collections", label: "Collections", icon: HandCoins },
   { to: "/finance/accounts", label: "Accounts", icon: Landmark },
   {
+    to: "/finance/historical-invoices",
+    label: "Historical Paid Invoices",
+    icon: ReceiptText,
+  },
+  {
     to: "/finance/expense-categories",
     label: "Expense Categories",
     icon: Tags,
@@ -162,6 +167,7 @@ const NAV_GROUPS = [
       "/finance/expenses",
       "/finance/reports",
       "/finance/accounts",
+      "/finance/historical-invoices",
     ],
   },
   {

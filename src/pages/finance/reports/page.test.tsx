@@ -56,6 +56,9 @@ const mocks = vi.hoisted(() => ({
         monthly: Array<{
           month: string;
           income: number;
+          recognizedRevenue: number;
+          incurredExpenses: number;
+          operatingNet: number;
           expenses: number;
           net: number;
           paymentCount: number;
@@ -63,6 +66,9 @@ const mocks = vi.hoisted(() => ({
         }>;
         totals: {
           income: number;
+          recognizedRevenue: number;
+          incurredExpenses: number;
+          operatingNet: number;
           expenses: number;
           net: number;
           paymentCount: number;
@@ -147,10 +153,10 @@ function report(overrides = {}) {
         month: "2026-08",
         income: 1000,
         recognizedRevenue: 1000,
-        expenses: 250,
         incurredExpenses: 250,
-        net: 750,
         operatingNet: 750,
+        expenses: 250,
+        net: 750,
         paymentCount: 2,
         paidExpenseCount: 1,
       },
@@ -158,10 +164,10 @@ function report(overrides = {}) {
     totals: {
       income: 1000,
       recognizedRevenue: 1000,
-      expenses: 250,
       incurredExpenses: 250,
-      net: 750,
       operatingNet: 750,
+      expenses: 250,
+      net: 750,
       paymentCount: 2,
     },
     topExpenseCategories: [
@@ -308,13 +314,24 @@ describe("FinanceReportsPage", () => {
         {
           month: "2026-08",
           income: 0,
+          recognizedRevenue: 0,
+          incurredExpenses: 0,
+          operatingNet: 0,
           expenses: 0,
           net: 0,
           paymentCount: 0,
           paidExpenseCount: 0,
         },
       ],
-      totals: { income: 0, expenses: 0, net: 0, paymentCount: 0 },
+      totals: {
+        income: 0,
+        recognizedRevenue: 0,
+        incurredExpenses: 0,
+        operatingNet: 0,
+        expenses: 0,
+        net: 0,
+        paymentCount: 0,
+      },
       topExpenseCategories: [],
       incomeByRegion: [],
       expenseStatusSummary: [

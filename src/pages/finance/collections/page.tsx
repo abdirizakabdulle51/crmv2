@@ -54,13 +54,18 @@ function date(value: number) {
     value,
   );
 }
-const transactionLabel = (type: string) => ({
-  opening_balance: "Opening balance",
-  capital_contribution: "Capital contribution",
-  other_non_invoice_inflow: "Other account inflow",
-  expense_return: "Expense return",
-  reversal: "Reversal",
-}[type] ?? type);
+
+function transactionLabel(type: string) {
+  return (
+    {
+      opening_balance: "Opening balance",
+      capital_contribution: "Capital contribution",
+      other_non_invoice_inflow: "Other account inflow",
+      expense_return: "Expense return",
+      reversal: "Reversal",
+    }[type] ?? type
+  );
+}
 
 const emptyForm = {
   countryId: "",
@@ -94,7 +99,10 @@ export default function CollectionsPage({
   const [inflowOpen, setInflowOpen] = useState(false);
   const [inflowForm, setInflowForm] = useState({
     accountId: "",
-    type: "capital_contribution" as "opening_balance" | "capital_contribution" | "other_non_invoice_inflow",
+    type: "capital_contribution" as
+      | "opening_balance"
+      | "capital_contribution"
+      | "other_non_invoice_inflow",
     amount: "",
     transactionDate: today(),
     transactionId: "",
@@ -234,15 +242,31 @@ export default function CollectionsPage({
       });
       toast.success("Account inflow recorded");
       setInflowOpen(false);
-      setInflowForm({ accountId: "", type: "capital_contribution", amount: "", transactionDate: today(), transactionId: "", source: "", description: "" });
+      setInflowForm({
+        accountId: "",
+        type: "capital_contribution",
+        amount: "",
+        transactionDate: today(),
+        transactionId: "",
+        source: "",
+        description: "",
+      });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not record inflow");
+      toast.error(
+        error instanceof Error ? error.message : "Could not record inflow",
+      );
     } finally {
       setPending(false);
     }
   }
 
-  if (!accounts || !report || !countries || !institutions || (accountsMode && !balances))
+  if (
+    !accounts ||
+    !report ||
+    !countries ||
+    !institutions ||
+    (accountsMode && !balances)
+  )
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-9 w-64" />
@@ -334,9 +358,17 @@ export default function CollectionsPage({
               </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Other cash inflows</CardTitle></CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">
+                  Non-invoice account activity
+                </CardTitle>
+              </CardHeader>
               <CardContent className="text-2xl font-bold">
-                {report.otherTotalsByCurrency.length ? report.otherTotalsByCurrency.map((total) => money(total.amount, total.currency)).join(" · ") : money(0)}
+                {report.otherTotalsByCurrency.length
+                  ? report.otherTotalsByCurrency
+                      .map((total) => money(total.amount, total.currency))
+                      .join(" · ")
+                  : money(0)}
               </CardContent>
             </Card>
             <Card>
@@ -477,13 +509,59 @@ export default function CollectionsPage({
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle>Other incoming account transactions</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Non-invoice account transactions</CardTitle>
+            </CardHeader>
             <CardContent className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead><tr className="border-b text-left text-muted-foreground"><th className="py-3 pr-4">Date</th><th className="pr-4">Type</th><th className="pr-4">Account</th><th className="pr-4">Transaction ID</th><th className="pr-4">Description</th><th className="text-right">Amount</th></tr></thead>
-                <tbody>{report.otherRows.map((row) => <tr key={row._id} className="border-b last:border-0"><td className="py-3 pr-4">{date(row.transactionDate)}</td><td className="pr-4">{transactionLabel(row.category)}</td><td className="pr-4">{row.accountName}</td><td className="pr-4 font-mono text-xs">{row.transactionId}</td><td className="pr-4">{row.description}</td><td className={`text-right font-medium ${row.signedAmount < 0 ? "text-destructive" : "text-emerald-600"}`}>{money(row.signedAmount, row.currency)}</td></tr>)}</tbody>
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="py-3 pr-4">Date</th>
+                    <th className="pr-4">Type</th>
+                    <th className="pr-4">Account</th>
+                    <th className="pr-4">Transaction ID</th>
+                    <th className="pr-4">Description</th>
+                    <th className="text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.otherRows.map((row) => (
+                    <tr key={row._id} className="border-b last:border-0">
+                      <td className="py-3 pr-4">{date(row.transactionDate)}</td>
+                      <td className="pr-4">
+                        {row.isReversal
+                          ? `Reversal · ${transactionLabel(row.category)}`
+                          : transactionLabel(row.category)}
+                      </td>
+                      <td className="pr-4">
+                        <div>{row.accountName}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {row.providerName}
+                        </div>
+                      </td>
+                      <td className="pr-4 font-mono text-xs">
+                        {row.transactionId}
+                      </td>
+                      <td className="pr-4">{row.description}</td>
+                      <td
+                        className={`text-right font-medium ${row.signedAmount < 0 ? "text-destructive" : "text-emerald-600"}`}
+                      >
+                        {money(row.signedAmount, row.currency)}
+                      </td>
+                    </tr>
+                  ))}
+                  {report.otherRows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="py-10 text-center text-muted-foreground"
+                      >
+                        No non-invoice account transactions in this period.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
               </table>
-              {report.otherRows.length === 0 ? <div className="py-10 text-center text-sm text-muted-foreground">No other account inflows in this period.</div> : null}
             </CardContent>
           </Card>
         </>
@@ -770,11 +848,71 @@ export default function CollectionsPage({
 
       {accountsMode && balances ? (
         <Card>
-          <CardHeader><CardTitle>Account balances as of {date(timestamp(endDate, true))}</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>
+              Account balances as of {date(timestamp(endDate, true))}
+            </CardTitle>
+          </CardHeader>
           <CardContent className="overflow-x-auto">
-            <div className="mb-4 flex flex-wrap gap-4">{balances.totalsByCurrency.map((total) => <div key={total.currency} className="rounded-lg border px-4 py-3"><div className="text-xs text-muted-foreground">Total {total.currency} balance</div><div className="text-xl font-bold">{money(total.balance, total.currency)}</div></div>)}</div>
-            <table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Account</th><th>Country</th><th>Currency</th><th className="text-right">Money in</th><th className="text-right">Money out</th><th className="text-right">Balance</th><th className="text-right">Last transaction</th></tr></thead>
-              <tbody>{balances.rows.map((row) => <tr key={row.account._id} className="border-b"><td className="py-2"><div className="font-medium">{row.account.name}</div><div className="text-xs text-muted-foreground">{row.account.providerName} · {row.account.accountNumber}</div></td><td>{countries.find((country) => country._id === row.account.countryId)?.name ?? "—"}</td><td>{row.account.currency}</td><td className="text-right text-emerald-600">{money(row.moneyIn, row.account.currency)}</td><td className="text-right text-destructive">{money(row.moneyOut, row.account.currency)}</td><td className="text-right font-bold">{money(row.balance, row.account.currency)}</td><td className="text-right">{row.lastTransactionDate ? date(row.lastTransactionDate) : "—"}</td></tr>)}</tbody>
+            <div className="mb-4 flex flex-wrap gap-4">
+              {balances.totalsByCurrency.map((total) => (
+                <div
+                  key={total.currency}
+                  className="rounded-lg border px-4 py-3"
+                >
+                  <div className="text-xs text-muted-foreground">
+                    Total {total.currency} balance
+                  </div>
+                  <div className="text-xl font-bold">
+                    {money(total.balance, total.currency)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left">
+                  <th className="py-2">Account</th>
+                  <th>Country</th>
+                  <th>Currency</th>
+                  <th className="text-right">Money in</th>
+                  <th className="text-right">Money out</th>
+                  <th className="text-right">Balance</th>
+                  <th className="text-right">Last transaction</th>
+                </tr>
+              </thead>
+              <tbody>
+                {balances.rows.map((row) => (
+                  <tr key={row.account._id} className="border-b">
+                    <td className="py-2">
+                      <div className="font-medium">{row.account.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {row.account.providerName} · {row.account.accountNumber}
+                      </div>
+                    </td>
+                    <td>
+                      {countries.find(
+                        (country) => country._id === row.account.countryId,
+                      )?.name ?? "—"}
+                    </td>
+                    <td>{row.account.currency}</td>
+                    <td className="text-right text-emerald-600">
+                      {money(row.moneyIn, row.account.currency)}
+                    </td>
+                    <td className="text-right text-destructive">
+                      {money(row.moneyOut, row.account.currency)}
+                    </td>
+                    <td className="text-right font-bold">
+                      {money(row.balance, row.account.currency)}
+                    </td>
+                    <td className="text-right">
+                      {row.lastTransactionDate
+                        ? date(row.lastTransactionDate)
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
             </table>
           </CardContent>
         </Card>
@@ -787,8 +925,13 @@ export default function CollectionsPage({
           </CardHeader>
           <CardContent>
             <div className="mb-4 flex flex-wrap gap-6 text-lg font-bold">
-              <span>Account balance: {money(ledger.accountBalance, ledger.account.currency)}</span>
-              <span>Period movement: {money(ledger.netMovement, ledger.account.currency)}</span>
+              <span>
+                Account balance as of {date(timestamp(endDate, true))}: {" "}
+                {money(ledger.accountBalance, ledger.account.currency)}
+              </span>
+              <span>
+                Period movement: {money(ledger.netMovement, ledger.account.currency)}
+              </span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -812,7 +955,12 @@ export default function CollectionsPage({
                       >
                         {money(row.amount, ledger.account.currency)}
                       </td>
-                      <td className="text-right font-medium">{money(row.runningBalance ?? 0, ledger.account.currency)}</td>
+                      <td className="text-right font-medium">
+                        {money(
+                          row.runningBalance ?? 0,
+                          ledger.account.currency,
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -821,6 +969,138 @@ export default function CollectionsPage({
           </CardContent>
         </Card>
       ) : null}
+
+      <Dialog open={inflowOpen} onOpenChange={setInflowOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Record Non-Invoice Inflow</DialogTitle>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={saveInflow}>
+            <div>
+              <Label>Receiving account</Label>
+              <Select
+                value={inflowForm.accountId}
+                onValueChange={(accountId) =>
+                  setInflowForm({ ...inflowForm, accountId })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts
+                    .filter(
+                      (account) =>
+                        account.isActive && account.usage !== "outgoing",
+                    )
+                    .map((account) => (
+                      <SelectItem key={account._id} value={account._id}>
+                        {account.name} · {account.currency}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Transaction type</Label>
+              <Select
+                value={inflowForm.type}
+                onValueChange={(type) =>
+                  setInflowForm({
+                    ...inflowForm,
+                    type: type as typeof inflowForm.type,
+                  })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="opening_balance">Opening balance</SelectItem>
+                  <SelectItem value="capital_contribution">
+                    Capital contribution / investment
+                  </SelectItem>
+                  <SelectItem value="other_non_invoice_inflow">
+                    Other non-invoice inflow
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Amount</Label>
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={inflowForm.amount}
+                  onChange={(event) =>
+                    setInflowForm({ ...inflowForm, amount: event.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <Label>Transaction date</Label>
+                <Input
+                  type="date"
+                  max={today()}
+                  value={inflowForm.transactionDate}
+                  onChange={(event) =>
+                    setInflowForm({
+                      ...inflowForm,
+                      transactionDate: event.target.value,
+                    })
+                  }
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Transaction ID</Label>
+              <Input
+                value={inflowForm.transactionId}
+                onChange={(event) =>
+                  setInflowForm({ ...inflowForm, transactionId: event.target.value })
+                }
+                required
+              />
+            </div>
+            <div>
+              <Label>Source / investor</Label>
+              <Input
+                value={inflowForm.source}
+                onChange={(event) =>
+                  setInflowForm({ ...inflowForm, source: event.target.value })
+                }
+              />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Input
+                value={inflowForm.description}
+                onChange={(event) =>
+                  setInflowForm({ ...inflowForm, description: event.target.value })
+                }
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setInflowOpen(false)}
+                disabled={pending}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={pending}>
+                {pending ? "Saving..." : "Record inflow"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
@@ -988,21 +1268,6 @@ export default function CollectionsPage({
                 Save account
               </Button>
             </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={inflowOpen} onOpenChange={setInflowOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Record Non-Invoice Inflow</DialogTitle></DialogHeader>
-          <form className="space-y-4" onSubmit={saveInflow}>
-            <div><Label>Receiving account</Label><Select value={inflowForm.accountId} onValueChange={(accountId) => setInflowForm({ ...inflowForm, accountId })}><SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger><SelectContent>{accounts.filter((account) => account.isActive && account.usage !== "outgoing").map((account) => <SelectItem key={account._id} value={account._id}>{account.name} · {account.currency}</SelectItem>)}</SelectContent></Select></div>
-            <div><Label>Transaction type</Label><Select value={inflowForm.type} onValueChange={(type) => setInflowForm({ ...inflowForm, type: type as typeof inflowForm.type })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="opening_balance">Opening balance</SelectItem><SelectItem value="capital_contribution">Capital contribution / investment</SelectItem><SelectItem value="other_non_invoice_inflow">Other non-invoice inflow</SelectItem></SelectContent></Select></div>
-            <div className="grid grid-cols-2 gap-3"><div><Label>Amount</Label><Input type="number" min="0.01" step="0.01" value={inflowForm.amount} onChange={(event) => setInflowForm({ ...inflowForm, amount: event.target.value })} required /></div><div><Label>Transaction date</Label><Input type="date" max={today()} value={inflowForm.transactionDate} onChange={(event) => setInflowForm({ ...inflowForm, transactionDate: event.target.value })} required /></div></div>
-            <div><Label>Transaction ID</Label><Input value={inflowForm.transactionId} onChange={(event) => setInflowForm({ ...inflowForm, transactionId: event.target.value })} required /></div>
-            <div><Label>Source / investor</Label><Input value={inflowForm.source} onChange={(event) => setInflowForm({ ...inflowForm, source: event.target.value })} /></div>
-            <div><Label>Description</Label><Input value={inflowForm.description} onChange={(event) => setInflowForm({ ...inflowForm, description: event.target.value })} required /></div>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setInflowOpen(false)} disabled={pending}>Cancel</Button><Button type="submit" disabled={pending}>{pending ? "Saving..." : "Record inflow"}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
