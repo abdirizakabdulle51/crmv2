@@ -235,6 +235,149 @@ async function insertExpense(
 }
 
 describe("finance reports", () => {
+  it("reports non-invoice funding separately from collections and revenue", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      const accountId = await ctx.db.insert("receivingAccounts", {
+        countryId: s.countryA,
+        name: "Capital account",
+        providerName: "Somalia Bank",
+        accountNumber: "CAP-REPORT-1",
+        accountHolderName: "HTG CLOUDS LIMITED",
+        type: "bank",
+        usage: "both",
+        currency: "USD",
+        isActive: true,
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "capital_contribution",
+        amount: 5000,
+        amountCents: 500000,
+        transactionDate: Date.UTC(2026, 7, 5),
+        transactionId: "CAPITAL-REPORT-1",
+        description: "Initial investment",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 5),
+      });
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+    expect(report.totals).toMatchObject({
+      income: 0,
+      recognizedRevenue: 0,
+      capitalContributions: 5000,
+      otherCashInflows: 5000,
+      totalCashInflows: 5000,
+    });
+  });
+
+  it("keeps returns separate and nets reversals against their original category", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const expenseId = await insertExpense(t, s, {
+      status: "paid",
+      amount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+    });
+    await t.run(async (ctx) => {
+      const accountId = await ctx.db.insert("receivingAccounts", {
+        countryId: s.countryA,
+        name: "Operations account",
+        providerName: "Somalia Bank",
+        accountNumber: "REV-REPORT-1",
+        accountHolderName: "HTG CLOUDS LIMITED",
+        type: "bank",
+        usage: "both",
+        currency: "USD",
+        isActive: true,
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const capitalId = await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "capital_contribution",
+        amount: 5000,
+        amountCents: 500000,
+        transactionDate: Date.UTC(2026, 7, 1),
+        transactionId: "CAPITAL-REVERSAL-1",
+        description: "Capital contribution",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 1),
+      });
+      const returnId = await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "expense_return",
+        amount: 40,
+        amountCents: 4000,
+        transactionDate: Date.UTC(2026, 7, 10),
+        transactionId: "EXPENSE-RETURN-1",
+        expenseId,
+        description: "Returned funds",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 10),
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "outgoing",
+        type: "reversal",
+        amount: 5000,
+        amountCents: 500000,
+        transactionDate: Date.UTC(2026, 7, 11),
+        transactionId: "CAPITAL-REVERSAL-1-R",
+        relatedTransactionId: capitalId,
+        description: "Reverse capital contribution",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 11),
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "outgoing",
+        type: "reversal",
+        amount: 40,
+        amountCents: 4000,
+        transactionDate: Date.UTC(2026, 7, 12),
+        transactionId: "EXPENSE-RETURN-1-R",
+        expenseId,
+        relatedTransactionId: returnId,
+        description: "Reverse expense return",
+        createdBy: s.ceo._id,
+        createdAt: Date.UTC(2026, 7, 12),
+      });
+    });
+
+    const report = await asUser(t, s.ceo).query(api.financeReports.summary, {
+      startMonth: "2026-08",
+      endMonth: "2026-08",
+    });
+    expect(report.totals.capitalContributions).toBe(0);
+    expect(report.totals.otherCashInflows).toBe(0);
+    expect(report.totals.expenseReturns).toBe(0);
+    expect(report.totals.totalCashInflows).toBe(0);
+    expect(report.totals.recognizedRevenue).toBe(0);
+  });
+
   it("groups income by invoice payment paidAt and expenses by paidAt", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -265,6 +408,11 @@ describe("finance reports", () => {
         expenses: 125,
         incurredExpenses: 125,
         expenseReturns: 0,
+        openingBalances: 0,
+        capitalContributions: 0,
+        otherNonInvoiceInflows: 0,
+        otherCashInflows: 0,
+        totalCashInflows: 300,
         netExpenses: 125,
         net: 175,
         operatingNet: -125,

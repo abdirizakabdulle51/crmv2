@@ -285,6 +285,11 @@ export const summary = query({
           expenses: 0,
           incurredExpenses: 0,
           expenseReturns: 0,
+          openingBalances: 0,
+          capitalContributions: 0,
+          otherNonInvoiceInflows: 0,
+          otherCashInflows: 0,
+          totalCashInflows: 0,
           netExpenses: 0,
           net: 0,
           operatingNet: 0,
@@ -473,6 +478,20 @@ export const summary = query({
       ctx.db.query("expenseRequests").collect(),
       ctx.db.query("accountTransactions").collect(),
     ]);
+    const transactionById = new Map(
+      accountTransactions.map((transaction) => [transaction._id, transaction]),
+    );
+    const fundingInflows = new Set([
+      "opening_balance",
+      "capital_contribution",
+      "other_non_invoice_inflow",
+    ]);
+    const transactionCategory = (transaction: (typeof accountTransactions)[number]) => {
+      if (transaction.type === "reversal" && transaction.relatedTransactionId) {
+        return transactionById.get(transaction.relatedTransactionId)?.type;
+      }
+      return transaction.type;
+    };
     const returnsByExpense = new Map<Id<"expenseRequests">, number>();
     for (const transaction of accountTransactions) {
       if (!transaction.expenseId) continue;
@@ -484,6 +503,35 @@ export const summary = query({
         transaction.expenseId,
         sumMoney([returnsByExpense.get(transaction.expenseId) ?? 0, signed]),
       );
+    }
+    for (const transaction of accountTransactions) {
+      if (scope.countryScope && transaction.countryId !== scope.countryScope) {
+        continue;
+      }
+      const month = monthFromTimestamp(transaction.transactionDate);
+      if (!monthInRange(month, startMonth, endMonth)) continue;
+      const category = transactionCategory(transaction);
+      if (!category || !fundingInflows.has(category)) continue;
+      const signed =
+        transaction.direction === "incoming"
+          ? transaction.amount
+          : -transaction.amount;
+      const row = monthly.get(month);
+      if (!row) continue;
+      if (category === "opening_balance") {
+        row.openingBalances = sumMoney([row.openingBalances, signed]);
+      } else if (category === "capital_contribution") {
+        row.capitalContributions = sumMoney([
+          row.capitalContributions,
+          signed,
+        ]);
+      } else if (category === "other_non_invoice_inflow") {
+        row.otherNonInvoiceInflows = sumMoney([
+          row.otherNonInvoiceInflows,
+          signed,
+        ]);
+      }
+      row.otherCashInflows = sumMoney([row.otherCashInflows, signed]);
     }
     for (const expense of expenses) {
       if (!isVisibleExpenseForReport(expense, user, scope)) continue;
@@ -568,6 +616,7 @@ export const summary = query({
 
     const monthlyRows = [...monthly.values()].map((row) => ({
       ...row,
+      totalCashInflows: sumMoney([row.income, row.otherCashInflows]),
       netExpenses: sumMoney([row.expenses, -row.expenseReturns]),
       net: sumMoney([row.income, -row.expenses, row.expenseReturns]),
       operatingNet: sumMoney([row.recognizedRevenue, -row.incurredExpenses]),
@@ -587,6 +636,17 @@ export const summary = query({
         expenses: sumMoney([acc.expenses, row.expenses]),
         incurredExpenses: sumMoney([acc.incurredExpenses, row.incurredExpenses]),
         expenseReturns: sumMoney([acc.expenseReturns, row.expenseReturns]),
+        openingBalances: sumMoney([acc.openingBalances, row.openingBalances]),
+        capitalContributions: sumMoney([
+          acc.capitalContributions,
+          row.capitalContributions,
+        ]),
+        otherNonInvoiceInflows: sumMoney([
+          acc.otherNonInvoiceInflows,
+          row.otherNonInvoiceInflows,
+        ]),
+        otherCashInflows: sumMoney([acc.otherCashInflows, row.otherCashInflows]),
+        totalCashInflows: sumMoney([acc.totalCashInflows, row.totalCashInflows]),
         netExpenses: sumMoney([acc.netExpenses, row.netExpenses]),
         net: sumMoney([acc.net, row.net]),
         operatingNet: sumMoney([acc.operatingNet, row.operatingNet]),
@@ -600,13 +660,17 @@ export const summary = query({
         expenses: 0,
         incurredExpenses: 0,
         expenseReturns: 0,
+        openingBalances: 0,
+        capitalContributions: 0,
+        otherNonInvoiceInflows: 0,
+        otherCashInflows: 0,
+        totalCashInflows: 0,
         netExpenses: 0,
         net: 0,
         operatingNet: 0,
         paymentCount: 0,
       },
     );
-
     return {
       currency: REPORT_CURRENCY,
       startMonth,

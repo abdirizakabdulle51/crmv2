@@ -135,6 +135,90 @@ describe("finance accounts", () => {
     ).rejects.toThrow("active opening balance");
   });
 
+  it("returns as-of balances and chronological running ledger balances", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const accountId = await createAccount(t, s);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "opening_balance",
+        amount: 100,
+        amountCents: 10000,
+        transactionDate: 100,
+        transactionId: "ASOF-OPEN",
+        description: "Opening balance",
+        createdBy: s.ceo._id,
+        createdAt: 100,
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "capital_contribution",
+        amount: 50,
+        amountCents: 5000,
+        transactionDate: 200,
+        transactionId: "ASOF-CAPITAL",
+        description: "Capital contribution",
+        createdBy: s.ceo._id,
+        createdAt: 200,
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "outgoing",
+        type: "reversal",
+        amount: 25,
+        amountCents: 2500,
+        transactionDate: 250,
+        transactionId: "ASOF-REVERSAL",
+        description: "Applicable outgoing reversal",
+        createdBy: s.ceo._id,
+        createdAt: 250,
+      });
+      await ctx.db.insert("accountTransactions", {
+        accountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "other_non_invoice_inflow",
+        amount: 1000,
+        amountCents: 100000,
+        transactionDate: 300,
+        transactionId: "ASOF-FUTURE",
+        description: "Future inflow",
+        createdBy: s.ceo._id,
+        createdAt: 300,
+      });
+    });
+
+    const balances = await asUser(t, s.ceo).query(
+      api.receivingAccounts.balances,
+      { asOf: 250 },
+    );
+    expect(balances.rows[0]).toMatchObject({
+      moneyIn: 150,
+      moneyOut: 25,
+      balance: 125,
+    });
+
+    const ledger = await asUser(t, s.ceo).query(api.receivingAccounts.ledger, {
+      accountId,
+      startDate: 0,
+      endDate: 250,
+    });
+    expect(ledger.rows.map((row) => row.date)).toEqual([100, 200, 250]);
+    expect(ledger.rows.map((row) => row.runningBalance)).toEqual([100, 150, 125]);
+    expect(ledger.accountBalance).toBe(125);
+    expect(ledger.rows.at(-1)?.runningBalance).toBe(ledger.accountBalance);
+  });
+
   it("rejects a new account transaction that reuses a historical bank transaction ID", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
