@@ -465,7 +465,9 @@ export default function FinanceReportsPage({
         ]
       : view === "expenses"
         ? [
-            ["Paid expenses", formatCurrency(report.totals.expenses)],
+            ["Gross paid expenses", formatCurrency(report.totals.expenses)],
+            ["Expense returns", formatCurrency(report.totals.expenseReturns ?? 0)],
+            ["Net paid expenses", formatCurrency(report.totals.netExpenses ?? report.totals.expenses)],
             [
               "Paid expense requests",
               report.monthly
@@ -767,9 +769,10 @@ export default function FinanceReportsPage({
                   <XAxis dataKey="label" className="text-xs" />
                   <YAxis yAxisId="amount" tickFormatter={formatCompact} className="text-xs" />
                   <YAxis yAxisId="count" orientation="right" allowDecimals={false} className="text-xs" />
-                  <Tooltip formatter={(value, name) => name === "Paid amount" ? formatCurrency(Number(value)) : Number(value).toLocaleString()} />
+                  <Tooltip formatter={(value, name) => name === "Paid requests" ? Number(value).toLocaleString() : formatCurrency(Number(value))} />
                   <Legend />
-                  <Bar yAxisId="amount" dataKey="expenses" name="Paid amount" fill="oklch(0.65 0.18 35)" radius={[4, 4, 0, 0]} />
+                  <Bar yAxisId="amount" dataKey="netExpenses" name="Net paid amount" fill="oklch(0.65 0.18 35)" radius={[4, 4, 0, 0]} />
+                  <Bar yAxisId="amount" dataKey="expenseReturns" name="Returns" fill="oklch(0.68 0.15 155)" radius={[4, 4, 0, 0]} />
                   <Bar yAxisId="count" dataKey="paidExpenseCount" name="Paid requests" fill="oklch(0.6 0.14 250)" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>

@@ -264,6 +264,8 @@ describe("finance reports", () => {
         expectedCollections: 0,
         expenses: 125,
         incurredExpenses: 125,
+        expenseReturns: 0,
+        netExpenses: 125,
         net: 175,
         operatingNet: -125,
         paymentCount: 1,
