@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { assertSupportedCurrency, roundMoney } from "./money";
@@ -1076,6 +1076,129 @@ export const archiveExpenseRequest = mutation({
       now,
     });
   },
+});
+
+const TWO_INCORRECT_EXPENSES_CONFIRMATION = "DELETE_TWO_INCORRECT_EXPENSES";
+
+export type ExpenseCleanupTarget = {
+  expenseId: Id<"expenseRequests">;
+  paymentTransactionId: string;
+  amount: number;
+  titleFragment: string;
+};
+
+export type ExpenseCleanupCounts = {
+  expenseRequests: number;
+  expenseEvents: number;
+  accountTransactions: number;
+  invoicePayments: number;
+};
+
+const TWO_INCORRECT_EXPENSE_TARGETS: readonly ExpenseCleanupTarget[] = [
+  {
+    expenseId:
+      "px7a6vm0bzt4gs123y2j6dzrgh8dmpw9" as Id<"expenseRequests">,
+    paymentTransactionId: "1171255",
+    amount: 1500,
+    titleFragment: "Salary jan2026",
+  },
+  {
+    expenseId:
+      "px71nn2vjyspv54nykhht9awdd8dme1w" as Id<"expenseRequests">,
+    paymentTransactionId: "136056",
+    amount: 36,
+    titleFragment: "DigiCert re returned",
+  },
+];
+
+type ExpenseCleanupArgs = {
+  dryRun: boolean;
+  confirm?: string;
+};
+
+export async function performTwoIncorrectExpenseCleanup(
+  ctx: MutationCtx,
+  args: ExpenseCleanupArgs,
+  targets: readonly ExpenseCleanupTarget[],
+): Promise<ExpenseCleanupCounts> {
+  if (!args.dryRun && args.confirm !== TWO_INCORRECT_EXPENSES_CONFIRMATION) {
+    throw new Error(
+      `Exact confirmation required: ${TWO_INCORRECT_EXPENSES_CONFIRMATION}`,
+    );
+  }
+  if (targets.length !== 2 || new Set(targets.map((target) => target.expenseId)).size !== 2) {
+    throw new Error("Refusing cleanup: exactly two distinct expense targets are required");
+  }
+
+  const invoicePayments = await ctx.db.query("invoicePayments").collect();
+  const expenses: Doc<"expenseRequests">[] = [];
+  const expenseEvents: Doc<"expenseEvents">[] = [];
+  const accountTransactions: Doc<"accountTransactions">[] = [];
+
+  for (const target of targets) {
+    const expense = await ctx.db.get(target.expenseId);
+    if (
+      !expense ||
+      expense._id !== target.expenseId ||
+      expense.paymentTransactionId !== target.paymentTransactionId ||
+      expense.amount !== target.amount ||
+      !expense.title.includes(target.titleFragment)
+    ) {
+      throw new Error(
+        `Refusing cleanup: target expense validation failed for ${target.expenseId}`,
+      );
+    }
+
+    expenses.push(expense);
+    expenseEvents.push(
+      ...(await ctx.db
+        .query("expenseEvents")
+        .withIndex("by_expense", (q) => q.eq("expenseId", target.expenseId))
+        .collect()),
+    );
+    accountTransactions.push(
+      ...(await ctx.db
+        .query("accountTransactions")
+        .withIndex("by_expense", (q) => q.eq("expenseId", target.expenseId))
+        .collect()),
+    );
+  }
+
+  const linkedInvoicePayments = invoicePayments.filter((payment) =>
+    targets.some(
+      (target) => payment.transactionId === target.paymentTransactionId,
+    ),
+  );
+  const counts: ExpenseCleanupCounts = {
+    expenseRequests: expenses.length,
+    expenseEvents: expenseEvents.length,
+    accountTransactions: accountTransactions.length,
+    invoicePayments: linkedInvoicePayments.length,
+  };
+
+  if (args.dryRun) return counts;
+  if (counts.accountTransactions !== 0 || counts.invoicePayments !== 0) {
+    throw new Error(
+      `Refusing cleanup: linked records found (accountTransactions=${counts.accountTransactions}, invoicePayments=${counts.invoicePayments})`,
+    );
+  }
+
+  for (const event of expenseEvents) await ctx.db.delete(event._id);
+  for (const expense of expenses) await ctx.db.delete(expense._id);
+  return counts;
+}
+
+export const permanentlyDeleteTwoIncorrectExpenses = internalMutation({
+  args: {
+    dryRun: v.boolean(),
+    confirm: v.optional(v.string()),
+  },
+  handler: async (ctx, args) =>
+    performTwoIncorrectExpenseCleanup(
+      ctx,
+      args,
+      TWO_INCORRECT_EXPENSE_TARGETS,
+    ),
 });
 
 export const getExpenseRequest = query({

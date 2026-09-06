@@ -2,6 +2,10 @@ import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
 import { api } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
+import {
+  performTwoIncorrectExpenseCleanup,
+  type ExpenseCleanupTarget,
+} from "./expenses";
 import schema from "./schema";
 import { modules } from "./test.setup";
 
@@ -240,7 +244,236 @@ async function updateFinanceSettings(
   });
 }
 
+async function insertCleanupExpense(
+  t: ReturnType<typeof convexTest>,
+  s: Seed,
+  args: {
+    title: string;
+    amount: number;
+    paymentTransactionId: string;
+    fundingAccountId?: Id<"receivingAccounts">;
+  },
+) {
+  return await t.run(async (ctx) =>
+    ctx.db.insert("expenseRequests", {
+      title: args.title,
+      categoryId: s.category,
+      amount: args.amount,
+      currency: "USD",
+      expenseDate: Date.UTC(2026, 7, 5),
+      requestedBy: s.ceo._id,
+      companyId: s.companyA,
+      countryId: s.countryA,
+      status: "paid",
+      paidAt: Date.UTC(2026, 7, 5),
+      paidBy: s.ceo._id,
+      fundingAccountId: args.fundingAccountId,
+      paymentTransactionId: args.paymentTransactionId,
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  );
+}
+
 describe("expenses", () => {
+  it("dry-runs and deletes only the two targeted expenses and their events", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const targetA = await insertCleanupExpense(t, s, {
+      title: "Salary jan2026 - duplicate",
+      amount: 1500,
+      paymentTransactionId: "1171255",
+    });
+    const targetB = await insertCleanupExpense(t, s, {
+      title: "DigiCert re returned - duplicate",
+      amount: 36,
+      paymentTransactionId: "136056",
+    });
+    const unrelated = await insertCleanupExpense(t, s, {
+      title: "Keep this expense",
+      amount: 99,
+      paymentTransactionId: "KEEP-1",
+    });
+    await t.run(async (ctx) => {
+      for (const expenseId of [targetA, targetB]) {
+        for (let index = 0; index < 5; index += 1) {
+          await ctx.db.insert("expenseEvents", {
+            expenseId,
+            type: index === 0 ? "created" : "updated",
+            message: `Event ${index + 1}`,
+            actorId: s.ceo._id,
+            createdAt: index + 1,
+          });
+        }
+      }
+      await ctx.db.insert("expenseEvents", {
+        expenseId: unrelated,
+        type: "created",
+        message: "Unrelated event",
+        actorId: s.ceo._id,
+        createdAt: 1,
+      });
+    });
+
+    const targets: ExpenseCleanupTarget[] = [
+      {
+        expenseId: targetA,
+        paymentTransactionId: "1171255",
+        amount: 1500,
+        titleFragment: "Salary jan2026",
+      },
+      {
+        expenseId: targetB,
+        paymentTransactionId: "136056",
+        amount: 36,
+        titleFragment: "DigiCert re returned",
+      },
+    ];
+    const dryRun = await t.run((ctx) =>
+      performTwoIncorrectExpenseCleanup(ctx, { dryRun: true }, targets),
+    );
+    expect(dryRun).toEqual({
+      expenseRequests: 2,
+      expenseEvents: 10,
+      accountTransactions: 0,
+      invoicePayments: 0,
+    });
+    expect(
+      await t.run(async (ctx) => ({
+        targetA: await ctx.db.get(targetA),
+        targetB: await ctx.db.get(targetB),
+        unrelated: await ctx.db.get(unrelated),
+      })),
+    ).toMatchObject({
+      targetA: { _id: targetA },
+      targetB: { _id: targetB },
+      unrelated: { _id: unrelated },
+    });
+
+    const result = await t.run((ctx) =>
+      performTwoIncorrectExpenseCleanup(
+        ctx,
+        {
+          dryRun: false,
+          confirm: "DELETE_TWO_INCORRECT_EXPENSES",
+        },
+        targets,
+      ),
+    );
+    expect(result).toEqual(dryRun);
+    const remaining = await t.run(async (ctx) => ({
+      targetA: await ctx.db.get(targetA),
+      targetB: await ctx.db.get(targetB),
+      unrelated: await ctx.db.get(unrelated),
+      targetEvents: [
+        ...(await ctx.db
+          .query("expenseEvents")
+          .withIndex("by_expense", (q) => q.eq("expenseId", targetA))
+          .collect()),
+        ...(await ctx.db
+          .query("expenseEvents")
+          .withIndex("by_expense", (q) => q.eq("expenseId", targetB))
+          .collect()),
+      ],
+      unrelatedEvents: await ctx.db
+        .query("expenseEvents")
+        .withIndex("by_expense", (q) => q.eq("expenseId", unrelated))
+        .collect(),
+    }));
+    expect(remaining.targetA).toBeNull();
+    expect(remaining.targetB).toBeNull();
+    expect(remaining.targetEvents).toHaveLength(0);
+    expect(remaining.unrelated).toMatchObject({ _id: unrelated });
+    expect(remaining.unrelatedEvents).toHaveLength(1);
+  });
+
+  it("fails closed for wrong confirmation, mismatched targets, and linked account transactions", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const targetId = await insertCleanupExpense(t, s, {
+      title: "Salary jan2026 - duplicate",
+      amount: 1500,
+      paymentTransactionId: "1171255",
+      fundingAccountId: s.fundingAccount,
+    });
+    const target: ExpenseCleanupTarget = {
+      expenseId: targetId,
+      paymentTransactionId: "1171255",
+      amount: 1500,
+      titleFragment: "Salary jan2026",
+    };
+    const secondTarget = {
+      ...target,
+      expenseId: await insertCleanupExpense(t, s, {
+        title: "DigiCert re returned - duplicate",
+        amount: 36,
+        paymentTransactionId: "136056",
+      }),
+      paymentTransactionId: "136056",
+      amount: 36,
+      titleFragment: "DigiCert re returned",
+    } satisfies ExpenseCleanupTarget;
+
+    await expect(
+      t.run((ctx) =>
+        performTwoIncorrectExpenseCleanup(
+          ctx,
+          { dryRun: false, confirm: "WRONG" },
+          [target, secondTarget],
+        ),
+      ),
+    ).rejects.toThrow("Exact confirmation required");
+    await expect(
+      t.run((ctx) =>
+        performTwoIncorrectExpenseCleanup(
+          ctx,
+          { dryRun: true },
+          [target, { ...secondTarget, amount: 37 }],
+        ),
+      ),
+    ).rejects.toThrow("target expense validation failed");
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("accountTransactions", {
+        accountId: s.fundingAccount,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "outgoing",
+        type: "reversal",
+        amount: 1500,
+        amountCents: 150000,
+        transactionDate: Date.UTC(2026, 7, 5),
+        transactionId: "1171255-reversal",
+        expenseId: targetId,
+        description: "Linked account transaction",
+        createdBy: s.ceo._id,
+        createdAt: 1,
+      });
+    });
+    const linkedDryRun = await t.run((ctx) =>
+      performTwoIncorrectExpenseCleanup(ctx, { dryRun: true }, [
+        target,
+        secondTarget,
+      ]),
+    );
+    expect(linkedDryRun.accountTransactions).toBe(1);
+    await expect(
+      t.run((ctx) =>
+        performTwoIncorrectExpenseCleanup(
+          ctx,
+          {
+            dryRun: false,
+            confirm: "DELETE_TWO_INCORRECT_EXPENSES",
+          },
+          [target, secondTarget],
+        ),
+      ),
+    ).rejects.toThrow("linked records found");
+    expect(await t.run((ctx) => ctx.db.get(targetId))).toMatchObject({
+      _id: targetId,
+    });
+  });
+
   it("requires global users to select a country", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
