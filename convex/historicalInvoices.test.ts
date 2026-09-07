@@ -21,9 +21,16 @@ type Args = {
   transactionId?: string;
   notes?: string;
 };
+type UnpaidArgs = Omit<Args, "paymentDate" | "paymentMethod" | "receivingAccountId" | "paymentReference" | "transactionId">;
 const createHistorical = (api as unknown as {
-  historicalInvoices: { create: FunctionReference<"mutation", "public", Args, Id<"invoices">> };
+  historicalInvoices: {
+    create: FunctionReference<"mutation", "public", Args, Id<"invoices">>;
+    createUnpaid: FunctionReference<"mutation", "public", UnpaidArgs, Id<"invoices">>;
+  };
 }).historicalInvoices.create;
+const createHistoricalUnpaid = (api as unknown as {
+  historicalInvoices: { createUnpaid: FunctionReference<"mutation", "public", UnpaidArgs, Id<"invoices">> };
+}).historicalInvoices.createUnpaid;
 
 async function seed(t: ReturnType<typeof convexTest>) {
   return await t.run(async (ctx) => {
@@ -65,6 +72,64 @@ describe("historical paid invoices", () => {
     expect(result.contracts).toHaveLength(0);
     expect(result.quotes).toHaveLength(0);
     expect(result.leads).toHaveLength(0);
+  });
+
+  it("creates an unpaid historical invoice without payment rows", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const user = t.withIdentity({ tokenIdentifier: "historical-test" });
+    const invoiceId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId,
+      originalReference: " S00066 ",
+      invoiceDate: "2026-02-02",
+      coverageStartMonth: "2026-02",
+      monthsCovered: 2,
+      monthlyAmount: 100,
+      notes: "Still outstanding",
+    });
+    const result = await t.run(async (ctx) => ({
+      invoice: await ctx.db.get(invoiceId),
+      payments: await ctx.db.query("invoicePayments").withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId)).collect(),
+      events: await ctx.db.query("invoiceEvents").withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId)).collect(),
+    }));
+    expect(result.invoice).toMatchObject({
+      isHistorical: true,
+      sourceSystem: "odoo",
+      originalReference: "S00066",
+      normalizedOriginalReference: "S00066",
+      status: "issued",
+      amountPaid: 0,
+      amountPaidCents: 0,
+      balanceDue: 200,
+      balanceDueCents: 20000,
+      historicalCoverageStartMonth: "2026-02",
+      historicalCoverageMonths: 2,
+      notes: "Still outstanding",
+    });
+    expect(result.invoice?.revenueAllocations).toEqual([{ month: "2026-02", amount: 100 }, { month: "2026-03", amount: 100 }]);
+    expect(result.payments).toHaveLength(0);
+    expect(result.events.map((event) => event.type)).toEqual(["draft_created", "issued"]);
+  });
+
+  it("allows the normal payment flow to partially and fully pay an unpaid historical invoice", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const user = t.withIdentity({ tokenIdentifier: "historical-test" });
+    const invoiceId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "PAY-1", invoiceDate: "2026-02-02", coverageStartMonth: "2026-02", monthsCovered: 2, monthlyAmount: 100,
+    });
+    await user.mutation(api.invoices.recordPayment, { invoiceId, amount: 40, paidAt: Date.UTC(2026, 1, 5), method: "Bank Transfer", receivingAccountId: s.accountId, transactionId: "PAY-1-A" });
+    let invoice = await user.query(api.invoices.getById, { invoiceId });
+    expect(invoice).toMatchObject({ status: "partially_paid", amountPaid: 40, balanceDue: 160 });
+    await user.mutation(api.invoices.recordPayment, { invoiceId, amount: 160, paidAt: Date.UTC(2026, 1, 6), method: "Bank Transfer", receivingAccountId: s.accountId, transactionId: "PAY-1-B" });
+    invoice = await user.query(api.invoices.getById, { invoiceId });
+    expect(invoice).toMatchObject({ status: "paid", amountPaid: 200, balanceDue: 0 });
+    const result = await t.run(async (ctx) => ({
+      payments: await ctx.db.query("invoicePayments").withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId)).collect(),
+      events: await ctx.db.query("invoiceEvents").withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId)).collect(),
+    }));
+    expect(result.payments).toHaveLength(2);
+    expect(result.events.map((event) => event.type)).toEqual(["draft_created", "issued", "payment_recorded", "payment_recorded"]);
   });
 
   it("guards duplicates while allowing the same reference for another customer", async () => {

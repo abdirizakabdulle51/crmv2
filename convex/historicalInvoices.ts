@@ -115,6 +115,137 @@ function historicalInvoiceNumber(
   return `HIST-ODOO-${companyId}-${encodeURIComponent(normalizedReference)}`;
 }
 
+type HistoricalInvoiceInput = {
+  companyId: Doc<"companies">["_id"];
+  originalReference: string;
+  invoiceDate: string;
+  coverageStartMonth: string;
+  monthsCovered: number;
+  monthlyAmount: number;
+  notes?: string;
+};
+
+function prepareHistoricalInvoice(
+  args: HistoricalInvoiceInput,
+  validated?: { normalizedReference: string; invoiceDate: number },
+) {
+  const normalizedReference = validated?.normalizedReference ?? normalizeReference(args.originalReference);
+  const invoiceDate = validated?.invoiceDate ?? dateOnlyTimestamp(args.invoiceDate, "Invoice date");
+  const months = coverageMonths(args.coverageStartMonth, args.monthsCovered);
+  const monthlyCents = toCents(args.monthlyAmount, "Monthly amount");
+  if (monthlyCents <= 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Monthly amount must be positive",
+    });
+  }
+  const monthlyAmount = fromCents(monthlyCents);
+  const lineItems = calculateLineItems([
+    {
+      itemName: `Historical Odoo coverage (${args.coverageStartMonth})`,
+      serviceCategory: "Historical Invoice",
+      billingUnit: "month",
+      quantity: args.monthsCovered,
+      monthlyUnitPrice: monthlyAmount,
+    },
+  ]);
+  const totals = calculateInvoiceTotals(lineItems);
+  const revenueAllocations = allocateMoney(
+    totals.grandTotal,
+    months.map((month) => ({ month, weight: 1 })),
+  ).map(({ month, amount }) => ({ month, amount }));
+  const receivableAllocations = allocateMoney(
+    totals.grandTotal,
+    months.map((month) => ({ month, weight: 1 })),
+  ).map(({ month, amount }) => ({ month, amount }));
+
+  return {
+    normalizedReference,
+    invoiceDate,
+    lineItems,
+    totals,
+    revenueAllocations,
+    receivableAllocations,
+  };
+}
+
+async function insertHistoricalInvoiceBase(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  company: Doc<"companies">,
+  args: HistoricalInvoiceInput,
+  prepared: ReturnType<typeof prepareHistoricalInvoice>,
+) {
+  const existing = await ctx.db
+    .query("invoices")
+    .withIndex("by_historical_identity", (q) =>
+      q
+        .eq("companyId", args.companyId)
+        .eq("sourceSystem", "odoo")
+        .eq("normalizedOriginalReference", prepared.normalizedReference),
+    )
+    .first();
+  if (existing) {
+    throw new ConvexError({
+      code: "CONFLICT",
+      message:
+        "This historical invoice reference already exists for the customer",
+    });
+  }
+
+  const now = Date.now();
+  const invoiceNumber = historicalInvoiceNumber(
+    company._id,
+    prepared.normalizedReference,
+  );
+  const invoiceId = await ctx.db.insert("invoices", {
+    companyId: company._id,
+    sourceMonth: args.coverageStartMonth,
+    sourceSystem: "odoo",
+    isHistorical: true,
+    originalReference: args.originalReference.trim(),
+    normalizedOriginalReference: prepared.normalizedReference,
+    historicalCoverageStartMonth: args.coverageStartMonth,
+    historicalCoverageMonths: args.monthsCovered,
+    historicalImportedAt: now,
+    revenueAllocations: prepared.revenueAllocations,
+    receivableAllocations: prepared.receivableAllocations,
+    createdBy: user._id,
+    invoiceNumber,
+    status: "issued",
+    issueDate: prepared.invoiceDate,
+    dueDate: prepared.invoiceDate,
+    lockedAt: now,
+    companyName: company.name,
+    contactName: company.contactName,
+    contactEmail: company.contactEmail,
+    billingEmail: company.contactEmail,
+    sellerCurrency: "USD",
+    lineItems: prepared.lineItems.map(withLineMoneyCents),
+    ...withInvoiceMoneyCents(prepared.totals),
+    notes: args.notes?.trim() || undefined,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await ctx.db.insert("invoiceEvents", {
+    invoiceId,
+    type: "draft_created",
+    actorId: user._id,
+    message: `Historical Odoo invoice ${args.originalReference.trim()} recorded as a draft before issue.`,
+    createdAt: now,
+  });
+  await ctx.db.insert("invoiceEvents", {
+    invoiceId,
+    type: "issued",
+    actorId: user._id,
+    message: `Historical Odoo invoice ${invoiceNumber} issued.`,
+    createdAt: now,
+  });
+
+  return { invoiceId, totals: prepared.totals, now };
+}
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
@@ -178,99 +309,14 @@ export const create = mutation({
     const normalizedReference = normalizeReference(args.originalReference);
     const invoiceDate = dateOnlyTimestamp(args.invoiceDate, "Invoice date");
     const paymentDate = dateOnlyTimestamp(args.paymentDate, "Payment date");
-    const months = coverageMonths(args.coverageStartMonth, args.monthsCovered);
-    const monthlyCents = toCents(args.monthlyAmount, "Monthly amount");
-    if (monthlyCents <= 0) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Monthly amount must be positive",
-      });
-    }
-    const monthlyAmount = fromCents(monthlyCents);
-    const lineItems = calculateLineItems([
-      {
-        itemName: `Historical Odoo coverage (${args.coverageStartMonth})`,
-        serviceCategory: "Historical Invoice",
-        billingUnit: "month",
-        quantity: args.monthsCovered,
-        monthlyUnitPrice: monthlyAmount,
-      },
-    ]);
-    const totals = calculateInvoiceTotals(lineItems);
-    const revenueAllocations = allocateMoney(
-      totals.grandTotal,
-      months.map((month) => ({ month, weight: 1 })),
-    ).map(({ month, amount }) => ({ month, amount }));
-    const receivableAllocations = allocateMoney(
-      totals.grandTotal,
-      months.map((month) => ({ month, weight: 1 })),
-    ).map(({ month, amount }) => ({ month, amount }));
-    const existing = await ctx.db
-      .query("invoices")
-      .withIndex("by_historical_identity", (q) =>
-        q
-          .eq("companyId", args.companyId)
-          .eq("sourceSystem", "odoo")
-          .eq("normalizedOriginalReference", normalizedReference),
-      )
-      .first();
-    if (existing) {
-      throw new ConvexError({
-        code: "CONFLICT",
-        message:
-          "This historical invoice reference already exists for the customer",
-      });
-    }
-
-    const now = Date.now();
-    const invoiceNumber = historicalInvoiceNumber(
-      company._id,
-      normalizedReference,
+    const prepared = prepareHistoricalInvoice(args, { normalizedReference, invoiceDate });
+    const { invoiceId, totals, now } = await insertHistoricalInvoiceBase(
+      ctx,
+      user,
+      company,
+      args,
+      prepared,
     );
-    const invoiceId = await ctx.db.insert("invoices", {
-      companyId: company._id,
-      sourceMonth: args.coverageStartMonth,
-      sourceSystem: "odoo",
-      isHistorical: true,
-      originalReference: args.originalReference.trim(),
-      normalizedOriginalReference: normalizedReference,
-      historicalCoverageStartMonth: args.coverageStartMonth,
-      historicalCoverageMonths: args.monthsCovered,
-      historicalImportedAt: now,
-      revenueAllocations,
-      receivableAllocations,
-      createdBy: user._id,
-      invoiceNumber,
-      status: "issued",
-      issueDate: invoiceDate,
-      dueDate: invoiceDate,
-      lockedAt: now,
-      companyName: company.name,
-      contactName: company.contactName,
-      contactEmail: company.contactEmail,
-      billingEmail: company.contactEmail,
-      sellerCurrency: "USD",
-      lineItems: lineItems.map(withLineMoneyCents),
-      ...withInvoiceMoneyCents(totals),
-      notes: args.notes?.trim() || undefined,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await ctx.db.insert("invoiceEvents", {
-      invoiceId,
-      type: "draft_created",
-      actorId: user._id,
-      message: `Historical Odoo invoice ${args.originalReference.trim()} recorded as a draft before issue.`,
-      createdAt: now,
-    });
-    await ctx.db.insert("invoiceEvents", {
-      invoiceId,
-      type: "issued",
-      actorId: user._id,
-      message: `Historical Odoo invoice ${invoiceNumber} issued.`,
-      createdAt: now,
-    });
 
     const paymentAmount = totals.grandTotal;
     const payment = calculatePaymentApplication(
@@ -390,6 +436,38 @@ export const create = mutation({
       message: `Historical payment of ${payment.amount.toFixed(2)} recorded.`,
       createdAt: now,
     });
+    return invoiceId;
+  },
+});
+
+export const createUnpaid = mutation({
+  args: {
+    companyId: v.id("companies"),
+    originalReference: v.string(),
+    invoiceDate: v.string(),
+    coverageStartMonth: v.string(),
+    monthsCovered: v.number(),
+    monthlyAmount: v.number(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const company = await ctx.db.get(args.companyId);
+    if (!company) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Company not found",
+      });
+    }
+    assertCanManageCompany(user, company);
+    const prepared = prepareHistoricalInvoice(args);
+    const { invoiceId } = await insertHistoricalInvoiceBase(
+      ctx,
+      user,
+      company,
+      args,
+      prepared,
+    );
     return invoiceId;
   },
 });

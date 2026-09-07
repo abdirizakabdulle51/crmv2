@@ -594,6 +594,15 @@ describe("InvoiceDetailPage", () => {
     },
   );
 
+  it("keeps Record Payment available for an unpaid historical invoice", () => {
+    mocks.invoice = invoice({ isHistorical: true, sourceSystem: "odoo", status: "issued" });
+
+    renderDetailPage();
+
+    expect(screen.getByText("Historical · Odoo")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Record Payment" })).toBeInTheDocument();
+  });
+
   it("opens the payment dialog with balance due context", async () => {
     const user = userEvent.setup();
     renderDetailPage();
