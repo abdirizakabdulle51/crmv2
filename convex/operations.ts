@@ -313,7 +313,7 @@ export const healthOverview = query({
         issues.push({
           severity: "high",
           type: "duplicate_account_transaction",
-          message: `Duplicate account transaction ID ${key.split(":").at(-1)} (${sources.join(", ")})`,
+          message: `Duplicate account transaction ID ${key.split(":")[key.split(":").length - 1]} (${sources.join(", ")})`,
           href: "/finance/account-transactions",
         });
     }
