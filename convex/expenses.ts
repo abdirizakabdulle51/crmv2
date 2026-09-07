@@ -1198,7 +1198,84 @@ export const permanentlyDeleteTwoIncorrectExpenses = internalMutation({
       ctx,
       args,
       TWO_INCORRECT_EXPENSE_TARGETS,
-    ),
+  ),
+});
+
+const INCORRECT_EXPENSE_CONFIRMATION = "DELETE_INCORRECT_EXPENSE";
+
+export type IncorrectExpenseCleanupArgs = {
+  expenseId: Id<"expenseRequests">;
+  expectedTransactionId: string;
+  expectedAmount: number;
+  dryRun: boolean;
+  confirm?: string;
+};
+
+export async function performIncorrectExpenseCleanup(
+  ctx: MutationCtx,
+  args: IncorrectExpenseCleanupArgs,
+): Promise<ExpenseCleanupCounts> {
+  const expense = await ctx.db.get(args.expenseId);
+  if (
+    !expense ||
+    expense._id !== args.expenseId ||
+    expense.paymentTransactionId !== args.expectedTransactionId ||
+    expense.amount !== args.expectedAmount ||
+    expense.status !== "paid"
+  ) {
+    throw new Error(
+      `Refusing cleanup: target expense validation failed for ${args.expenseId}`,
+    );
+  }
+  if (!args.dryRun && args.confirm !== INCORRECT_EXPENSE_CONFIRMATION) {
+    throw new Error(
+      `Exact confirmation required: ${INCORRECT_EXPENSE_CONFIRMATION}`,
+    );
+  }
+
+  const [expenseEvents, accountTransactions, invoicePayments] =
+    await Promise.all([
+      ctx.db
+        .query("expenseEvents")
+        .withIndex("by_expense", (q) => q.eq("expenseId", args.expenseId))
+        .collect(),
+      ctx.db
+        .query("accountTransactions")
+        .withIndex("by_expense", (q) => q.eq("expenseId", args.expenseId))
+        .collect(),
+      ctx.db.query("invoicePayments").collect(),
+    ]);
+  const linkedInvoicePayments = invoicePayments.filter(
+    (payment) => payment.transactionId === args.expectedTransactionId,
+  );
+  const counts: ExpenseCleanupCounts = {
+    expenseRequests: 1,
+    expenseEvents: expenseEvents.length,
+    accountTransactions: accountTransactions.length,
+    invoicePayments: linkedInvoicePayments.length,
+  };
+
+  if (args.dryRun) return counts;
+  if (counts.accountTransactions !== 0 || counts.invoicePayments !== 0) {
+    throw new Error(
+      `Refusing cleanup: linked records found (accountTransactions=${counts.accountTransactions}, invoicePayments=${counts.invoicePayments})`,
+    );
+  }
+
+  for (const event of expenseEvents) await ctx.db.delete(event._id);
+  await ctx.db.delete(expense._id);
+  return counts;
+}
+
+export const permanentlyDeleteIncorrectExpense = internalMutation({
+  args: {
+    expenseId: v.id("expenseRequests"),
+    expectedTransactionId: v.string(),
+    expectedAmount: v.number(),
+    dryRun: v.boolean(),
+    confirm: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => performIncorrectExpenseCleanup(ctx, args),
 });
 
 export const getExpenseRequest = query({
