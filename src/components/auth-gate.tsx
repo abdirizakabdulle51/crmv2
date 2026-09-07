@@ -12,20 +12,60 @@ import { Label } from "@/components/ui/label.tsx";
 import { toast } from "sonner";
 import { BrandLogo } from "@/components/brand-logo.tsx";
 import { InactivityLogout } from "@/components/inactivity-logout.tsx";
+import { Check, ShieldCheck } from "lucide-react";
 
 function LoginPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="text-center space-y-6 max-w-md px-6">
-        <BrandLogo
-          className="justify-center"
-          iconClassName="h-12 w-auto max-w-[240px]"
-        />
-        <p className="text-muted-foreground">
-          Sign in to access the CRM platform
-        </p>
-        <SignInForm />
-      </div>
+    <div className="min-h-screen overflow-y-auto bg-background p-3 sm:p-5 lg:p-7">
+      <main className="mx-auto grid min-h-[calc(100vh-1.5rem)] max-w-7xl overflow-hidden rounded-2xl border bg-card shadow-xl shadow-foreground/5 sm:min-h-[calc(100vh-2.5rem)] lg:min-h-[calc(100vh-3.5rem)] lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="relative hidden overflow-hidden border-r border-sidebar-border bg-gradient-to-br from-sidebar via-sidebar-accent to-primary/25 p-12 lg:flex lg:flex-col lg:justify-between">
+          <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(to_right,var(--sidebar-border)_1px,transparent_1px),linear-gradient(to_bottom,var(--sidebar-border)_1px,transparent_1px)] [background-size:42px_42px] [mask-image:linear-gradient(to_bottom_right,transparent,black,transparent)]" />
+          <div className="relative z-10">
+            <BrandLogo iconClassName="h-12 w-auto max-w-[230px]" />
+            <div className="mt-24 max-w-xl">
+              <h1 className="text-5xl font-bold leading-[1.08] tracking-tight text-sidebar-foreground">
+                Operate your cloud business from one place.
+              </h1>
+              <p className="mt-6 max-w-lg text-lg leading-8 text-sidebar-foreground/70">
+                A unified workspace for customers, contracts, billing,
+                collections, and operational visibility.
+              </p>
+              <div className="mt-10 space-y-4">
+                {[
+                  "Manage customers, opportunities, and contracts",
+                  "Automate usage-based billing and collections",
+                  "See financial and operational performance clearly",
+                ].map((feature) => (
+                  <div key={feature} className="flex items-center gap-3 text-sm font-medium text-sidebar-foreground">
+                    <span className="grid size-6 place-items-center rounded-full border border-primary/60 bg-primary/20 text-sidebar-foreground">
+                      <Check className="size-3.5" />
+                    </span>
+                    {feature}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="relative z-10 flex items-center gap-2 text-xs text-sidebar-foreground/65">
+            <ShieldCheck className="size-4 text-primary" />
+            Secure access for authorized HTGCLOUDS team members
+          </div>
+        </section>
+
+        <section className="flex items-center justify-center bg-card px-6 py-10 sm:px-12">
+          <div className="w-full max-w-sm">
+            <BrandLogo className="mb-14 lg:hidden" iconClassName="h-11 w-auto max-w-[210px]" />
+            <h2 className="text-3xl font-bold tracking-tight">Welcome back</h2>
+            <p className="mb-8 mt-2 text-sm text-muted-foreground">
+              Sign in to continue to HTGCLOUDS CRM.
+            </p>
+            <SignInForm />
+            <p className="mt-6 text-center text-xs text-muted-foreground">
+              Having trouble signing in? Contact your administrator.
+            </p>
+          </div>
+        </section>
+      </main>
     </div>
   );
 }

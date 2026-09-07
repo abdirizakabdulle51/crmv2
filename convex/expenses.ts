@@ -3,6 +3,7 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { assertSupportedCurrency, roundMoney } from "./money";
+import { assertUniqueAccountTransactionId } from "./accountTransactionIdentity";
 import {
   assertCanManageCompany,
   assertNotMonitoring,
@@ -910,21 +911,11 @@ export const markExpensePaid = mutation({
       args.paymentTransactionId ?? "",
       "Payment transaction ID",
     );
-    const duplicate = await ctx.db
-      .query("expenseRequests")
-      .withIndex("by_account_transaction", (q) =>
-        q
-          .eq("fundingAccountId", fundingAccount._id)
-          .eq("paymentTransactionId", paymentTransactionId),
-      )
-      .first();
-    if (duplicate && duplicate._id !== expense._id) {
-      throw new ConvexError({
-        code: "CONFLICT",
-        message:
-          "This transaction ID has already been used for the funding account",
-      });
-    }
+    await assertUniqueAccountTransactionId(
+      ctx,
+      fundingAccount._id,
+      paymentTransactionId,
+    );
     const paymentMethod =
       fundingAccount.type === "bank"
         ? "Bank Transfer"
@@ -935,7 +926,10 @@ export const markExpensePaid = mutation({
     const now = Date.now();
     const paidAt = args.paidAt ?? now;
     if (paidAt > now) {
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Payment date cannot be in the future" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Payment date cannot be in the future",
+      });
     }
     await ctx.db.patch(args.expenseId, {
       status: "paid",
@@ -981,18 +975,31 @@ export const reconcilePaidExpenseDate = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     if (!isCeoOrHob(user)) {
-      throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can reconcile payment dates" });
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can reconcile payment dates",
+      });
     }
     const expense = await getExpenseOrThrow(ctx, args.expenseId);
     if (expense.status !== "paid") {
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Only paid expenses can have their payment date reconciled" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only paid expenses can have their payment date reconciled",
+      });
     }
     const reason = normalizeRequiredText(args.reason, "Correction reason");
     const now = Date.now();
     if (args.paidAt > now) {
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Payment date cannot be in the future" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Payment date cannot be in the future",
+      });
     }
-    await ctx.db.patch(args.expenseId, { paidAt: args.paidAt, paidBy: user._id, updatedAt: now });
+    await ctx.db.patch(args.expenseId, {
+      paidAt: args.paidAt,
+      paidBy: user._id,
+      updatedAt: now,
+    });
     await insertExpenseEvent(ctx, {
       expenseId: args.expenseId,
       type: "updated",
@@ -1096,15 +1103,13 @@ export type ExpenseCleanupCounts = {
 
 const TWO_INCORRECT_EXPENSE_TARGETS: readonly ExpenseCleanupTarget[] = [
   {
-    expenseId:
-      "px7a6vm0bzt4gs123y2j6dzrgh8dmpw9" as Id<"expenseRequests">,
+    expenseId: "px7a6vm0bzt4gs123y2j6dzrgh8dmpw9" as Id<"expenseRequests">,
     paymentTransactionId: "1171255",
     amount: 1500,
     titleFragment: "Salary jan2026",
   },
   {
-    expenseId:
-      "px71nn2vjyspv54nykhht9awdd8dme1w" as Id<"expenseRequests">,
+    expenseId: "px71nn2vjyspv54nykhht9awdd8dme1w" as Id<"expenseRequests">,
     paymentTransactionId: "136056",
     amount: 36,
     titleFragment: "DigiCert re returned",
@@ -1126,8 +1131,13 @@ export async function performTwoIncorrectExpenseCleanup(
       `Exact confirmation required: ${TWO_INCORRECT_EXPENSES_CONFIRMATION}`,
     );
   }
-  if (targets.length !== 2 || new Set(targets.map((target) => target.expenseId)).size !== 2) {
-    throw new Error("Refusing cleanup: exactly two distinct expense targets are required");
+  if (
+    targets.length !== 2 ||
+    new Set(targets.map((target) => target.expenseId)).size !== 2
+  ) {
+    throw new Error(
+      "Refusing cleanup: exactly two distinct expense targets are required",
+    );
   }
 
   const invoicePayments = await ctx.db.query("invoicePayments").collect();
@@ -1198,7 +1208,7 @@ export const permanentlyDeleteTwoIncorrectExpenses = internalMutation({
       ctx,
       args,
       TWO_INCORRECT_EXPENSE_TARGETS,
-  ),
+    ),
 });
 
 const INCORRECT_EXPENSE_CONFIRMATION = "DELETE_INCORRECT_EXPENSE";
@@ -1319,7 +1329,9 @@ export const listExpenseRequests = query({
         visible.push(expense);
       }
     }
-    return visible.sort((a, b) => b.expenseDate - a.expenseDate || b.createdAt - a.createdAt);
+    return visible.sort(
+      (a, b) => b.expenseDate - a.expenseDate || b.createdAt - a.createdAt,
+    );
   },
 });
 

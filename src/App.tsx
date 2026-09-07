@@ -202,7 +202,15 @@ export default function App() {
             />
             <Route
               path="/finance/accounts"
-              element={lazyPage(<CollectionsPage accountsMode />)}
+              element={lazyPage(<CollectionsPage mode="accounts" />)}
+            />
+            <Route
+              path="/finance/account-transactions"
+              element={lazyPage(<CollectionsPage mode="transactions" />)}
+            />
+            <Route
+              path="/finance/banks"
+              element={lazyPage(<CollectionsPage mode="banks" />)}
             />
             <Route
               path="/finance/historical-invoices"

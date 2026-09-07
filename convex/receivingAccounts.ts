@@ -8,7 +8,13 @@ import {
   canViewCompany,
   isCeoOrHob,
 } from "./authorization";
-import { assertSupportedCurrency, roundMoney, sumMoney, toCents } from "./money";
+import {
+  assertSupportedCurrency,
+  roundMoney,
+  sumMoney,
+  toCents,
+} from "./money";
+import { assertUniqueAccountTransactionId } from "./accountTransactionIdentity";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -64,38 +70,6 @@ function signedTransactionAmount(transaction: Doc<"accountTransactions">) {
     : -transaction.amount;
 }
 
-async function assertUniqueTransaction(
-  ctx: MutationCtx,
-  accountId: Doc<"receivingAccounts">["_id"],
-  transactionId: string,
-) {
-  const [accountTransaction, invoicePayment, expense] = await Promise.all([
-    ctx.db
-      .query("accountTransactions")
-      .withIndex("by_account_transaction", (q) =>
-        q.eq("accountId", accountId).eq("transactionId", transactionId),
-      )
-      .first(),
-    ctx.db
-      .query("invoicePayments")
-      .withIndex("by_account_transaction", (q) =>
-        q.eq("receivingAccountId", accountId).eq("transactionId", transactionId),
-      )
-      .first(),
-    ctx.db
-      .query("expenseRequests")
-      .withIndex("by_account_transaction", (q) =>
-        q.eq("fundingAccountId", accountId).eq("paymentTransactionId", transactionId),
-      )
-      .first(),
-  ]);
-  if (accountTransaction || invoicePayment || expense)
-    throw new ConvexError({
-      code: "CONFLICT",
-      message: "This transaction ID is already recorded for the account",
-    });
-}
-
 async function insertAccountTransaction(
   ctx: MutationCtx,
   args: {
@@ -129,7 +103,7 @@ async function insertAccountTransaction(
       message: "Transaction date cannot be in the future",
     });
   const transactionId = required(args.transactionId, "Transaction ID");
-  await assertUniqueTransaction(ctx, args.account._id, transactionId);
+  await assertUniqueAccountTransactionId(ctx, args.account._id, transactionId);
   return await ctx.db.insert("accountTransactions", {
     accountId: args.account._id,
     countryId: args.account.countryId!,
@@ -527,7 +501,11 @@ export const recordNonInvoiceInflow = mutation({
         message: "Only CEO or Head of Business can record non-invoice inflows",
       });
     const account = await ctx.db.get(args.accountId);
-    if (!account?.isActive || !account.countryId || account.usage === "outgoing")
+    if (
+      !account?.isActive ||
+      !account.countryId ||
+      account.usage === "outgoing"
+    )
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Select an active account enabled for incoming funds",
@@ -538,7 +516,11 @@ export const recordNonInvoiceInflow = mutation({
         .query("accountTransactions")
         .withIndex("by_account", (q) => q.eq("accountId", account._id))
         .collect();
-      if (openings.some((entry) => entry.type === "opening_balance" && !entry.reversedAt))
+      if (
+        openings.some(
+          (entry) => entry.type === "opening_balance" && !entry.reversedAt,
+        )
+      )
         throw new ConvexError({
           code: "CONFLICT",
           message: "This account already has an active opening balance",
@@ -583,12 +565,18 @@ export const recordExpenseReturn = mutation({
         code: "BAD_REQUEST",
         message: "Only a paid expense can receive a return",
       });
-    if (!account?.isActive || !account.countryId || account.usage === "outgoing")
+    if (
+      !account?.isActive ||
+      !account.countryId ||
+      account.usage === "outgoing"
+    )
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Select an active account enabled for incoming funds",
       });
-    const expenseCompany = expense.companyId ? await ctx.db.get(expense.companyId) : null;
+    const expenseCompany = expense.companyId
+      ? await ctx.db.get(expense.companyId)
+      : null;
     const expenseCountryId = expense.countryId ?? expenseCompany?.countryId;
     if (!expenseCountryId || account.countryId !== expenseCountryId)
       throw new ConvexError({
@@ -643,8 +631,13 @@ export const expenseReturns = query({
     const user = await currentUser(ctx);
     const expense = await ctx.db.get(args.expenseId);
     if (!expense)
-      throw new ConvexError({ code: "NOT_FOUND", message: "Expense not found" });
-    const company = expense.companyId ? await ctx.db.get(expense.companyId) : null;
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Expense not found",
+      });
+    const company = expense.companyId
+      ? await ctx.db.get(expense.companyId)
+      : null;
     if (
       !isCeoOrHob(user) &&
       expense.requestedBy !== user._id &&
@@ -685,14 +678,21 @@ export const reverseAccountTransaction = mutation({
     if (!isCeoOrHob(user))
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can reverse account transactions",
+        message:
+          "Only CEO or Head of Business can reverse account transactions",
       });
     const original = await ctx.db.get(args.transactionId);
     if (!original || original.type === "reversal" || original.reversedAt)
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Transaction cannot be reversed" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Transaction cannot be reversed",
+      });
     const account = await ctx.db.get(original.accountId);
     if (!account)
-      throw new ConvexError({ code: "NOT_FOUND", message: "Finance account not found" });
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Finance account not found",
+      });
     const reason = required(args.reason, "Reversal reason");
     const reversalId = await insertAccountTransaction(ctx, {
       account,
@@ -745,9 +745,7 @@ export const collections = query({
       args.accountId
         ? ctx.db
             .query("accountTransactions")
-            .withIndex("by_account", (q) =>
-              q.eq("accountId", args.accountId!),
-            )
+            .withIndex("by_account", (q) => q.eq("accountId", args.accountId!))
             .collect()
         : ctx.db.query("accountTransactions").collect(),
     ]);
@@ -868,7 +866,9 @@ export const balances = query({
         ctx.db.query("expenseRequests").collect(),
         ctx.db.query("accountTransactions").collect(),
       ]);
-    const accounts = allAccounts.filter((account) => canViewAccount(user, account));
+    const accounts = allAccounts.filter((account) =>
+      canViewAccount(user, account),
+    );
     const rows = accounts.map((account) => {
       const payments = allPayments.filter(
         (payment) =>
@@ -948,7 +948,7 @@ export const ledger = query({
         code: "NOT_FOUND",
         message: "Finance account not found",
       });
-    const [payments, expenses, accountTransactions] = await Promise.all([
+    const [payments, expenses, accountTransactions, users] = await Promise.all([
       ctx.db
         .query("invoicePayments")
         .withIndex("by_receiving_account", (q) =>
@@ -965,11 +965,27 @@ export const ledger = query({
         .query("accountTransactions")
         .withIndex("by_account", (q) => q.eq("accountId", account._id))
         .collect(),
+      ctx.db.query("users").collect(),
     ]);
+    const userNames = new Map(users.map((row) => [row._id, row.name]));
     const rows: Array<{
       key: string;
       date: number;
       direction: "incoming" | "outgoing";
+      sourceType:
+        | "invoice_payment"
+        | "expense_payment"
+        | "expense_return"
+        | "cash_inflow"
+        | "opening_balance"
+        | "reversal";
+      sourceLabel: string;
+      sourceHref?: string;
+      sourceStatus?: string;
+      sourceMissing: boolean;
+      sourceNote?: string;
+      recordedAt: number;
+      recordedByName: string;
       description: string;
       reference: string;
       amount: number;
@@ -980,12 +996,20 @@ export const ledger = query({
       if (payment.paidAt < args.startDate || payment.paidAt > args.endDate)
         continue;
       const invoice = await ctx.db.get(payment.invoiceId);
-      if (!invoice) continue;
       rows.push({
         key: payment._id,
         date: payment.paidAt,
         direction: "incoming",
-        description: `${invoice.invoiceNumber ?? "Invoice"} · ${invoice.companyName}`,
+        sourceType: "invoice_payment",
+        sourceLabel: invoice?.invoiceNumber ?? "Missing invoice",
+        sourceHref: invoice ? `/invoices/${invoice._id}` : undefined,
+        sourceStatus: invoice?.status,
+        sourceMissing: !invoice,
+        recordedAt: payment.createdAt,
+        recordedByName: userNames.get(payment.recordedBy) ?? "Unknown user",
+        description: invoice
+          ? `${invoice.invoiceNumber ?? "Invoice"} · ${invoice.companyName}`
+          : "Invoice payment with a missing source invoice",
         reference: payment.transactionId ?? payment.reference ?? "",
         amount: payment.amount,
         createdAt: payment.createdAt,
@@ -1003,6 +1027,15 @@ export const ledger = query({
         key: expense._id,
         date: expense.paidAt,
         direction: "outgoing",
+        sourceType: "expense_payment",
+        sourceLabel: expense.title,
+        sourceHref: `/finance/expenses/${expense._id}`,
+        sourceStatus: expense.status,
+        sourceMissing: false,
+        recordedAt: expense.updatedAt,
+        recordedByName: expense.paidBy
+          ? (userNames.get(expense.paidBy) ?? "Unknown user")
+          : "Unknown user",
         description: expense.title,
         reference:
           expense.paymentTransactionId ?? expense.paymentReference ?? "",
@@ -1016,10 +1049,47 @@ export const ledger = query({
         transaction.transactionDate > args.endDate
       )
         continue;
+      const linkedExpense = transaction.expenseId
+        ? await ctx.db.get(transaction.expenseId)
+        : null;
+      const original = transaction.relatedTransactionId
+        ? await ctx.db.get(transaction.relatedTransactionId)
+        : null;
+      const sourceType =
+        transaction.type === "expense_return"
+          ? "expense_return"
+          : transaction.type === "reversal"
+            ? "reversal"
+            : transaction.type === "opening_balance"
+              ? "opening_balance"
+              : "cash_inflow";
+      const sourceMissing =
+        (transaction.type === "expense_return" && !linkedExpense) ||
+        (transaction.type === "reversal" && !original);
       rows.push({
         key: transaction._id,
         date: transaction.transactionDate,
         direction: transaction.direction,
+        sourceType,
+        sourceLabel:
+          linkedExpense?.title ??
+          (original ? `Transaction ${original.transactionId}` : undefined) ??
+          transaction.source ??
+          (transaction.type === "opening_balance"
+            ? "Opening balance"
+            : transaction.type === "capital_contribution"
+              ? "Capital contribution"
+              : transaction.type === "reversal"
+                ? "Missing original transaction"
+                : "Account inflow"),
+        sourceHref: linkedExpense
+          ? `/finance/expenses/${linkedExpense._id}`
+          : undefined,
+        sourceStatus: linkedExpense?.status,
+        sourceMissing,
+        sourceNote: transaction.source,
+        recordedAt: transaction.createdAt,
+        recordedByName: userNames.get(transaction.createdBy) ?? "Unknown user",
         description: transaction.description,
         reference: transaction.transactionId,
         amount:

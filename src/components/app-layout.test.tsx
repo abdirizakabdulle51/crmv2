@@ -263,7 +263,16 @@ describe("AppLayout", () => {
       within(sidebar).getByRole("link", { name: "Expenses" }),
     ).toBeInTheDocument();
     expect(
-      within(sidebar).getByRole("link", { name: "Reports" }),
+      within(sidebar).getByRole("link", { name: "Financial Overview" }),
+    ).toBeInTheDocument();
+    expect(
+      within(sidebar).getByRole("link", { name: "Revenue & Collections" }),
+    ).toBeInTheDocument();
+    expect(
+      within(sidebar).getByRole("link", { name: "Expense Report" }),
+    ).toBeInTheDocument();
+    expect(
+      within(sidebar).getByRole("link", { name: "Country Performance" }),
     ).toBeInTheDocument();
     expect(
       within(sidebar).getByRole("link", { name: "Collections" }),
@@ -286,7 +295,7 @@ describe("AppLayout", () => {
       within(sidebar).getByRole("link", { name: "Expenses" }),
     ).toBeInTheDocument();
     expect(
-      within(sidebar).getByRole("link", { name: "Reports" }),
+      within(sidebar).getByRole("link", { name: "Financial Overview" }),
     ).toBeInTheDocument();
     expect(
       within(sidebar).getByRole("link", { name: "Collections" }),

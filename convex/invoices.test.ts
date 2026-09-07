@@ -1993,7 +1993,38 @@ describe("invoices", () => {
         receivingAccountId: s.bankAccountId,
         transactionId: "BANK-DUP-1",
       }),
-    ).rejects.toThrow("already been recorded");
+    ).rejects.toThrow("already recorded");
+  });
+
+  it("rejects an invoice payment that reuses an inflow transaction ID", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    await t.run((ctx) =>
+      ctx.db.insert("accountTransactions", {
+        accountId: s.bankAccountId,
+        countryId: s.countryA,
+        currency: "USD",
+        direction: "incoming",
+        type: "capital_contribution",
+        amount: 10,
+        amountCents: 1000,
+        transactionDate: 1000,
+        transactionId: "SHARED-BANK-ID",
+        description: "Capital injection",
+        createdBy: s.ceo._id,
+        createdAt: 1000,
+      }),
+    );
+
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+        invoiceId,
+        amount: 5,
+        receivingAccountId: s.bankAccountId,
+        transactionId: "SHARED-BANK-ID",
+      }),
+    ).rejects.toThrow("already recorded");
   });
 
   it("records mobile money payments against a receiving wallet", async () => {
@@ -2106,11 +2137,7 @@ describe("invoices", () => {
     const s = await seed(t);
 
     for (const [index, status] of (
-      [
-        "sent",
-        "overdue",
-        "partially_paid",
-      ] as const
+      ["sent", "overdue", "partially_paid"] as const
     ).entries()) {
       const invoiceId = await issueDraftForA(t, s);
       await t.run(async (ctx) => {

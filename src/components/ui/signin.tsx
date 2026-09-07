@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useAction, useQuery } from "convex/react";
-import { Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import { Button } from "@/components/ui/button.tsx";
@@ -14,6 +14,7 @@ export function SignInForm() {
   const bootstrapFirstUser = useAction(api.auth.bootstrapFirstUser);
   const [isBootstrapMode, setIsBootstrapMode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -66,16 +67,27 @@ export function SignInForm() {
       </div>
       <div className="space-y-2">
         <Label htmlFor="password">Password</Label>
-        <Input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          minLength={8}
-          required
-        />
+        <div className="relative">
+          <Input
+            id="password"
+            name="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete={isBootstrapMode ? "new-password" : "current-password"}
+            minLength={8}
+            className="pr-11"
+            required
+          />
+          <button
+            type="button"
+            className="absolute right-1 top-1 grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setShowPassword((value) => !value)}
+            aria-label={showPassword ? "Hide password" : "Show password"}
+          >
+            {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+          </button>
+        </div>
       </div>
-      <Button className="w-full" type="submit" disabled={isSubmitting}>
+      <Button className="h-11 w-full font-semibold" type="submit" disabled={isSubmitting}>
         {isSubmitting && <Loader2 className="size-4 animate-spin" />}
         {isBootstrapMode ? "Create Initial CEO Account" : "Sign In"}
       </Button>

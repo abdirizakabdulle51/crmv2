@@ -28,6 +28,8 @@ import {
   Tags,
   SlidersHorizontal,
   Landmark,
+  ArrowLeftRight,
+  University,
   FileSignature,
   CalendarDays,
   CalendarClock,
@@ -64,9 +66,34 @@ const NAV_ITEMS = [
   { to: "/quotes", label: "Opportunity Quotes", icon: FileText },
   { to: "/invoices", label: "Invoices", icon: ReceiptText },
   { to: "/finance/expenses", label: "Expenses", icon: WalletCards },
-  { to: "/finance/reports", label: "Reports", icon: ChartColumn },
+  {
+    to: "/finance/reports",
+    label: "Financial Overview",
+    icon: ChartColumn,
+  },
+  {
+    to: "/finance/reports/revenue",
+    label: "Revenue & Collections",
+    icon: HandCoins,
+  },
+  {
+    to: "/finance/reports/expenses",
+    label: "Expense Report",
+    icon: WalletCards,
+  },
+  {
+    to: "/finance/reports/country",
+    label: "Country Performance",
+    icon: Building2,
+  },
   { to: "/finance/collections", label: "Collections", icon: HandCoins },
   { to: "/finance/accounts", label: "Accounts", icon: Landmark },
+  {
+    to: "/finance/account-transactions",
+    label: "Account Transactions",
+    icon: ArrowLeftRight,
+  },
+  { to: "/finance/banks", label: "Banks & Providers", icon: University },
   {
     to: "/finance/historical-invoices",
     label: "Historical Paid Invoices",
@@ -166,7 +193,12 @@ const NAV_GROUPS = [
       "/finance/collections",
       "/finance/expenses",
       "/finance/reports",
+      "/finance/reports/revenue",
+      "/finance/reports/expenses",
+      "/finance/reports/country",
       "/finance/accounts",
+      "/finance/account-transactions",
+      "/finance/banks",
       "/finance/historical-invoices",
     ],
   },
@@ -186,7 +218,12 @@ const NAV_GROUPS = [
   },
   {
     label: "Administration",
-    items: ["/team", "/settings", "/finance/settings", "/operations/data-health"],
+    items: [
+      "/team",
+      "/settings",
+      "/finance/settings",
+      "/operations/data-health",
+    ],
   },
 ];
 

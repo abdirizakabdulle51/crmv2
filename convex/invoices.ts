@@ -9,6 +9,7 @@ import {
 } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
+import { assertUniqueAccountTransactionId } from "./accountTransactionIdentity";
 import { internal } from "./_generated/api";
 import {
   assertCanManageCompany,
@@ -2054,7 +2055,7 @@ export const previewContractInvoiceBatch = query({
           status = "not_in_period";
           reason = "Contract does not cover this month";
         } else if (
-      !isDynamicPricingContract(contract) &&
+          !isDynamicPricingContract(contract) &&
           lineItems.length === 0
         ) {
           status = "no_services";
@@ -2169,98 +2170,108 @@ async function runDueContractDrafts(
   now: number,
   trigger: "scheduled" | "manual",
 ) {
-    const runId = await ctx.db.insert("billingAutomationRuns", {
-      startedAt: Date.now(),
-      status: "running",
-      trigger,
-      actorId: actor._id,
-      contractsScanned: 0,
-      created: 0,
-      skipped: 0,
-      issues: [],
+  const runId = await ctx.db.insert("billingAutomationRuns", {
+    startedAt: Date.now(),
+    status: "running",
+    trigger,
+    actorId: actor._id,
+    contractsScanned: 0,
+    created: 0,
+    skipped: 0,
+    issues: [],
+  });
+  const contracts = (await ctx.db.query("customerContracts").collect()).filter(
+    (contract) => contract.status === "active",
+  );
+  let created = 0;
+  let skipped = 0;
+  const issues: Array<{
+    contractId?: Id<"customerContracts">;
+    contractNumber?: string;
+    sourceMonth?: string;
+    reason: string;
+  }> = [];
+  const recordSkip = (
+    contract: Doc<"customerContracts">,
+    sourceMonth: string,
+    error: unknown,
+  ) => {
+    const reason =
+      error instanceof ConvexError
+        ? String(error.data?.message ?? error.message)
+        : error instanceof Error
+          ? error.message
+          : "Invoice draft could not be created";
+    // Existing invoices are the expected idempotent outcome on later runs.
+    if (reason.includes("invoice already exists")) return;
+    skipped += 1;
+    issues.push({
+      contractId: contract._id,
+      contractNumber: contract.contractNumber,
+      sourceMonth,
+      reason,
     });
-    const contracts = (
-      await ctx.db.query("customerContracts").collect()
-    ).filter((contract) => contract.status === "active");
-    let created = 0;
-    let skipped = 0;
-    const issues: Array<{
-      contractId?: Id<"customerContracts">;
-      contractNumber?: string;
-      sourceMonth?: string;
-      reason: string;
-    }> = [];
-    const recordSkip = (contract: Doc<"customerContracts">, sourceMonth: string, error: unknown) => {
-      const reason =
-        error instanceof ConvexError
-          ? String(error.data?.message ?? error.message)
-          : error instanceof Error
-            ? error.message
-            : "Invoice draft could not be created";
-      // Existing invoices are the expected idempotent outcome on later runs.
-      if (reason.includes("invoice already exists")) return;
-      skipped += 1;
-      issues.push({
-        contractId: contract._id,
-        contractNumber: contract.contractNumber,
-        sourceMonth,
-        reason,
-      });
-    };
-    for (const contract of contracts) {
-      const startMonth = monthKeyFromTimestamp(contract.startDate);
-      const endMonth = monthKeyFromTimestamp(contract.endDate);
-      const frequency = contractFrequencyMonths(contract);
-      for (
-        let sourceMonth = startMonth;
-        sourceMonth <= endMonth;
-        sourceMonth = addMonths(sourceMonth, frequency)
+  };
+  for (const contract of contracts) {
+    const startMonth = monthKeyFromTimestamp(contract.startDate);
+    const endMonth = monthKeyFromTimestamp(contract.endDate);
+    const frequency = contractFrequencyMonths(contract);
+    for (
+      let sourceMonth = startMonth;
+      sourceMonth <= endMonth;
+      sourceMonth = addMonths(sourceMonth, frequency)
+    ) {
+      const cycleMonths = contractCycleMonths(contract, sourceMonth);
+      const cycleEnd = monthEndTimestamp(cycleMonths[cycleMonths.length - 1]!);
+      const due =
+        (contract.billingTiming ?? "postpaid") === "prepaid"
+          ? monthStartTimestamp(sourceMonth) <= now
+          : cycleEnd <= now;
+      if (!due) continue;
+      try {
+        await createContractDraftInvoice(ctx, {
+          user: actor,
+          contract,
+          sourceMonth,
+        });
+        created += 1;
+      } catch (error) {
+        recordSkip(contract, sourceMonth, error);
+      }
+      if (
+        (contract.billingTiming ?? "postpaid") === "prepaid" &&
+        contract.pricingModel === "flexible_total_commitment" &&
+        cycleEnd <= now
       ) {
-        const cycleMonths = contractCycleMonths(contract, sourceMonth);
-        const cycleEnd = monthEndTimestamp(cycleMonths[cycleMonths.length - 1]!);
-        const due =
-          (contract.billingTiming ?? "postpaid") === "prepaid"
-            ? monthStartTimestamp(sourceMonth) <= now
-            : cycleEnd <= now;
-        if (!due) continue;
         try {
           await createContractDraftInvoice(ctx, {
             user: actor,
             contract,
             sourceMonth,
+            kind: "overage_settlement",
           });
           created += 1;
         } catch (error) {
           recordSkip(contract, sourceMonth, error);
         }
-        if (
-          (contract.billingTiming ?? "postpaid") === "prepaid" &&
-          contract.pricingModel === "flexible_total_commitment" &&
-          cycleEnd <= now
-        ) {
-          try {
-            await createContractDraftInvoice(ctx, {
-              user: actor,
-              contract,
-              sourceMonth,
-              kind: "overage_settlement",
-            });
-            created += 1;
-          } catch (error) {
-            recordSkip(contract, sourceMonth, error);
-          }
-        }
       }
     }
-    await ctx.db.patch(runId, {
-      completedAt: Date.now(),
-      status: "completed",
-      contractsScanned: contracts.length,
-      created,
-      skipped,
-      issues: issues.slice(0, 250),
-    });
-    return { runId, contractsScanned: contracts.length, created, skipped, issues };
+  }
+  await ctx.db.patch(runId, {
+    completedAt: Date.now(),
+    status: "completed",
+    contractsScanned: contracts.length,
+    created,
+    skipped,
+    issues: issues.slice(0, 250),
+  });
+  return {
+    runId,
+    contractsScanned: contracts.length,
+    created,
+    skipped,
+    issues,
+  };
 }
 
 export const createDueContractDrafts = internalMutation({
@@ -2279,8 +2290,16 @@ export const runDueContractDraftsNow = mutation({
   handler: async (ctx, args) => {
     const actor = await getCurrentUserOrThrow(ctx);
     if (!isCeoOrHob(actor))
-      throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can run billing automation" });
-    return await runDueContractDrafts(ctx, actor, args.now ?? Date.now(), "manual");
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can run billing automation",
+      });
+    return await runDueContractDrafts(
+      ctx,
+      actor,
+      args.now ?? Date.now(),
+      "manual",
+    );
   },
 });
 
@@ -3049,8 +3068,14 @@ export const recordPayment = mutation({
     assertPayable(invoice);
 
     const payment = calculatePaymentApplication(invoice, args.amount);
-    const { amount, appliedAmount, extraServiceRevenueAmount, nextAmountPaid,
-      nextBalanceDue, nextStatus } = payment;
+    const {
+      amount,
+      appliedAmount,
+      extraServiceRevenueAmount,
+      nextAmountPaid,
+      nextBalanceDue,
+      nextStatus,
+    } = payment;
     const now = Date.now();
     const paidAt = args.paidAt ?? now;
     const method = trimOptional(args.method) ?? PAYMENT_METHOD_BANK_TRANSFER;
@@ -3071,7 +3096,10 @@ export const recordPayment = mutation({
     const receivingAccount = args.receivingAccountId
       ? await ctx.db.get(args.receivingAccountId)
       : null;
-    if (args.receivingAccountId && (!receivingAccount || !receivingAccount.isActive)) {
+    if (
+      args.receivingAccountId &&
+      (!receivingAccount || !receivingAccount.isActive)
+    ) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: "Select an active receiving account",
@@ -3116,22 +3144,12 @@ export const recordPayment = mutation({
         message: `Payment account currency must be ${invoiceCurrency}`,
       });
     }
-    const duplicate = receivingAccount
-      ? await ctx.db
-          .query("invoicePayments")
-          .withIndex("by_account_transaction", (q) =>
-            q
-              .eq("receivingAccountId", receivingAccount._id)
-              .eq("transactionId", transactionId),
-          )
-          .first()
-      : null;
-    if (duplicate) {
-      throw new ConvexError({
-        code: "CONFLICT",
-        message:
-          "This transaction ID has already been recorded for the account",
-      });
+    if (receivingAccount && transactionId) {
+      await assertUniqueAccountTransactionId(
+        ctx,
+        receivingAccount._id,
+        transactionId,
+      );
     }
 
     await ctx.db.insert("invoicePayments", {
@@ -3203,35 +3221,62 @@ export const reconcileLegacyPayment = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     if (!isCeoOrHob(user)) {
-      throw new ConvexError({ code: "FORBIDDEN", message: "Only CEO or Head of Business can reconcile historical payments" });
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message:
+          "Only CEO or Head of Business can reconcile historical payments",
+      });
     }
     const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
     await assertCanAccessInvoice(ctx, user, invoice);
-    const payments = await ctx.db.query("invoicePayments").withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id)).collect();
-    const missing = roundMoney(invoice.amountPaid - sumMoney(payments.map((payment) => payment.amount)));
+    const payments = await ctx.db
+      .query("invoicePayments")
+      .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+      .collect();
+    const missing = roundMoney(
+      invoice.amountPaid - sumMoney(payments.map((payment) => payment.amount)),
+    );
     const amount = roundMoney(args.amount);
     if (amount <= 0 || amount > missing) {
-      throw new ConvexError({ code: "BAD_REQUEST", message: `Reconciliation amount cannot exceed ${formatMoney(missing)}` });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Reconciliation amount cannot exceed ${formatMoney(missing)}`,
+      });
     }
     if (args.paidAt > Date.now()) {
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Payment date cannot be in the future" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Payment date cannot be in the future",
+      });
     }
     const account = await ctx.db.get(args.receivingAccountId);
     const company = await ctx.db.get(invoice.companyId);
-    if (!account?.isActive || account.usage === "outgoing" || !company || account.countryId !== company.countryId) {
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Select an active collection account in the customer's country" });
+    if (
+      !account?.isActive ||
+      account.usage === "outgoing" ||
+      !company ||
+      account.countryId !== company.countryId
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Select an active collection account in the customer's country",
+      });
     }
     if (account.currency !== (invoice.sellerCurrency ?? "USD")) {
-      throw new ConvexError({ code: "BAD_REQUEST", message: `Payment account currency must be ${invoice.sellerCurrency ?? "USD"}` });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Payment account currency must be ${invoice.sellerCurrency ?? "USD"}`,
+      });
     }
     const transactionId = trimOptional(args.transactionId);
     if (!transactionId) {
-      throw new ConvexError({ code: "BAD_REQUEST", message: "Transaction ID is required" });
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Transaction ID is required",
+      });
     }
-    const duplicate = await ctx.db.query("invoicePayments").withIndex("by_account_transaction", (q) => q.eq("receivingAccountId", account._id).eq("transactionId", transactionId)).first();
-    if (duplicate) {
-      throw new ConvexError({ code: "CONFLICT", message: "This transaction ID is already recorded for the account" });
-    }
+    await assertUniqueAccountTransactionId(ctx, account._id, transactionId);
     const now = Date.now();
     await ctx.db.insert("invoicePayments", {
       invoiceId: invoice._id,

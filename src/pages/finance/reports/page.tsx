@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { NavLink } from "react-router-dom";
 import { useConvex, useQuery } from "convex/react";
 import {
   Bar,
@@ -412,7 +411,7 @@ export default function FinanceReportsPage({
             {view === "overview"
               ? "Finance Overview"
               : view === "revenue"
-                ? "Revenue Report"
+                ? "Revenue & Collections Report"
                 : view === "expenses"
                   ? "Expense Report"
                   : "Country Performance"}
@@ -488,7 +487,9 @@ export default function FinanceReportsPage({
             ],
             [
               "Net paid expenses",
-              formatCurrency(report.totals.netExpenses ?? report.totals.expenses),
+              formatCurrency(
+                report.totals.netExpenses ?? report.totals.expenses,
+              ),
             ],
             [
               "Paid expense requests",
@@ -510,8 +511,14 @@ export default function FinanceReportsPage({
                 "Recognized contract revenue",
                 formatCurrency(report.totals.recognizedRevenue ?? 0),
               ],
-              ["Expenses incurred", formatCurrency(report.totals.incurredExpenses ?? 0)],
-              ["Operating net", formatCurrency(report.totals.operatingNet ?? 0)],
+              [
+                "Expenses incurred",
+                formatCurrency(report.totals.incurredExpenses ?? 0),
+              ],
+              [
+                "Operating net",
+                formatCurrency(report.totals.operatingNet ?? 0),
+              ],
             ];
 
   return (
@@ -522,7 +529,7 @@ export default function FinanceReportsPage({
             {view === "overview"
               ? "Finance Overview"
               : view === "revenue"
-                ? "Revenue Report"
+                ? "Revenue & Collections Report"
                 : view === "expenses"
                   ? "Expense Report"
                   : "Country Performance"}
@@ -573,34 +580,6 @@ export default function FinanceReportsPage({
             </Button>
           ) : null}
         </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2 border-b pb-3">
-        {(
-          [
-            ["overview", "Overview"],
-            ["revenue", "Revenue"],
-            ["expenses", "Expenses"],
-            ["country", "Country performance"],
-          ] as const
-        ).map(([value, label]) => (
-          <Button
-            key={value}
-            asChild
-            variant={view === value ? "default" : "ghost"}
-            size="sm"
-          >
-            <NavLink
-              to={
-                value === "overview"
-                  ? "/finance/reports"
-                  : `/finance/reports/${value}`
-              }
-            >
-              {label}
-            </NavLink>
-          </Button>
-        ))}
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row">
@@ -693,7 +672,9 @@ export default function FinanceReportsPage({
                   />
                   <Legend />
                   <Bar
-                    dataKey={view === "overview" ? "recognizedRevenue" : "income"}
+                    dataKey={
+                      view === "overview" ? "recognizedRevenue" : "income"
+                    }
                     name={
                       view === "overview"
                         ? "Recognized revenue"
@@ -741,7 +722,9 @@ export default function FinanceReportsPage({
                     <th className="px-3 py-3 text-right">Expected</th>
                     {view === "overview" ? (
                       <>
-                        <th className="px-3 py-3 text-right">Expenses incurred</th>
+                        <th className="px-3 py-3 text-right">
+                          Expenses incurred
+                        </th>
                         <th className="px-3 py-3 text-right">Operating net</th>
                       </>
                     ) : null}
@@ -766,9 +749,7 @@ export default function FinanceReportsPage({
                             {formatCurrency(row.otherCashInflows ?? 0)}
                           </td>
                           <td className="px-3 py-3 text-right font-medium">
-                            {formatCurrency(
-                              row.totalCashInflows ?? row.income,
-                            )}
+                            {formatCurrency(row.totalCashInflows ?? row.income)}
                           </td>
                         </>
                       ) : null}
@@ -817,124 +798,189 @@ export default function FinanceReportsPage({
               country.
             </p>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
             {(report.countryPerformance ?? []).length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No country performance data in this period.
               </p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] text-sm">
-                  <thead>
-                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-3 py-3">Country</th>
-                      <th className="px-3 py-3 text-right">Revenue</th>
-                      <th className="px-3 py-3 text-right">Collections</th>
-                      <th className="px-3 py-3 text-right">Expenses</th>
-                      <th className="px-3 py-3 text-right">Net cash</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.countryPerformance.map((row) => (
-                      <tr
-                        key={row.countryId}
-                        className="border-b last:border-0"
-                      >
-                        <td className="px-3 py-3 font-medium">
-                          {row.countryName}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          {formatCurrency(row.revenue)}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          {formatCurrency(row.collections)}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          {formatCurrency(row.expenses)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-medium">
-                          {formatCurrency(row.net)}
-                        </td>
+              <>
+                <div className="h-[320px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={report.countryPerformance}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        className="opacity-30"
+                      />
+                      <XAxis dataKey="countryName" className="text-xs" />
+                      <YAxis
+                        tickFormatter={formatCompact}
+                        className="text-xs"
+                      />
+                      <Tooltip
+                        formatter={(value) => formatCurrency(Number(value))}
+                      />
+                      <Legend />
+                      <Bar
+                        dataKey="collections"
+                        name="Collections"
+                        fill="oklch(0.6 0.18 170)"
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar
+                        dataKey="expenses"
+                        name="Paid expenses"
+                        fill="oklch(0.65 0.18 35)"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[640px] text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-3 py-3">Country</th>
+                        <th className="px-3 py-3 text-right">Revenue</th>
+                        <th className="px-3 py-3 text-right">Collections</th>
+                        <th className="px-3 py-3 text-right">Expenses</th>
+                        <th className="px-3 py-3 text-right">Net cash</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {report.countryPerformance.map((row) => (
+                        <tr
+                          key={row.countryId}
+                          className="border-b last:border-0"
+                        >
+                          <td className="px-3 py-3 font-medium">
+                            {row.countryName}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {formatCurrency(row.revenue)}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {formatCurrency(row.collections)}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {formatCurrency(row.expenses)}
+                          </td>
+                          <td className="px-3 py-3 text-right font-medium">
+                            {formatCurrency(row.net)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
       ) : null}
 
       {view === "expenses" ? (
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Top Expense Categories</CardTitle>
+              <CardTitle>Monthly Paid Expenses and Returns</CardTitle>
             </CardHeader>
-            <CardContent>
-              {report.topExpenseCategories.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No paid expenses in this period.
-                </p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-3 py-3">Category</th>
-                      <th className="px-3 py-3 text-right">Count</th>
-                      <th className="px-3 py-3 text-right">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.topExpenseCategories.map((category) => (
-                      <tr
-                        key={category.categoryId}
-                        className="border-b last:border-0"
-                      >
-                        <td className="px-3 py-3 font-medium">
-                          {category.categoryName}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          {category.count}
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          {formatCurrency(category.total)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+            <CardContent className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                  <XAxis dataKey="label" className="text-xs" />
+                  <YAxis tickFormatter={formatCompact} className="text-xs" />
+                  <Tooltip
+                    formatter={(value) => formatCurrency(Number(value))}
+                  />
+                  <Legend />
+                  <Bar
+                    dataKey="expenses"
+                    name="Gross paid expenses"
+                    fill="oklch(0.65 0.18 35)"
+                    radius={[4, 4, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="expenseReturns"
+                    name="Expense returns"
+                    fill="oklch(0.6 0.18 170)"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Expense Categories</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {report.topExpenseCategories.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No paid expenses in this period.
+                  </p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className="px-3 py-3">Category</th>
+                        <th className="px-3 py-3 text-right">Count</th>
+                        <th className="px-3 py-3 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.topExpenseCategories.map((category) => (
+                        <tr
+                          key={category.categoryId}
+                          className="border-b last:border-0"
+                        >
+                          <td className="px-3 py-3 font-medium">
+                            {category.categoryName}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {category.count}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {formatCurrency(category.total)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Expense Status Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {report.expenseStatusSummary.map((row) => (
-                  <div
-                    key={row.status}
-                    className="flex items-center justify-between rounded-lg border p-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Badge variant="secondary">
-                        {STATUS_LABELS[row.status]}
-                      </Badge>
-                      <span className="text-sm text-muted-foreground">
-                        {row.count} request{row.count === 1 ? "" : "s"}
+            <Card>
+              <CardHeader>
+                <CardTitle>Expense Status Summary</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {report.expenseStatusSummary.map((row) => (
+                    <div
+                      key={row.status}
+                      className="flex items-center justify-between rounded-lg border p-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Badge variant="secondary">
+                          {STATUS_LABELS[row.status]}
+                        </Badge>
+                        <span className="text-sm text-muted-foreground">
+                          {row.count} request{row.count === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      <span className="text-sm font-medium">
+                        {formatCurrency(row.total)}
                       </span>
                     </div>
-                    <span className="text-sm font-medium">
-                      {formatCurrency(row.total)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       ) : null}
     </div>

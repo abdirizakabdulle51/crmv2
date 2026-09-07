@@ -90,22 +90,28 @@ describe("finance accounts", () => {
     const s = await seed(t);
     const accountId = await createAccount(t, s);
 
-    await asUser(t, s.ceo).mutation(api.receivingAccounts.recordNonInvoiceInflow, {
-      accountId,
-      type: "opening_balance",
-      amount: 500,
-      transactionDate: 1000,
-      transactionId: "OPEN-500",
-      description: "Opening balance",
-    });
-    await asUser(t, s.ceo).mutation(api.receivingAccounts.recordNonInvoiceInflow, {
-      accountId,
-      type: "capital_contribution",
-      amount: 250,
-      transactionDate: 1000,
-      transactionId: "CAP-250",
-      description: "Capital contribution",
-    });
+    await asUser(t, s.ceo).mutation(
+      api.receivingAccounts.recordNonInvoiceInflow,
+      {
+        accountId,
+        type: "opening_balance",
+        amount: 500,
+        transactionDate: 1000,
+        transactionId: "OPEN-500",
+        description: "Opening balance",
+      },
+    );
+    await asUser(t, s.ceo).mutation(
+      api.receivingAccounts.recordNonInvoiceInflow,
+      {
+        accountId,
+        type: "capital_contribution",
+        amount: 250,
+        transactionDate: 1000,
+        transactionId: "CAP-250",
+        description: "Capital contribution",
+      },
+    );
 
     const ledger = await asUser(t, s.ceo).query(api.receivingAccounts.ledger, {
       accountId,
@@ -114,12 +120,20 @@ describe("finance accounts", () => {
     });
     expect(ledger.accountBalance).toBe(750);
     expect(ledger.rows).toHaveLength(2);
+    expect(ledger.rows.map((row) => row.sourceType)).toEqual([
+      "opening_balance",
+      "cash_inflow",
+    ]);
+    expect(ledger.rows.every((row) => !row.sourceMissing)).toBe(true);
 
-    const collections = await asUser(t, s.ceo).query(api.receivingAccounts.collections, {
-      startDate: 0,
-      endDate: Date.now(),
-      accountId,
-    });
+    const collections = await asUser(t, s.ceo).query(
+      api.receivingAccounts.collections,
+      {
+        startDate: 0,
+        endDate: Date.now(),
+        accountId,
+      },
+    );
     expect(collections.rows).toHaveLength(0);
     expect(collections.totalsByCurrency).toHaveLength(0);
 
@@ -214,7 +228,9 @@ describe("finance accounts", () => {
       endDate: 250,
     });
     expect(ledger.rows.map((row) => row.date)).toEqual([100, 200, 250]);
-    expect(ledger.rows.map((row) => row.runningBalance)).toEqual([100, 150, 125]);
+    expect(ledger.rows.map((row) => row.runningBalance)).toEqual([
+      100, 150, 125,
+    ]);
     expect(ledger.accountBalance).toBe(125);
     expect(ledger.rows[ledger.rows.length - 1]?.runningBalance).toBe(
       ledger.accountBalance,
@@ -271,6 +287,61 @@ describe("finance accounts", () => {
         description: "Duplicate bank transaction",
       }),
     ).rejects.toThrow("already recorded");
+  });
+
+  it("keeps an orphan invoice payment visible and flagged in the ledger", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const accountId = await createAccount(t, s);
+    const invoiceId = await t.run(async (ctx) => {
+      const sectorId = await ctx.db.insert("sectors", { name: "Banking" });
+      const companyId = await ctx.db.insert("companies", {
+        name: "Removed Source",
+        sectorId,
+        countryId: s.countryA,
+        contractStatus: "active",
+      });
+      const id = await ctx.db.insert("invoices", {
+        companyId,
+        createdBy: s.ceo._id,
+        status: "paid",
+        companyName: "Removed Source",
+        lineItems: [],
+        subtotal: 20,
+        monthlyTotal: 20,
+        yearlyTotal: 20,
+        grandTotal: 20,
+        amountPaid: 20,
+        balanceDue: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("invoicePayments", {
+        invoiceId: id,
+        receivingAccountId: accountId,
+        amount: 20,
+        paidAt: 1000,
+        transactionId: "ORPHAN-20",
+        recordedBy: s.ceo._id,
+        createdAt: 1000,
+      });
+      return id;
+    });
+    await t.run((ctx) => ctx.db.delete(invoiceId));
+
+    const ledger = await asUser(t, s.ceo).query(api.receivingAccounts.ledger, {
+      accountId,
+      startDate: 0,
+      endDate: Date.now(),
+    });
+
+    expect(ledger.accountBalance).toBe(20);
+    expect(ledger.rows[0]).toMatchObject({
+      sourceType: "invoice_payment",
+      sourceLabel: "Missing invoice",
+      sourceMissing: true,
+      amount: 20,
+    });
   });
 
   it("records, limits, and reverses expense returns without changing the expense", async () => {

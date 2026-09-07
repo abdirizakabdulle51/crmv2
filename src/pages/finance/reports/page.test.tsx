@@ -239,7 +239,9 @@ describe("FinanceReportsPage", () => {
     expect(screen.getAllByText("$1,000.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$250.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$750.00").length).toBeGreaterThan(0);
-    expect(screen.getByText("Monthly Recognized Revenue vs Expenses Incurred")).toBeInTheDocument();
+    expect(
+      screen.getByText("Monthly Recognized Revenue vs Expenses Incurred"),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("chart")).toBeInTheDocument();
     expect(
       screen.queryByText("Income by Region / Data Center"),
@@ -251,9 +253,11 @@ describe("FinanceReportsPage", () => {
       screen.getByRole("button", { name: "Export Invoice Payments CSV" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Country performance" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Expenses" })).toBeInTheDocument();
+      screen.queryByRole("link", { name: "Country performance" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Expenses" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps revenue and country views focused", () => {

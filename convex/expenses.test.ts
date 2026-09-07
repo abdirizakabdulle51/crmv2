@@ -467,11 +467,10 @@ describe("expenses", () => {
     ).rejects.toThrow("Exact confirmation required");
     await expect(
       t.run((ctx) =>
-        performTwoIncorrectExpenseCleanup(
-          ctx,
-          { dryRun: true },
-          [target, { ...secondTarget, amount: 37 }],
-        ),
+        performTwoIncorrectExpenseCleanup(ctx, { dryRun: true }, [
+          target,
+          { ...secondTarget, amount: 37 },
+        ]),
       ),
     ).rejects.toThrow("target expense validation failed");
 
@@ -1286,7 +1285,7 @@ describe("expenses", () => {
         expenseId: second,
         paymentTransactionId: "OUT-1",
       }),
-    ).rejects.toThrow("already been used");
+    ).rejects.toThrow("already recorded");
     await t.run((ctx) => ctx.db.patch(s.fundingAccount, { isActive: false }));
     await expect(
       asUser(t, s.ceo).mutation(api.expenses.markExpensePaid, {

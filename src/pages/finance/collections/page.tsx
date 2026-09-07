@@ -1,11 +1,21 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
-import { Building2, Landmark, Loader2, Plus, Search } from "lucide-react";
+import {
+  ArrowDownLeft,
+  ArrowUpRight,
+  AlertTriangle,
+  Building2,
+  Landmark,
+  Loader2,
+  Plus,
+  Search,
+} from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
 import type { Id } from "@/convex/_generated/dataModel.d.ts";
 import { Button } from "@/components/ui/button.tsx";
+import { Badge } from "@/components/ui/badge.tsx";
 import {
   Card,
   CardContent,
@@ -67,6 +77,19 @@ function transactionLabel(type: string) {
   );
 }
 
+function sourceLabel(type: string) {
+  return (
+    {
+      invoice_payment: "Invoice payment",
+      expense_payment: "Expense payment",
+      expense_return: "Expense return",
+      cash_inflow: "Cash injection",
+      opening_balance: "Opening balance",
+      reversal: "Reversal",
+    }[type] ?? type
+  );
+}
+
 const emptyForm = {
   countryId: "",
   institutionId: "",
@@ -81,14 +104,26 @@ const emptyForm = {
 };
 
 export default function CollectionsPage({
-  accountsMode = false,
+  mode = "collections",
 }: {
-  accountsMode?: boolean;
+  mode?: "collections" | "accounts" | "transactions" | "banks";
 }) {
   const { currentUser } = useCrm();
+  const [searchParams] = useSearchParams();
+  const accountsMode = mode === "accounts";
+  const transactionsMode = mode === "transactions";
+  const banksMode = mode === "banks";
+  const collectionsMode = mode === "collections";
   const [startDate, setStartDate] = useState(monthStart());
   const [endDate, setEndDate] = useState(today());
-  const [accountId, setAccountId] = useState("all");
+  const [accountId, setAccountId] = useState(
+    transactionsMode ? (searchParams.get("accountId") ?? "all") : "all",
+  );
+  const [direction, setDirection] = useState<"all" | "incoming" | "outgoing">(
+    "all",
+  );
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [detailKey, setDetailKey] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editAccountId, setEditAccountId] =
     useState<Id<"receivingAccounts"> | null>(null);
@@ -121,7 +156,7 @@ export default function CollectionsPage({
   const [form, setForm] = useState(emptyForm);
   const operationalAccounts = useQuery(
     api.receivingAccounts.list,
-    accountsMode ? "skip" : { purpose: "incoming" },
+    accountsMode ? "skip" : transactionsMode ? {} : { purpose: "incoming" },
   );
   const accountPage = usePaginatedQuery(
     api.receivingAccounts.listPage,
@@ -141,15 +176,22 @@ export default function CollectionsPage({
   const institutions = useQuery(api.financialInstitutions.list, {
     includeInactive: true,
   });
-  const report = useQuery(api.receivingAccounts.collections, {
-    startDate: timestamp(startDate),
-    endDate: timestamp(endDate, true),
-    accountId:
-      accountId === "all" ? undefined : (accountId as Id<"receivingAccounts">),
-  });
+  const report = useQuery(
+    api.receivingAccounts.collections,
+    collectionsMode
+      ? {
+          startDate: timestamp(startDate),
+          endDate: timestamp(endDate, true),
+          accountId:
+            accountId === "all"
+              ? undefined
+              : (accountId as Id<"receivingAccounts">),
+        }
+      : "skip",
+  );
   const ledger = useQuery(
     api.receivingAccounts.ledger,
-    accountsMode && accountId !== "all"
+    transactionsMode && accountId !== "all"
       ? {
           accountId: accountId as Id<"receivingAccounts">,
           startDate: timestamp(startDate),
@@ -175,6 +217,16 @@ export default function CollectionsPage({
   );
   const canManage =
     currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
+  const transactionRows =
+    ledger?.rows.filter(
+      (row) =>
+        (direction === "all" || row.direction === direction) &&
+        (sourceFilter === "all" ||
+          (sourceFilter === "missing"
+            ? row.sourceMissing
+            : row.sourceType === sourceFilter)),
+    ) ?? [];
+  const selectedTransaction = ledger?.rows.find((row) => row.key === detailKey);
 
   async function saveAccount(event: React.FormEvent) {
     event.preventDefault();
@@ -262,7 +314,7 @@ export default function CollectionsPage({
 
   if (
     !accounts ||
-    !report ||
+    (collectionsMode && !report) ||
     !countries ||
     !institutions ||
     (accountsMode && !balances)
@@ -279,19 +331,46 @@ export default function CollectionsPage({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            {accountsMode ? "Accounts" : "Collections"}
+            {accountsMode
+              ? "Accounts"
+              : transactionsMode
+                ? "Account Transactions"
+                : banksMode
+                  ? "Banks & Providers"
+                  : "Collections"}
           </h1>
           <p className="text-muted-foreground">
             {accountsMode
-              ? "Maintain accounts used for customer collections and expense payments."
-              : "Trace every customer payment to its invoice, account, and transaction ID."}
+              ? "Manage financial accounts and review their current balances."
+              : transactionsMode
+                ? "Review inward and outward bank movements with a clear audit trail."
+                : banksMode
+                  ? "Maintain the institutions used by company accounts."
+                  : "Trace every customer payment to its invoice, account, and transaction ID."}
           </p>
         </div>
         {canManage && accountsMode ? (
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setInflowOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />Record account inflow
+            <Button
+              onClick={() => {
+                setEditAccountId(null);
+                setForm(emptyForm);
+                setDialogOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add account
             </Button>
+          </div>
+        ) : null}
+        {canManage && transactionsMode ? (
+          <Button onClick={() => setInflowOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Record account inflow
+          </Button>
+        ) : null}
+        {canManage && banksMode ? (
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               onClick={async () => {
@@ -310,7 +389,6 @@ export default function CollectionsPage({
               Reconcile legacy accounts
             </Button>
             <Button
-              variant="outline"
               onClick={() => {
                 setEditInstitutionId(null);
                 setBankForm({
@@ -326,21 +404,11 @@ export default function CollectionsPage({
               <Building2 className="mr-2 h-4 w-4" />
               Register bank
             </Button>
-            <Button
-              onClick={() => {
-                setEditAccountId(null);
-                setForm(emptyForm);
-                setDialogOpen(true);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add account
-            </Button>
           </div>
         ) : null}
       </div>
 
-      {!accountsMode ? (
+      {collectionsMode && report ? (
         <>
           <div className="grid gap-4 md:grid-cols-4">
             <Card>
@@ -641,12 +709,12 @@ export default function CollectionsPage({
                       <td>{account.isActive ? "Active" : "Inactive"}</td>
                       <td>
                         <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setAccountId(account._id)}
-                          >
-                            Ledger
+                          <Button variant="outline" size="sm" asChild>
+                            <Link
+                              to={`/finance/account-transactions?accountId=${account._id}`}
+                            >
+                              Transactions
+                            </Link>
                           </Button>
                           <Button
                             variant="outline"
@@ -707,7 +775,7 @@ export default function CollectionsPage({
         </Card>
       ) : null}
 
-      {accountsMode && canManage ? (
+      {banksMode && canManage ? (
         <Card>
           <CardHeader>
             <CardTitle>Registered banks and providers</CardTitle>
@@ -807,11 +875,11 @@ export default function CollectionsPage({
         </Card>
       ) : null}
 
-      {accountsMode ? (
+      {transactionsMode ? (
         <Card>
-          <CardContent className="grid gap-4 pt-6 sm:grid-cols-3">
+          <CardContent className="grid gap-4 pt-6 sm:grid-cols-2 xl:grid-cols-5">
             <div>
-              <Label>Ledger from</Label>
+              <Label>From</Label>
               <Input
                 type="date"
                 value={startDate}
@@ -819,7 +887,7 @@ export default function CollectionsPage({
               />
             </div>
             <div>
-              <Label>Ledger to</Label>
+              <Label>To</Label>
               <Input
                 type="date"
                 value={endDate}
@@ -827,7 +895,7 @@ export default function CollectionsPage({
               />
             </div>
             <div>
-              <Label>Account ledger</Label>
+              <Label>Account</Label>
               <Select value={accountId} onValueChange={setAccountId}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select account" />
@@ -839,6 +907,50 @@ export default function CollectionsPage({
                       {account.name}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Direction</Label>
+              <Select
+                value={direction}
+                onValueChange={(value) =>
+                  setDirection(value as typeof direction)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All transactions</SelectItem>
+                  <SelectItem value="incoming">Inward only</SelectItem>
+                  <SelectItem value="outgoing">Outward only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Source</Label>
+              <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All sources</SelectItem>
+                  <SelectItem value="invoice_payment">
+                    Invoice payments
+                  </SelectItem>
+                  <SelectItem value="expense_payment">
+                    Expense payments
+                  </SelectItem>
+                  <SelectItem value="expense_return">
+                    Expense returns
+                  </SelectItem>
+                  <SelectItem value="cash_inflow">Cash injections</SelectItem>
+                  <SelectItem value="opening_balance">
+                    Opening balances
+                  </SelectItem>
+                  <SelectItem value="reversal">Reversals</SelectItem>
+                  <SelectItem value="missing">Missing source</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -918,20 +1030,46 @@ export default function CollectionsPage({
         </Card>
       ) : null}
 
-      {accountsMode && ledger ? (
+      {transactionsMode && ledger ? (
         <Card>
           <CardHeader>
             <CardTitle>{ledger.account.name} ledger</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="mb-4 flex flex-wrap gap-6 text-lg font-bold">
-              <span>
-                Account balance as of {date(timestamp(endDate, true))}: {" "}
-                {money(ledger.accountBalance, ledger.account.currency)}
-              </span>
-              <span>
-                Period movement: {money(ledger.netMovement, ledger.account.currency)}
-              </span>
+            <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                {
+                  label: "Opening balance",
+                  value: ledger.accountBalance - ledger.netMovement,
+                },
+                {
+                  label: "Total inward",
+                  value: ledger.rows
+                    .filter((row) => row.direction === "incoming")
+                    .reduce((sum, row) => sum + row.amount, 0),
+                  icon: ArrowDownLeft,
+                },
+                {
+                  label: "Total outward",
+                  value: Math.abs(
+                    ledger.rows
+                      .filter((row) => row.direction === "outgoing")
+                      .reduce((sum, row) => sum + row.amount, 0),
+                  ),
+                  icon: ArrowUpRight,
+                },
+                { label: "Closing balance", value: ledger.accountBalance },
+              ].map((item) => (
+                <div key={item.label} className="rounded-lg border p-4">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {item.icon ? <item.icon className="h-4 w-4" /> : null}
+                    {item.label}
+                  </div>
+                  <div className="mt-1 text-xl font-bold">
+                    {money(item.value, ledger.account.currency)}
+                  </div>
+                </div>
+              ))}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -939,16 +1077,46 @@ export default function CollectionsPage({
                   <tr className="border-b text-left">
                     <th className="py-2">Date</th>
                     <th>Description</th>
+                    <th>Source</th>
                     <th>Reference</th>
                     <th className="text-right">Amount</th>
                     <th className="text-right">Running balance</th>
+                    <th className="text-right">Details</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ledger.rows.map((row) => (
+                  {transactionRows.map((row) => (
                     <tr key={row.key} className="border-b">
                       <td className="py-2">{date(row.date)}</td>
                       <td>{row.description}</td>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          {row.sourceMissing ? (
+                            <AlertTriangle className="h-4 w-4 text-destructive" />
+                          ) : null}
+                          {row.sourceHref ? (
+                            <Link
+                              className="font-medium text-primary hover:underline"
+                              to={row.sourceHref}
+                            >
+                              {row.sourceLabel}
+                            </Link>
+                          ) : (
+                            <span
+                              className={
+                                row.sourceMissing
+                                  ? "font-medium text-destructive"
+                                  : "font-medium"
+                              }
+                            >
+                              {row.sourceLabel}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {sourceLabel(row.sourceType)}
+                        </div>
+                      </td>
                       <td className="font-mono text-xs">{row.reference}</td>
                       <td
                         className={`text-right font-medium ${row.direction === "outgoing" ? "text-destructive" : "text-emerald-600"}`}
@@ -961,14 +1129,123 @@ export default function CollectionsPage({
                           ledger.account.currency,
                         )}
                       </td>
+                      <td className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDetailKey(row.key)}
+                        >
+                          View
+                        </Button>
+                      </td>
                     </tr>
                   ))}
+                  {transactionRows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="py-10 text-center text-muted-foreground"
+                      >
+                        No transactions match the selected filters.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>
           </CardContent>
         </Card>
       ) : null}
+
+      {transactionsMode && accountId === "all" ? (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            Select an account to view and filter its transactions.
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Dialog
+        open={Boolean(selectedTransaction)}
+        onOpenChange={(open) => !open && setDetailKey(null)}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Transaction details</DialogTitle>
+          </DialogHeader>
+          {selectedTransaction && ledger ? (
+            <div className="space-y-4 text-sm">
+              {selectedTransaction.sourceMissing ? (
+                <div className="flex gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-destructive">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  The source record is missing. This transaction remains visible
+                  so the account balance can still be reconciled.
+                </div>
+              ) : null}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Detail
+                  label="Type"
+                  value={sourceLabel(selectedTransaction.sourceType)}
+                />
+                <Detail
+                  label="Direction"
+                  value={
+                    selectedTransaction.direction === "incoming"
+                      ? "Inward"
+                      : "Outward"
+                  }
+                />
+                <Detail label="Date" value={date(selectedTransaction.date)} />
+                <Detail
+                  label="Amount"
+                  value={money(
+                    selectedTransaction.amount,
+                    ledger.account.currency,
+                  )}
+                />
+                <Detail
+                  label="Transaction ID"
+                  value={selectedTransaction.reference || "Missing"}
+                />
+                <Detail
+                  label="Recorded by"
+                  value={selectedTransaction.recordedByName}
+                />
+                <Detail
+                  label="Recorded at"
+                  value={date(selectedTransaction.recordedAt)}
+                />
+                <div>
+                  <div className="text-xs text-muted-foreground">
+                    Source status
+                  </div>
+                  <Badge className="mt-1" variant="secondary">
+                    {selectedTransaction.sourceStatus ?? "Not applicable"}
+                  </Badge>
+                </div>
+              </div>
+              <Detail label="Source" value={selectedTransaction.sourceLabel} />
+              <Detail
+                label="Description"
+                value={selectedTransaction.description}
+              />
+              {selectedTransaction.sourceNote ? (
+                <Detail
+                  label="Provided by / source"
+                  value={selectedTransaction.sourceNote}
+                />
+              ) : null}
+              {selectedTransaction.sourceHref ? (
+                <Button asChild className="w-full">
+                  <Link to={selectedTransaction.sourceHref}>
+                    Open source record
+                  </Link>
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={inflowOpen} onOpenChange={setInflowOpen}>
         <DialogContent className="max-w-md">
@@ -1016,7 +1293,9 @@ export default function CollectionsPage({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="opening_balance">Opening balance</SelectItem>
+                  <SelectItem value="opening_balance">
+                    Opening balance
+                  </SelectItem>
                   <SelectItem value="capital_contribution">
                     Capital contribution / investment
                   </SelectItem>
@@ -1061,7 +1340,10 @@ export default function CollectionsPage({
               <Input
                 value={inflowForm.transactionId}
                 onChange={(event) =>
-                  setInflowForm({ ...inflowForm, transactionId: event.target.value })
+                  setInflowForm({
+                    ...inflowForm,
+                    transactionId: event.target.value,
+                  })
                 }
                 required
               />
@@ -1080,7 +1362,10 @@ export default function CollectionsPage({
               <Input
                 value={inflowForm.description}
                 onChange={(event) =>
-                  setInflowForm({ ...inflowForm, description: event.target.value })
+                  setInflowForm({
+                    ...inflowForm,
+                    description: event.target.value,
+                  })
                 }
                 required
               />
@@ -1422,6 +1707,15 @@ export default function CollectionsPage({
           </form>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 font-medium">{value}</div>
     </div>
   );
 }
