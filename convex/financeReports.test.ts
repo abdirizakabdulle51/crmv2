@@ -152,17 +152,27 @@ async function insertInvoiceWithPayment(
     receivingBankLocation?: string;
     receivingCurrencyNote?: string;
     lineItems?: Doc<"invoices">["lineItems"];
+    receivingAccountId?: Id<"receivingAccounts"> | null;
+    isHistorical?: boolean;
+    issueDate?: number;
   },
 ) {
   return await t.run(async (ctx) => {
     const company = await ctx.db.get(args.companyId);
     const accounts = await ctx.db.query("receivingAccounts").collect();
     const receivingAccount = accounts.find(
-      (account) => account.countryId === company?.countryId,
+      (account) =>
+        args.receivingAccountId === null
+          ? false
+          : args.receivingAccountId
+            ? account._id === args.receivingAccountId
+            : account.countryId === company?.countryId,
     );
     const invoiceId = await ctx.db.insert("invoices", {
       companyId: args.companyId,
       createdBy: args.createdBy,
+      isHistorical: args.isHistorical,
+      issueDate: args.issueDate,
       invoiceNumber: args.invoiceNumber ?? "INV-2026-00001",
       sourceReference: args.sourceReference,
       status: args.status ?? "paid",
@@ -181,7 +191,10 @@ async function insertInvoiceWithPayment(
     });
     await ctx.db.insert("invoicePayments", {
       invoiceId,
-      receivingAccountId: receivingAccount?._id,
+      receivingAccountId:
+        args.receivingAccountId === null
+          ? undefined
+          : args.receivingAccountId ?? receivingAccount?._id,
       amount: args.paymentAmount,
       paidAt: args.paidAt,
       method: args.method ?? "Bank Transfer",
@@ -236,6 +249,7 @@ async function insertExpense(
     vendor?: string;
     paymentMethod?: string;
     paymentReference?: string;
+    fundingAccountId?: Id<"receivingAccounts"> | null;
   },
 ) {
   return await t.run(async (ctx) => {
@@ -250,11 +264,15 @@ async function insertExpense(
       companyId: args.companyId ?? s.companyA,
       countryId: args.countryId ?? s.countryA,
       status: args.status,
-      fundingAccountId: args.paidAt
-        ? args.countryId === s.countryB || args.companyId === s.companyB
-          ? s.accountB
-          : s.accountA
-        : undefined,
+      fundingAccountId:
+        args.fundingAccountId === null
+          ? undefined
+          : args.fundingAccountId ??
+            (args.paidAt
+              ? args.countryId === s.countryB || args.companyId === s.companyB
+                ? s.accountB
+                : s.accountA
+              : undefined),
       approvedBy: args.paidAt ? s.hob._id : undefined,
       paidAt: args.paidAt,
       paidBy: args.paidAt ? s.ceo._id : undefined,
@@ -489,6 +507,137 @@ describe("finance reports", () => {
         cashOutflows: 125,
       }),
     ]);
+  });
+
+  it("counts unlinked legacy invoice payments without leaking across countries", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 100,
+      paidAt: Date.UTC(2026, 7, 5),
+      receivingAccountId: null,
+      invoiceNumber: "LEGACY-SOM-1",
+    });
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyB,
+      createdBy: s.ceo._id,
+      paymentAmount: 200,
+      paidAt: Date.UTC(2026, 7, 5),
+      receivingAccountId: null,
+      invoiceNumber: "LEGACY-KEN-1",
+    });
+
+    const globalReport = await asUser(t, s.ceo).query(
+      api.financeReports.summary,
+      { startMonth: "2026-08", endMonth: "2026-08" },
+    );
+    const countryReport = await asUser(t, s.ceo).query(
+      api.financeReports.summary,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+        countryId: s.countryA,
+      },
+    );
+
+    expect(globalReport.totals).toMatchObject({
+      income: 300,
+      paymentCount: 2,
+    });
+    expect(countryReport.totals).toMatchObject({
+      income: 100,
+      paymentCount: 1,
+    });
+  });
+
+  it("keeps historical unlinked payment date semantics", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const paidAt = Date.UTC(2026, 7, 1, 0, 30);
+    await insertInvoiceWithPayment(t, {
+      companyId: s.companyA,
+      createdBy: s.ceo._id,
+      paymentAmount: 80,
+      paidAt,
+      receivingAccountId: null,
+      isHistorical: true,
+      issueDate: Date.UTC(2026, 6, 31),
+      invoiceNumber: "LEGACY-HIST-1",
+    });
+
+    const augustReport = await asUser(t, s.ceo).query(
+      api.financeReports.summary,
+      { startMonth: "2026-08", endMonth: "2026-08" },
+    );
+    const julyReport = await asUser(t, s.ceo).query(
+      api.financeReports.summary,
+      { startMonth: "2026-07", endMonth: "2026-07" },
+    );
+
+    expect(augustReport.totals).toMatchObject({
+      income: 80,
+      paymentCount: 1,
+    });
+    expect(julyReport.totals).toMatchObject({
+      income: 0,
+      paymentCount: 0,
+    });
+  });
+
+  it("counts unlinked paid expenses on paidAt while preserving country scope", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 75,
+      companyId: s.companyA,
+      countryId: s.countryA,
+      expenseDate: Date.UTC(2026, 6, 31),
+      paidAt: Date.UTC(2026, 7, 2),
+      fundingAccountId: null,
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 125,
+      companyId: s.companyB,
+      countryId: s.countryB,
+      expenseDate: Date.UTC(2026, 6, 31),
+      paidAt: Date.UTC(2026, 7, 2),
+      fundingAccountId: null,
+    });
+    await insertExpense(t, s, {
+      status: "paid",
+      amount: 10,
+      companyId: s.companyA,
+      countryId: s.countryA,
+      expenseDate: Date.UTC(2026, 5, 30),
+      paidAt: Date.UTC(2026, 6, 15),
+      fundingAccountId: null,
+    });
+
+    const globalReport = await asUser(t, s.ceo).query(
+      api.financeReports.summary,
+      { startMonth: "2026-08", endMonth: "2026-08" },
+    );
+    const countryReport = await asUser(t, s.ceo).query(
+      api.financeReports.summary,
+      {
+        startMonth: "2026-08",
+        endMonth: "2026-08",
+        countryId: s.countryA,
+      },
+    );
+
+    expect(globalReport.totals).toMatchObject({
+      cashOutflows: 200,
+      openingCashBalance: -10,
+    });
+    expect(countryReport.totals).toMatchObject({
+      cashOutflows: 75,
+      openingCashBalance: -10,
+    });
   });
 
   it("reports single region payment income fully to that region", async () => {

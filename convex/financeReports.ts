@@ -341,6 +341,13 @@ export const summary = query({
         (!scope.countryScope || account.countryId === scope.countryScope),
       );
     };
+    const paymentScopeIsVisible = (
+      payment: Doc<"invoicePayments">,
+      invoice: Doc<"invoices">,
+    ) =>
+      payment.receivingAccountId === undefined
+        ? scope.visibleCompanyIds.has(invoice.companyId)
+        : accountIsVisible(payment.receivingAccountId);
     const reportStart = financialMonthStart(startMonth);
     let openingCashBalance = 0;
     const regionIncome = new Map<
@@ -355,7 +362,7 @@ export const summary = query({
     for (const payment of payments) {
       const invoice = invoiceMap.get(payment.invoiceId);
       if (!invoice) continue;
-      if (!accountIsVisible(payment.receivingAccountId)) continue;
+      if (!paymentScopeIsVisible(payment, invoice)) continue;
       assertSupportedCurrency(invoice.sellerCurrency);
       if (invoice.isTest || invoice.hiddenAt) continue;
       if (invoice.status === "void" || invoice.status === "cancelled") {
@@ -377,8 +384,12 @@ export const summary = query({
       const account = payment.receivingAccountId
         ? accountMap.get(payment.receivingAccountId)
         : undefined;
-      if (account?.countryId) {
-        const performance = countryRow(account.countryId);
+      const countryId =
+        payment.receivingAccountId === undefined
+          ? scope.companyMap.get(invoice.companyId)?.countryId
+          : account?.countryId;
+      if (countryId) {
+        const performance = countryRow(countryId);
         performance.collections = sumMoney([
           performance.collections,
           payment.amount,
@@ -490,7 +501,8 @@ export const summary = query({
       if (
         expense.status === "paid" &&
         expense.paidAt &&
-        accountIsVisible(expense.fundingAccountId)
+        (expense.fundingAccountId === undefined ||
+          accountIsVisible(expense.fundingAccountId))
       ) {
         if (expense.paidAt < reportStart) {
           openingCashBalance = sumMoney([openingCashBalance, -expense.amount]);
@@ -505,8 +517,15 @@ export const summary = query({
             const account = expense.fundingAccountId
               ? accountMap.get(expense.fundingAccountId)
               : undefined;
-            if (account?.countryId) {
-              const performance = countryRow(account.countryId);
+            const expenseCompany = expense.companyId
+              ? scope.companyMap.get(expense.companyId)
+              : undefined;
+            const countryId =
+              expense.fundingAccountId === undefined
+                ? expense.countryId ?? expenseCompany?.countryId
+                : account?.countryId;
+            if (countryId) {
+              const performance = countryRow(countryId);
               performance.cashOutflows = sumMoney([
                 performance.cashOutflows,
                 expense.amount,
