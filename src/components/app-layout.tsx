@@ -73,7 +73,7 @@ const NAV_ITEMS = [
   },
   {
     to: "/finance/reports/revenue",
-    label: "Revenue & Collections",
+    label: "Collections & Cash Inflows",
     icon: HandCoins,
   },
   {

@@ -311,8 +311,8 @@ export default function FinanceReportsPage({
   );
   const hasData =
     (report?.totals.income ?? 0) > 0 ||
-    (report?.totals.recognizedRevenue ?? 0) > 0 ||
     (report?.totals.otherCashInflows ?? 0) !== 0 ||
+    (report?.totals.cashOutflows ?? 0) > 0 ||
     (report?.totals.expenses ?? 0) > 0 ||
     (report?.totals.expenseReturns ?? 0) > 0 ||
     (report?.expenseStatusSummary ?? []).some((row) => row.count > 0);
@@ -411,7 +411,7 @@ export default function FinanceReportsPage({
             {view === "overview"
               ? "Finance Overview"
               : view === "revenue"
-                ? "Revenue & Collections Report"
+                ? "Collections & Cash Inflows"
                 : view === "expenses"
                   ? "Expense Report"
                   : "Country Performance"}
@@ -452,7 +452,7 @@ export default function FinanceReportsPage({
   const summaryCards =
     view === "revenue"
       ? [
-          ["Collected income", formatCurrency(report.totals.income)],
+          ["Invoice collections", formatCurrency(report.totals.income)],
           [
             "Other cash inflows",
             formatCurrency(report.totals.otherCashInflows ?? 0),
@@ -463,15 +463,6 @@ export default function FinanceReportsPage({
               report.totals.totalCashInflows ?? report.totals.income,
             ),
           ],
-          [
-            "Recognized revenue",
-            formatCurrency(report.totals.recognizedRevenue ?? 0),
-          ],
-          ["Pre-collected", formatCurrency(report.totals.preCollected ?? 0)],
-          [
-            "Expected collections",
-            formatCurrency(report.totals.expectedCollections ?? 0),
-          ],
           ["Payments", report.totals.paymentCount.toLocaleString()],
           [
             "Capital contributions",
@@ -480,13 +471,13 @@ export default function FinanceReportsPage({
         ]
       : view === "expenses"
         ? [
-            ["Gross paid expenses", formatCurrency(report.totals.expenses)],
+            ["Registered expenses", formatCurrency(report.totals.expenses)],
             [
               "Expense returns",
               formatCurrency(report.totals.expenseReturns ?? 0),
             ],
             [
-              "Net paid expenses",
+              "Net registered expenses",
               formatCurrency(
                 report.totals.netExpenses ?? report.totals.expenses,
               ),
@@ -501,23 +492,29 @@ export default function FinanceReportsPage({
         : view === "country"
           ? [
               ["Collections", formatCurrency(report.totals.income)],
-              ["Revenue", formatCurrency(report.totals.recognizedRevenue ?? 0)],
-              ["Expenses", formatCurrency(report.totals.expenses)],
-              ["Net cash", formatCurrency(report.totals.net)],
+              [
+                "Other cash inflows",
+                formatCurrency(report.totals.otherCashInflows),
+              ],
+              ["Cash outflows", formatCurrency(report.totals.cashOutflows)],
+              [
+                "Net cash movement",
+                formatCurrency(report.totals.netCashMovement),
+              ],
             ]
           : [
-              ["Collections", formatCurrency(report.totals.income)],
               [
-                "Recognized contract revenue",
-                formatCurrency(report.totals.recognizedRevenue ?? 0),
+                "Opening cash",
+                formatCurrency(report.totals.openingCashBalance),
               ],
               [
-                "Expenses incurred",
-                formatCurrency(report.totals.incurredExpenses ?? 0),
+                "Total cash inflows",
+                formatCurrency(report.totals.totalCashInflows),
               ],
+              ["Cash outflows", formatCurrency(report.totals.cashOutflows)],
               [
-                "Operating net",
-                formatCurrency(report.totals.operatingNet ?? 0),
+                "Closing cash",
+                formatCurrency(report.totals.closingCashBalance),
               ],
             ];
 
@@ -529,14 +526,14 @@ export default function FinanceReportsPage({
             {view === "overview"
               ? "Finance Overview"
               : view === "revenue"
-                ? "Revenue & Collections Report"
+                ? "Collections & Cash Inflows"
                 : view === "expenses"
                   ? "Expense Report"
                   : "Country Performance"}
           </h1>
           <p className="mt-1 text-muted-foreground">
-            Operational income, expense, and approval status reporting. USD only
-            for this phase.
+            Cash movements and expenses use their correct financial dates. USD
+            only for this phase.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -652,8 +649,8 @@ export default function FinanceReportsPage({
           <CardHeader>
             <CardTitle>
               {view === "revenue"
-                ? "Monthly Revenue and Collections"
-                : "Monthly Recognized Revenue vs Expenses Incurred"}
+                ? "Monthly Collections and Other Cash Inflows"
+                : "Monthly Cash Inflows vs Outflows"}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -673,11 +670,11 @@ export default function FinanceReportsPage({
                   <Legend />
                   <Bar
                     dataKey={
-                      view === "overview" ? "recognizedRevenue" : "income"
+                      view === "overview" ? "totalCashInflows" : "income"
                     }
                     name={
                       view === "overview"
-                        ? "Recognized revenue"
+                        ? "Total cash inflows"
                         : "Invoice collections"
                     }
                     fill="oklch(0.6 0.18 170)"
@@ -685,15 +682,15 @@ export default function FinanceReportsPage({
                   />
                   {view === "overview" ? (
                     <Bar
-                      dataKey="incurredExpenses"
-                      name="Expenses incurred"
+                      dataKey="cashOutflows"
+                      name="Cash outflows"
                       fill="oklch(0.65 0.18 35)"
                       radius={[4, 4, 0, 0]}
                     />
                   ) : (
                     <Bar
                       dataKey="otherCashInflows"
-                      name="Other cash inflows (not revenue)"
+                      name="Other cash inflows"
                       fill="oklch(0.68 0.14 250)"
                       radius={[4, 4, 0, 0]}
                     />
@@ -706,7 +703,7 @@ export default function FinanceReportsPage({
                 <thead>
                   <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-3 py-3">Month</th>
-                    <th className="px-3 py-3 text-right">Income</th>
+                    <th className="px-3 py-3 text-right">Collections</th>
                     {view === "revenue" ? (
                       <>
                         <th className="px-3 py-3 text-right">
@@ -717,15 +714,12 @@ export default function FinanceReportsPage({
                         </th>
                       </>
                     ) : null}
-                    <th className="px-3 py-3 text-right">Recognized</th>
-                    <th className="px-3 py-3 text-right">Pre-collected</th>
-                    <th className="px-3 py-3 text-right">Expected</th>
                     {view === "overview" ? (
                       <>
-                        <th className="px-3 py-3 text-right">
-                          Expenses incurred
-                        </th>
-                        <th className="px-3 py-3 text-right">Operating net</th>
+                        <th className="px-3 py-3 text-right">Other inflows</th>
+                        <th className="px-3 py-3 text-right">Total inflows</th>
+                        <th className="px-3 py-3 text-right">Cash outflows</th>
+                        <th className="px-3 py-3 text-right">Net movement</th>
                       </>
                     ) : null}
                     <th className="px-3 py-3 text-right">Payments</th>
@@ -753,22 +747,19 @@ export default function FinanceReportsPage({
                           </td>
                         </>
                       ) : null}
-                      <td className="px-3 py-3 text-right">
-                        {formatCurrency(row.recognizedRevenue ?? 0)}
-                      </td>
-                      <td className="px-3 py-3 text-right">
-                        {formatCurrency(row.preCollected ?? 0)}
-                      </td>
-                      <td className="px-3 py-3 text-right">
-                        {formatCurrency(row.expectedCollections ?? 0)}
-                      </td>
                       {view === "overview" ? (
                         <>
                           <td className="px-3 py-3 text-right">
-                            {formatCurrency(row.incurredExpenses ?? 0)}
+                            {formatCurrency(row.otherCashInflows)}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {formatCurrency(row.totalCashInflows)}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {formatCurrency(row.cashOutflows)}
                           </td>
                           <td className="px-3 py-3 text-right font-medium">
-                            {formatCurrency(row.operatingNet ?? 0)}
+                            {formatCurrency(row.netCashMovement)}
                           </td>
                         </>
                       ) : null}
@@ -794,8 +785,8 @@ export default function FinanceReportsPage({
           <CardHeader>
             <CardTitle>Country financial performance</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Revenue, collections, paid expenses, and net cash contribution by
-              country.
+              Account-linked cash collections, other inflows, outflows, and net
+              movement by country.
             </p>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -828,8 +819,8 @@ export default function FinanceReportsPage({
                         radius={[4, 4, 0, 0]}
                       />
                       <Bar
-                        dataKey="expenses"
-                        name="Paid expenses"
+                        dataKey="cashOutflows"
+                        name="Cash outflows"
                         fill="oklch(0.65 0.18 35)"
                         radius={[4, 4, 0, 0]}
                       />
@@ -841,10 +832,10 @@ export default function FinanceReportsPage({
                     <thead>
                       <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                         <th className="px-3 py-3">Country</th>
-                        <th className="px-3 py-3 text-right">Revenue</th>
                         <th className="px-3 py-3 text-right">Collections</th>
-                        <th className="px-3 py-3 text-right">Expenses</th>
-                        <th className="px-3 py-3 text-right">Net cash</th>
+                        <th className="px-3 py-3 text-right">Other inflows</th>
+                        <th className="px-3 py-3 text-right">Cash outflows</th>
+                        <th className="px-3 py-3 text-right">Net movement</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -857,13 +848,13 @@ export default function FinanceReportsPage({
                             {row.countryName}
                           </td>
                           <td className="px-3 py-3 text-right">
-                            {formatCurrency(row.revenue)}
-                          </td>
-                          <td className="px-3 py-3 text-right">
                             {formatCurrency(row.collections)}
                           </td>
                           <td className="px-3 py-3 text-right">
-                            {formatCurrency(row.expenses)}
+                            {formatCurrency(row.otherCashInflows)}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            {formatCurrency(row.cashOutflows)}
                           </td>
                           <td className="px-3 py-3 text-right font-medium">
                             {formatCurrency(row.net)}
@@ -883,7 +874,7 @@ export default function FinanceReportsPage({
         <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Monthly Paid Expenses and Returns</CardTitle>
+              <CardTitle>Monthly Expenses by Expense Date</CardTitle>
             </CardHeader>
             <CardContent className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -897,7 +888,7 @@ export default function FinanceReportsPage({
                   <Legend />
                   <Bar
                     dataKey="expenses"
-                    name="Gross paid expenses"
+                    name="Registered expenses"
                     fill="oklch(0.65 0.18 35)"
                     radius={[4, 4, 0, 0]}
                   />

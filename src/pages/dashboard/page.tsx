@@ -375,7 +375,6 @@ function FinanceActivityChart({
           (row) =>
             row.invoicesSent > 0 ||
             row.invoicesPaid > 0 ||
-            row.recognizedRevenue > 0 ||
             row.preCollected > 0 ||
             row.expectedCollections > 0 ||
             row.expenses > 0,
@@ -387,10 +386,10 @@ function FinanceActivityChart({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <CardTitle className="text-base">
-              Monthly Revenue & Cash Flow
+              Monthly Collections & Cash Outlook
             </CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              Recognized revenue, collections, expected cash, and expenses
+              Collections, expected cash, and expenses
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -436,12 +435,6 @@ function FinanceActivityChart({
                 <YAxis tickFormatter={formatCompact} className="text-xs" />
                 <Tooltip formatter={financeTooltipFormatter} />
                 <Legend />
-                <Bar
-                  dataKey="recognizedRevenue"
-                  name="Recognized Revenue"
-                  fill="oklch(0.6 0.2 260)"
-                  radius={[4, 4, 0, 0]}
-                />
                 <Bar
                   dataKey="invoicesPaid"
                   name="Invoices Paid"

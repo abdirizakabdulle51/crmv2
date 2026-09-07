@@ -13,6 +13,8 @@ type Seed = {
   catalogItem: Id<"serviceCatalog">;
   categoryTravel: Id<"expenseCategories">;
   categoryOps: Id<"expenseCategories">;
+  accountA: Id<"receivingAccounts">;
+  accountB: Id<"receivingAccounts">;
   ceo: Doc<"users">;
   hob: Doc<"users">;
   gmA: Doc<"users">;
@@ -94,6 +96,23 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       createdAt: 1,
       updatedAt: 1,
     });
+    const createAccount = (countryId: Id<"countries">, suffix: string) =>
+      ctx.db.insert("receivingAccounts", {
+        countryId,
+        name: `Account ${suffix}`,
+        providerName: `Bank ${suffix}`,
+        accountNumber: suffix,
+        accountHolderName: "HTG",
+        type: "bank",
+        usage: "both",
+        currency: "USD",
+        isActive: true,
+        createdBy: ceoId,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    const accountA = await createAccount(countryA, "A");
+    const accountB = await createAccount(countryB, "B");
 
     return {
       countryA,
@@ -103,6 +122,8 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<Seed> {
       catalogItem,
       categoryTravel,
       categoryOps,
+      accountA,
+      accountB,
       ceo: (await ctx.db.get(ceoId))!,
       hob: (await ctx.db.get(hobId))!,
       gmA: (await ctx.db.get(gmAId))!,
@@ -134,6 +155,11 @@ async function insertInvoiceWithPayment(
   },
 ) {
   return await t.run(async (ctx) => {
+    const company = await ctx.db.get(args.companyId);
+    const accounts = await ctx.db.query("receivingAccounts").collect();
+    const receivingAccount = accounts.find(
+      (account) => account.countryId === company?.countryId,
+    );
     const invoiceId = await ctx.db.insert("invoices", {
       companyId: args.companyId,
       createdBy: args.createdBy,
@@ -155,6 +181,7 @@ async function insertInvoiceWithPayment(
     });
     await ctx.db.insert("invoicePayments", {
       invoiceId,
+      receivingAccountId: receivingAccount?._id,
       amount: args.paymentAmount,
       paidAt: args.paidAt,
       method: args.method ?? "Bank Transfer",
@@ -223,6 +250,11 @@ async function insertExpense(
       companyId: args.companyId ?? s.companyA,
       countryId: args.countryId ?? s.countryA,
       status: args.status,
+      fundingAccountId: args.paidAt
+        ? args.countryId === s.countryB || args.companyId === s.companyB
+          ? s.accountB
+          : s.accountA
+        : undefined,
       approvedBy: args.paidAt ? s.hob._id : undefined,
       paidAt: args.paidAt,
       paidBy: args.paidAt ? s.ceo._id : undefined,
@@ -235,7 +267,7 @@ async function insertExpense(
 }
 
 describe("finance reports", () => {
-  it("reports non-invoice funding separately from collections and revenue", async () => {
+  it("reports non-invoice funding separately from collections", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     await t.run(async (ctx) => {
@@ -275,10 +307,10 @@ describe("finance reports", () => {
     });
     expect(report.totals).toMatchObject({
       income: 0,
-      recognizedRevenue: 0,
       capitalContributions: 5000,
       otherCashInflows: 5000,
       totalCashInflows: 5000,
+      netCashMovement: 5000,
     });
   });
 
@@ -372,13 +404,14 @@ describe("finance reports", () => {
       endMonth: "2026-08",
     });
     expect(report.totals.capitalContributions).toBe(0);
-    expect(report.totals.otherCashInflows).toBe(0);
+    expect(report.totals.otherCashInflows).toBe(5040);
     expect(report.totals.expenseReturns).toBe(0);
-    expect(report.totals.totalCashInflows).toBe(0);
-    expect(report.totals.recognizedRevenue).toBe(0);
+    expect(report.totals.totalCashInflows).toBe(5040);
+    expect(report.totals.cashOutflows).toBe(5140);
+    expect(report.totals.netCashMovement).toBe(-100);
   });
 
-  it("groups income by invoice payment paidAt and expenses by paidAt", async () => {
+  it("groups collections by paidAt and expenses by expenseDate", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     await insertInvoiceWithPayment(t, {
@@ -402,9 +435,6 @@ describe("finance reports", () => {
       {
         month: "2026-08",
         income: 300,
-        recognizedRevenue: 0,
-        preCollected: 0,
-        expectedCollections: 0,
         expenses: 125,
         incurredExpenses: 125,
         expenseReturns: 0,
@@ -413,20 +443,19 @@ describe("finance reports", () => {
         otherNonInvoiceInflows: 0,
         otherCashInflows: 0,
         totalCashInflows: 300,
+        cashOutflows: 125,
+        netCashMovement: 175,
         netExpenses: 125,
-        net: 175,
-        operatingNet: -125,
         paymentCount: 1,
         paidExpenseCount: 1,
       },
     ]);
     expect(report.totals).toMatchObject({
       income: 300,
-      recognizedRevenue: 0,
       expenses: 125,
       incurredExpenses: 125,
-      net: 175,
-      operatingNet: -125,
+      cashOutflows: 125,
+      netCashMovement: 175,
       paymentCount: 1,
     });
   });
@@ -450,14 +479,14 @@ describe("finance reports", () => {
       expect.objectContaining({
         month: "2026-07",
         incurredExpenses: 125,
-        expenses: 0,
-        operatingNet: -125,
+        expenses: 125,
+        cashOutflows: 0,
       }),
       expect.objectContaining({
         month: "2026-08",
         incurredExpenses: 0,
-        expenses: 125,
-        operatingNet: 0,
+        expenses: 0,
+        cashOutflows: 125,
       }),
     ]);
   });
@@ -713,17 +742,17 @@ describe("finance reports", () => {
     expect(ceoReport.totals).toMatchObject({
       income: 400,
       expenses: 100,
-      net: 300,
+      netCashMovement: 300,
     });
     expect(hobReport.totals).toMatchObject({
       income: 100,
       expenses: 25,
-      net: 75,
+      netCashMovement: 75,
     });
     expect(gmReport.totals).toMatchObject({
       income: 100,
       expenses: 25,
-      net: 75,
+      netCashMovement: 75,
     });
     expect(gmReport.incomeByRegion).toEqual([
       {
@@ -953,7 +982,7 @@ describe("finance reports", () => {
     expect(rows).toEqual([]);
   });
 
-  it("exports paid expenses by paidAt with joined finance fields", async () => {
+  it("exports paid expenses by expenseDate with joined finance fields", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     await insertExpense(t, s, {
@@ -967,6 +996,7 @@ describe("finance reports", () => {
     await insertExpense(t, s, {
       status: "paid",
       amount: 75,
+      expenseDate: Date.UTC(2026, 6, 30),
       paidAt: Date.UTC(2026, 6, 30),
     });
     await insertExpense(t, s, {
@@ -1119,8 +1149,9 @@ describe("finance reports", () => {
     expect(report.totals.expenses).toBe(100);
     expect(report.totals.expenseReturns).toBe(40);
     expect(report.totals.netExpenses).toBe(60);
-    expect(report.totals.net).toBe(-60);
     expect(report.totals.incurredExpenses).toBe(60);
-    expect(report.totals.operatingNet).toBe(-60);
+    expect(report.totals.cashOutflows).toBe(100);
+    expect(report.totals.totalCashInflows).toBe(40);
+    expect(report.totals.netCashMovement).toBe(-60);
   });
 });

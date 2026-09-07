@@ -56,21 +56,29 @@ const mocks = vi.hoisted(() => ({
         monthly: Array<{
           month: string;
           income: number;
-          recognizedRevenue: number;
           incurredExpenses: number;
-          operatingNet: number;
           expenses: number;
-          net: number;
+          expenseReturns: number;
+          otherCashInflows: number;
+          totalCashInflows: number;
+          cashOutflows: number;
+          netCashMovement: number;
           paymentCount: number;
           paidExpenseCount: number;
         }>;
         totals: {
           income: number;
-          recognizedRevenue: number;
           incurredExpenses: number;
-          operatingNet: number;
           expenses: number;
-          net: number;
+          expenseReturns: number;
+          netExpenses: number;
+          otherCashInflows: number;
+          totalCashInflows: number;
+          cashOutflows: number;
+          netCashMovement: number;
+          openingCashBalance: number;
+          closingCashBalance: number;
+          capitalContributions: number;
           paymentCount: number;
         };
         topExpenseCategories: Array<{
@@ -152,22 +160,30 @@ function report(overrides = {}) {
       {
         month: "2026-08",
         income: 1000,
-        recognizedRevenue: 1000,
         incurredExpenses: 250,
-        operatingNet: 750,
         expenses: 250,
-        net: 750,
+        expenseReturns: 0,
+        otherCashInflows: 200,
+        totalCashInflows: 1200,
+        cashOutflows: 250,
+        netCashMovement: 950,
         paymentCount: 2,
         paidExpenseCount: 1,
       },
     ],
     totals: {
       income: 1000,
-      recognizedRevenue: 1000,
       incurredExpenses: 250,
-      operatingNet: 750,
       expenses: 250,
-      net: 750,
+      expenseReturns: 0,
+      netExpenses: 250,
+      otherCashInflows: 200,
+      totalCashInflows: 1200,
+      cashOutflows: 250,
+      netCashMovement: 950,
+      openingCashBalance: 50,
+      closingCashBalance: 1000,
+      capitalContributions: 200,
       paymentCount: 2,
     },
     topExpenseCategories: [
@@ -198,10 +214,11 @@ function report(overrides = {}) {
       {
         countryId: "country-1",
         countryName: "Somalia",
-        revenue: 900,
         collections: 1000,
         expenses: 250,
-        net: 750,
+        otherCashInflows: 200,
+        cashOutflows: 250,
+        net: 950,
       },
     ],
     ...overrides,
@@ -233,14 +250,14 @@ describe("FinanceReportsPage", () => {
     expect(
       screen.getByRole("heading", { name: "Finance Overview" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Collections").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Expenses incurred").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Operating net").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Opening cash").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Cash outflows").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Closing cash").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$1,000.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$250.00").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("$750.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("$1,200.00").length).toBeGreaterThan(0);
     expect(
-      screen.getByText("Monthly Recognized Revenue vs Expenses Incurred"),
+      screen.getByText("Monthly Cash Inflows vs Outflows"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("chart")).toBeInTheDocument();
     expect(
@@ -263,7 +280,7 @@ describe("FinanceReportsPage", () => {
   it("keeps revenue and country views focused", () => {
     const { unmount } = renderReport("revenue");
     expect(
-      screen.getByText("Monthly Revenue and Collections"),
+      screen.getByText("Monthly Collections and Other Cash Inflows"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Paid Expenses")).not.toBeInTheDocument();
     unmount();
@@ -274,7 +291,7 @@ describe("FinanceReportsPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Somalia")).toBeInTheDocument();
     expect(
-      screen.getByRole("columnheader", { name: "Revenue" }),
+      screen.getByRole("columnheader", { name: "Other inflows" }),
     ).toBeInTheDocument();
   });
 
@@ -318,22 +335,30 @@ describe("FinanceReportsPage", () => {
         {
           month: "2026-08",
           income: 0,
-          recognizedRevenue: 0,
           incurredExpenses: 0,
-          operatingNet: 0,
           expenses: 0,
-          net: 0,
+          expenseReturns: 0,
+          otherCashInflows: 0,
+          totalCashInflows: 0,
+          cashOutflows: 0,
+          netCashMovement: 0,
           paymentCount: 0,
           paidExpenseCount: 0,
         },
       ],
       totals: {
         income: 0,
-        recognizedRevenue: 0,
         incurredExpenses: 0,
-        operatingNet: 0,
         expenses: 0,
-        net: 0,
+        expenseReturns: 0,
+        netExpenses: 0,
+        otherCashInflows: 0,
+        totalCashInflows: 0,
+        cashOutflows: 0,
+        netCashMovement: 0,
+        openingCashBalance: 0,
+        closingCashBalance: 0,
+        capitalContributions: 0,
         paymentCount: 0,
       },
       topExpenseCategories: [],
