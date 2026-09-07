@@ -49,6 +49,7 @@ import {
   priceFlexibleContractUsage,
   priceMonthlyContractUsage,
 } from "./contractUsagePricing";
+import { nextInvoiceNumber } from "./invoiceNumbers";
 
 type Ctx = QueryCtx | MutationCtx;
 type InvoiceStatus = Doc<"invoices">["status"];
@@ -330,11 +331,6 @@ function requireCleanupReason(value: string | undefined) {
   return reason;
 }
 
-function invoiceNumberForSequence(now: number, sequence: number) {
-  const year = new Date(now).getUTCFullYear();
-  return `INV-${year}-${String(sequence).padStart(5, "0")}`;
-}
-
 function defaultDueDateForIssue(
   issueDate: number,
   paymentTermDays = DEFAULT_PAYMENT_TERM_DAYS,
@@ -357,14 +353,6 @@ function startOfBusinessDay(now: number) {
   return (
     Date.UTC(year, month - 1, day) - MOGADISHU_UTC_OFFSET_HOURS * MS_PER_HOUR
   );
-}
-
-async function nextInvoiceNumber(ctx: MutationCtx, now: number) {
-  const invoices = await ctx.db.query("invoices").collect();
-  const issuedCount = invoices.filter(
-    (invoice) => invoice.invoiceNumber,
-  ).length;
-  return invoiceNumberForSequence(now, issuedCount + 1);
 }
 
 function assertDraft(invoice: Doc<"invoices">) {

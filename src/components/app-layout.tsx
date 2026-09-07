@@ -96,7 +96,7 @@ const NAV_ITEMS = [
   { to: "/finance/banks", label: "Banks & Providers", icon: University },
   {
     to: "/finance/historical-invoices",
-    label: "Historical Paid Invoices",
+    label: "Historical Invoices",
     icon: ReceiptText,
   },
   {

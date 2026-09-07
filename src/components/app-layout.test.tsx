@@ -217,6 +217,9 @@ describe("AppLayout", () => {
       within(sidebar).getByRole("link", { name: "Invoices" }),
     ).toBeInTheDocument();
     expect(
+      within(sidebar).getByRole("link", { name: "Historical Invoices" }),
+    ).toBeInTheDocument();
+    expect(
       within(sidebar).getByRole("link", { name: "Contracts" }),
     ).toBeInTheDocument();
     expect(

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convexTest } from "convex-test";
 import type { FunctionReference } from "convex/server";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import schema from "./schema";
 import { modules } from "./test.setup";
@@ -31,6 +31,9 @@ const createHistorical = (api as unknown as {
 const createHistoricalUnpaid = (api as unknown as {
   historicalInvoices: { createUnpaid: FunctionReference<"mutation", "public", UnpaidArgs, Id<"invoices">> };
 }).historicalInvoices.createUnpaid;
+const renumberOutstanding = (internal as unknown as {
+  historicalInvoices: { renumberOutstanding: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, unknown> };
+}).historicalInvoices.renumberOutstanding;
 
 async function seed(t: ReturnType<typeof convexTest>) {
   return await t.run(async (ctx) => {
@@ -62,6 +65,7 @@ describe("historical paid invoices", () => {
       leads: await ctx.db.query("leads").collect(),
     }));
     expect(result.invoice).toMatchObject({ isHistorical: true, sourceSystem: "odoo", originalReference: "S00065", issueDate: Date.UTC(2026, 4, 14), status: "paid", grandTotal: 17624.79, grandTotalCents: 1762479, amountPaid: 17624.79, amountPaidCents: 1762479, balanceDue: 0, balanceDueCents: 0, historicalCoverageStartMonth: "2026-05", historicalCoverageMonths: 3 });
+    expect(result.invoice?.invoiceNumber).toBe(`INV-${new Date().getUTCFullYear()}-00001`);
     expect(result.invoice?.revenueAllocations).toEqual([{ month: "2026-05", amount: 5874.93 }, { month: "2026-06", amount: 5874.93 }, { month: "2026-07", amount: 5874.93 }]);
     expect(result.payments).toHaveLength(1);
     expect(result.payments[0]).toMatchObject({ amount: 17624.79, amountCents: 1762479, appliedAmount: 17624.79, paidAt: Date.UTC(2026, 4, 14), method: "Bank Transfer", transactionId: "ODOO-S00065" });
@@ -72,6 +76,110 @@ describe("historical paid invoices", () => {
     expect(result.contracts).toHaveLength(0);
     expect(result.quotes).toHaveLength(0);
     expect(result.leads).toHaveLength(0);
+  });
+
+  it("uses the shared normal sequence for historical and subsequent CRM invoices", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const user = t.withIdentity({ tokenIdentifier: "historical-test" });
+    const paidId = await user.mutation(createHistorical, {
+      companyId: s.companyId, originalReference: "SEQUENCE-PAID", invoiceDate: "2026-01-01", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100, paymentDate: "2026-01-01",
+    });
+    const unpaidId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "SEQUENCE-UNPAID", invoiceDate: "2026-01-02", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100,
+    });
+    const normalDraftId = await t.run(async (ctx) => ctx.db.insert("invoices", {
+      companyId: s.companyId,
+      createdBy: s.userId,
+      status: "draft",
+      companyName: "Historical Customer",
+      lineItems: [{ itemName: "Normal service", serviceCategory: "Compute", billingUnit: "month", quantity: 1, monthlyUnitPrice: 10, monthlyTotal: 10, yearlyTotal: 120 }],
+      subtotal: 10,
+      monthlyTotal: 10,
+      yearlyTotal: 120,
+      grandTotal: 10,
+      amountPaid: 0,
+      balanceDue: 10,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }));
+    await user.mutation(api.invoices.issueInvoice, { invoiceId: normalDraftId });
+    const result = await t.run(async (ctx) => ({
+      paid: await ctx.db.get(paidId),
+      unpaid: await ctx.db.get(unpaidId),
+      normal: await ctx.db.get(normalDraftId),
+    }));
+    const year = new Date().getUTCFullYear();
+    expect(result.paid?.invoiceNumber).toBe(`INV-${year}-00001`);
+    expect(result.unpaid?.invoiceNumber).toBe(`INV-${year}-00002`);
+    expect(result.normal?.invoiceNumber).toBe(`INV-${year}-00003`);
+  });
+
+  it("previews and executes only outstanding legacy historical renumbering", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const user = t.withIdentity({ tokenIdentifier: "historical-test" });
+    const paidId = await user.mutation(createHistorical, {
+      companyId: s.companyId, originalReference: "LEGACY-PAID", invoiceDate: "2026-01-03", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100, paymentDate: "2026-01-03",
+    });
+    const earlyId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "LEGACY-EARLY", invoiceDate: "2026-01-01", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100,
+    });
+    const partialId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "LEGACY-PARTIAL", invoiceDate: "2026-01-02", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100,
+    });
+    await user.mutation(api.invoices.recordPayment, { invoiceId: partialId, amount: 20, paidAt: Date.UTC(2026, 0, 4), receivingAccountId: s.accountId, transactionId: "LEGACY-PARTIAL-1" });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(paidId, { invoiceNumber: "HIST-ODOO-PAID", status: "paid" });
+      await ctx.db.patch(earlyId, { invoiceNumber: "HIST-ODOO-EARLY" });
+      await ctx.db.patch(partialId, { invoiceNumber: "HIST-ODOO-PARTIAL" });
+    });
+    const before = await t.run(async (ctx) => ({
+      invoices: await ctx.db.query("invoices").collect(),
+      payments: await ctx.db.query("invoicePayments").collect(),
+      events: await ctx.db.query("invoiceEvents").collect(),
+    }));
+    await expect(t.mutation(renumberOutstanding, { dryRun: false })).rejects.toThrow("Exact confirmation required");
+    const preview = await t.mutation(renumberOutstanding, { dryRun: true });
+    const year = new Date().getUTCFullYear();
+    expect(preview).toEqual([
+      expect.objectContaining({ invoiceId: earlyId, oldInvoiceNumber: "HIST-ODOO-EARLY", newInvoiceNumber: `INV-${year}-00004`, status: "issued", grandTotal: 100, amountPaid: 0, balanceDue: 100, originalReference: "LEGACY-EARLY" }),
+      expect.objectContaining({ invoiceId: partialId, oldInvoiceNumber: "HIST-ODOO-PARTIAL", newInvoiceNumber: `INV-${year}-00005`, status: "partially_paid", grandTotal: 100, amountPaid: 20, balanceDue: 80, originalReference: "LEGACY-PARTIAL" }),
+    ]);
+    const afterDryRun = await t.run(async (ctx) => ({ invoices: await ctx.db.query("invoices").collect(), payments: await ctx.db.query("invoicePayments").collect(), events: await ctx.db.query("invoiceEvents").collect() }));
+    expect(afterDryRun).toEqual(before);
+    await t.mutation(renumberOutstanding, { dryRun: false, confirm: "RENUMBER_OUTSTANDING_HISTORICAL_INVOICES" });
+    const after = await t.run(async (ctx) => ({
+      invoices: await ctx.db.query("invoices").collect(),
+      payments: await ctx.db.query("invoicePayments").collect(),
+      events: await ctx.db.query("invoiceEvents").collect(),
+    }));
+    expect(after.payments).toEqual(before.payments);
+    expect(after.events).toEqual(before.events);
+    expect(after.invoices.find((invoice) => invoice._id === paidId)).toEqual(before.invoices.find((invoice) => invoice._id === paidId));
+    expect(after.invoices.find((invoice) => invoice._id === earlyId)).toEqual({ ...before.invoices.find((invoice) => invoice._id === earlyId), invoiceNumber: `INV-${year}-00004` });
+    expect(after.invoices.find((invoice) => invoice._id === partialId)).toEqual({ ...before.invoices.find((invoice) => invoice._id === partialId), invoiceNumber: `INV-${year}-00005` });
+  });
+
+  it("fails the migration closed when a proposed number is already used", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const user = t.withIdentity({ tokenIdentifier: "historical-test" });
+    const targetId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "COLLISION-TARGET", invoiceDate: "2026-01-01", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100,
+    });
+    const occupiedId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "COLLISION-OCCUPIED", invoiceDate: "2026-01-02", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100,
+    });
+    const occupiedNumber = `INV-${new Date().getUTCFullYear()}-00003`;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(targetId, { invoiceNumber: "HIST-ODOO-COLLISION-TARGET" });
+      await ctx.db.patch(occupiedId, { invoiceNumber: occupiedNumber, status: "paid" });
+    });
+    await expect(t.mutation(renumberOutstanding, { dryRun: true })).rejects.toThrow(`Invoice number collision detected for ${occupiedNumber}`);
+    const result = await t.run(async (ctx) => ({ target: await ctx.db.get(targetId), occupied: await ctx.db.get(occupiedId) }));
+    expect(result.target?.invoiceNumber).toBe("HIST-ODOO-COLLISION-TARGET");
+    expect(result.occupied?.invoiceNumber).toBe(occupiedNumber);
   });
 
   it("creates an unpaid historical invoice without payment rows", async () => {

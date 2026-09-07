@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel.d.ts";
 import { assertCanManageCompany, canViewCompany } from "./authorization";
@@ -14,12 +14,24 @@ import {
 } from "./money";
 import { calculatePaymentApplication } from "./invoices";
 import { assertUniqueAccountTransactionId } from "./accountTransactionIdentity";
+import {
+  invoiceNumberForSequence,
+  nextInvoiceNumber,
+  nextInvoiceSequence,
+} from "./invoiceNumbers";
 
 const PAYMENT_METHOD_BANK_TRANSFER = "Bank Transfer";
 const PAYMENT_METHOD_MOBILE_MONEY = "Mobile Money";
 const SUPPORTED_PAYMENT_METHODS = new Set([
   PAYMENT_METHOD_BANK_TRANSFER,
   PAYMENT_METHOD_MOBILE_MONEY,
+]);
+const RENUMBER_CONFIRMATION = "RENUMBER_OUTSTANDING_HISTORICAL_INVOICES";
+const OUTSTANDING_HISTORICAL_STATUSES = new Set([
+  "issued",
+  "sent",
+  "overdue",
+  "partially_paid",
 ]);
 
 async function getCurrentUserOrThrow(
@@ -108,13 +120,6 @@ function coverageMonths(startMonth: string, count: number) {
   });
 }
 
-function historicalInvoiceNumber(
-  companyId: Doc<"companies">["_id"],
-  normalizedReference: string,
-) {
-  return `HIST-ODOO-${companyId}-${encodeURIComponent(normalizedReference)}`;
-}
-
 type HistoricalInvoiceInput = {
   companyId: Doc<"companies">["_id"];
   originalReference: string;
@@ -194,10 +199,7 @@ async function insertHistoricalInvoiceBase(
   }
 
   const now = Date.now();
-  const invoiceNumber = historicalInvoiceNumber(
-    company._id,
-    prepared.normalizedReference,
-  );
+  const invoiceNumber = await nextInvoiceNumber(ctx, now);
   const invoiceId = await ctx.db.insert("invoices", {
     companyId: company._id,
     sourceMonth: args.coverageStartMonth,
@@ -278,6 +280,91 @@ export const list = query({
           )?.paidAt,
         })),
     );
+  },
+});
+
+async function buildOutstandingHistoricalRenumberPlan(ctx: MutationCtx) {
+  const invoices = await ctx.db.query("invoices").collect();
+  const targets = invoices
+    .filter(
+      (invoice) =>
+        invoice.isHistorical === true &&
+        invoice.invoiceNumber?.startsWith("HIST-ODOO-") === true &&
+        OUTSTANDING_HISTORICAL_STATUSES.has(invoice.status),
+    )
+    .sort((left, right) => {
+      const issueDateDifference =
+        (left.issueDate ?? 0) - (right.issueDate ?? 0);
+      if (issueDateDifference !== 0) return issueDateDifference;
+      const importedDateDifference =
+        (left.historicalImportedAt ?? 0) -
+        (right.historicalImportedAt ?? 0);
+      if (importedDateDifference !== 0) return importedDateDifference;
+      const createdDateDifference = left.createdAt - right.createdAt;
+      if (createdDateDifference !== 0) return createdDateDifference;
+      return left._id.localeCompare(right._id);
+    });
+
+  const now = Date.now();
+  const firstSequence = nextInvoiceSequence(invoices);
+  const usedNumbers = new Set(
+    invoices
+      .map((invoice) => invoice.invoiceNumber)
+      .filter((invoiceNumber): invoiceNumber is string => Boolean(invoiceNumber)),
+  );
+  const collisions: string[] = [];
+  const plan = targets.map((invoice, index) => {
+    const newInvoiceNumber = invoiceNumberForSequence(
+      now,
+      firstSequence + index,
+    );
+    if (usedNumbers.has(newInvoiceNumber)) {
+      collisions.push(newInvoiceNumber);
+    }
+    return {
+      invoiceId: invoice._id,
+      oldInvoiceNumber: invoice.invoiceNumber,
+      newInvoiceNumber,
+      status: invoice.status,
+      grandTotal: invoice.grandTotal,
+      amountPaid: invoice.amountPaid,
+      balanceDue: invoice.balanceDue,
+      originalReference: invoice.originalReference,
+    };
+  });
+
+  if (collisions.length > 0) {
+    throw new ConvexError({
+      code: "CONFLICT",
+      message: `Invoice number collision detected for ${collisions.join(", ")}`,
+    });
+  }
+
+  return plan;
+}
+
+export const renumberOutstanding = internalMutation({
+  args: {
+    dryRun: v.boolean(),
+    confirm: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (!args.dryRun && args.confirm !== RENUMBER_CONFIRMATION) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Exact confirmation required: ${RENUMBER_CONFIRMATION}`,
+      });
+    }
+
+    const plan = await buildOutstandingHistoricalRenumberPlan(ctx);
+    if (!args.dryRun) {
+      for (const row of plan) {
+        await ctx.db.patch(row.invoiceId, {
+          invoiceNumber: row.newInvoiceNumber,
+        });
+      }
+    }
+    return plan;
   },
 });
 
