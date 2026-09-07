@@ -34,6 +34,9 @@ const createHistoricalUnpaid = (api as unknown as {
 const renumberOutstanding = (internal as unknown as {
   historicalInvoices: { renumberOutstanding: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, unknown> };
 }).historicalInvoices.renumberOutstanding;
+const correctOutstandingDueDates = (internal as unknown as {
+  historicalInvoices: { correctOutstandingDueDates: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, unknown> };
+}).historicalInvoices.correctOutstandingDueDates;
 
 async function seed(t: ReturnType<typeof convexTest>) {
   return await t.run(async (ctx) => {
@@ -64,7 +67,7 @@ describe("historical paid invoices", () => {
       quotes: await ctx.db.query("quotes").collect(),
       leads: await ctx.db.query("leads").collect(),
     }));
-    expect(result.invoice).toMatchObject({ isHistorical: true, sourceSystem: "odoo", originalReference: "S00065", issueDate: Date.UTC(2026, 4, 14), status: "paid", grandTotal: 17624.79, grandTotalCents: 1762479, amountPaid: 17624.79, amountPaidCents: 1762479, balanceDue: 0, balanceDueCents: 0, historicalCoverageStartMonth: "2026-05", historicalCoverageMonths: 3 });
+    expect(result.invoice).toMatchObject({ isHistorical: true, sourceSystem: "odoo", originalReference: "S00065", issueDate: Date.UTC(2026, 4, 14), dueDate: Date.UTC(2026, 4, 14), status: "paid", grandTotal: 17624.79, grandTotalCents: 1762479, amountPaid: 17624.79, amountPaidCents: 1762479, balanceDue: 0, balanceDueCents: 0, historicalCoverageStartMonth: "2026-05", historicalCoverageMonths: 3 });
     expect(result.invoice?.invoiceNumber).toBe(`INV-${new Date().getUTCFullYear()}-00001`);
     expect(result.invoice?.revenueAllocations).toEqual([{ month: "2026-05", amount: 5874.93 }, { month: "2026-06", amount: 5874.93 }, { month: "2026-07", amount: 5874.93 }]);
     expect(result.payments).toHaveLength(1);
@@ -206,6 +209,8 @@ describe("historical paid invoices", () => {
       originalReference: "S00066",
       normalizedOriginalReference: "S00066",
       status: "issued",
+      issueDate: Date.UTC(2026, 1, 2),
+      dueDate: Date.UTC(2026, 1, 9),
       amountPaid: 0,
       amountPaidCents: 0,
       balanceDue: 200,
@@ -217,6 +222,103 @@ describe("historical paid invoices", () => {
     expect(result.invoice?.revenueAllocations).toEqual([{ month: "2026-02", amount: 100 }, { month: "2026-03", amount: 100 }]);
     expect(result.payments).toHaveLength(0);
     expect(result.events.map((event) => event.type)).toEqual(["draft_created", "issued"]);
+  });
+
+  it.each([15, 30] as const)(
+    "uses company Net %s terms for unpaid historical invoices",
+    async (paymentTermDays) => {
+      const t = convexTest(schema, modules);
+      const s = await seed(t);
+      await t.run(async (ctx) => {
+        await ctx.db.patch(s.companyId, { paymentTermDays });
+      });
+      const user = t.withIdentity({ tokenIdentifier: "historical-test" });
+      const invoiceId = await user.mutation(createHistoricalUnpaid, {
+        companyId: s.companyId,
+        originalReference: `TERMS-${paymentTermDays}`,
+        invoiceDate: "2026-02-02",
+        coverageStartMonth: "2026-02",
+        monthsCovered: 1,
+        monthlyAmount: 100,
+      });
+      const invoice = await user.query(api.invoices.getById, { invoiceId });
+      expect(invoice.issueDate).toBe(Date.UTC(2026, 1, 2));
+      expect(invoice.dueDate).toBe(
+        Date.UTC(2026, 1, 2) + paymentTermDays * 24 * 60 * 60 * 1000,
+      );
+    },
+  );
+
+  it("corrects only outstanding historical due dates in a dry run and execution", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const user = t.withIdentity({ tokenIdentifier: "historical-test" });
+    const issuedId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "DUE-ISSUED", invoiceDate: "2026-01-01", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100,
+    });
+    const paidId = await user.mutation(createHistorical, {
+      companyId: s.companyId, originalReference: "DUE-PAID", invoiceDate: "2026-01-02", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100, paymentDate: "2026-01-02",
+    });
+    const zeroBalanceId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "DUE-ZERO", invoiceDate: "2026-01-03", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100,
+    });
+    const overdueId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "DUE-OVERDUE", invoiceDate: "2026-01-04", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100,
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(issuedId, { dueDate: Date.UTC(2026, 0, 1) });
+      await ctx.db.patch(paidId, { dueDate: Date.UTC(2026, 0, 2) });
+      await ctx.db.patch(zeroBalanceId, { dueDate: Date.UTC(2026, 0, 3), amountPaid: 100, balanceDue: 0, amountPaidCents: 10000, balanceDueCents: 0, status: "paid" });
+      await ctx.db.patch(overdueId, { dueDate: Date.UTC(2026, 0, 4), status: "overdue" });
+    });
+    const before = await t.run(async (ctx) => ({
+      invoices: await ctx.db.query("invoices").collect(),
+    }));
+    await expect(t.mutation(correctOutstandingDueDates, { dryRun: false })).rejects.toThrow("Exact confirmation required");
+    const preview = await t.mutation(correctOutstandingDueDates, { dryRun: true });
+    expect(preview).toEqual([
+      expect.objectContaining({ invoiceId: issuedId, status: "issued", issueDate: Date.UTC(2026, 0, 1), oldDueDate: Date.UTC(2026, 0, 1), newDueDate: Date.UTC(2026, 0, 8), balanceDue: 100, companyId: s.companyId, paymentTermDays: 7 }),
+      expect.objectContaining({ invoiceId: overdueId, status: "overdue", issueDate: Date.UTC(2026, 0, 4), oldDueDate: Date.UTC(2026, 0, 4), newDueDate: Date.UTC(2026, 0, 11), balanceDue: 100, companyId: s.companyId, paymentTermDays: 7 }),
+    ]);
+    expect(await t.run(async (ctx) => ({ invoices: await ctx.db.query("invoices").collect() }))).toEqual(before);
+    await t.mutation(correctOutstandingDueDates, { dryRun: false, confirm: "CORRECT_OUTSTANDING_HISTORICAL_DUE_DATES" });
+    const after = await t.run(async (ctx) => ({ invoices: await ctx.db.query("invoices").collect() }));
+    expect(after.invoices.find((invoice) => invoice._id === paidId)).toEqual(before.invoices.find((invoice) => invoice._id === paidId));
+    expect(after.invoices.find((invoice) => invoice._id === zeroBalanceId)).toEqual(before.invoices.find((invoice) => invoice._id === zeroBalanceId));
+    expect(after.invoices.find((invoice) => invoice._id === issuedId)).toEqual({ ...before.invoices.find((invoice) => invoice._id === issuedId), dueDate: Date.UTC(2026, 0, 8) });
+    expect(after.invoices.find((invoice) => invoice._id === overdueId)).toEqual({ ...before.invoices.find((invoice) => invoice._id === overdueId), dueDate: Date.UTC(2026, 0, 11) });
+  });
+
+  it("reuses the existing overdue marker and payment flow for historical invoices", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const user = t.withIdentity({ tokenIdentifier: "historical-test" });
+    const invoiceId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId, originalReference: "OVERDUE-PAY", invoiceDate: "2026-01-01", coverageStartMonth: "2026-01", monthsCovered: 1, monthlyAmount: 100,
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(invoiceId, { dueDate: Date.UTC(2026, 0, 1) });
+    });
+    const correction = await t.mutation(correctOutstandingDueDates, {
+      dryRun: false,
+      confirm: "CORRECT_OUTSTANDING_HISTORICAL_DUE_DATES",
+    });
+    expect(correction).toEqual([
+      expect.objectContaining({
+        invoiceId,
+        oldDueDate: Date.UTC(2026, 0, 1),
+        newDueDate: Date.UTC(2026, 0, 8),
+      }),
+    ]);
+    const overdueResult = await t.mutation(internal.invoices.markOverdueInvoices, {
+      now: Date.UTC(2026, 0, 20, 12),
+    });
+    expect(overdueResult).toEqual({ updated: 1 });
+    await user.mutation(api.invoices.recordPayment, {
+      invoiceId, amount: 100, receivingAccountId: s.accountId, transactionId: "OVERDUE-HIST-1",
+    });
+    const invoice = await user.query(api.invoices.getById, { invoiceId });
+    expect(invoice).toMatchObject({ status: "paid", amountPaid: 100, balanceDue: 0 });
   });
 
   it("allows the normal payment flow to partially and fully pay an unpaid historical invoice", async () => {

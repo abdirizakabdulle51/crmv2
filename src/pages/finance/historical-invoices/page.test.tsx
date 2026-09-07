@@ -94,6 +94,34 @@ describe("HistoricalInvoicesPage", () => {
     })));
     expect(mocks.createUnpaid).not.toHaveBeenCalled();
   });
+
+  it("renders overdue historical invoices with the red overdue badge", () => {
+    mocks.invoices = [{
+      _id: "invoice-overdue" as Id<"invoices">,
+      _creationTime: 1,
+      companyId: "company-1" as Id<"companies">,
+      companyName: "AICC",
+      originalReference: "OVERDUE-1",
+      isHistorical: true,
+      sourceSystem: "odoo",
+      historicalCoverageStartMonth: "2026-01",
+      historicalCoverageMonths: 1,
+      issueDate: Date.UTC(2026, 0, 1),
+      dueDate: Date.UTC(2026, 0, 8),
+      grandTotal: 100,
+      amountPaid: 0,
+      balanceDue: 100,
+      status: "overdue",
+      createdBy: "user-1" as Id<"users">,
+      lineItems: [],
+      createdAt: 1,
+      updatedAt: 1,
+    } as unknown as Doc<"invoices">];
+
+    render(<HistoricalInvoicesPage />);
+
+    expect(screen.getByText("Overdue")).toHaveClass("bg-destructive");
+  });
 });
 
 async function userSelectsCompany() {

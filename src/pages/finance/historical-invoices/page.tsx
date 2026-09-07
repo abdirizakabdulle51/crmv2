@@ -62,6 +62,14 @@ function historicalStatusLabel(status: string) {
   return status === "issued" ? "Issued / Unpaid" : status;
 }
 
+function historicalStatusBadge(status: string) {
+  return status === "overdue" ? (
+    <Badge variant="destructive">Overdue</Badge>
+  ) : (
+    <Badge variant="secondary">{historicalStatusLabel(status)}</Badge>
+  );
+}
+
 function emptyForm() {
   return {
     companyId: "", originalReference: "", invoiceDate: "", coverageStartMonth: "",
@@ -163,7 +171,7 @@ export default function HistoricalInvoicesPage() {
         {months.length > 0 && Number(form.monthlyAmount) > 0 ? <Card><CardHeader><CardTitle>Coverage preview</CardTitle></CardHeader><CardContent className="space-y-2 text-sm">{months.map((month) => <div className="flex justify-between" key={month}><span>{new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`))}</span><span>{formatCurrency(Number(form.monthlyAmount))}</span></div>)}<div className="flex justify-between border-t pt-2 font-semibold"><span>Invoice Total</span><span>{formatCurrency(total)}</span></div></CardContent></Card> : null}
         <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Recording…" : isUnpaid ? "Record Historical Unpaid Invoice" : "Record Historical Paid Invoice"}</Button>
       </form>
-      <Card><CardHeader><CardTitle>Historical ledger</CardTitle></CardHeader><CardContent><div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30"><th className="p-3 text-left">Customer</th><th className="p-3 text-left">Original Reference</th><th className="p-3 text-left">Invoice Date</th><th className="p-3 text-left">Coverage</th><th className="p-3 text-right">Total</th><th className="p-3 text-left">Payment Date</th><th className="p-3 text-left">Status</th><th className="p-3 text-left">Source</th></tr></thead><tbody>{historicalInvoices.map((invoice) => <tr key={invoice._id} className="border-b last:border-0"><td className="p-3">{invoice.companyName}</td><td className="p-3">{invoice.originalReference}</td><td className="p-3">{dateLabel(invoice.issueDate)}</td><td className="p-3">{invoice.historicalCoverageStartMonth} ({invoice.historicalCoverageMonths} month{invoice.historicalCoverageMonths === 1 ? "" : "s"})</td><td className="p-3 text-right">{formatCurrency(invoice.grandTotal)}</td><td className="p-3">{dateLabel(invoice.paymentDate)}</td><td className="p-3"><Badge variant="secondary">{historicalStatusLabel(invoice.status)}</Badge></td><td className="p-3"><Badge>Historical · Odoo</Badge></td></tr>)}</tbody></table></div></CardContent></Card>
+      <Card><CardHeader><CardTitle>Historical ledger</CardTitle></CardHeader><CardContent><div className="overflow-x-auto rounded-lg border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30"><th className="p-3 text-left">Customer</th><th className="p-3 text-left">Original Reference</th><th className="p-3 text-left">Invoice Date</th><th className="p-3 text-left">Coverage</th><th className="p-3 text-right">Total</th><th className="p-3 text-left">Payment Date</th><th className="p-3 text-left">Status</th><th className="p-3 text-left">Source</th></tr></thead><tbody>{historicalInvoices.map((invoice) => <tr key={invoice._id} className="border-b last:border-0"><td className="p-3">{invoice.companyName}</td><td className="p-3">{invoice.originalReference}</td><td className="p-3">{dateLabel(invoice.issueDate)}</td><td className="p-3">{invoice.historicalCoverageStartMonth} ({invoice.historicalCoverageMonths} month{invoice.historicalCoverageMonths === 1 ? "" : "s"})</td><td className="p-3 text-right">{formatCurrency(invoice.grandTotal)}</td><td className="p-3">{dateLabel(invoice.paymentDate)}</td><td className="p-3">{historicalStatusBadge(invoice.status)}</td><td className="p-3"><Badge>Historical · Odoo</Badge></td></tr>)}</tbody></table></div></CardContent></Card>
     </div>
   );
 }

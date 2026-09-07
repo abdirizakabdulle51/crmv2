@@ -49,6 +49,7 @@ import {
   priceFlexibleContractUsage,
   priceMonthlyContractUsage,
 } from "./contractUsagePricing";
+import { defaultDueDateForIssue } from "./invoiceDueDates";
 import { nextInvoiceNumber } from "./invoiceNumbers";
 
 type Ctx = QueryCtx | MutationCtx;
@@ -127,7 +128,6 @@ async function invoiceLinesWithOnboardingCredit(
   };
 }
 
-const DEFAULT_PAYMENT_TERM_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MS_PER_HOUR = 60 * 60 * 1000;
 const MOGADISHU_UTC_OFFSET_HOURS = 3;
@@ -329,13 +329,6 @@ function requireCleanupReason(value: string | undefined) {
     });
   }
   return reason;
-}
-
-function defaultDueDateForIssue(
-  issueDate: number,
-  paymentTermDays = DEFAULT_PAYMENT_TERM_DAYS,
-) {
-  return issueDate + paymentTermDays * MS_PER_DAY;
 }
 
 function startOfBusinessDay(now: number) {

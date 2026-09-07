@@ -12,6 +12,10 @@ import {
   withInvoiceMoneyCents,
   withLineMoneyCents,
 } from "./money";
+import {
+  defaultDueDateForIssue,
+  paymentTermDaysOrDefault,
+} from "./invoiceDueDates";
 import { calculatePaymentApplication } from "./invoices";
 import { assertUniqueAccountTransactionId } from "./accountTransactionIdentity";
 import {
@@ -27,6 +31,8 @@ const SUPPORTED_PAYMENT_METHODS = new Set([
   PAYMENT_METHOD_MOBILE_MONEY,
 ]);
 const RENUMBER_CONFIRMATION = "RENUMBER_OUTSTANDING_HISTORICAL_INVOICES";
+const DUE_DATE_CORRECTION_CONFIRMATION =
+  "CORRECT_OUTSTANDING_HISTORICAL_DUE_DATES";
 const OUTSTANDING_HISTORICAL_STATUSES = new Set([
   "issued",
   "sent",
@@ -180,6 +186,7 @@ async function insertHistoricalInvoiceBase(
   company: Doc<"companies">,
   args: HistoricalInvoiceInput,
   prepared: ReturnType<typeof prepareHistoricalInvoice>,
+  dueDate: number,
 ) {
   const existing = await ctx.db
     .query("invoices")
@@ -216,7 +223,7 @@ async function insertHistoricalInvoiceBase(
     invoiceNumber,
     status: "issued",
     issueDate: prepared.invoiceDate,
-    dueDate: prepared.invoiceDate,
+    dueDate,
     lockedAt: now,
     companyName: company.name,
     contactName: company.contactName,
@@ -368,6 +375,78 @@ export const renumberOutstanding = internalMutation({
   },
 });
 
+async function buildOutstandingHistoricalDueDatePlan(ctx: MutationCtx) {
+  const [invoices, companies] = await Promise.all([
+    ctx.db.query("invoices").collect(),
+    ctx.db.query("companies").collect(),
+  ]);
+  const companyMap = new Map(companies.map((company) => [company._id, company]));
+  const targets = invoices
+    .filter(
+      (invoice) =>
+        invoice.isHistorical === true &&
+        OUTSTANDING_HISTORICAL_STATUSES.has(invoice.status) &&
+        invoice.balanceDue > 0 &&
+        invoice.issueDate !== undefined &&
+        invoice.dueDate === invoice.issueDate,
+    )
+    .sort((left, right) => {
+      const issueDateDifference = (left.issueDate ?? 0) - (right.issueDate ?? 0);
+      if (issueDateDifference !== 0) return issueDateDifference;
+      const createdDateDifference = left.createdAt - right.createdAt;
+      if (createdDateDifference !== 0) return createdDateDifference;
+      return left._id.localeCompare(right._id);
+    });
+
+  return targets.map((invoice) => {
+    const company = companyMap.get(invoice.companyId);
+    if (!company) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: `Company not found for historical invoice ${invoice._id}`,
+      });
+    }
+    const paymentTermDays = paymentTermDaysOrDefault(company.paymentTermDays);
+    return {
+      invoiceId: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      status: invoice.status,
+      issueDate: invoice.issueDate!,
+      oldDueDate: invoice.dueDate,
+      newDueDate: defaultDueDateForIssue(invoice.issueDate!, paymentTermDays),
+      balanceDue: invoice.balanceDue,
+      companyId: invoice.companyId,
+      paymentTermDays,
+    };
+  });
+}
+
+export const correctOutstandingDueDates = internalMutation({
+  args: {
+    dryRun: v.boolean(),
+    confirm: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (
+      !args.dryRun &&
+      args.confirm !== DUE_DATE_CORRECTION_CONFIRMATION
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Exact confirmation required: ${DUE_DATE_CORRECTION_CONFIRMATION}`,
+      });
+    }
+
+    const plan = await buildOutstandingHistoricalDueDatePlan(ctx);
+    if (!args.dryRun) {
+      for (const row of plan) {
+        await ctx.db.patch(row.invoiceId, { dueDate: row.newDueDate });
+      }
+    }
+    return plan;
+  },
+});
+
 export const create = mutation({
   args: {
     companyId: v.id("companies"),
@@ -403,6 +482,7 @@ export const create = mutation({
       company,
       args,
       prepared,
+      prepared.invoiceDate,
     );
 
     const paymentAmount = totals.grandTotal;
@@ -554,6 +634,7 @@ export const createUnpaid = mutation({
       company,
       args,
       prepared,
+      defaultDueDateForIssue(prepared.invoiceDate, company.paymentTermDays),
     );
     return invoiceId;
   },
