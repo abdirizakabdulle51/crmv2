@@ -108,7 +108,15 @@ const CloudHealthRegionPage = lazy(
 const DocumentationPage = lazy(() => import("./pages/documentation/page.tsx"));
 const TasksPage = lazy(() => import("./pages/tasks/page.tsx"));
 const TaskDetailPage = lazy(() => import("./pages/tasks/detail-page.tsx"));
-const DataHealthPage = lazy(() => import("./pages/operations/data-health-page.tsx"));
+const DataHealthPage = lazy(
+  () => import("./pages/operations/data-health-page.tsx"),
+);
+const BillingQueuePage = lazy(
+  () => import("./pages/operations/billing-queue-page.tsx"),
+);
+const ApprovalInboxPage = lazy(
+  () => import("./pages/operations/approval-inbox-page.tsx"),
+);
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 function PageLoading() {
@@ -164,6 +172,14 @@ export default function App() {
               element={lazyPage(<NewOpportunityQuotePage />)}
             />
             <Route path="/invoices" element={lazyPage(<InvoicesPage />)} />
+            <Route
+              path="/billing-queue"
+              element={lazyPage(<BillingQueuePage />)}
+            />
+            <Route
+              path="/approvals"
+              element={lazyPage(<ApprovalInboxPage />)}
+            />
             <Route
               path="/invoices/:invoiceId/print"
               element={lazyPage(<InvoicePrintPage />)}

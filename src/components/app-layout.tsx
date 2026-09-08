@@ -35,6 +35,8 @@ import {
   CalendarClock,
   HandCoins,
   ShieldCheck,
+  ListChecks,
+  Inbox,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -65,6 +67,7 @@ const NAV_ITEMS = [
   { to: "/at-risk", label: "At Risk", icon: AlertTriangle },
   { to: "/quotes", label: "Opportunity Quotes", icon: FileText },
   { to: "/invoices", label: "Invoices", icon: ReceiptText },
+  { to: "/billing-queue", label: "Billing Queue", icon: ListChecks },
   { to: "/finance/expenses", label: "Expenses", icon: WalletCards },
   {
     to: "/finance/reports",
@@ -154,7 +157,8 @@ const NAV_ITEMS = [
     cloudHealthOnly: true,
   },
   { to: "/documentation", label: "Documentation", icon: BookOpen },
-  { to: "/tasks", label: "Tasks", icon: ClipboardList },
+  { to: "/tasks", label: "My Work", icon: ClipboardList },
+  { to: "/approvals", label: "Approval Inbox", icon: Inbox },
   { to: "/team", label: "Team", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
   {
@@ -185,6 +189,7 @@ const NAV_GROUPS = [
       "/finance/contract-performance",
       "/usage",
       "/invoices",
+      "/billing-queue",
     ],
   },
   {
@@ -214,7 +219,7 @@ const NAV_GROUPS = [
   },
   {
     label: "Workspace",
-    items: ["/tasks", "/documentation"],
+    items: ["/tasks", "/approvals", "/documentation"],
   },
   {
     label: "Administration",

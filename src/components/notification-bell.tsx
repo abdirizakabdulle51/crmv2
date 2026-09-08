@@ -94,7 +94,7 @@ export function NotificationBell() {
           <div>
             <div className="text-sm font-semibold">Notifications</div>
             <div className="text-xs text-muted-foreground">
-              Task updates for you
+              Updates and assigned work
             </div>
           </div>
           {unreadCount > 0 ? (
@@ -163,6 +163,16 @@ export function NotificationBell() {
             })
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false);
+            navigate("/tasks");
+          }}
+          className="w-full border-t px-3 py-2 text-center text-xs font-medium text-primary hover:bg-primary/5"
+        >
+          Open My Work
+        </button>
       </PopoverContent>
     </Popover>
   );

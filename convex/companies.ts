@@ -130,6 +130,201 @@ export const list = query({
   },
 });
 
+export const dashboard = query({
+  args: {},
+  handler: async (ctx) => {
+    const currentUser = await getCurrentUserOrThrow(ctx);
+    const [companies, contracts, invoices, payments, usage, users, leads] =
+      await Promise.all([
+        ctx.db.query("companies").collect(),
+        ctx.db.query("customerContracts").collect(),
+        ctx.db.query("invoices").collect(),
+        ctx.db.query("invoicePayments").collect(),
+        ctx.db.query("consumption").collect(),
+        ctx.db.query("users").collect(),
+        ctx.db.query("leads").collect(),
+      ]);
+    const visibleCompanies = companies.filter((company) =>
+      canViewCompany(currentUser, company),
+    );
+    const visibleIds = new Set(visibleCompanies.map((company) => company._id));
+    const now = Date.now();
+    const renewalWindow = now + 60 * 24 * 60 * 60 * 1000;
+    const currentMonth = new Date(now).toISOString().slice(0, 7);
+    const currentDate = new Date(now);
+    const previousMonthDate = new Date(
+      Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth() - 1, 1),
+    );
+    const previousMonth = previousMonthDate.toISOString().slice(0, 7);
+    const activeContracts = contracts.filter(
+      (contract) =>
+        contract.status === "active" && visibleIds.has(contract.companyId),
+    );
+    const contractByCompany = new Map(
+      activeContracts.map((contract) => [contract.companyId, contract]),
+    );
+    const usersById = new Map(users.map((user) => [user._id, user]));
+    const invoicesByCompany = new Map<
+      Doc<"companies">["_id"],
+      Doc<"invoices">[]
+    >();
+    const invoiceCompany = new Map<
+      Doc<"invoices">["_id"],
+      Doc<"companies">["_id"]
+    >();
+    for (const invoice of invoices) {
+      if (
+        !visibleIds.has(invoice.companyId) ||
+        invoice.isTest ||
+        invoice.hiddenAt ||
+        invoice.status === "cancelled" ||
+        invoice.status === "void"
+      )
+        continue;
+      const rows = invoicesByCompany.get(invoice.companyId) ?? [];
+      rows.push(invoice);
+      invoicesByCompany.set(invoice.companyId, rows);
+      invoiceCompany.set(invoice._id, invoice.companyId);
+    }
+    const paymentsByCompany = new Map<
+      Doc<"companies">["_id"],
+      Doc<"invoicePayments">[]
+    >();
+    for (const payment of payments) {
+      const companyId = invoiceCompany.get(payment.invoiceId);
+      if (!companyId || !visibleIds.has(companyId)) continue;
+      const rows = paymentsByCompany.get(companyId) ?? [];
+      rows.push(payment);
+      paymentsByCompany.set(companyId, rows);
+    }
+    const usageByCompany = new Map<Doc<"companies">["_id"], number>();
+    const previousUsageByCompany = new Map<Doc<"companies">["_id"], number>();
+    for (const entry of usage) {
+      if (!visibleIds.has(entry.companyId)) continue;
+      if (entry.month === currentMonth) {
+        usageByCompany.set(
+          entry.companyId,
+          Math.round(
+            ((usageByCompany.get(entry.companyId) ?? 0) + entry.amount) * 100,
+          ) / 100,
+        );
+      }
+      if (entry.month === previousMonth && entry.amount > 0) {
+        previousUsageByCompany.set(
+          entry.companyId,
+          Math.round(
+            ((previousUsageByCompany.get(entry.companyId) ?? 0) +
+              entry.amount) *
+              100,
+          ) / 100,
+        );
+      }
+    }
+
+    const rows = visibleCompanies.map((company) => {
+      const contract = contractByCompany.get(company._id);
+      const lifecycleStatus = derivedLifecycle(
+        company,
+        leads,
+        Boolean(contract),
+      );
+      const commercialModel =
+        contract || company.commercialModel === "contracted"
+          ? "contracted"
+          : "payg";
+      const companyInvoices = invoicesByCompany.get(company._id) ?? [];
+      const outstanding =
+        Math.round(
+          companyInvoices.reduce(
+            (total, invoice) =>
+              total +
+              (invoice.status === "draft"
+                ? 0
+                : Math.max(0, invoice.balanceDue)),
+            0,
+          ) * 100,
+        ) / 100;
+      const overdue = companyInvoices.some(
+        (invoice) =>
+          invoice.status !== "draft" &&
+          invoice.balanceDue > 0 &&
+          (invoice.status === "overdue" ||
+            (invoice.dueDate !== undefined && invoice.dueDate < now)),
+      );
+      const missingInvoice =
+        lifecycleStatus === "customer" &&
+        commercialModel === "payg" &&
+        previousUsageByCompany.has(company._id) &&
+        !companyInvoices.some(
+          (invoice) => invoice.sourceMonth === previousMonth,
+        );
+      const expiringSoon = Boolean(
+        contract &&
+        contract.endDate >= now &&
+        contract.endDate <= renewalWindow,
+      );
+      const lastPayment = (paymentsByCompany.get(company._id) ?? []).sort(
+        (a, b) => b.paidAt - a.paidAt,
+      )[0];
+      const health: "healthy" | "attention" | "at_risk" | "prospect" | "lost" =
+        lifecycleStatus === "lost"
+          ? "lost"
+          : lifecycleStatus === "prospect"
+            ? "prospect"
+            : overdue
+              ? "at_risk"
+              : missingInvoice || expiringSoon || !company.accountManagerId
+                ? "attention"
+                : "healthy";
+      return {
+        ...company,
+        lifecycleStatus,
+        commercialModel,
+        ownerName: company.accountManagerId
+          ? (usersById.get(company.accountManagerId)?.name ?? "Unnamed")
+          : undefined,
+        contractId: contract?._id,
+        contractNumber: contract?.contractNumber,
+        contractEndDate: contract?.endDate,
+        monthlyUsage: usageByCompany.get(company._id) ?? 0,
+        previousMonthUsage: previousUsageByCompany.get(company._id) ?? 0,
+        outstanding,
+        lastPaymentAt: lastPayment?.paidAt,
+        overdue,
+        missingInvoice,
+        expiringSoon,
+        health,
+      };
+    });
+    return {
+      currentUserId: currentUser._id,
+      currentUserRole: currentUser.role,
+      currentMonth,
+      previousMonth,
+      rows,
+      summary: {
+        total: rows.length,
+        contracted: rows.filter(
+          (row) =>
+            row.lifecycleStatus === "customer" &&
+            row.commercialModel === "contracted",
+        ).length,
+        payg: rows.filter(
+          (row) =>
+            row.lifecycleStatus === "customer" &&
+            row.commercialModel === "payg",
+        ).length,
+        prospects: rows.filter((row) => row.lifecycleStatus === "prospect")
+          .length,
+        overdue: rows.filter((row) => row.overdue).length,
+        missingInvoices: rows.filter((row) => row.missingInvoice).length,
+        expiringSoon: rows.filter((row) => row.expiringSoon).length,
+        unassigned: rows.filter((row) => !row.accountManagerId).length,
+      },
+    };
+  },
+});
+
 export const getById = query({
   args: { id: v.id("companies") },
   handler: async (ctx, args) => {
