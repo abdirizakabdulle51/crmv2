@@ -35,6 +35,7 @@ import {
 import { formatCurrency } from "@/lib/format.ts";
 import CompanyDialog from "./_components/company-dialog.tsx";
 import ImportDialog from "./_components/import-dialog.tsx";
+import { matchesOwnerFilter } from "./owner-filter.ts";
 
 const PAGE_SIZE = 10;
 const healthStyle = {
@@ -109,12 +110,11 @@ export default function CompaniesPage() {
       if (countryFilter !== "all" && row.countryId !== countryFilter)
         return false;
       if (
-        ownerFilter !== "all" &&
-        (ownerFilter === "mine"
-          ? row.accountManagerId !== dashboard?.currentUserId
-          : ownerFilter === "unassigned"
-            ? Boolean(row.accountManagerId)
-            : row.accountManagerId !== ownerFilter)
+        !matchesOwnerFilter(
+          row.accountManagerId,
+          ownerFilter,
+          dashboard?.currentUserId,
+        )
       )
         return false;
       return true;

@@ -1390,6 +1390,76 @@ describe("invoices", () => {
     ).rejects.toThrow("Only draft invoices can be cancelled");
   });
 
+  it("marks and unmarks invoices as test or hidden with admin-only audit events", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await createDraftForA(t, s);
+
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.setInvoiceTestMode, {
+        invoiceId,
+        isTest: true,
+        reason: "Test data",
+      }),
+    ).rejects.toThrow("Only CEO or Head of Business can clean up invoices");
+    await expect(
+      asUser(t, s.gmA).mutation(api.invoices.setInvoiceTestMode, {
+        invoiceId,
+        isTest: true,
+        reason: "Test data",
+      }),
+    ).rejects.toThrow("Only CEO or Head of Business can clean up invoices");
+    await expect(
+      asUser(t, s.ceo).mutation(api.invoices.setInvoiceTestMode, {
+        invoiceId,
+        isTest: true,
+        reason: " ",
+      }),
+    ).rejects.toThrow("Cleanup reason is required");
+
+    await asUser(t, s.ceo).mutation(api.invoices.setInvoiceTestMode, {
+      invoiceId,
+      isTest: true,
+      reason: "Training invoice",
+    });
+    let invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.isTest).toBe(true);
+    expect(invoice.hiddenBy).toBe(s.ceo._id);
+    expect(invoice.hiddenAt).toBeGreaterThan(0);
+
+    await asUser(t, s.hob).mutation(api.invoices.setInvoiceTestMode, {
+      invoiceId,
+      isTest: false,
+      reason: "Real invoice after review",
+    });
+    invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.isTest).toBe(false);
+    expect(invoice.hiddenBy).toBeUndefined();
+    expect(invoice.hiddenAt).toBeUndefined();
+
+    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
+      invoiceId,
+    });
+    expect(events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["marked_test", "unmarked_test"]),
+    );
+    expect(events[events.length - 2]).toMatchObject({
+      type: "marked_test",
+      actorId: s.ceo._id,
+      message: "Invoice marked as test/hidden. Reason: Training invoice",
+    });
+    expect(events[events.length - 1]).toMatchObject({
+      type: "unmarked_test",
+      actorId: s.hob._id,
+      message:
+        "Invoice unmarked as test/hidden. Reason: Real invoice after review",
+    });
+  });
+
   it("only CEO or HOB can void eligible invoices with an audited reason", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

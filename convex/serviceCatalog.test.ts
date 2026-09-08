@@ -1,6 +1,6 @@
 import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { modules } from "./test.setup";
 
@@ -104,5 +104,40 @@ describe("legacy service catalogue metadata migration", () => {
     const second = await t.mutation(internal.serviceCatalog.migrateLegacyMetadata, {});
     expect(first.migratedRows).toBe(0);
     expect(second.migratedRows).toBe(0);
+  });
+
+  it("keeps service catalogue deletion admin-only", async () => {
+    const t = convexTest(schema, modules);
+    const ids = await t.run(async (ctx) => {
+      await ctx.db.insert("users", {
+        tokenIdentifier: "catalogue-ceo",
+        role: "ceo",
+      });
+      await ctx.db.insert("users", {
+        tokenIdentifier: "catalogue-am",
+        role: "account_manager",
+      });
+      const item = await ctx.db.insert("serviceCatalog", {
+        serviceCategory: "ECS",
+        itemName: "Deletion test",
+        billingUnit: "instance/month",
+        monthlyPrice: 10,
+      });
+      return item;
+    });
+
+    await expect(
+      t.withIdentity({ tokenIdentifier: "catalogue-am" }).mutation(
+        api.serviceCatalog.remove,
+        { id: ids },
+      ),
+    ).rejects.toThrow("Admin only");
+    await t.withIdentity({ tokenIdentifier: "catalogue-ceo" }).mutation(
+      api.serviceCatalog.remove,
+      { id: ids },
+    );
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(ids)).toBeNull();
+    });
   });
 });

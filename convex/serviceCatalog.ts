@@ -252,6 +252,17 @@ export const update = mutation({
   },
 });
 
+export const remove = mutation({
+  args: { id: v.id("serviceCatalog") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (user.role !== "ceo" && user.role !== "head_of_business") {
+      throw new ConvexError({ code: "FORBIDDEN", message: "Admin only" });
+    }
+    await ctx.db.delete(args.id);
+  },
+});
+
 export const bulkCreate = mutation({
   args: {
     items: v.array(

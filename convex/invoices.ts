@@ -2944,6 +2944,56 @@ export const cancelDraftInvoice = mutation({
   },
 });
 
+export const setInvoiceTestMode = mutation({
+  args: {
+    invoiceId: v.id("invoices"),
+    isTest: v.boolean(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
+    assertCanCleanupInvoices(user);
+    await assertCanAccessInvoice(ctx, user, invoice);
+    const reason = requireCleanupReason(args.reason);
+    if ((invoice.isTest ?? false) === args.isTest) {
+      return;
+    }
+
+    const now = Date.now();
+    if (args.isTest) {
+      await ctx.db.patch(args.invoiceId, {
+        isTest: true,
+        hiddenAt: now,
+        hiddenBy: user._id,
+        updatedAt: now,
+      });
+      await insertEvent(ctx, {
+        invoiceId: args.invoiceId,
+        type: "marked_test",
+        actorId: user._id,
+        message: `Invoice marked as test/hidden. Reason: ${reason}`,
+        now,
+      });
+      return;
+    }
+
+    await ctx.db.patch(args.invoiceId, {
+      isTest: false,
+      hiddenAt: undefined,
+      hiddenBy: undefined,
+      updatedAt: now,
+    });
+    await insertEvent(ctx, {
+      invoiceId: args.invoiceId,
+      type: "unmarked_test",
+      actorId: user._id,
+      message: `Invoice unmarked as test/hidden. Reason: ${reason}`,
+      now,
+    });
+  },
+});
+
 export const listPayments = query({
   args: { invoiceId: v.id("invoices") },
   handler: async (ctx, args) => {
