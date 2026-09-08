@@ -426,19 +426,3 @@ export const backfillLifecycleAndNames = mutation({
     return { scanned: companies.length, updated };
   },
 });
-
-export const remove = mutation({
-  args: { id: v.id("companies") },
-  handler: async (ctx, args) => {
-    const currentUser = await getCurrentUserOrThrow(ctx);
-    const company = await ctx.db.get(args.id);
-    if (!company) {
-      throw new ConvexError({
-        code: "NOT_FOUND",
-        message: "Company not found",
-      });
-    }
-    assertCanManageCompany(currentUser, company);
-    await ctx.db.delete(args.id);
-  },
-});

@@ -68,7 +68,7 @@ type InvoicePayment = Doc<"invoicePayments">;
 type InvoiceStatus = Invoice["status"];
 type InvoiceLineItem = Invoice["lineItems"][number];
 type User = Doc<"users">;
-type CleanupAction = "cancel" | "void" | "mark_test" | "unmark_test";
+type CleanupAction = "cancel" | "void";
 
 const STATUS_LABELS: Record<InvoiceStatus, string> = {
   draft: "Draft",
@@ -96,12 +96,7 @@ const PAYABLE_STATUSES = new Set<InvoiceStatus>([
   "overdue",
   "partially_paid",
 ]);
-const VOIDABLE_STATUSES = new Set<InvoiceStatus>([
-  "issued",
-  "sent",
-  "partially_paid",
-  "overdue",
-]);
+const VOIDABLE_STATUSES = new Set<InvoiceStatus>(["issued", "sent", "overdue"]);
 
 const PAYMENT_METHODS = ["Bank Transfer", "Mobile Money"];
 
@@ -341,7 +336,8 @@ function InvoiceDetailContent() {
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-  const [reconcilingLegacyPayment, setReconcilingLegacyPayment] = useState(false);
+  const [reconcilingLegacyPayment, setReconcilingLegacyPayment] =
+    useState(false);
   const [cleanupAction, setCleanupAction] = useState<CleanupAction | null>(
     null,
   );
@@ -387,10 +383,11 @@ function InvoiceDetailContent() {
   );
   const issueInvoice = useMutation(api.invoices.issueInvoice);
   const recordPayment = useMutation(api.invoices.recordPayment);
-  const reconcileLegacyPayment = useMutation(api.invoices.reconcileLegacyPayment);
+  const reconcileLegacyPayment = useMutation(
+    api.invoices.reconcileLegacyPayment,
+  );
   const cancelDraftInvoice = useMutation(api.invoices.cancelDraftInvoice);
   const voidInvoice = useMutation(api.invoices.voidInvoice);
-  const setInvoiceTestMode = useMutation(api.invoices.setInvoiceTestMode);
   const sendInvoiceEmail = useAction(api.invoices.sendInvoiceEmail);
 
   if (!invoiceId) {
@@ -425,9 +422,12 @@ function InvoiceDetailContent() {
   const canRecordPayment = PAYABLE_STATUSES.has(invoice.status);
   const isCleanupAdmin =
     currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
-  const recordedPaymentTotal = payments.reduce((sum, payment) => sum + payment.amount, 0);
-  const legacyPaymentGap = Math.round((invoice.amountPaid - recordedPaymentTotal) * 100) / 100;
-  const isTestHidden = Boolean(invoice.isTest || invoice.hiddenAt);
+  const recordedPaymentTotal = payments.reduce(
+    (sum, payment) => sum + payment.amount,
+    0,
+  );
+  const legacyPaymentGap =
+    Math.round((invoice.amountPaid - recordedPaymentTotal) * 100) / 100;
   const usersById = new Map(users.map((user) => [user._id, user]));
   const showRegionBreakdown = invoice.lineItems.some(hasLineItemRegion);
   const regionTotals = showRegionBreakdown
@@ -484,7 +484,10 @@ function InvoiceDetailContent() {
       toast.error(`Payment cannot exceed ${formatCurrency(legacyPaymentGap)}`);
       return;
     }
-    if (reconcilingLegacyPayment && (!receivingAccountId || !transactionId.trim())) {
+    if (
+      reconcilingLegacyPayment &&
+      (!receivingAccountId || !transactionId.trim())
+    ) {
       toast.error("Select a receiving account and enter the transaction ID");
       return;
     }
@@ -500,7 +503,11 @@ function InvoiceDetailContent() {
       };
       if (reconcilingLegacyPayment) await reconcileLegacyPayment(common);
       else await recordPayment({ ...common, method: paymentMethod });
-      toast.success(reconcilingLegacyPayment ? "Historical payment reconciled" : "Payment recorded");
+      toast.success(
+        reconcilingLegacyPayment
+          ? "Historical payment reconciled"
+          : "Payment recorded",
+      );
       setPaymentDialogOpen(false);
       setReconcilingLegacyPayment(false);
       resetPaymentForm();
@@ -520,22 +527,10 @@ function InvoiceDetailContent() {
   };
 
   const cleanupDialogTitle =
-    cleanupAction === "cancel"
-      ? "Cancel draft invoice?"
-      : cleanupAction === "void"
-        ? "Void invoice?"
-        : cleanupAction === "mark_test"
-          ? "Mark invoice as test/hidden?"
-          : "Unmark invoice as test/hidden?";
+    cleanupAction === "cancel" ? "Cancel draft invoice?" : "Void invoice?";
 
   const cleanupConfirmLabel =
-    cleanupAction === "cancel"
-      ? "Cancel Draft"
-      : cleanupAction === "void"
-        ? "Void Invoice"
-        : cleanupAction === "mark_test"
-          ? "Mark as Test"
-          : "Unmark Test";
+    cleanupAction === "cancel" ? "Cancel Draft" : "Void Invoice";
 
   const handleCleanup = async () => {
     if (!cleanupAction) return;
@@ -553,17 +548,6 @@ function InvoiceDetailContent() {
       } else if (cleanupAction === "void") {
         await voidInvoice({ invoiceId: invoice._id, reason });
         toast.success("Invoice voided");
-      } else {
-        await setInvoiceTestMode({
-          invoiceId: invoice._id,
-          isTest: cleanupAction === "mark_test",
-          reason,
-        });
-        toast.success(
-          cleanupAction === "mark_test"
-            ? "Invoice marked as test/hidden"
-            : "Invoice unmarked as test/hidden",
-        );
       }
       setCleanupAction(null);
       setCleanupReason("");
@@ -592,7 +576,6 @@ function InvoiceDetailContent() {
             <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
             {statusBadge(invoice.status)}
             {invoice.isHistorical ? <Badge>Historical · Odoo</Badge> : null}
-            {isTestHidden ? <Badge variant="outline">Test/Hidden</Badge> : null}
           </div>
           <p className="mt-1 text-muted-foreground">
             Read-only invoice snapshot and history.
@@ -747,7 +730,10 @@ function InvoiceDetailContent() {
               Cancel Draft
             </Button>
           ) : null}
-          {isCleanupAdmin && VOIDABLE_STATUSES.has(invoice.status) ? (
+          {isCleanupAdmin &&
+          VOIDABLE_STATUSES.has(invoice.status) &&
+          invoice.amountPaid === 0 &&
+          payments.length === 0 ? (
             <Button
               variant="outline"
               className="border-destructive/40 text-destructive hover:bg-destructive/10"
@@ -756,18 +742,6 @@ function InvoiceDetailContent() {
             >
               <ShieldAlert className="mr-2 h-4 w-4" />
               Void Invoice
-            </Button>
-          ) : null}
-          {isCleanupAdmin ? (
-            <Button
-              variant="outline"
-              onClick={() =>
-                setCleanupAction(isTestHidden ? "unmark_test" : "mark_test")
-              }
-              disabled={isCleaningUp}
-            >
-              <ShieldAlert className="mr-2 h-4 w-4" />
-              {isTestHidden ? "Unmark Test" : "Mark as Test"}
             </Button>
           ) : null}
         </div>
@@ -819,7 +793,10 @@ function InvoiceDetailContent() {
             <Detail label="Source Month" value={invoice.sourceMonth} />
             {invoice.isHistorical ? (
               <>
-                <Detail label="Original Reference" value={invoice.originalReference} />
+                <Detail
+                  label="Original Reference"
+                  value={invoice.originalReference}
+                />
                 <Detail
                   label="Coverage"
                   value={`${invoice.historicalCoverageStartMonth ?? "-"} · ${invoice.historicalCoverageMonths ?? 0} month(s)`}
@@ -1050,7 +1027,9 @@ function InvoiceDetailContent() {
       </Card>
 
       <RecordPaymentDialog
-        balanceDue={reconcilingLegacyPayment ? legacyPaymentGap : invoice.balanceDue}
+        balanceDue={
+          reconcilingLegacyPayment ? legacyPaymentGap : invoice.balanceDue
+        }
         reconciliation={reconcilingLegacyPayment}
         amount={paymentAmount}
         date={paymentDate}
@@ -1191,11 +1170,17 @@ function RecordPaymentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{reconciliation ? "Reconcile Historical Payment" : "Record Payment"}</DialogTitle>
+          <DialogTitle>
+            {reconciliation ? "Reconcile Historical Payment" : "Record Payment"}
+          </DialogTitle>
         </DialogHeader>
         <form className="space-y-4" onSubmit={onSubmit}>
           <div className="rounded-lg border bg-muted/30 p-3 text-sm">
-            <div className="text-muted-foreground">{reconciliation ? "Unrecorded paid amount" : "Current balance due"}</div>
+            <div className="text-muted-foreground">
+              {reconciliation
+                ? "Unrecorded paid amount"
+                : "Current balance due"}
+            </div>
             <div className="mt-1 text-xl font-bold">
               {formatCurrency(balanceDue)}
             </div>
@@ -1214,9 +1199,14 @@ function RecordPaymentDialog({
             />
             {isOverBalance ? (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                <div className="font-medium">This payment is above the invoice balance.</div>
+                <div className="font-medium">
+                  This payment is above the invoice balance.
+                </div>
                 <div className="mt-1">
-                  {formatCurrency(appliedAmount)} will be applied to the invoice. {formatCurrency(extraServiceRevenueAmount)} will be recorded as Extra Service Revenue and will not become customer credit.
+                  {formatCurrency(appliedAmount)} will be applied to the
+                  invoice. {formatCurrency(extraServiceRevenueAmount)} will be
+                  recorded as Extra Service Revenue and will not become customer
+                  credit.
                 </div>
               </div>
             ) : null}
@@ -1307,9 +1297,7 @@ function RecordPaymentDialog({
             <Button
               type="submit"
               className="bg-cyan-600 text-white hover:bg-cyan-700"
-              disabled={
-                pending
-              }
+              disabled={pending}
             >
               {pending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

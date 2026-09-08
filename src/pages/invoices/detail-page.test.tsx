@@ -17,7 +17,6 @@ vi.mock("@/convex/_generated/api.js", () => ({
       issueInvoice: "invoices.issueInvoice",
       cancelDraftInvoice: "invoices.cancelDraftInvoice",
       voidInvoice: "invoices.voidInvoice",
-      setInvoiceTestMode: "invoices.setInvoiceTestMode",
       recordPayment: "invoices.recordPayment",
       sendInvoiceEmail: "invoices.sendInvoiceEmail",
       listEvents: "invoices.listEvents",
@@ -47,7 +46,6 @@ const mocks = vi.hoisted(() => ({
   issueInvoice: vi.fn(),
   cancelDraftInvoice: vi.fn(),
   voidInvoice: vi.fn(),
-  setInvoiceTestMode: vi.fn(),
   recordPayment: vi.fn(),
   sendInvoiceEmail: vi.fn(),
   toastError: vi.fn(),
@@ -64,8 +62,6 @@ vi.mock("convex/react", () => ({
     if (mutation === "invoices.cancelDraftInvoice")
       return mocks.cancelDraftInvoice;
     if (mutation === "invoices.voidInvoice") return mocks.voidInvoice;
-    if (mutation === "invoices.setInvoiceTestMode")
-      return mocks.setInvoiceTestMode;
     if (mutation === "invoices.recordPayment") return mocks.recordPayment;
     return vi.fn();
   },
@@ -247,7 +243,6 @@ describe("InvoiceDetailPage", () => {
     mocks.issueInvoice.mockResolvedValue(undefined);
     mocks.cancelDraftInvoice.mockResolvedValue(undefined);
     mocks.voidInvoice.mockResolvedValue(undefined);
-    mocks.setInvoiceTestMode.mockResolvedValue(undefined);
     mocks.recordPayment.mockResolvedValue(undefined);
     mocks.receivingAccounts = [
       {
@@ -595,12 +590,18 @@ describe("InvoiceDetailPage", () => {
   );
 
   it("keeps Record Payment available for an unpaid historical invoice", () => {
-    mocks.invoice = invoice({ isHistorical: true, sourceSystem: "odoo", status: "issued" });
+    mocks.invoice = invoice({
+      isHistorical: true,
+      sourceSystem: "odoo",
+      status: "issued",
+    });
 
     renderDetailPage();
 
     expect(screen.getByText("Historical · Odoo")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Record Payment" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Record Payment" }),
+    ).toBeInTheDocument();
   });
 
   it("opens the payment dialog with balance due context", async () => {
@@ -997,11 +998,15 @@ describe("InvoiceDetailPage", () => {
       screen.queryByRole("button", { name: "Void Invoice" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Mark as Test" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /Mark as Test|Unmark Test/ }),
+    ).not.toBeInTheDocument();
 
     cleanup();
-    mocks.invoice = invoice({ status: "issued" });
+    mocks.invoice = invoice({
+      status: "issued",
+      amountPaid: 0,
+      balanceDue: 1200,
+    });
     renderDetailPage();
 
     expect(
@@ -1074,6 +1079,7 @@ describe("InvoiceDetailPage", () => {
 
   it("voids an eligible invoice through the admin cleanup dialog", async () => {
     const user = userEvent.setup();
+    mocks.invoice = invoice({ amountPaid: 0, balanceDue: 1200 });
     renderDetailPage();
 
     await user.click(screen.getByRole("button", { name: "Void Invoice" }));
@@ -1091,46 +1097,6 @@ describe("InvoiceDetailPage", () => {
       reason: "Customer requested correction",
     });
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Invoice voided");
-  });
-
-  it("marks and unmarks an invoice as test/hidden from the detail page", async () => {
-    const user = userEvent.setup();
-    renderDetailPage();
-
-    await user.click(screen.getByRole("button", { name: "Mark as Test" }));
-    let dialog = screen.getByRole("dialog", {
-      name: "Mark invoice as test/hidden?",
-    });
-    await user.type(within(dialog).getByLabelText("Reason"), "Training data");
-    await user.click(
-      within(dialog).getByRole("button", { name: "Mark as Test" }),
-    );
-
-    expect(mocks.setInvoiceTestMode).toHaveBeenCalledWith({
-      invoiceId: "invoice-1",
-      isTest: true,
-      reason: "Training data",
-    });
-
-    cleanup();
-    mocks.invoice = invoice({ isTest: true, hiddenAt: Date.UTC(2026, 7, 5) });
-    renderDetailPage();
-
-    expect(screen.getAllByText("Test/Hidden").length).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Unmark Test" }));
-    dialog = screen.getByRole("dialog", {
-      name: "Unmark invoice as test/hidden?",
-    });
-    await user.type(within(dialog).getByLabelText("Reason"), "Real invoice");
-    await user.click(
-      within(dialog).getByRole("button", { name: "Unmark Test" }),
-    );
-
-    expect(mocks.setInvoiceTestMode).toHaveBeenLastCalledWith({
-      invoiceId: "invoice-1",
-      isTest: false,
-      reason: "Real invoice",
-    });
   });
 
   it("renders cleanup event labels and reasons", () => {

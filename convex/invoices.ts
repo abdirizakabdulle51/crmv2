@@ -154,12 +154,7 @@ const OVERDUE_CANDIDATE_STATUSES = new Set<InvoiceStatus>([
   "sent",
   "partially_paid",
 ]);
-const VOIDABLE_STATUSES = new Set<InvoiceStatus>([
-  "issued",
-  "sent",
-  "partially_paid",
-  "overdue",
-]);
+const VOIDABLE_STATUSES = new Set<InvoiceStatus>(["issued", "sent", "overdue"]);
 
 const invoiceStatusValidator = v.union(
   v.literal("draft"),
@@ -2871,11 +2866,21 @@ export const voidInvoice = mutation({
     assertCanCleanupInvoices(user);
     await assertCanAccessInvoice(ctx, user, invoice);
     const reason = requireCleanupReason(args.reason);
-    if (!VOIDABLE_STATUSES.has(invoice.status)) {
+    const recordedPayments = await ctx.db
+      .query("invoicePayments")
+      .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+      .take(1);
+    if (toCents(invoice.amountPaid) > 0 || recordedPayments.length > 0) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message:
-          "Only issued, sent, partially paid, or overdue invoices can be voided",
+          "Invoices with payments cannot be voided. Reverse or refund the payment first.",
+      });
+    }
+    if (!VOIDABLE_STATUSES.has(invoice.status)) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only issued, sent, or overdue invoices can be voided",
       });
     }
 
@@ -2936,56 +2941,6 @@ export const cancelDraftInvoice = mutation({
         lockedAt: undefined,
       });
     }
-  },
-});
-
-export const setInvoiceTestMode = mutation({
-  args: {
-    invoiceId: v.id("invoices"),
-    isTest: v.boolean(),
-    reason: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUserOrThrow(ctx);
-    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
-    assertCanCleanupInvoices(user);
-    await assertCanAccessInvoice(ctx, user, invoice);
-    const reason = requireCleanupReason(args.reason);
-    if ((invoice.isTest ?? false) === args.isTest) {
-      return;
-    }
-
-    const now = Date.now();
-    if (args.isTest) {
-      await ctx.db.patch(args.invoiceId, {
-        isTest: true,
-        hiddenAt: now,
-        hiddenBy: user._id,
-        updatedAt: now,
-      });
-      await insertEvent(ctx, {
-        invoiceId: args.invoiceId,
-        type: "marked_test",
-        actorId: user._id,
-        message: `Invoice marked as test/hidden. Reason: ${reason}`,
-        now,
-      });
-      return;
-    }
-
-    await ctx.db.patch(args.invoiceId, {
-      isTest: false,
-      hiddenAt: undefined,
-      hiddenBy: undefined,
-      updatedAt: now,
-    });
-    await insertEvent(ctx, {
-      invoiceId: args.invoiceId,
-      type: "unmarked_test",
-      actorId: user._id,
-      message: `Invoice unmarked as test/hidden. Reason: ${reason}`,
-      now,
-    });
   },
 });
 

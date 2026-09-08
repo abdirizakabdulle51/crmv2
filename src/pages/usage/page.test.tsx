@@ -29,8 +29,6 @@ vi.mock("@/convex/_generated/api.js", () => ({
     companies: { list: "companies.list" },
     consumption: {
       list: "consumption.list",
-      remove: "consumption.remove",
-      bulkRemove: "consumption.bulkRemove",
       bulkCreateFromManageOne: "consumption.bulkCreateFromManageOne",
     },
     manageOneTenants: {
@@ -42,8 +40,6 @@ vi.mock("@/convex/_generated/api.js", () => ({
 const mocks = vi.hoisted(() => ({
   companies: [] as Doc<"companies">[],
   consumption: [] as Doc<"consumption">[],
-  removeMutation: vi.fn(),
-  bulkRemoveMutation: vi.fn(async () => ({ deleted: 0 })),
   bulkPreview: undefined as
     | {
         rows: Array<{
@@ -64,15 +60,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useMutation: (mutation: string) => {
-    if (mutation === "consumption.remove") {
-      return mocks.removeMutation;
-    }
-    if (mutation === "consumption.bulkRemove") {
-      return mocks.bulkRemoveMutation;
-    }
-    return vi.fn();
-  },
+  useMutation: () => vi.fn(),
   useQuery: (query: string) => {
     if (query === "companies.list") {
       return mocks.companies;
@@ -131,10 +119,6 @@ function LocationProbe() {
 }
 
 function renderUsagePage() {
-  mocks.removeMutation.mockReset();
-  mocks.bulkRemoveMutation.mockReset();
-  mocks.bulkRemoveMutation.mockResolvedValue({ deleted: 0 });
-
   return render(
     <MemoryRouter initialEntries={["/usage"]}>
       <Routes>
@@ -232,34 +216,20 @@ describe("UsagePage company filter indicators", () => {
   });
 });
 
-describe("UsagePage bulk delete", () => {
-  it("selects visible usage entries and deletes them in one confirmed action", async () => {
-    const user = userEvent.setup();
+describe("UsagePage protections", () => {
+  it("does not offer selection or deletion actions", () => {
     const aicc = company("company-1", "AICC");
     mocks.companies = [aicc];
     mocks.consumption = [
       usage("usage-1", aicc._id, "2026-08", "ECS", 100),
       usage("usage-2", aicc._id, "2026-08", "EVS", 200),
     ];
-    mocks.bulkRemoveMutation.mockResolvedValue({ deleted: 2 });
-
     renderUsagePage();
 
-    await user.click(
-      screen.getByRole("checkbox", {
-        name: "Select all visible usage entries",
-      }),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Delete Selected (2)" }),
-    );
-    await user.click(screen.getByRole("button", { name: "Confirm Delete" }));
-
-    await waitFor(() => {
-      expect(mocks.bulkRemoveMutation).toHaveBeenCalledWith({
-        ids: ["usage-1", "usage-2"],
-      });
-    });
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /delete/i }),
+    ).not.toBeInTheDocument();
   });
 });
 

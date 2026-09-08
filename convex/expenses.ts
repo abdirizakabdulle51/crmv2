@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { assertSupportedCurrency, roundMoney } from "./money";
@@ -966,50 +966,6 @@ export const markExpensePaid = mutation({
   },
 });
 
-export const reconcilePaidExpenseDate = mutation({
-  args: {
-    expenseId: v.id("expenseRequests"),
-    paidAt: v.number(),
-    reason: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const user = await getCurrentUserOrThrow(ctx);
-    if (!isCeoOrHob(user)) {
-      throw new ConvexError({
-        code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can reconcile payment dates",
-      });
-    }
-    const expense = await getExpenseOrThrow(ctx, args.expenseId);
-    if (expense.status !== "paid") {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Only paid expenses can have their payment date reconciled",
-      });
-    }
-    const reason = normalizeRequiredText(args.reason, "Correction reason");
-    const now = Date.now();
-    if (args.paidAt > now) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "Payment date cannot be in the future",
-      });
-    }
-    await ctx.db.patch(args.expenseId, {
-      paidAt: args.paidAt,
-      paidBy: user._id,
-      updatedAt: now,
-    });
-    await insertExpenseEvent(ctx, {
-      expenseId: args.expenseId,
-      type: "updated",
-      message: `Payment date corrected from ${expense.paidAt ? new Date(expense.paidAt).toISOString().slice(0, 10) : "missing"} to ${new Date(args.paidAt).toISOString().slice(0, 10)}. Reason: ${reason}.`,
-      actorId: user._id,
-      now,
-    });
-  },
-});
-
 export const cancelExpenseRequest = mutation({
   args: {
     expenseId: v.id("expenseRequests"),
@@ -1068,6 +1024,27 @@ export const archiveExpenseRequest = mutation({
         message: "This expense has already been deleted",
       });
     }
+    if (
+      expense.status !== "draft" &&
+      expense.status !== "rejected" &&
+      expense.status !== "cancelled"
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Only draft, rejected, or cancelled unpaid expenses can be deleted",
+      });
+    }
+    if (
+      expense.paidAt ||
+      expense.fundingAccountId ||
+      expense.paymentTransactionId
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Expenses with payment information cannot be deleted",
+      });
+    }
 
     const reason = normalizeRequiredText(args.reason, "Delete reason");
     const now = Date.now();
@@ -1083,209 +1060,6 @@ export const archiveExpenseRequest = mutation({
       now,
     });
   },
-});
-
-const TWO_INCORRECT_EXPENSES_CONFIRMATION = "DELETE_TWO_INCORRECT_EXPENSES";
-
-export type ExpenseCleanupTarget = {
-  expenseId: Id<"expenseRequests">;
-  paymentTransactionId: string;
-  amount: number;
-  titleFragment: string;
-};
-
-export type ExpenseCleanupCounts = {
-  expenseRequests: number;
-  expenseEvents: number;
-  accountTransactions: number;
-  invoicePayments: number;
-};
-
-const TWO_INCORRECT_EXPENSE_TARGETS: readonly ExpenseCleanupTarget[] = [
-  {
-    expenseId: "px7a6vm0bzt4gs123y2j6dzrgh8dmpw9" as Id<"expenseRequests">,
-    paymentTransactionId: "1171255",
-    amount: 1500,
-    titleFragment: "Salary jan2026",
-  },
-  {
-    expenseId: "px71nn2vjyspv54nykhht9awdd8dme1w" as Id<"expenseRequests">,
-    paymentTransactionId: "136056",
-    amount: 36,
-    titleFragment: "DigiCert re returned",
-  },
-];
-
-type ExpenseCleanupArgs = {
-  dryRun: boolean;
-  confirm?: string;
-};
-
-export async function performTwoIncorrectExpenseCleanup(
-  ctx: MutationCtx,
-  args: ExpenseCleanupArgs,
-  targets: readonly ExpenseCleanupTarget[],
-): Promise<ExpenseCleanupCounts> {
-  if (!args.dryRun && args.confirm !== TWO_INCORRECT_EXPENSES_CONFIRMATION) {
-    throw new Error(
-      `Exact confirmation required: ${TWO_INCORRECT_EXPENSES_CONFIRMATION}`,
-    );
-  }
-  if (
-    targets.length !== 2 ||
-    new Set(targets.map((target) => target.expenseId)).size !== 2
-  ) {
-    throw new Error(
-      "Refusing cleanup: exactly two distinct expense targets are required",
-    );
-  }
-
-  const invoicePayments = await ctx.db.query("invoicePayments").collect();
-  const expenses: Doc<"expenseRequests">[] = [];
-  const expenseEvents: Doc<"expenseEvents">[] = [];
-  const accountTransactions: Doc<"accountTransactions">[] = [];
-
-  for (const target of targets) {
-    const expense = await ctx.db.get(target.expenseId);
-    if (
-      !expense ||
-      expense._id !== target.expenseId ||
-      expense.paymentTransactionId !== target.paymentTransactionId ||
-      expense.amount !== target.amount ||
-      !expense.title.includes(target.titleFragment)
-    ) {
-      throw new Error(
-        `Refusing cleanup: target expense validation failed for ${target.expenseId}`,
-      );
-    }
-
-    expenses.push(expense);
-    expenseEvents.push(
-      ...(await ctx.db
-        .query("expenseEvents")
-        .withIndex("by_expense", (q) => q.eq("expenseId", target.expenseId))
-        .collect()),
-    );
-    accountTransactions.push(
-      ...(await ctx.db
-        .query("accountTransactions")
-        .withIndex("by_expense", (q) => q.eq("expenseId", target.expenseId))
-        .collect()),
-    );
-  }
-
-  const linkedInvoicePayments = invoicePayments.filter((payment) =>
-    targets.some(
-      (target) => payment.transactionId === target.paymentTransactionId,
-    ),
-  );
-  const counts: ExpenseCleanupCounts = {
-    expenseRequests: expenses.length,
-    expenseEvents: expenseEvents.length,
-    accountTransactions: accountTransactions.length,
-    invoicePayments: linkedInvoicePayments.length,
-  };
-
-  if (args.dryRun) return counts;
-  if (counts.accountTransactions !== 0 || counts.invoicePayments !== 0) {
-    throw new Error(
-      `Refusing cleanup: linked records found (accountTransactions=${counts.accountTransactions}, invoicePayments=${counts.invoicePayments})`,
-    );
-  }
-
-  for (const event of expenseEvents) await ctx.db.delete(event._id);
-  for (const expense of expenses) await ctx.db.delete(expense._id);
-  return counts;
-}
-
-export const permanentlyDeleteTwoIncorrectExpenses = internalMutation({
-  args: {
-    dryRun: v.boolean(),
-    confirm: v.optional(v.string()),
-  },
-  handler: async (ctx, args) =>
-    performTwoIncorrectExpenseCleanup(
-      ctx,
-      args,
-      TWO_INCORRECT_EXPENSE_TARGETS,
-    ),
-});
-
-const INCORRECT_EXPENSE_CONFIRMATION = "DELETE_INCORRECT_EXPENSE";
-
-export type IncorrectExpenseCleanupArgs = {
-  expenseId: Id<"expenseRequests">;
-  expectedTransactionId: string;
-  expectedAmount: number;
-  dryRun: boolean;
-  confirm?: string;
-};
-
-export async function performIncorrectExpenseCleanup(
-  ctx: MutationCtx,
-  args: IncorrectExpenseCleanupArgs,
-): Promise<ExpenseCleanupCounts> {
-  const expense = await ctx.db.get(args.expenseId);
-  if (
-    !expense ||
-    expense._id !== args.expenseId ||
-    expense.paymentTransactionId !== args.expectedTransactionId ||
-    expense.amount !== args.expectedAmount ||
-    expense.status !== "paid"
-  ) {
-    throw new Error(
-      `Refusing cleanup: target expense validation failed for ${args.expenseId}`,
-    );
-  }
-  if (!args.dryRun && args.confirm !== INCORRECT_EXPENSE_CONFIRMATION) {
-    throw new Error(
-      `Exact confirmation required: ${INCORRECT_EXPENSE_CONFIRMATION}`,
-    );
-  }
-
-  const [expenseEvents, accountTransactions, invoicePayments] =
-    await Promise.all([
-      ctx.db
-        .query("expenseEvents")
-        .withIndex("by_expense", (q) => q.eq("expenseId", args.expenseId))
-        .collect(),
-      ctx.db
-        .query("accountTransactions")
-        .withIndex("by_expense", (q) => q.eq("expenseId", args.expenseId))
-        .collect(),
-      ctx.db.query("invoicePayments").collect(),
-    ]);
-  const linkedInvoicePayments = invoicePayments.filter(
-    (payment) => payment.transactionId === args.expectedTransactionId,
-  );
-  const counts: ExpenseCleanupCounts = {
-    expenseRequests: 1,
-    expenseEvents: expenseEvents.length,
-    accountTransactions: accountTransactions.length,
-    invoicePayments: linkedInvoicePayments.length,
-  };
-
-  if (args.dryRun) return counts;
-  if (counts.accountTransactions !== 0 || counts.invoicePayments !== 0) {
-    throw new Error(
-      `Refusing cleanup: linked records found (accountTransactions=${counts.accountTransactions}, invoicePayments=${counts.invoicePayments})`,
-    );
-  }
-
-  for (const event of expenseEvents) await ctx.db.delete(event._id);
-  await ctx.db.delete(expense._id);
-  return counts;
-}
-
-export const permanentlyDeleteIncorrectExpense = internalMutation({
-  args: {
-    expenseId: v.id("expenseRequests"),
-    expectedTransactionId: v.string(),
-    expectedAmount: v.number(),
-    dryRun: v.boolean(),
-    confirm: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => performIncorrectExpenseCleanup(ctx, args),
 });
 
 export const getExpenseRequest = query({

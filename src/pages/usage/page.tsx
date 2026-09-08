@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api.js";
-import type { Id } from "@/convex/_generated/dataModel.d.ts";
 import {
   Card,
   CardContent,
@@ -11,7 +10,6 @@ import {
 } from "@/components/ui/card.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
-import { Checkbox } from "@/components/ui/checkbox.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { CompanyCombobox } from "@/components/company-combobox.tsx";
@@ -30,13 +28,10 @@ import {
   EmptyDescription,
   EmptyContent,
 } from "@/components/ui/empty.tsx";
-import { Plus, Upload, BarChart3, Trash2, Sparkles } from "lucide-react";
+import { Plus, Upload, BarChart3, Sparkles } from "lucide-react";
 import UsageEntryDialog from "./_components/usage-entry-dialog.tsx";
 import UsageImportDialog from "./_components/usage-import-dialog.tsx";
-import ConfirmDeleteDialog from "@/components/confirm-delete-dialog.tsx";
-import { useCrm } from "@/lib/crm-context.tsx";
 import { formatCurrency } from "@/lib/format.ts";
-import { toast } from "sonner";
 import { getCurrentMonth } from "./_lib/constants.ts";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
@@ -46,9 +41,6 @@ export default function UsagePage() {
   const navigate = useNavigate();
   const companies = useQuery(api.companies.list, {});
   const consumption = useQuery(api.consumption.list, {});
-  const removeEntry = useMutation(api.consumption.remove);
-  const bulkRemoveEntries = useMutation(api.consumption.bulkRemove);
-  const { isAdmin } = useCrm();
 
   const [entryOpen, setEntryOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -63,21 +55,12 @@ export default function UsagePage() {
   );
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
-  const [deleteId, setDeleteId] = useState<Id<"consumption"> | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<Id<"consumption">>>(
-    () => new Set(),
-  );
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-
-  const clearSelection = () => setSelectedIds(new Set());
 
   const handleBulkMonthChange = (value: string) => {
     setBulkMonth(value);
     if (value) {
       setMonthFilter(value);
       setCurrentPage(1);
-      clearSelection();
     }
   };
 
@@ -115,14 +98,6 @@ export default function UsagePage() {
     sortedFiltered.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
   const pageEnd = Math.min(safePage * pageSize, sortedFiltered.length);
   const paginatedEntries = sortedFiltered.slice(pageStart - 1, pageEnd);
-  const visibleIds = paginatedEntries.map((entry) => entry._id);
-  const selectedVisibleCount = visibleIds.filter((id) =>
-    selectedIds.has(id),
-  ).length;
-  const allVisibleSelected =
-    visibleIds.length > 0 && selectedVisibleCount === visibleIds.length;
-  const someVisibleSelected =
-    selectedVisibleCount > 0 && selectedVisibleCount < visibleIds.length;
 
   // Group by company for summary
   const companyMap = new Map(companies.map((c) => [c._id, c]));
@@ -214,7 +189,6 @@ export default function UsagePage() {
           onValueChange={(value) => {
             setCompanyFilter(value);
             setCurrentPage(1);
-            clearSelection();
           }}
           getCompanyMeta={(company) => {
             const count = usageCountByCompany.get(company._id) ?? 0;
@@ -226,7 +200,6 @@ export default function UsagePage() {
           onValueChange={(value) => {
             setMonthFilter(value);
             setCurrentPage(1);
-            clearSelection();
           }}
         >
           <SelectTrigger className="w-[160px]">
@@ -246,7 +219,6 @@ export default function UsagePage() {
           onValueChange={(value) => {
             setPageSize(Number(value));
             setCurrentPage(1);
-            clearSelection();
           }}
         >
           <SelectTrigger
@@ -281,12 +253,6 @@ export default function UsagePage() {
           <Sparkles className="h-4 w-4 mr-2" />
           Auto-fill from ManageOne
         </Button>
-        {isAdmin && selectedIds.size > 0 && (
-          <Button variant="destructive" onClick={() => setBulkDeleteOpen(true)}>
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete Selected ({selectedIds.size})
-          </Button>
-        )}
       </div>
 
       {/* Data table */}
@@ -324,39 +290,12 @@ export default function UsagePage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/30">
-                    {isAdmin && (
-                      <th className="p-3 w-10">
-                        <Checkbox
-                          aria-label="Select all visible usage entries"
-                          checked={
-                            allVisibleSelected ||
-                            (someVisibleSelected ? "indeterminate" : false)
-                          }
-                          onCheckedChange={(checked) => {
-                            setSelectedIds((current) => {
-                              const next = new Set(current);
-                              if (checked) {
-                                for (const id of visibleIds) {
-                                  next.add(id);
-                                }
-                              } else {
-                                for (const id of visibleIds) {
-                                  next.delete(id);
-                                }
-                              }
-                              return next;
-                            });
-                          }}
-                        />
-                      </th>
-                    )}
                     <th className="text-left p-3 font-medium">Company</th>
                     <th className="text-left p-3 font-medium">Month</th>
                     <th className="text-left p-3 font-medium">Service</th>
                     <th className="text-right p-3 font-medium">Qty</th>
                     <th className="text-right p-3 font-medium">Amount</th>
                     <th className="text-left p-3 font-medium">Source</th>
-                    {isAdmin && <th className="p-3 w-10"></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -364,25 +303,6 @@ export default function UsagePage() {
                     const company = companyMap.get(entry.companyId);
                     return (
                       <tr key={entry._id} className="border-b last:border-0">
-                        {isAdmin && (
-                          <td className="p-3">
-                            <Checkbox
-                              aria-label={`Select usage entry for ${company?.name || "Unknown"} ${entry.month} ${entry.serviceType}`}
-                              checked={selectedIds.has(entry._id)}
-                              onCheckedChange={(checked) => {
-                                setSelectedIds((current) => {
-                                  const next = new Set(current);
-                                  if (checked) {
-                                    next.add(entry._id);
-                                  } else {
-                                    next.delete(entry._id);
-                                  }
-                                  return next;
-                                });
-                              }}
-                            />
-                          </td>
-                        )}
                         <td className="p-3 font-medium">
                           {company?.name || "Unknown"}
                         </td>
@@ -422,18 +342,6 @@ export default function UsagePage() {
                             </span>
                           )}
                         </td>
-                        {isAdmin && (
-                          <td className="p-3">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="cursor-pointer"
-                              onClick={() => setDeleteId(entry._id)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          </td>
-                        )}
                       </tr>
                     );
                   })}
@@ -450,7 +358,6 @@ export default function UsagePage() {
                   size="sm"
                   disabled={safePage === 1}
                   onClick={() => {
-                    clearSelection();
                     setCurrentPage((page) => Math.max(1, page - 1));
                   }}
                 >
@@ -464,7 +371,6 @@ export default function UsagePage() {
                   size="sm"
                   disabled={safePage === pageCount}
                   onClick={() => {
-                    clearSelection();
                     setCurrentPage((page) => Math.min(pageCount, page + 1));
                   }}
                 >
@@ -482,53 +388,6 @@ export default function UsagePage() {
         companies={companies}
       />
       <UsageImportDialog open={importOpen} onOpenChange={setImportOpen} />
-
-      <ConfirmDeleteDialog
-        open={!!deleteId}
-        onOpenChange={(v) => {
-          if (!v) setDeleteId(null);
-        }}
-        onConfirm={async () => {
-          if (!deleteId) return;
-          setDeleting(true);
-          try {
-            await removeEntry({ id: deleteId });
-            toast.success("Usage entry deleted");
-          } catch {
-            toast.error("Failed to delete entry");
-          } finally {
-            setDeleting(false);
-            setDeleteId(null);
-          }
-        }}
-        title="Delete usage entry?"
-        description="This action is irreversible. The usage entry will be permanently removed."
-        loading={deleting}
-      />
-      <ConfirmDeleteDialog
-        open={bulkDeleteOpen}
-        onOpenChange={(open) => {
-          setBulkDeleteOpen(open);
-        }}
-        onConfirm={async () => {
-          const ids = [...selectedIds];
-          if (ids.length === 0) return;
-          setDeleting(true);
-          try {
-            const result = await bulkRemoveEntries({ ids });
-            toast.success(`${result.deleted} usage entries deleted`);
-            clearSelection();
-          } catch {
-            toast.error("Failed to delete selected entries");
-          } finally {
-            setDeleting(false);
-            setBulkDeleteOpen(false);
-          }
-        }}
-        title={`Delete ${selectedIds.size} usage entries?`}
-        description="This action is irreversible. The selected usage entries will be permanently removed."
-        loading={deleting}
-      />
     </div>
   );
 }

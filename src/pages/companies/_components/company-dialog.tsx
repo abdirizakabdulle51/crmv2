@@ -26,8 +26,6 @@ import {
   SelectValue,
 } from "@/components/ui/select.tsx";
 import { toast } from "sonner";
-import { Trash2 } from "lucide-react";
-import ConfirmDeleteDialog from "@/components/confirm-delete-dialog.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
 
 function formatManageOneNumber(value: number | undefined) {
@@ -182,12 +180,11 @@ export function CompanyForm({
 }: CompanyFormProps) {
   const createCompany = useMutation(api.companies.create);
   const updateCompany = useMutation(api.companies.update);
-  const removeCompany = useMutation(api.companies.remove);
   const manageOneTenants = useQuery(
     api.manageOneTenants.getByCompanyId,
     company && showManageOneUsage ? { companyId: company._id } : "skip",
   );
-  const { isAdmin, currentUser } = useCrm();
+  const { currentUser } = useCrm();
 
   const [name, setName] = useState("");
   const [sectorId, setSectorId] = useState<string>("");
@@ -205,8 +202,6 @@ export function CompanyForm({
   const [lifecycleStatus, setLifecycleStatus] =
     useState<LifecycleStatus>("customer");
   const [lostReason, setLostReason] = useState("");
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (company) {
@@ -311,21 +306,6 @@ export function CompanyForm({
       onFinished();
     } catch {
       toast.error("Failed to save company");
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!company) return;
-    setDeleting(true);
-    try {
-      await removeCompany({ id: company._id });
-      toast.success("Company deleted");
-      setConfirmOpen(false);
-      onFinished();
-    } catch {
-      toast.error("Failed to delete company");
-    } finally {
-      setDeleting(false);
     }
   };
 
@@ -552,27 +532,8 @@ export function CompanyForm({
           <Button className="flex-1" onClick={handleSave}>
             {company ? "Update Company" : "Create Company"}
           </Button>
-          {company && isAdmin && (
-            <Button
-              variant="destructive"
-              size="icon"
-              onClick={() => setConfirmOpen(true)}
-              className="cursor-pointer"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
         </div>
       </div>
-
-      <ConfirmDeleteDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        onConfirm={handleDelete}
-        title="Delete this company?"
-        description="This action is irreversible. The company and all associated records will be permanently removed."
-        loading={deleting}
-      />
     </>
   );
 }

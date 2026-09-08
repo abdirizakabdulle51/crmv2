@@ -22,7 +22,6 @@ vi.mock("@/convex/_generated/api.js", () => ({
     companies: {
       create: "companies.create",
       update: "companies.update",
-      remove: "companies.remove",
     },
     manageOneTenants: {
       getByCompanyId: "manageOneTenants.getByCompanyId",
@@ -33,7 +32,6 @@ vi.mock("@/convex/_generated/api.js", () => ({
 const mocks = vi.hoisted(() => ({
   createCompany: vi.fn(),
   updateCompany: vi.fn(),
-  removeCompany: vi.fn(),
   currentUser: undefined as Doc<"users"> | undefined,
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -43,7 +41,6 @@ vi.mock("convex/react", () => ({
   useMutation: (mutation: string) => {
     if (mutation === "companies.create") return mocks.createCompany;
     if (mutation === "companies.update") return mocks.updateCompany;
-    if (mutation === "companies.remove") return mocks.removeCompany;
     return vi.fn();
   },
   useQuery: () => [],
@@ -91,9 +88,7 @@ function user(): Doc<"users"> {
   };
 }
 
-function company(
-  overrides: Partial<Doc<"companies">> = {},
-): Doc<"companies"> {
+function company(overrides: Partial<Doc<"companies">> = {}): Doc<"companies"> {
   return {
     _id: "company-1" as Id<"companies">,
     _creationTime: 1,
@@ -137,22 +132,25 @@ describe("CompanyForm payment terms", () => {
     vi.clearAllMocks();
     mocks.createCompany.mockResolvedValue("company-1");
     mocks.updateCompany.mockResolvedValue(undefined);
-    mocks.removeCompany.mockResolvedValue(undefined);
     mocks.currentUser = user();
   });
 
   it("shows Default (Net 7) for companies without explicit payment terms", () => {
     renderCompanyForm();
 
-    expect(screen.getByRole("combobox", { name: "Payment Terms" }))
-      .toHaveTextContent("Default (Net 7)");
+    expect(
+      screen.getByRole("combobox", { name: "Payment Terms" }),
+    ).toHaveTextContent("Default (Net 7)");
   });
 
   it("submits Net 15 when creating a company", async () => {
     const user = userEvent.setup();
     renderCompanyForm();
 
-    await user.type(screen.getByPlaceholderText("e.g. Acme Corporation"), "AICC");
+    await user.type(
+      screen.getByPlaceholderText("e.g. Acme Corporation"),
+      "AICC",
+    );
     await chooseComboboxByIndex(0, "Cloud");
     await chooseComboboxByIndex(1, "Somalia");
     await chooseSelectOption("Payment Terms", "Net 15");

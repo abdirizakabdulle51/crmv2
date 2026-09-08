@@ -32,7 +32,6 @@ import {
   ChevronRight,
   Plus,
   Pencil,
-  Trash2,
   Upload,
   Download,
   Package,
@@ -45,7 +44,6 @@ export default function ServiceCatalogSection() {
   const catalog = useQuery(api.serviceCatalog.list, {});
   const createItem = useMutation(api.serviceCatalog.create);
   const updateItem = useMutation(api.serviceCatalog.update);
-  const removeItem = useMutation(api.serviceCatalog.remove);
   const bulkCreate = useMutation(api.serviceCatalog.bulkCreate);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -94,8 +92,15 @@ export default function ServiceCatalogSection() {
   };
 
   const handleSave = async () => {
-    if (!productGroup || !serviceCategory.trim() || !itemName.trim() || !billingUnit.trim()) {
-      toast.error("Product group, service, name, and billing unit are required");
+    if (
+      !productGroup ||
+      !serviceCategory.trim() ||
+      !itemName.trim() ||
+      !billingUnit.trim()
+    ) {
+      toast.error(
+        "Product group, service, name, and billing unit are required",
+      );
       return;
     }
     const mp = parseFloat(monthlyPrice);
@@ -129,15 +134,6 @@ export default function ServiceCatalogSection() {
       resetForm();
     } catch {
       toast.error("Failed to save item");
-    }
-  };
-
-  const handleDelete = async (id: Id<"serviceCatalog">) => {
-    try {
-      await removeItem({ id });
-      toast.success("Item removed");
-    } catch {
-      toast.error("Failed to remove item");
     }
   };
 
@@ -260,13 +256,6 @@ export default function ServiceCatalogSection() {
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleDelete(item._id)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                              </Button>
                             </div>
                           </div>
                         ))}
@@ -297,7 +286,9 @@ export default function ServiceCatalogSection() {
               <div className="space-y-2">
                 <Label>Product Group *</Label>
                 <Select value={productGroup} onValueChange={setProductGroup}>
-                  <SelectTrigger><SelectValue placeholder="Select group" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select group" />
+                  </SelectTrigger>
                   <SelectContent>
                     {PRODUCT_GROUPS.map((group) => (
                       <SelectItem key={group.value} value={group.value}>
@@ -563,7 +554,17 @@ function CatalogImportDialog({
           "1200.00",
           "0.17",
         ],
-        ["storage", "OBS", "Storage", "OBS Standard", "Object storage", "GB", "0.012", "", ""],
+        [
+          "storage",
+          "OBS",
+          "Storage",
+          "OBS Standard",
+          "Object storage",
+          "GB",
+          "0.012",
+          "",
+          "",
+        ],
       ],
     });
     const blob = new Blob([csv], { type: "text/csv" });

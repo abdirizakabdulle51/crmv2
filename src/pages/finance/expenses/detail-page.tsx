@@ -290,7 +290,6 @@ export default function ExpenseDetailPage() {
   const rejectExpense = useMutation(api.expenses.rejectExpenseRequest);
   const cancelExpense = useMutation(api.expenses.cancelExpenseRequest);
   const markPaid = useMutation(api.expenses.markExpensePaid);
-  const reconcilePaidDate = useMutation(api.expenses.reconcilePaidExpenseDate);
   const recordExpenseReturn = useMutation(
     api.receivingAccounts.recordExpenseReturn,
   );
@@ -317,9 +316,9 @@ export default function ExpenseDetailPage() {
   const [fundingAccountId, setFundingAccountId] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentTransactionId, setPaymentTransactionId] = useState("");
-  const [paymentDate, setPaymentDate] = useState(() => timestampToDateInput(Date.now()));
-  const [reconciliationOpen, setReconciliationOpen] = useState(false);
-  const [reconciliationReason, setReconciliationReason] = useState("");
+  const [paymentDate, setPaymentDate] = useState(() =>
+    timestampToDateInput(Date.now()),
+  );
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [pendingReceiptAction, setPendingReceiptAction] = useState<
     string | null
@@ -401,7 +400,8 @@ export default function ExpenseDetailPage() {
     !["rejected", "paid", "cancelled"].includes(expense.status) &&
     (isRequester || isAdmin);
   const canMarkPaid = expense.status === "approved" && isAdmin;
-  const canDelete = isAdmin;
+  const canDelete =
+    isAdmin && ["draft", "rejected", "cancelled"].includes(expense.status);
   const category = categoryMap.get(expense.categoryId);
   const receiptRequired = category?.requiresReceipt === true;
   const company = expense.companyId
@@ -514,27 +514,6 @@ export default function ExpenseDetailPage() {
     }
   };
 
-  const handleReconcilePaidDate = async (event: FormEvent) => {
-    event.preventDefault();
-    const paidAt = dateInputToTimestamp(paymentDate);
-    if (paidAt === undefined) return;
-    if (!reconciliationReason.trim()) {
-      toast.error("Correction reason is required");
-      return;
-    }
-    setPendingAction("reconcile-paid-date");
-    try {
-      await reconcilePaidDate({ expenseId: expense._id, paidAt, reason: reconciliationReason.trim() });
-      toast.success("Payment date corrected");
-      setReconciliationOpen(false);
-      setReconciliationReason("");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to reconcile payment date");
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
   const handleExpenseReturn = async (event: FormEvent) => {
     event.preventDefault();
     const amount = Number(returnForm.amount);
@@ -569,7 +548,9 @@ export default function ExpenseDetailPage() {
       });
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to record expense return",
+        error instanceof Error
+          ? error.message
+          : "Failed to record expense return",
       );
     } finally {
       setPendingAction(null);
@@ -741,20 +722,9 @@ export default function ExpenseDetailPage() {
             </Button>
           ) : null}
           {isAdmin && expense.status === "paid" ? (
-            <>
-              <Button variant="outline" onClick={() => setReturnOpen(true)}>
-                Record Return
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setPaymentDate(timestampToDateInput(expense.paidAt ?? Date.now()));
-                  setReconciliationOpen(true);
-                }}
-              >
-                Correct Payment Date
-              </Button>
-            </>
+            <Button variant="outline" onClick={() => setReturnOpen(true)}>
+              Record Return
+            </Button>
           ) : null}
           {canCancel ? (
             <Button
@@ -917,7 +887,9 @@ export default function ExpenseDetailPage() {
               <tbody>
                 {displayedReturnSummary.entries.map((entry) => (
                   <tr key={entry._id} className="border-b last:border-0">
-                    <td className="py-2">{formatDate(entry.transactionDate)}</td>
+                    <td className="py-2">
+                      {formatDate(entry.transactionDate)}
+                    </td>
                     <td className="font-mono text-xs">{entry.transactionId}</td>
                     <td>{entry.description}</td>
                     <td
@@ -1272,7 +1244,14 @@ export default function ExpenseDetailPage() {
             ) : null}
             <div className="space-y-2">
               <Label htmlFor="expense-payment-date">Payment date</Label>
-              <Input id="expense-payment-date" type="date" value={paymentDate} max={timestampToDateInput(Date.now())} onChange={(event) => setPaymentDate(event.target.value)} required />
+              <Input
+                id="expense-payment-date"
+                type="date"
+                value={paymentDate}
+                max={timestampToDateInput(Date.now())}
+                onChange={(event) => setPaymentDate(event.target.value)}
+                required
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="payment-transaction-id">Transaction ID</Label>
@@ -1394,7 +1373,10 @@ export default function ExpenseDetailPage() {
               <Input
                 value={returnForm.transactionId}
                 onChange={(event) =>
-                  setReturnForm({ ...returnForm, transactionId: event.target.value })
+                  setReturnForm({
+                    ...returnForm,
+                    transactionId: event.target.value,
+                  })
                 }
                 required
               />
@@ -1423,20 +1405,11 @@ export default function ExpenseDetailPage() {
                 type="submit"
                 disabled={pendingAction === "expense-return"}
               >
-                {pendingAction === "expense-return" ? "Saving..." : "Record return"}
+                {pendingAction === "expense-return"
+                  ? "Saving..."
+                  : "Record return"}
               </Button>
             </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={reconciliationOpen} onOpenChange={setReconciliationOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Correct Payment Date</DialogTitle></DialogHeader>
-          <form className="space-y-4" onSubmit={handleReconcilePaidDate}>
-            <p className="text-sm text-muted-foreground">Enter the date cash actually left the selected funding account.</p>
-            <div className="space-y-2"><Label htmlFor="reconciled-payment-date">Actual payment date</Label><Input id="reconciled-payment-date" type="date" value={paymentDate} max={timestampToDateInput(Date.now())} onChange={(event) => setPaymentDate(event.target.value)} required /></div>
-            <div className="space-y-2"><Label htmlFor="payment-date-reason">Reason for correction</Label><Input id="payment-date-reason" value={reconciliationReason} onChange={(event) => setReconciliationReason(event.target.value)} placeholder="Why is the stored payment date incorrect?" required /></div>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setReconciliationOpen(false)}>Cancel</Button><Button type="submit" disabled={pendingAction === "reconcile-paid-date" || !reconciliationReason.trim()}>Save Correction</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -1498,8 +1471,12 @@ function EditExpenseDialog({
   const selectedCategory = categories.find(
     (category) => category._id === categoryId,
   );
-  const selectedCompany = companies.find((company) => company._id === companyId);
-  const resolvedCountryId = selectedCompany?.countryId ?? (countryId === "none" ? undefined : (countryId as Id<"countries">));
+  const selectedCompany = companies.find(
+    (company) => company._id === companyId,
+  );
+  const resolvedCountryId =
+    selectedCompany?.countryId ??
+    (countryId === "none" ? undefined : (countryId as Id<"countries">));
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1635,7 +1612,10 @@ function EditExpenseDialog({
                 onValueChange={setCountryId}
                 disabled={companyId !== "none"}
               >
-                <SelectTrigger className="w-full" aria-label="Edit expense country">
+                <SelectTrigger
+                  className="w-full"
+                  aria-label="Edit expense country"
+                >
                   <SelectValue placeholder="Select country" />
                 </SelectTrigger>
                 <SelectContent>

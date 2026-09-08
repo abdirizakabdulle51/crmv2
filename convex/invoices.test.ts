@@ -416,10 +416,12 @@ describe("invoices", () => {
       { quoteId: s.acceptedQuoteB },
     );
 
-    await asUser(t, s.ceo).mutation(api.invoices.setInvoiceTestMode, {
-      invoiceId: invoiceB,
-      isTest: true,
-      reason: "Seeded test invoice",
+    await t.run(async (ctx) => {
+      await ctx.db.patch(invoiceB, {
+        isTest: true,
+        hiddenAt: Date.now(),
+        hiddenBy: s.ceo._id,
+      });
     });
 
     expect(
@@ -1432,11 +1434,11 @@ describe("invoices", () => {
     });
   });
 
-  it("allows voiding sent, partially paid, and overdue invoices but rejects other statuses", async () => {
+  it("allows voiding sent and overdue invoices but rejects other statuses", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
 
-    for (const status of ["sent", "partially_paid", "overdue"] as const) {
+    for (const status of ["sent", "overdue"] as const) {
       const invoiceId = await issueInvoiceWithStatus(t, s, status);
       await asUser(t, s.hob).mutation(api.invoices.voidInvoice, {
         invoiceId,
@@ -1448,7 +1450,13 @@ describe("invoices", () => {
       expect(invoice.status).toBe("void");
     }
 
-    for (const status of ["draft", "paid", "cancelled", "void"] as const) {
+    for (const status of [
+      "draft",
+      "partially_paid",
+      "paid",
+      "cancelled",
+      "void",
+    ] as const) {
       const invoiceId =
         status === "draft"
           ? await createDraftForA(t, s)
@@ -1458,80 +1466,8 @@ describe("invoices", () => {
           invoiceId,
           reason: `Cannot void ${status}`,
         }),
-      ).rejects.toThrow(
-        "Only issued, sent, partially paid, or overdue invoices can be voided",
-      );
+      ).rejects.toThrow("Only issued, sent, or overdue invoices can be voided");
     }
-  });
-
-  it("marks and unmarks invoices as test or hidden with admin-only audit events", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seed(t);
-    const invoiceId = await createDraftForA(t, s);
-
-    await expect(
-      asUser(t, s.amA).mutation(api.invoices.setInvoiceTestMode, {
-        invoiceId,
-        isTest: true,
-        reason: "Test data",
-      }),
-    ).rejects.toThrow("Only CEO or Head of Business can clean up invoices");
-    await expect(
-      asUser(t, s.gmA).mutation(api.invoices.setInvoiceTestMode, {
-        invoiceId,
-        isTest: true,
-        reason: "Test data",
-      }),
-    ).rejects.toThrow("Only CEO or Head of Business can clean up invoices");
-    await expect(
-      asUser(t, s.ceo).mutation(api.invoices.setInvoiceTestMode, {
-        invoiceId,
-        isTest: true,
-        reason: " ",
-      }),
-    ).rejects.toThrow("Cleanup reason is required");
-
-    await asUser(t, s.ceo).mutation(api.invoices.setInvoiceTestMode, {
-      invoiceId,
-      isTest: true,
-      reason: "Training invoice",
-    });
-    let invoice = await asUser(t, s.amA).query(api.invoices.getById, {
-      invoiceId,
-    });
-    expect(invoice.isTest).toBe(true);
-    expect(invoice.hiddenBy).toBe(s.ceo._id);
-    expect(invoice.hiddenAt).toBeGreaterThan(0);
-
-    await asUser(t, s.hob).mutation(api.invoices.setInvoiceTestMode, {
-      invoiceId,
-      isTest: false,
-      reason: "Real invoice after review",
-    });
-    invoice = await asUser(t, s.amA).query(api.invoices.getById, {
-      invoiceId,
-    });
-    expect(invoice.isTest).toBe(false);
-    expect(invoice.hiddenBy).toBeUndefined();
-    expect(invoice.hiddenAt).toBeUndefined();
-
-    const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
-      invoiceId,
-    });
-    expect(events.map((event) => event.type)).toEqual(
-      expect.arrayContaining(["marked_test", "unmarked_test"]),
-    );
-    expect(events[events.length - 2]).toMatchObject({
-      type: "marked_test",
-      actorId: s.ceo._id,
-      message: "Invoice marked as test/hidden. Reason: Training invoice",
-    });
-    expect(events[events.length - 1]).toMatchObject({
-      type: "unmarked_test",
-      actorId: s.hob._id,
-      message:
-        "Invoice unmarked as test/hidden. Reason: Real invoice after review",
-    });
   });
 
   it("protects invoice events with invoice RBAC", async () => {

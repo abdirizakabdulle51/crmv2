@@ -241,35 +241,6 @@ describe("role scoping", () => {
     await asUser(t, s.ceo).query(api.companies.getById, { id: s.companyB });
   });
 
-  it("enforces company delete permissions for AM and GM scope", async () => {
-    const t = convexTest({ schema, modules });
-    const s = await seed(t);
-
-    const amCompany = await asUser(t, s.amA).mutation(api.companies.create, {
-      name: "AM deletable",
-      sectorId: s.sector,
-      countryId: s.countryA,
-      accountManagerId: s.amA._id,
-      contractStatus: "active",
-    });
-    await asUser(t, s.amA).mutation(api.companies.remove, { id: amCompany });
-    await expect(
-      asUser(t, s.amA).mutation(api.companies.remove, { id: s.companyB }),
-    ).rejects.toThrow(/permission|FORBIDDEN/i);
-
-    const gmCompany = await asUser(t, s.gmA).mutation(api.companies.create, {
-      name: "GM deletable",
-      sectorId: s.sector,
-      countryId: s.countryA,
-      accountManagerId: s.amA._id,
-      contractStatus: "active",
-    });
-    await asUser(t, s.gmA).mutation(api.companies.remove, { id: gmCompany });
-    await expect(
-      asUser(t, s.gmA).mutation(api.companies.remove, { id: s.companyB }),
-    ).rejects.toThrow(/permission|FORBIDDEN/i);
-  });
-
   it("enforces lead and activity permissions", async () => {
     const t = convexTest({ schema, modules });
     const s = await seed(t);
@@ -372,10 +343,6 @@ describe("role scoping", () => {
         serviceType: "SFS",
         amount: 20,
       }),
-    ).rejects.toThrow(/permission|FORBIDDEN/i);
-    await asUser(t, s.gmA).mutation(api.consumption.remove, { id: s.usageA });
-    await expect(
-      asUser(t, s.gmA).mutation(api.consumption.remove, { id: s.usageB }),
     ).rejects.toThrow(/permission|FORBIDDEN/i);
     await asUser(t, s.gmA).mutation(api.salesTargets.upsert, {
       accountManagerId: s.amA._id,
