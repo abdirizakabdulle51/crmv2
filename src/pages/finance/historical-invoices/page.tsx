@@ -22,6 +22,7 @@ type HistoricalArgs = {
   coverageStartMonth: string;
   monthsCovered: number;
   monthlyAmount: number;
+  itemDescription: string;
   paymentDate: string;
   paymentMethod?: string;
   receivingAccountId?: Id<"receivingAccounts">;
@@ -73,7 +74,7 @@ function historicalStatusBadge(status: string) {
 function emptyForm() {
   return {
     companyId: "", originalReference: "", invoiceDate: "", coverageStartMonth: "",
-    monthsCovered: "1", monthlyAmount: "", paymentDate: "", paymentMethod: "Bank Transfer",
+    monthsCovered: "1", monthlyAmount: "", itemDescription: "Compute, Network and Storage Services", paymentDate: "", paymentMethod: "Bank Transfer",
     receivingAccountId: "", paymentReference: "", transactionId: "", notes: "",
   };
 }
@@ -99,7 +100,7 @@ export default function HistoricalInvoicesPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!form.companyId || !form.originalReference.trim() || !form.invoiceDate || !form.coverageStartMonth || (!isUnpaid && !form.paymentDate) || !Number(form.monthlyAmount) || !Number.isInteger(Number(form.monthsCovered)) || Number(form.monthsCovered) < 1) {
+    if (!form.companyId || !form.originalReference.trim() || !form.itemDescription.trim() || !form.invoiceDate || !form.coverageStartMonth || (!isUnpaid && !form.paymentDate) || !Number(form.monthlyAmount) || !Number.isInteger(Number(form.monthsCovered)) || Number(form.monthsCovered) < 1) {
       toast.error("Complete all required historical invoice fields");
       return;
     }
@@ -114,6 +115,7 @@ export default function HistoricalInvoicesPage() {
           coverageStartMonth: form.coverageStartMonth,
           monthsCovered: Number(form.monthsCovered),
           monthlyAmount: Number(form.monthlyAmount),
+          itemDescription: form.itemDescription.trim(),
           notes: form.notes || undefined,
         });
         toast.success("Historical unpaid invoice recorded");
@@ -125,6 +127,7 @@ export default function HistoricalInvoicesPage() {
           coverageStartMonth: form.coverageStartMonth,
           monthsCovered: Number(form.monthsCovered),
           monthlyAmount: Number(form.monthlyAmount),
+          itemDescription: form.itemDescription.trim(),
           paymentDate: form.paymentDate,
           paymentMethod: form.paymentMethod,
           receivingAccountId: form.receivingAccountId ? form.receivingAccountId as Id<"receivingAccounts"> : undefined,
@@ -157,6 +160,7 @@ export default function HistoricalInvoicesPage() {
           <div className="space-y-2"><Label htmlFor="coverage-month">Coverage Start Month *</Label><Input id="coverage-month" type="month" value={form.coverageStartMonth} onChange={(e) => set("coverageStartMonth", e.target.value)} /></div>
           <div className="space-y-2"><Label htmlFor="months-covered">Months Covered *</Label><Input id="months-covered" type="number" min="1" step="1" value={form.monthsCovered} onChange={(e) => set("monthsCovered", e.target.value)} /></div>
           <div className="space-y-2"><Label htmlFor="monthly-amount">Monthly Amount (USD) *</Label><Input id="monthly-amount" type="number" min="0.01" step="0.01" value={form.monthlyAmount} onChange={(e) => set("monthlyAmount", e.target.value)} /></div>
+          <div className="space-y-2 sm:col-span-2 lg:col-span-3"><Label htmlFor="item-description">Invoice Item Description *</Label><Input id="item-description" value={form.itemDescription} onChange={(e) => set("itemDescription", e.target.value)} required /></div>
           <div className="space-y-2"><Label>Invoice Total</Label><Input value={formatCurrency(total)} readOnly /></div>
           {!isUnpaid ? <>
             <div className="space-y-2"><Label htmlFor="payment-date">Payment Date *</Label><Input id="payment-date" type="date" value={form.paymentDate} onChange={(e) => set("paymentDate", e.target.value)} /></div>

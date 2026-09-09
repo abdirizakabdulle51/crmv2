@@ -48,6 +48,7 @@ describe("HistoricalInvoicesPage", () => {
 
     expect(screen.getByRole("heading", { name: "Historical Invoices" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Record Historical Paid Invoice" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Invoice Item Description *")).toHaveValue("Compute, Network and Storage Services");
     expect(screen.getByText("Historical ledger")).toBeInTheDocument();
   });
 
@@ -61,6 +62,7 @@ describe("HistoricalInvoicesPage", () => {
     fireEvent.change(screen.getByLabelText("Invoice Date *"), { target: { value: "2026-02-02" } });
     fireEvent.change(screen.getByLabelText("Coverage Start Month *"), { target: { value: "2026-02" } });
     fireEvent.change(screen.getByLabelText("Monthly Amount (USD) *"), { target: { value: "100" } });
+    fireEvent.change(screen.getByLabelText("Invoice Item Description *"), { target: { value: "Custom historical services" } });
     expect(screen.queryByLabelText("Payment Date *")).not.toBeInTheDocument();
     expect(screen.getByText("Amount Paid:")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Record Historical Unpaid Invoice" }));
@@ -71,6 +73,7 @@ describe("HistoricalInvoicesPage", () => {
       coverageStartMonth: "2026-02",
       monthsCovered: 1,
       monthlyAmount: 100,
+      itemDescription: "Custom historical services",
       notes: undefined,
     }));
     expect(mocks.createPaid).not.toHaveBeenCalled();

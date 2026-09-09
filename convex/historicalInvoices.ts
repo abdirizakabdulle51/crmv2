@@ -133,6 +133,7 @@ type HistoricalInvoiceInput = {
   coverageStartMonth: string;
   monthsCovered: number;
   monthlyAmount: number;
+  itemDescription?: string;
   notes?: string;
 };
 
@@ -153,7 +154,7 @@ function prepareHistoricalInvoice(
   const monthlyAmount = fromCents(monthlyCents);
   const lineItems = calculateLineItems([
     {
-      itemName: `Historical Odoo coverage (${args.coverageStartMonth})`,
+      itemName: args.itemDescription?.trim() || "Compute, Network and Storage Services",
       serviceCategory: "Historical Invoice",
       billingUnit: "month",
       quantity: args.monthsCovered,
@@ -455,6 +456,7 @@ export const create = mutation({
     coverageStartMonth: v.string(),
     monthsCovered: v.number(),
     monthlyAmount: v.number(),
+    itemDescription: v.optional(v.string()),
     paymentDate: v.string(),
     paymentMethod: v.optional(v.string()),
     receivingAccountId: v.optional(v.id("receivingAccounts")),
@@ -615,6 +617,7 @@ export const createUnpaid = mutation({
     coverageStartMonth: v.string(),
     monthsCovered: v.number(),
     monthlyAmount: v.number(),
+    itemDescription: v.optional(v.string()),
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {

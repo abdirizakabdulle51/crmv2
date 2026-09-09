@@ -14,6 +14,7 @@ type Args = {
   coverageStartMonth: string;
   monthsCovered: number;
   monthlyAmount: number;
+  itemDescription?: string;
   paymentDate: string;
   paymentMethod?: string;
   receivingAccountId?: Id<"receivingAccounts">;
@@ -57,7 +58,7 @@ describe("historical paid invoices", () => {
     const s = await seed(t);
     const user = t.withIdentity({ tokenIdentifier: "historical-test" });
     const invoiceId = await user.mutation(createHistorical, {
-      companyId: s.companyId, originalReference: "S00065", invoiceDate: "2026-05-14", coverageStartMonth: "2026-05", monthsCovered: 3, monthlyAmount: 5874.93, paymentDate: "2026-05-14", receivingAccountId: s.accountId, transactionId: "ODOO-S00065", paymentReference: "Paid in Odoo",
+      companyId: s.companyId, originalReference: "S00065", invoiceDate: "2026-05-14", coverageStartMonth: "2026-05", monthsCovered: 3, monthlyAmount: 5874.93, itemDescription: "Managed cloud services", paymentDate: "2026-05-14", receivingAccountId: s.accountId, transactionId: "ODOO-S00065", paymentReference: "Paid in Odoo",
     });
     const result = await t.run(async (ctx) => ({
       invoice: await ctx.db.get(invoiceId),
@@ -70,6 +71,7 @@ describe("historical paid invoices", () => {
     expect(result.invoice).toMatchObject({ isHistorical: true, sourceSystem: "odoo", originalReference: "S00065", issueDate: Date.UTC(2026, 4, 14), dueDate: Date.UTC(2026, 4, 14), status: "paid", grandTotal: 17624.79, grandTotalCents: 1762479, amountPaid: 17624.79, amountPaidCents: 1762479, balanceDue: 0, balanceDueCents: 0, historicalCoverageStartMonth: "2026-05", historicalCoverageMonths: 3 });
     expect(result.invoice?.invoiceNumber).toBe(`INV-${new Date().getUTCFullYear()}-00001`);
     expect(result.invoice?.revenueAllocations).toEqual([{ month: "2026-05", amount: 5874.93 }, { month: "2026-06", amount: 5874.93 }, { month: "2026-07", amount: 5874.93 }]);
+    expect(result.invoice?.lineItems[0]?.itemName).toBe("Managed cloud services");
     expect(result.payments).toHaveLength(1);
     expect(result.payments[0]).toMatchObject({ amount: 17624.79, amountCents: 1762479, appliedAmount: 17624.79, paidAt: Date.UTC(2026, 4, 14), method: "Bank Transfer", transactionId: "ODOO-S00065" });
     expect(result.payments[0].extraServiceRevenueAmount).toBeUndefined();
