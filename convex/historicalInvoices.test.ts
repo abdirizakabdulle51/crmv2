@@ -23,6 +23,17 @@ type Args = {
   notes?: string;
 };
 type UnpaidArgs = Omit<Args, "paymentDate" | "paymentMethod" | "receivingAccountId" | "paymentReference" | "transactionId">;
+type DescriptionCorrectionRow = {
+  invoiceId: Id<"invoices">;
+  invoiceNumber: string;
+  oldItemName: string;
+  newItemName: string;
+  serviceCategory: string;
+  grandTotal: number;
+  amountPaid: number;
+  balanceDue: number;
+  status: Doc<"invoices">["status"];
+};
 const createHistorical = (api as unknown as {
   historicalInvoices: {
     create: FunctionReference<"mutation", "public", Args, Id<"invoices">>;
@@ -39,7 +50,7 @@ const correctOutstandingDueDates = (internal as unknown as {
   historicalInvoices: { correctOutstandingDueDates: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, unknown> };
 }).historicalInvoices.correctOutstandingDueDates;
 const correctHistoricalInvoiceDescriptions = (internal as unknown as {
-  historicalInvoices: { correctHistoricalInvoiceDescriptions: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, unknown> };
+  historicalInvoices: { correctHistoricalInvoiceDescriptions: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, DescriptionCorrectionRow[]> };
 }).historicalInvoices.correctHistoricalInvoiceDescriptions;
 
 const DESCRIPTION_TARGET_NUMBERS = [
@@ -82,7 +93,7 @@ async function seedDescriptionCorrectionFixture(t: ReturnType<typeof convexTest>
       if (!invoice) throw new Error("Fixture invoice was not created");
       await ctx.db.patch(invoiceId, {
         invoiceNumber,
-        lineItems: invoice.lineItems.map((line, lineIndex) =>
+        lineItems: invoice.lineItems.map((line: Doc<"invoices">["lineItems"][number], lineIndex: number) =>
           lineIndex === 0
             ? { ...line, itemName: `Historical Odoo coverage (2026-07)` }
             : line,
@@ -197,7 +208,7 @@ describe("historical paid invoices", () => {
       const updated = afterExecution[index];
       expect(updated).toEqual({
         ...original,
-        lineItems: original!.lineItems.map((line, lineIndex) =>
+        lineItems: original!.lineItems.map((line: Doc<"invoices">["lineItems"][number], lineIndex: number) =>
           lineIndex === 0 ? { ...line, itemName: CORRECTED_ITEM_NAME } : line,
         ),
       });
