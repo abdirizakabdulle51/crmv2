@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { convexTest } from "convex-test";
 import type { FunctionReference } from "convex/server";
+import type { MutationCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
+import { correctHistoricalInvoiceDescriptions } from "./historicalInvoices";
 import schema from "./schema";
 import { modules } from "./test.setup";
 import { calculatePaymentApplication } from "./invoices";
@@ -26,6 +28,8 @@ type UnpaidArgs = Omit<Args, "paymentDate" | "paymentMethod" | "receivingAccount
 type DescriptionCorrectionRow = {
   invoiceId: Id<"invoices">;
   invoiceNumber: string;
+  companyName: string;
+  originalReference: string;
   oldItemName: string;
   newItemName: string;
   serviceCategory: string;
@@ -49,15 +53,32 @@ const renumberOutstanding = (internal as unknown as {
 const correctOutstandingDueDates = (internal as unknown as {
   historicalInvoices: { correctOutstandingDueDates: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, unknown> };
 }).historicalInvoices.correctOutstandingDueDates;
-const correctHistoricalInvoiceDescriptions = (internal as unknown as {
-  historicalInvoices: { correctHistoricalInvoiceDescriptions: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, DescriptionCorrectionRow[]> };
-}).historicalInvoices.correctHistoricalInvoiceDescriptions;
 
-const DESCRIPTION_TARGET_NUMBERS = [
-  "INV-2026-00037",
-  "INV-2026-00038",
-  "INV-2026-00039",
-  "INV-2026-00043",
+const DESCRIPTION_TARGETS = [
+  {
+    invoiceId: "ph7db1cvdarxkvxqcpqem93dqs8e23nt",
+    invoiceNumber: "INV-2026-00037",
+    companyName: "NationalCivilServiceCommission",
+    originalReference: "INV/2026/JLY",
+  },
+  {
+    invoiceId: "ph747dg07ccpthk0wvce4qbdbd8e2p11",
+    invoiceNumber: "INV-2026-00038",
+    companyName: "NationalCivilServiceCommission",
+    originalReference: "INV/2026/00070",
+  },
+  {
+    invoiceId: "ph77jmc4s0h0nt6p6v5ng3rfxn8e35sx",
+    invoiceNumber: "INV-2026-00039",
+    companyName: "NationalCivilServiceCommission",
+    originalReference: "INV/2026/SEPT",
+  },
+  {
+    invoiceId: "ph7aevwpxfw6785a4yn33kb71x8dzcjj",
+    invoiceNumber: "INV-2026-00043",
+    companyName: "SAB",
+    originalReference: "SAB-AUG-2026",
+  },
 ] as const;
 const CORRECTED_ITEM_NAME = "Compute, Storage and Network Services";
 
@@ -74,165 +95,218 @@ async function seed(t: ReturnType<typeof convexTest>) {
   });
 }
 
-async function seedDescriptionCorrectionFixture(t: ReturnType<typeof convexTest>) {
-  const s = await seed(t);
-  const user = t.withIdentity({ tokenIdentifier: "historical-test" });
-  const targetIds = [] as Id<"invoices">[];
-  for (const [index, invoiceNumber] of DESCRIPTION_TARGET_NUMBERS.entries()) {
-    const invoiceId = await user.mutation(createHistoricalUnpaid, {
-      companyId: s.companyId,
-      originalReference: `DESCRIPTION-${index + 1}`,
-      invoiceDate: `2026-07-${String(index + 1).padStart(2, "0")}`,
-      coverageStartMonth: "2026-07",
-      monthsCovered: 1,
-      monthlyAmount: 100 + index,
-    });
-    targetIds.push(invoiceId);
-    await t.run(async (ctx) => {
-      const invoice = await ctx.db.get(invoiceId);
-      if (!invoice) throw new Error("Fixture invoice was not created");
-      await ctx.db.patch(invoiceId, {
-        invoiceNumber,
-        lineItems: invoice.lineItems.map((line: Doc<"invoices">["lineItems"][number], lineIndex: number) =>
-          lineIndex === 0
-            ? { ...line, itemName: `Historical Odoo coverage (2026-07)` }
-            : line,
-        ),
-      });
-    });
+type DescriptionInvoice = Pick<
+  Doc<"invoices">,
+  | "_id"
+  | "invoiceNumber"
+  | "companyName"
+  | "originalReference"
+  | "isHistorical"
+  | "lineItems"
+  | "grandTotal"
+  | "amountPaid"
+  | "balanceDue"
+  | "status"
+>;
+type DescriptionLine = Doc<"invoices">["lineItems"][number];
+type DescriptionCorrectionArgs = { dryRun: boolean; confirm?: string };
+type DescriptionCorrectionHandler = (
+  ctx: MutationCtx,
+  args: DescriptionCorrectionArgs,
+) => Promise<DescriptionCorrectionRow[]>;
+type DescriptionPatch = {
+  invoiceId: Id<"invoices">;
+  lineItems: DescriptionInvoice["lineItems"];
+};
+
+const correctHistoricalInvoiceDescriptionsHandler = (
+  correctHistoricalInvoiceDescriptions as unknown as {
+    _handler: DescriptionCorrectionHandler;
   }
+)._handler;
 
-  const unrelatedHistoricalId = await user.mutation(createHistoricalUnpaid, {
-    companyId: s.companyId,
-    originalReference: "DESCRIPTION-UNRELATED",
-    invoiceDate: "2026-08-01",
-    coverageStartMonth: "2026-08",
-    monthsCovered: 1,
-    monthlyAmount: 250,
-  });
-  const normalInvoiceId = await t.run(async (ctx) =>
-    ctx.db.insert("invoices", {
-      companyId: s.companyId,
-      createdBy: s.userId,
-      invoiceNumber: "INV-2026-00100",
-      status: "issued",
-      companyName: "Historical Customer",
-      lineItems: [
-        {
-          itemName: "Normal service",
-          serviceCategory: "Compute",
-          billingUnit: "month",
-          quantity: 1,
-          monthlyUnitPrice: 300,
-          monthlyTotal: 300,
-          yearlyTotal: 3600,
-        },
-      ],
-      subtotal: 300,
-      monthlyTotal: 300,
-      yearlyTotal: 3600,
-      grandTotal: 300,
-      amountPaid: 0,
-      balanceDue: 300,
-      createdAt: 1,
-      updatedAt: 1,
-    }),
-  );
-
+function makeDescriptionLine(itemName: string): DescriptionLine {
   return {
-    ...s,
-    user,
-    targetIds,
-    unrelatedHistoricalId,
-    normalInvoiceId,
+    itemName,
+    serviceCategory: "Historical Invoice",
+    billingUnit: "month",
+    quantity: 1,
+    monthlyUnitPrice: 100,
+    monthlyTotal: 100,
+    yearlyTotal: 100,
   };
 }
 
+function makeDescriptionInvoice(
+  target: (typeof DESCRIPTION_TARGETS)[number],
+  overrides: Partial<DescriptionInvoice> = {},
+): DescriptionInvoice {
+  return {
+    _id: target.invoiceId as Id<"invoices">,
+    invoiceNumber: target.invoiceNumber,
+    companyName: target.companyName,
+    originalReference: target.originalReference,
+    isHistorical: true,
+    lineItems: [
+      makeDescriptionLine("Historical Odoo coverage (2026-07)"),
+      makeDescriptionLine("Unrelated second line"),
+    ],
+    grandTotal: 100,
+    amountPaid: 0,
+    balanceDue: 100,
+    status: "issued",
+    ...overrides,
+  };
+}
+
+function createDescriptionTestContext(invoices: DescriptionInvoice[]) {
+  const records = new Map(
+    invoices.map((invoice) => [String(invoice._id), invoice]),
+  );
+  const patches: DescriptionPatch[] = [];
+  const ctx = {
+    db: {
+      get: async (invoiceId: Id<"invoices">) =>
+        records.get(String(invoiceId)) ?? null,
+      patch: async (
+        invoiceId: Id<"invoices">,
+        value: { lineItems: DescriptionInvoice["lineItems"] },
+      ) => {
+        const invoice = records.get(String(invoiceId));
+        if (!invoice) throw new Error(`Missing test invoice ${invoiceId}`);
+        patches.push({ invoiceId, lineItems: value.lineItems });
+        records.set(String(invoiceId), { ...invoice, lineItems: value.lineItems });
+      },
+    },
+  } as unknown as MutationCtx;
+
+  return { ctx, records, patches };
+}
+
 describe("historical paid invoices", () => {
-  it("dry-runs and executes only the four exact historical description targets", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedDescriptionCorrectionFixture(t);
-    const before = await t.run(async (ctx) =>
-      Promise.all([
-        ...fixture.targetIds.map((invoiceId) => ctx.db.get(invoiceId)),
-        ctx.db.get(fixture.unrelatedHistoricalId),
-        ctx.db.get(fixture.normalInvoiceId),
-      ]),
+  it("uses exact IDs, ignores duplicate invoice numbers, and patches only itemName", async () => {
+    const duplicateInvoices = DESCRIPTION_TARGETS.slice(0, 3).map(
+      (target, index) =>
+        makeDescriptionInvoice(target, {
+          _id: `ebir-duplicate-${index}` as Id<"invoices">,
+          companyName: "EBIR",
+          originalReference: `EBIR-${index + 1}`,
+        }),
     );
+    const invoices = [
+      ...DESCRIPTION_TARGETS.map((target) => makeDescriptionInvoice(target)),
+      ...duplicateInvoices,
+      makeDescriptionInvoice(DESCRIPTION_TARGETS[3], {
+        _id: "unrelated-historical" as Id<"invoices">,
+        companyName: "Other Customer",
+        originalReference: "OTHER-REFERENCE",
+      }),
+    ];
+    const testContext = createDescriptionTestContext(invoices);
+    const before = Array.from(testContext.records.values()).map((invoice) => ({
+      ...invoice,
+      lineItems: invoice.lineItems.map((line) => ({ ...line })),
+    }));
 
-    const dryRun = await t.mutation(correctHistoricalInvoiceDescriptions, {
-      dryRun: true,
-    });
+    const dryRun = await correctHistoricalInvoiceDescriptionsHandler(
+      testContext.ctx,
+      { dryRun: true },
+    );
     expect(dryRun).toHaveLength(4);
-    expect(dryRun.map((row) => row.invoiceNumber)).toEqual(
-      DESCRIPTION_TARGET_NUMBERS,
+    expect(dryRun.map((row) => row.invoiceId)).toEqual(
+      DESCRIPTION_TARGETS.map((target) => target.invoiceId),
     );
-    for (const row of dryRun) {
-      expect(row).toMatchObject({
-        oldItemName: "Historical Odoo coverage (2026-07)",
-        newItemName: CORRECTED_ITEM_NAME,
-        serviceCategory: "Historical Invoice",
-        status: "issued",
-      });
-    }
-
-    const afterDryRun = await t.run(async (ctx) =>
-      Promise.all([
-        ...fixture.targetIds.map((invoiceId) => ctx.db.get(invoiceId)),
-        ctx.db.get(fixture.unrelatedHistoricalId),
-        ctx.db.get(fixture.normalInvoiceId),
-      ]),
+    expect(dryRun).toEqual(
+      DESCRIPTION_TARGETS.map((target) =>
+        expect.objectContaining({
+          invoiceId: target.invoiceId,
+          invoiceNumber: target.invoiceNumber,
+          companyName: target.companyName,
+          originalReference: target.originalReference,
+          oldItemName: "Historical Odoo coverage (2026-07)",
+          newItemName: CORRECTED_ITEM_NAME,
+          serviceCategory: "Historical Invoice",
+          status: "issued",
+        }),
+      ),
     );
-    expect(afterDryRun).toEqual(before);
+    expect(testContext.patches).toHaveLength(0);
+    expect(Array.from(testContext.records.values())).toEqual(before);
 
     await expect(
-      t.mutation(correctHistoricalInvoiceDescriptions, {
+      correctHistoricalInvoiceDescriptionsHandler(testContext.ctx, {
         dryRun: false,
         confirm: "WRONG_CONFIRMATION",
       }),
     ).rejects.toThrow("Exact confirmation required");
+    expect(testContext.patches).toHaveLength(0);
 
-    await t.mutation(correctHistoricalInvoiceDescriptions, {
+    await correctHistoricalInvoiceDescriptionsHandler(testContext.ctx, {
       dryRun: false,
       confirm: "CORRECT_HISTORICAL_INVOICE_DESCRIPTIONS",
     });
-    const afterExecution = await t.run(async (ctx) =>
-      Promise.all([
-        ...fixture.targetIds.map((invoiceId) => ctx.db.get(invoiceId)),
-        ctx.db.get(fixture.unrelatedHistoricalId),
-        ctx.db.get(fixture.normalInvoiceId),
-      ]),
+    expect(testContext.patches.map((patch) => String(patch.invoiceId))).toEqual(
+      DESCRIPTION_TARGETS.map((target) => target.invoiceId),
     );
-    fixture.targetIds.forEach((_, index) => {
-      const original = before[index];
-      const updated = afterExecution[index];
+    for (const target of DESCRIPTION_TARGETS) {
+      const original = before.find(
+        (invoice) => String(invoice._id) === target.invoiceId,
+      );
+      const updated = testContext.records.get(target.invoiceId);
       expect(updated).toEqual({
         ...original,
-        lineItems: original!.lineItems.map((line: Doc<"invoices">["lineItems"][number], lineIndex: number) =>
+        lineItems: original?.lineItems.map((line, lineIndex) =>
           lineIndex === 0 ? { ...line, itemName: CORRECTED_ITEM_NAME } : line,
         ),
       });
-    });
-    expect(afterExecution[4]).toEqual(before[4]);
-    expect(afterExecution[5]).toEqual(before[5]);
+    }
+    for (const duplicate of duplicateInvoices) {
+      expect(testContext.records.get(String(duplicate._id))).toEqual(duplicate);
+    }
   });
 
-  it("fails closed when an exact target is missing or is not historical", async () => {
-    const missingTest = convexTest(schema, modules);
-    const missingFixture = await seedDescriptionCorrectionFixture(missingTest);
-    await missingTest.run((ctx) => ctx.db.delete(missingFixture.targetIds[0]));
-    await expect(
-      missingTest.mutation(correctHistoricalInvoiceDescriptions, { dryRun: true }),
-    ).rejects.toThrow("Expected exactly one invoice for INV-2026-00037");
+  it("requires all four exact targets and fails closed on every target guard", async () => {
+    const invalidCases: Array<{
+      name: string;
+      overrides: Partial<DescriptionInvoice>;
+    }> = [
+      { name: "wrong invoice number", overrides: { invoiceNumber: "INV-2026-99999" } },
+      { name: "wrong company", overrides: { companyName: "Wrong Company" } },
+      { name: "wrong reference", overrides: { originalReference: "WRONG-REFERENCE" } },
+      { name: "non-historical", overrides: { isHistorical: false } },
+      {
+        name: "wrong old description",
+        overrides: {
+          lineItems: [makeDescriptionLine("Already corrected")],
+        },
+      },
+    ];
 
-    const nonHistoricalTest = convexTest(schema, modules);
-    const nonHistoricalFixture = await seedDescriptionCorrectionFixture(nonHistoricalTest);
-    await nonHistoricalTest.run((ctx) =>
-      ctx.db.patch(nonHistoricalFixture.targetIds[0], { isHistorical: false }),
+    for (const invalidCase of invalidCases) {
+      const invoices = DESCRIPTION_TARGETS.map((target, index) =>
+        makeDescriptionInvoice(
+          target,
+          index === 0 ? invalidCase.overrides : undefined,
+        ),
+      );
+      const testContext = createDescriptionTestContext(invoices);
+      await expect(
+        correctHistoricalInvoiceDescriptionsHandler(testContext.ctx, {
+          dryRun: true,
+        }),
+      ).rejects.toThrow("not an eligible historical description correction target");
+      expect(testContext.patches).toHaveLength(0);
+    }
+
+    const missingTargetContext = createDescriptionTestContext(
+      DESCRIPTION_TARGETS.slice(1).map((target) => makeDescriptionInvoice(target)),
     );
     await expect(
-      nonHistoricalTest.mutation(correctHistoricalInvoiceDescriptions, { dryRun: true }),
+      correctHistoricalInvoiceDescriptionsHandler(missingTargetContext.ctx, {
+        dryRun: true,
+      }),
     ).rejects.toThrow("not an eligible historical description correction target");
+    expect(missingTargetContext.patches).toHaveLength(0);
   });
 
   it("records a paid multi-month invoice with exact existing money semantics", async () => {

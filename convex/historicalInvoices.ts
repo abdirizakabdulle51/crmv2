@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel.d.ts";
+import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { assertCanManageCompany, canViewCompany } from "./authorization";
 import {
   allocateMoney,
@@ -45,10 +45,30 @@ const HISTORICAL_DESCRIPTION_CORRECTION_PREFIX = "Historical Odoo coverage";
 const CORRECTED_HISTORICAL_ITEM_NAME =
   "Compute, Storage and Network Services";
 const HISTORICAL_DESCRIPTION_CORRECTION_TARGETS = [
-  "INV-2026-00037",
-  "INV-2026-00038",
-  "INV-2026-00039",
-  "INV-2026-00043",
+  {
+    invoiceId: "ph7db1cvdarxkvxqcpqem93dqs8e23nt",
+    invoiceNumber: "INV-2026-00037",
+    companyName: "NationalCivilServiceCommission",
+    originalReference: "INV/2026/JLY",
+  },
+  {
+    invoiceId: "ph747dg07ccpthk0wvce4qbdbd8e2p11",
+    invoiceNumber: "INV-2026-00038",
+    companyName: "NationalCivilServiceCommission",
+    originalReference: "INV/2026/00070",
+  },
+  {
+    invoiceId: "ph77jmc4s0h0nt6p6v5ng3rfxn8e35sx",
+    invoiceNumber: "INV-2026-00039",
+    companyName: "NationalCivilServiceCommission",
+    originalReference: "INV/2026/SEPT",
+  },
+  {
+    invoiceId: "ph7aevwpxfw6785a4yn33kb71x8dzcjj",
+    invoiceNumber: "INV-2026-00043",
+    companyName: "SAB",
+    originalReference: "SAB-AUG-2026",
+  },
 ] as const;
 
 async function getCurrentUserOrThrow(
@@ -462,6 +482,8 @@ export const correctOutstandingDueDates = internalMutation({
 type HistoricalDescriptionCorrectionRow = {
   invoiceId: Doc<"invoices">["_id"];
   invoiceNumber: string;
+  companyName: string;
+  originalReference: string;
   oldItemName: string;
   newItemName: string;
   serviceCategory: string;
@@ -474,35 +496,31 @@ type HistoricalDescriptionCorrectionRow = {
 async function buildHistoricalDescriptionCorrectionPlan(
   ctx: MutationCtx,
 ): Promise<HistoricalDescriptionCorrectionRow[]> {
-  const invoices = await ctx.db.query("invoices").collect();
-
-  return HISTORICAL_DESCRIPTION_CORRECTION_TARGETS.map((invoiceNumber) => {
-    const matches = invoices.filter(
-      (invoice) => invoice.invoiceNumber === invoiceNumber,
-    );
-    if (matches.length !== 1) {
-      throw new ConvexError({
-        code: "NOT_FOUND",
-        message: `Expected exactly one invoice for ${invoiceNumber}`,
-      });
-    }
-
-    const invoice = matches[0];
-    const firstLine = invoice.lineItems[0];
+  const plan: HistoricalDescriptionCorrectionRow[] = [];
+  for (const target of HISTORICAL_DESCRIPTION_CORRECTION_TARGETS) {
+    const invoice = await ctx.db.get(target.invoiceId as Id<"invoices">);
+    const firstLine = invoice?.lineItems[0];
     if (
+      !invoice ||
+      invoice._id !== target.invoiceId ||
+      invoice.invoiceNumber !== target.invoiceNumber ||
+      invoice.companyName !== target.companyName ||
+      invoice.originalReference !== target.originalReference ||
       invoice.isHistorical !== true ||
       !firstLine ||
       !firstLine.itemName.startsWith(HISTORICAL_DESCRIPTION_CORRECTION_PREFIX)
     ) {
       throw new ConvexError({
         code: "BAD_REQUEST",
-        message: `Invoice ${invoiceNumber} is not an eligible historical description correction target`,
+        message: `Invoice ${target.invoiceNumber} is not an eligible historical description correction target`,
       });
     }
 
-    return {
+    plan.push({
       invoiceId: invoice._id,
-      invoiceNumber,
+      invoiceNumber: target.invoiceNumber,
+      companyName: invoice.companyName,
+      originalReference: invoice.originalReference,
       oldItemName: firstLine.itemName,
       newItemName: CORRECTED_HISTORICAL_ITEM_NAME,
       serviceCategory: firstLine.serviceCategory,
@@ -510,8 +528,9 @@ async function buildHistoricalDescriptionCorrectionPlan(
       amountPaid: invoice.amountPaid,
       balanceDue: invoice.balanceDue,
       status: invoice.status,
-    };
-  });
+    });
+  }
+  return plan;
 }
 
 export const correctHistoricalInvoiceDescriptions = internalMutation({
