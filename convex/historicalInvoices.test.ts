@@ -38,6 +38,17 @@ const renumberOutstanding = (internal as unknown as {
 const correctOutstandingDueDates = (internal as unknown as {
   historicalInvoices: { correctOutstandingDueDates: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, unknown> };
 }).historicalInvoices.correctOutstandingDueDates;
+const correctHistoricalInvoiceDescriptions = (internal as unknown as {
+  historicalInvoices: { correctHistoricalInvoiceDescriptions: FunctionReference<"mutation", "internal", { dryRun: boolean; confirm?: string }, unknown> };
+}).historicalInvoices.correctHistoricalInvoiceDescriptions;
+
+const DESCRIPTION_TARGET_NUMBERS = [
+  "INV-2026-00037",
+  "INV-2026-00038",
+  "INV-2026-00039",
+  "INV-2026-00043",
+] as const;
+const CORRECTED_ITEM_NAME = "Compute, Storage and Network Services";
 
 async function seed(t: ReturnType<typeof convexTest>) {
   return await t.run(async (ctx) => {
@@ -52,7 +63,167 @@ async function seed(t: ReturnType<typeof convexTest>) {
   });
 }
 
+async function seedDescriptionCorrectionFixture(t: ReturnType<typeof convexTest>) {
+  const s = await seed(t);
+  const user = t.withIdentity({ tokenIdentifier: "historical-test" });
+  const targetIds = [] as Id<"invoices">[];
+  for (const [index, invoiceNumber] of DESCRIPTION_TARGET_NUMBERS.entries()) {
+    const invoiceId = await user.mutation(createHistoricalUnpaid, {
+      companyId: s.companyId,
+      originalReference: `DESCRIPTION-${index + 1}`,
+      invoiceDate: `2026-07-${String(index + 1).padStart(2, "0")}`,
+      coverageStartMonth: "2026-07",
+      monthsCovered: 1,
+      monthlyAmount: 100 + index,
+    });
+    targetIds.push(invoiceId);
+    await t.run(async (ctx) => {
+      const invoice = await ctx.db.get(invoiceId);
+      if (!invoice) throw new Error("Fixture invoice was not created");
+      await ctx.db.patch(invoiceId, {
+        invoiceNumber,
+        lineItems: invoice.lineItems.map((line, lineIndex) =>
+          lineIndex === 0
+            ? { ...line, itemName: `Historical Odoo coverage (2026-07)` }
+            : line,
+        ),
+      });
+    });
+  }
+
+  const unrelatedHistoricalId = await user.mutation(createHistoricalUnpaid, {
+    companyId: s.companyId,
+    originalReference: "DESCRIPTION-UNRELATED",
+    invoiceDate: "2026-08-01",
+    coverageStartMonth: "2026-08",
+    monthsCovered: 1,
+    monthlyAmount: 250,
+  });
+  const normalInvoiceId = await t.run(async (ctx) =>
+    ctx.db.insert("invoices", {
+      companyId: s.companyId,
+      createdBy: s.userId,
+      invoiceNumber: "INV-2026-00100",
+      status: "issued",
+      companyName: "Historical Customer",
+      lineItems: [
+        {
+          itemName: "Normal service",
+          serviceCategory: "Compute",
+          billingUnit: "month",
+          quantity: 1,
+          monthlyUnitPrice: 300,
+          monthlyTotal: 300,
+          yearlyTotal: 3600,
+        },
+      ],
+      subtotal: 300,
+      monthlyTotal: 300,
+      yearlyTotal: 3600,
+      grandTotal: 300,
+      amountPaid: 0,
+      balanceDue: 300,
+      createdAt: 1,
+      updatedAt: 1,
+    }),
+  );
+
+  return {
+    ...s,
+    user,
+    targetIds,
+    unrelatedHistoricalId,
+    normalInvoiceId,
+  };
+}
+
 describe("historical paid invoices", () => {
+  it("dry-runs and executes only the four exact historical description targets", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedDescriptionCorrectionFixture(t);
+    const before = await t.run(async (ctx) =>
+      Promise.all([
+        ...fixture.targetIds.map((invoiceId) => ctx.db.get(invoiceId)),
+        ctx.db.get(fixture.unrelatedHistoricalId),
+        ctx.db.get(fixture.normalInvoiceId),
+      ]),
+    );
+
+    const dryRun = await t.mutation(correctHistoricalInvoiceDescriptions, {
+      dryRun: true,
+    });
+    expect(dryRun).toHaveLength(4);
+    expect(dryRun.map((row) => row.invoiceNumber)).toEqual(
+      DESCRIPTION_TARGET_NUMBERS,
+    );
+    for (const row of dryRun) {
+      expect(row).toMatchObject({
+        oldItemName: "Historical Odoo coverage (2026-07)",
+        newItemName: CORRECTED_ITEM_NAME,
+        serviceCategory: "Historical Invoice",
+        status: "issued",
+      });
+    }
+
+    const afterDryRun = await t.run(async (ctx) =>
+      Promise.all([
+        ...fixture.targetIds.map((invoiceId) => ctx.db.get(invoiceId)),
+        ctx.db.get(fixture.unrelatedHistoricalId),
+        ctx.db.get(fixture.normalInvoiceId),
+      ]),
+    );
+    expect(afterDryRun).toEqual(before);
+
+    await expect(
+      t.mutation(correctHistoricalInvoiceDescriptions, {
+        dryRun: false,
+        confirm: "WRONG_CONFIRMATION",
+      }),
+    ).rejects.toThrow("Exact confirmation required");
+
+    await t.mutation(correctHistoricalInvoiceDescriptions, {
+      dryRun: false,
+      confirm: "CORRECT_HISTORICAL_INVOICE_DESCRIPTIONS",
+    });
+    const afterExecution = await t.run(async (ctx) =>
+      Promise.all([
+        ...fixture.targetIds.map((invoiceId) => ctx.db.get(invoiceId)),
+        ctx.db.get(fixture.unrelatedHistoricalId),
+        ctx.db.get(fixture.normalInvoiceId),
+      ]),
+    );
+    fixture.targetIds.forEach((_, index) => {
+      const original = before[index];
+      const updated = afterExecution[index];
+      expect(updated).toEqual({
+        ...original,
+        lineItems: original!.lineItems.map((line, lineIndex) =>
+          lineIndex === 0 ? { ...line, itemName: CORRECTED_ITEM_NAME } : line,
+        ),
+      });
+    });
+    expect(afterExecution[4]).toEqual(before[4]);
+    expect(afterExecution[5]).toEqual(before[5]);
+  });
+
+  it("fails closed when an exact target is missing or is not historical", async () => {
+    const missingTest = convexTest(schema, modules);
+    const missingFixture = await seedDescriptionCorrectionFixture(missingTest);
+    await missingTest.run((ctx) => ctx.db.delete(missingFixture.targetIds[0]));
+    await expect(
+      missingTest.mutation(correctHistoricalInvoiceDescriptions, { dryRun: true }),
+    ).rejects.toThrow("Expected exactly one invoice for INV-2026-00037");
+
+    const nonHistoricalTest = convexTest(schema, modules);
+    const nonHistoricalFixture = await seedDescriptionCorrectionFixture(nonHistoricalTest);
+    await nonHistoricalTest.run((ctx) =>
+      ctx.db.patch(nonHistoricalFixture.targetIds[0], { isHistorical: false }),
+    );
+    await expect(
+      nonHistoricalTest.mutation(correctHistoricalInvoiceDescriptions, { dryRun: true }),
+    ).rejects.toThrow("not an eligible historical description correction target");
+  });
+
   it("records a paid multi-month invoice with exact existing money semantics", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

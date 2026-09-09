@@ -827,9 +827,11 @@ function InvoicePrintContent() {
                 <tr key={`${item.catalogItemId ?? item.itemName}-${index}`}>
                   <td>
                     <div className="line-title">{item.itemName}</div>
-                    <div className="line-subtitle">
-                      {item.serviceCategory || item.billingUnit}
-                    </div>
+                    {!invoice.isHistorical ? (
+                      <div className="line-subtitle">
+                        {item.serviceCategory || item.billingUnit}
+                      </div>
+                    ) : null}
                   </td>
                   {showRegionBreakdown ? (
                     <td className="line-region-cell">

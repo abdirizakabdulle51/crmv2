@@ -39,6 +39,17 @@ const OUTSTANDING_HISTORICAL_STATUSES = new Set([
   "overdue",
   "partially_paid",
 ]);
+const HISTORICAL_DESCRIPTION_CORRECTION_CONFIRMATION =
+  "CORRECT_HISTORICAL_INVOICE_DESCRIPTIONS";
+const HISTORICAL_DESCRIPTION_CORRECTION_PREFIX = "Historical Odoo coverage";
+const CORRECTED_HISTORICAL_ITEM_NAME =
+  "Compute, Storage and Network Services";
+const HISTORICAL_DESCRIPTION_CORRECTION_TARGETS = [
+  "INV-2026-00037",
+  "INV-2026-00038",
+  "INV-2026-00039",
+  "INV-2026-00043",
+] as const;
 
 async function getCurrentUserOrThrow(
   ctx: QueryCtx | MutationCtx,
@@ -442,6 +453,106 @@ export const correctOutstandingDueDates = internalMutation({
     if (!args.dryRun) {
       for (const row of plan) {
         await ctx.db.patch(row.invoiceId, { dueDate: row.newDueDate });
+      }
+    }
+    return plan;
+  },
+});
+
+type HistoricalDescriptionCorrectionRow = {
+  invoiceId: Doc<"invoices">["_id"];
+  invoiceNumber: string;
+  oldItemName: string;
+  newItemName: string;
+  serviceCategory: string;
+  grandTotal: number;
+  amountPaid: number;
+  balanceDue: number;
+  status: Doc<"invoices">["status"];
+};
+
+async function buildHistoricalDescriptionCorrectionPlan(
+  ctx: MutationCtx,
+): Promise<HistoricalDescriptionCorrectionRow[]> {
+  const invoices = await ctx.db.query("invoices").collect();
+
+  return HISTORICAL_DESCRIPTION_CORRECTION_TARGETS.map((invoiceNumber) => {
+    const matches = invoices.filter(
+      (invoice) => invoice.invoiceNumber === invoiceNumber,
+    );
+    if (matches.length !== 1) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: `Expected exactly one invoice for ${invoiceNumber}`,
+      });
+    }
+
+    const invoice = matches[0];
+    const firstLine = invoice.lineItems[0];
+    if (
+      invoice.isHistorical !== true ||
+      !firstLine ||
+      !firstLine.itemName.startsWith(HISTORICAL_DESCRIPTION_CORRECTION_PREFIX)
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Invoice ${invoiceNumber} is not an eligible historical description correction target`,
+      });
+    }
+
+    return {
+      invoiceId: invoice._id,
+      invoiceNumber,
+      oldItemName: firstLine.itemName,
+      newItemName: CORRECTED_HISTORICAL_ITEM_NAME,
+      serviceCategory: firstLine.serviceCategory,
+      grandTotal: invoice.grandTotal,
+      amountPaid: invoice.amountPaid,
+      balanceDue: invoice.balanceDue,
+      status: invoice.status,
+    };
+  });
+}
+
+export const correctHistoricalInvoiceDescriptions = internalMutation({
+  args: {
+    dryRun: v.boolean(),
+    confirm: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (
+      !args.dryRun &&
+      args.confirm !== HISTORICAL_DESCRIPTION_CORRECTION_CONFIRMATION
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Exact confirmation required: ${HISTORICAL_DESCRIPTION_CORRECTION_CONFIRMATION}`,
+      });
+    }
+
+    const plan = await buildHistoricalDescriptionCorrectionPlan(ctx);
+    if (!args.dryRun) {
+      for (const row of plan) {
+        const invoice = await ctx.db.get(row.invoiceId);
+        const firstLine = invoice?.lineItems[0];
+        if (
+          !invoice ||
+          invoice.invoiceNumber !== row.invoiceNumber ||
+          invoice.isHistorical !== true ||
+          !firstLine ||
+          firstLine.itemName !== row.oldItemName
+        ) {
+          throw new ConvexError({
+            code: "BAD_REQUEST",
+            message: `Invoice ${row.invoiceNumber} changed during description correction`,
+          });
+        }
+
+        await ctx.db.patch(row.invoiceId, {
+          lineItems: invoice.lineItems.map((line, index) =>
+            index === 0 ? { ...line, itemName: row.newItemName } : line,
+          ),
+        });
       }
     }
     return plan;

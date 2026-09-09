@@ -178,6 +178,52 @@ describe("InvoicePrintPage", () => {
     expect(screen.queryByLabelText("Region totals")).not.toBeInTheDocument();
   });
 
+  it("hides the generic service category subtitle only for historical invoices", () => {
+    mocks.invoice = invoice({
+      isHistorical: true,
+      lineItems: [
+        {
+          itemName: "Compute, Storage and Network Services",
+          serviceCategory: "Historical Invoice",
+          billingUnit: "month",
+          quantity: 1,
+          monthlyUnitPrice: 100,
+          monthlyTotal: 100,
+          yearlyTotal: 1200,
+        },
+      ],
+    });
+
+    renderPrintPage();
+
+    expect(
+      screen.getByText("Compute, Storage and Network Services"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Historical Invoice")).not.toBeInTheDocument();
+  });
+
+  it("keeps service category subtitles for normal invoices", () => {
+    mocks.invoice = invoice({
+      isHistorical: false,
+      lineItems: [
+        {
+          itemName: "Normal service",
+          serviceCategory: "Compute",
+          billingUnit: "month",
+          quantity: 1,
+          monthlyUnitPrice: 100,
+          monthlyTotal: 100,
+          yearlyTotal: 1200,
+        },
+      ],
+    });
+
+    renderPrintPage();
+
+    expect(screen.getByText("Normal service")).toBeInTheDocument();
+    expect(screen.getByText("Compute")).toBeInTheDocument();
+  });
+
   it("shows one invoice-level region when all line items use the same region", () => {
     mocks.invoice = invoice({
       lineItems: [
