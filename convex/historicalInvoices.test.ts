@@ -422,7 +422,7 @@ describe("historical paid invoices", () => {
     expect(after.invoices.find((invoice) => invoice._id === partialId)).toEqual({ ...before.invoices.find((invoice) => invoice._id === partialId), invoiceNumber: `INV-${year}-00005` });
   });
 
-  it("fails the migration closed when a proposed number is already used", async () => {
+  it("keeps historical migration above existing valid invoice numbers", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const user = t.withIdentity({ tokenIdentifier: "historical-test" });
@@ -437,7 +437,13 @@ describe("historical paid invoices", () => {
       await ctx.db.patch(targetId, { invoiceNumber: "HIST-ODOO-COLLISION-TARGET" });
       await ctx.db.patch(occupiedId, { invoiceNumber: occupiedNumber, status: "paid" });
     });
-    await expect(t.mutation(renumberOutstanding, { dryRun: true })).rejects.toThrow(`Invoice number collision detected for ${occupiedNumber}`);
+    const preview = await t.mutation(renumberOutstanding, { dryRun: true });
+    expect(preview).toEqual([
+      expect.objectContaining({
+        invoiceId: targetId,
+        newInvoiceNumber: `INV-${new Date().getUTCFullYear()}-00004`,
+      }),
+    ]);
     const result = await t.run(async (ctx) => ({ target: await ctx.db.get(targetId), occupied: await ctx.db.get(occupiedId) }));
     expect(result.target?.invoiceNumber).toBe("HIST-ODOO-COLLISION-TARGET");
     expect(result.occupied?.invoiceNumber).toBe(occupiedNumber);

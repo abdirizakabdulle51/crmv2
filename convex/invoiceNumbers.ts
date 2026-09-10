@@ -9,7 +9,15 @@ export function invoiceNumberForSequence(now: number, sequence: number) {
 export function nextInvoiceSequence(
   invoices: Pick<Doc<"invoices">, "invoiceNumber">[],
 ) {
-  return invoices.filter((invoice) => invoice.invoiceNumber).length + 1;
+  const countBasedNext =
+    invoices.filter((invoice) => invoice.invoiceNumber).length + 1;
+  const normalInvoiceNumberPattern = /^INV-\d{4}-(\d{5})$/;
+  const maximumNormalSequence = invoices.reduce((maximum, invoice) => {
+    const match = invoice.invoiceNumber?.match(normalInvoiceNumberPattern);
+    if (!match) return maximum;
+    return Math.max(maximum, Number(match[1]));
+  }, 0);
+  return Math.max(countBasedNext, maximumNormalSequence + 1);
 }
 
 export async function nextInvoiceNumber(ctx: MutationCtx, now: number) {

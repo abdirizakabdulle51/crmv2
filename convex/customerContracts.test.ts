@@ -46,7 +46,10 @@ function cleanupArgs(fixture: Fixture, overrides: Partial<CleanupArgs> = {}): Cl
   };
 }
 
-async function seedFixture(t: ReturnType<typeof convexTest>): Promise<Fixture> {
+async function seedFixture(
+  t: ReturnType<typeof convexTest>,
+  fillerCount = 50,
+): Promise<Fixture> {
   return await t.run(async (ctx) => {
     const now = Date.UTC(2026, 8, 10);
     const countryId = await ctx.db.insert("countries", {
@@ -118,7 +121,7 @@ async function seedFixture(t: ReturnType<typeof convexTest>): Promise<Fixture> {
         });
       }
     }
-    for (let index = 0; index < 50; index += 1) {
+    for (let index = 0; index < fillerCount; index += 1) {
       await ctx.db.insert("invoices", {
         companyId: otherCompanyId,
         invoiceNumber: `LEGACY-${index}`,
@@ -442,46 +445,21 @@ describe("customer contract maintenance cleanup", () => {
     ).not.toBeNull();
   });
 
-  it("reports allocator collisions and refuses execution before deleting", async () => {
+  it("keeps the Safari cleanup safe after the count-based collision is corrected", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedFixture(t);
+    const fixture = await seedFixture(t, 45);
     await t.run(async (ctx) => {
       const invoice = await ctx.db.get(fixture.unrelatedInvoiceId);
       if (!invoice) throw new Error("fixture invoice missing");
-      await ctx.db.patch(invoice._id, { invoiceNumber: "INV-2026-00101" });
-      for (let index = 0; index < 49; index += 1) {
-        await ctx.db.insert("invoices", {
-          companyId: fixture.otherCompanyId,
-          invoiceNumber: `COLLISION-${index}`,
-          createdBy: fixture.userId,
-          status: "draft",
-          companyName: "NationalCivilServiceCommission",
-          lineItems: [],
-          subtotal: 1,
-          monthlyTotal: 1,
-          yearlyTotal: 1,
-          grandTotal: 1,
-          amountPaid: 0,
-          balanceDue: 1,
-          createdAt: Date.UTC(2026, 8, 10),
-          updatedAt: Date.UTC(2026, 8, 10),
-        });
-      }
+      await ctx.db.patch(invoice._id, { invoiceNumber: "INV-2026-00049" });
     });
     const dryRun = await t.mutation(
       internal.customerContracts.permanentlyDeleteIncorrectContract,
       cleanupArgs(fixture),
     );
     expect(dryRun).toMatchObject({
-      invoiceNumberAllocatorSafe: false,
-      invoiceNumberAllocatorCollision: "INV-2026-00101",
+      invoiceNumberAllocatorSafe: true,
     });
-    await expect(
-      t.mutation(
-        internal.customerContracts.permanentlyDeleteIncorrectContract,
-        cleanupArgs(fixture, { dryRun: false, confirm: CONFIRMATION }),
-      ),
-    ).rejects.toThrow("invoice allocator would collide");
     expect(
       await t.run((ctx) => ctx.db.get(fixture.contractId)),
     ).not.toBeNull();
