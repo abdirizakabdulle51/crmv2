@@ -375,6 +375,7 @@ function FinanceActivityChart({
           (row) =>
             row.invoicesSent > 0 ||
             row.invoicesPaid > 0 ||
+            row.recognizedRevenue > 0 ||
             row.preCollected > 0 ||
             row.expectedCollections > 0 ||
             row.expenses > 0,
@@ -386,10 +387,10 @@ function FinanceActivityChart({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <CardTitle className="text-base">
-              Monthly Collections & Cash Outlook
+              Monthly Billing, Collections & Cash Outlook
             </CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              Collections, expected cash, and expenses
+              Billed value by service month; collections by payment date
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -439,6 +440,12 @@ function FinanceActivityChart({
                   dataKey="invoicesPaid"
                   name="Invoices Paid"
                   fill="oklch(0.6 0.15 170)"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar
+                  dataKey="recognizedRevenue"
+                  name="Monthly billed value"
+                  fill="oklch(0.62 0.16 250)"
                   radius={[4, 4, 0, 0]}
                 />
                 <Bar

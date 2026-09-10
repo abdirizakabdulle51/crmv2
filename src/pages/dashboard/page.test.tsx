@@ -92,6 +92,14 @@ const mocks = vi.hoisted(() => ({
         },
       ],
     },
+    financeActivity: {
+      countries: [{ id: "overall", name: "All Countries" }],
+      monthly: {
+        overall: [{ period: "2026-01", label: "Jan", invoicesSent: 1200, invoicesPaid: 1200, recognizedRevenue: 100, preCollected: 100, expectedCollections: 0, expenses: 0 }],
+        byCountry: {},
+      },
+      daily: { overall: [], byCountry: {} },
+    },
   },
 }));
 
@@ -172,6 +180,18 @@ describe("DashboardPage", () => {
 
     await user.click(screen.getByRole("link", { name: /Quotes/i }));
     expect(screen.getByTestId("location")).toHaveTextContent("/quotes");
+  });
+
+  it("shows billed value by service month in finance analytics", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await user.click(screen.getByRole("tab", { name: "Graphs & Analytics" }));
+    expect(
+      screen.getByText(
+        "Billed value by service month; collections by payment date",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("navigates the Tasks card to the tasks page", async () => {
