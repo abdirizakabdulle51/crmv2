@@ -5,34 +5,68 @@ import { calculateMonthProration, roundMoney, sumMoney } from "./money";
 import { allocateFlexibleCommitment } from "./flexibleCommitment";
 
 type Ctx = QueryCtx | MutationCtx;
+type BillingUsage = {
+  _id: string;
+  month: string;
+  usageDate?: string;
+  catalogItemId?: Id<"serviceCatalog">;
+  amount: number;
+};
 
 export async function priceMonthlyContractUsage(
   ctx: Ctx,
   contract: Doc<"customerContracts">,
   month: string,
 ) {
-  const [usage, rules, overrides] = await Promise.all([
-    ctx.db
-      .query("consumption")
-      .withIndex("by_company_month", (q) =>
-        q.eq("companyId", contract.companyId).eq("month", month),
+  const [legacyUsage, dailyRows, rules, overrides, tenants] = await Promise.all(
+    [
+      ctx.db
+        .query("consumption")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", contract.companyId).eq("month", month),
+        )
+        .collect(),
+      ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", contract.companyId).eq("month", month),
+        )
+        .collect(),
+      ctx.db
+        .query("customerContractGroupDiscounts")
+        .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+        .collect(),
+      ctx.db
+        .query("customerContractLineItems")
+        .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+        .collect(),
+      ctx.db
+        .query("manageOneTenants")
+        .withIndex("by_linked_company", (q) =>
+          q.eq("linkedCompanyId", contract.companyId),
+        )
+        .collect(),
+    ],
+  );
+  const fromDaily = tenants.some((tenant) => tenant.enabled !== false);
+  const usage: BillingUsage[] = fromDaily
+    ? await pricedDailyUsage(
+        ctx,
+        dailyRows,
+        contract.startDate,
+        contract.endDate,
       )
-      .collect(),
-    ctx.db
-      .query("customerContractGroupDiscounts")
-      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
-      .collect(),
-    ctx.db
-      .query("customerContractLineItems")
-      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
-      .collect(),
-  ]);
+    : legacyUsage;
   const monthFraction = calculateMonthProration({
     startDate: contract.startDate,
     endDate: contract.endDate,
     month,
   }).fraction;
-  if (monthFraction < 1 && usage.some((entry) => !entry.usageDate)) {
+  if (
+    !fromDaily &&
+    monthFraction < 1 &&
+    usage.some((entry) => !entry.usageDate)
+  ) {
     throw new ConvexError({
       code: "USAGE_PERIOD_REQUIRED",
       message: "Partial-month contracts require dated usage records",
@@ -50,9 +84,7 @@ export async function priceMonthlyContractUsage(
         "Every usage record must be linked to a classified catalogue service before contract invoicing",
     });
   }
-  const catalogIds = new Set(
-    activeUsage.map((entry) => entry.catalogItemId!),
-  );
+  const catalogIds = new Set(activeUsage.map((entry) => entry.catalogItemId!));
   const catalogs = await Promise.all(
     [...catalogIds].map(async (id) => [id, await ctx.db.get(id)] as const),
   );
@@ -146,30 +178,93 @@ function monthEnd(month: string) {
   return Date.UTC(year, monthNumber, 0, 23, 59, 59, 999);
 }
 
+async function pricedDailyUsage(
+  ctx: Ctx,
+  rows: Doc<"dailyUsageSnapshots">[],
+  start: number,
+  end: number,
+): Promise<BillingUsage[]> {
+  const catalog = new Map(
+    (await ctx.db.query("serviceCatalog").collect()).map((item) => [
+      item._id,
+      item,
+    ]),
+  );
+  const grouped = new Map<
+    string,
+    { month: string; catalogItemId?: Id<"serviceCatalog">; quantity: number }
+  >();
+  for (const row of rows) {
+    const timestamp = Date.parse(`${row.usageDate}T00:00:00.000Z`);
+    if (timestamp < start || timestamp > end) continue;
+    const key = `${row.month}|${row.catalogItemId ?? row.serviceType}`;
+    const current = grouped.get(key) ?? {
+      month: row.month,
+      catalogItemId: row.catalogItemId,
+      quantity: 0,
+    };
+    current.quantity += row.quantity;
+    grouped.set(key, current);
+  }
+  return [...grouped.entries()].map(([key, row]) => {
+    const item = row.catalogItemId ? catalog.get(row.catalogItemId) : undefined;
+    const [year, monthNumber] = row.month.split("-").map(Number);
+    const days = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+    return {
+      _id: `daily:${key}`,
+      month: row.month,
+      catalogItemId: row.catalogItemId,
+      amount: item ? roundMoney((row.quantity / days) * item.monthlyPrice) : 0,
+    };
+  });
+}
+
 export async function priceFlexibleContractUsage(
   ctx: Ctx,
   contract: Doc<"customerContracts">,
   through: number,
 ) {
-  const [usage, rules, overrides] = await Promise.all([
-    ctx.db
-      .query("consumption")
-      .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
-      .collect(),
-    ctx.db
-      .query("customerContractGroupDiscounts")
-      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
-      .collect(),
-    ctx.db
-      .query("customerContractLineItems")
-      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
-      .collect(),
-  ]);
+  const [legacyUsage, dailyRows, rules, overrides, tenants] = await Promise.all(
+    [
+      ctx.db
+        .query("consumption")
+        .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
+        .collect(),
+      ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
+        .collect(),
+      ctx.db
+        .query("customerContractGroupDiscounts")
+        .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+        .collect(),
+      ctx.db
+        .query("customerContractLineItems")
+        .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+        .collect(),
+      ctx.db
+        .query("manageOneTenants")
+        .withIndex("by_linked_company", (q) =>
+          q.eq("linkedCompanyId", contract.companyId),
+        )
+        .collect(),
+    ],
+  );
+  const fromDaily = tenants.some((tenant) => tenant.enabled !== false);
+  const usage: BillingUsage[] = fromDaily
+    ? await pricedDailyUsage(
+        ctx,
+        dailyRows,
+        contract.startDate,
+        Math.min(contract.endDate, through),
+      )
+    : legacyUsage;
   const boundaryMonths = new Set([
     monthKey(contract.startDate),
     monthKey(contract.endDate),
   ]);
   if (
+    !fromDaily &&
     usage.some(
       (entry) =>
         boundaryMonths.has(entry.month) &&
@@ -209,15 +304,15 @@ export async function priceFlexibleContractUsage(
       message: "Every contract usage record must be linked to the catalogue",
     });
   }
-  const catalogIds = new Set(
-    dated.map(({ entry }) => entry.catalogItemId!),
-  );
+  const catalogIds = new Set(dated.map(({ entry }) => entry.catalogItemId!));
   const catalogs = await Promise.all(
     [...catalogIds].map(async (id) => [id, await ctx.db.get(id)] as const),
   );
   const catalogById = new Map(catalogs);
   if (
-    catalogs.some(([, catalog]) => !catalog?.productGroup || !catalog.serviceCode)
+    catalogs.some(
+      ([, catalog]) => !catalog?.productGroup || !catalog.serviceCode,
+    )
   ) {
     throw new ConvexError({
       code: "USAGE_CATALOG_REQUIRED",

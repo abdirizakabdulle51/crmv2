@@ -18,6 +18,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
       cancelDraftInvoice: "invoices.cancelDraftInvoice",
       voidInvoice: "invoices.voidInvoice",
       recordPayment: "invoices.recordPayment",
+      reversePayment: "invoices.reversePayment",
       sendInvoiceEmail: "invoices.sendInvoiceEmail",
       listEvents: "invoices.listEvents",
       listPayments: "invoices.listPayments",
@@ -47,6 +48,7 @@ const mocks = vi.hoisted(() => ({
   cancelDraftInvoice: vi.fn(),
   voidInvoice: vi.fn(),
   recordPayment: vi.fn(),
+  reversePayment: vi.fn(),
   sendInvoiceEmail: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -63,6 +65,7 @@ vi.mock("convex/react", () => ({
       return mocks.cancelDraftInvoice;
     if (mutation === "invoices.voidInvoice") return mocks.voidInvoice;
     if (mutation === "invoices.recordPayment") return mocks.recordPayment;
+    if (mutation === "invoices.reversePayment") return mocks.reversePayment;
     return vi.fn();
   },
   useQuery: (query: string) => {

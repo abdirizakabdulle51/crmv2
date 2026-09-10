@@ -888,13 +888,18 @@ export const balances = query({
           transaction.transactionDate <= args.asOf,
       );
       const moneyIn = sumMoney([
-        ...payments.map((payment) => payment.amount),
+        ...payments
+          .filter((payment) => payment.amount > 0)
+          .map((payment) => payment.amount),
         ...transactions
           .filter((transaction) => transaction.direction === "incoming")
           .map((transaction) => transaction.amount),
       ]);
       const moneyOut = sumMoney([
         ...expenses.map((expense) => expense.amount),
+        ...payments
+          .filter((payment) => payment.amount < 0)
+          .map((payment) => Math.abs(payment.amount)),
         ...transactions
           .filter((transaction) => transaction.direction === "outgoing")
           .map((transaction) => transaction.amount),
@@ -999,8 +1004,8 @@ export const ledger = query({
       rows.push({
         key: payment._id,
         date: payment.paidAt,
-        direction: "incoming",
-        sourceType: "invoice_payment",
+        direction: payment.amount < 0 ? "outgoing" : "incoming",
+        sourceType: payment.reversesPaymentId ? "reversal" : "invoice_payment",
         sourceLabel: invoice?.invoiceNumber ?? "Missing invoice",
         sourceHref: invoice ? `/invoices/${invoice._id}` : undefined,
         sourceStatus: invoice?.status,
@@ -1011,7 +1016,7 @@ export const ledger = query({
           ? `${invoice.invoiceNumber ?? "Invoice"} · ${invoice.companyName}`
           : "Invoice payment with a missing source invoice",
         reference: payment.transactionId ?? payment.reference ?? "",
-        amount: payment.amount,
+        amount: Math.abs(payment.amount),
         createdAt: payment.createdAt,
       });
     }

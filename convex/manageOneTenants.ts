@@ -811,8 +811,9 @@ export function buildUsageHintsForCompany(
         );
         const fallbackObsLineItem =
           pricedObsItems.length === 1 ? pricedObsItems[0] : undefined;
-        const fallbackObsCatalogItem =
-          fallbackObsLineItem ? undefined : findStandardObsCatalogItem(catalog);
+        const fallbackObsCatalogItem = fallbackObsLineItem
+          ? undefined
+          : findStandardObsCatalogItem(catalog);
         const suggestedCatalogItemId =
           fallbackObsLineItem?.suggestedCatalogItemId ??
           fallbackObsCatalogItem?._id;
@@ -1500,11 +1501,20 @@ export const bulkUpsert = internalMutation({
         .unique();
 
       if (existing) {
-        await ctx.db.patch(existing._id, { ...tenant, lastSyncedAt: now });
+        await ctx.db.patch(existing._id, {
+          ...tenant,
+          lastSyncedAt: now,
+          ...(tenant.enabled === false && existing.enabled !== false
+            ? { billingDisabledAt: now }
+            : tenant.enabled !== false && existing.enabled === false
+              ? { billingDisabledAt: undefined }
+              : {}),
+        });
       } else {
         await ctx.db.insert("manageOneTenants", {
           ...tenant,
           lastSyncedAt: now,
+          ...(tenant.enabled === false ? { billingDisabledAt: now } : {}),
         });
       }
 
@@ -1699,7 +1709,10 @@ export const linkToCompany = mutation({
       });
     }
 
-    await ctx.db.patch(args.tenantId, { linkedCompanyId: args.companyId });
+    await ctx.db.patch(args.tenantId, {
+      linkedCompanyId: args.companyId,
+      billingLinkedAt: Date.now(),
+    });
   },
 });
 
@@ -1727,7 +1740,10 @@ export const reassignCompany = mutation({
       });
     }
 
-    await ctx.db.patch(args.tenantId, { linkedCompanyId: args.companyId });
+    await ctx.db.patch(args.tenantId, {
+      linkedCompanyId: args.companyId,
+      billingLinkedAt: Date.now(),
+    });
     const usageRows = await migrateOpenDailyUsageRows(
       ctx,
       args.tenantId,
@@ -1754,7 +1770,10 @@ export const unlinkFromCompany = mutation({
       throw new ConvexError({ code: "NOT_FOUND", message: "Tenant not found" });
     }
 
-    await ctx.db.patch(args.tenantId, { linkedCompanyId: undefined });
+    await ctx.db.patch(args.tenantId, {
+      linkedCompanyId: undefined,
+      billingLinkedAt: undefined,
+    });
     const removedOpenUsageRows = await deleteOpenDailyUsageRows(
       ctx,
       args.tenantId,
@@ -1795,7 +1814,10 @@ export const createCompanyFromTenant = mutation({
       contactEmail: tenant.managerEmail,
     });
 
-    await ctx.db.patch(args.tenantId, { linkedCompanyId: companyId });
+    await ctx.db.patch(args.tenantId, {
+      linkedCompanyId: companyId,
+      billingLinkedAt: Date.now(),
+    });
     return companyId;
   },
 });

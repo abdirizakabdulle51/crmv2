@@ -1,17 +1,20 @@
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import {
+  internalAction,
   internalMutation,
   internalQuery,
   mutation,
   query,
 } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
   assertCanManageUsage,
   assertNotMonitoring,
   canViewCompany,
+  isCeoOrHob,
 } from "./authorization";
 import { buildUsageHintsForCompany } from "./manageOneTenants";
 import {
@@ -25,7 +28,11 @@ import {
   withInvoiceMoneyCents,
   withLineMoneyCents,
 } from "./money";
-import { findApplicableCredit, reserveCredit } from "./customerCredits";
+import {
+  findApplicableCredit,
+  releaseInvoiceCredit,
+  reserveCredit,
+} from "./customerCredits";
 import { contractDiscount, contractOveragePrice } from "./contractPricing";
 
 type CatalogItem = Doc<"serviceCatalog">;
@@ -215,7 +222,60 @@ function monthBounds(month: string) {
 }
 
 function dailyUsageSourceReference(month: string) {
-  return `Daily usage ${month}`;
+  return `PAYG:${month}`;
+}
+
+function isPaygUsageInvoice(invoice: Doc<"invoices">, month: string) {
+  return (
+    invoice.sourceType === "daily_usage" ||
+    invoice.sourceReference === dailyUsageSourceReference(month) ||
+    invoice.sourceReference === `Daily usage ${month}` ||
+    invoice.sourceReference === `PAYG-${month}`
+  );
+}
+
+function expectedDateKeys(month: string) {
+  return Array.from(
+    { length: daysInMonth(month) },
+    (_, index) => `${month}-${String(index + 1).padStart(2, "0")}`,
+  );
+}
+
+function paygCoverage(
+  rows: Doc<"dailyUsageSnapshots">[],
+  tenants: Doc<"manageOneTenants">[],
+  month: string,
+  captures: Doc<"dailyUsageCaptureRuns">[],
+) {
+  const expected = expectedDateKeys(month);
+  const datesByTenant = new Map<Id<"manageOneTenants">, Set<string>>();
+  for (const row of rows) {
+    const dates = datesByTenant.get(row.tenantId) ?? new Set<string>();
+    dates.add(row.usageDate);
+    datesByTenant.set(row.tenantId, dates);
+  }
+  for (const capture of captures.filter((run) => run.status === "completed")) {
+    for (const tenantId of capture.tenantIds) {
+      const dates = datesByTenant.get(tenantId) ?? new Set<string>();
+      dates.add(capture.usageDate);
+      datesByTenant.set(tenantId, dates);
+    }
+  }
+  const missing = tenants.flatMap((tenant) => {
+    const dates = datesByTenant.get(tenant._id) ?? new Set<string>();
+    const linkedDate = tenant.billingLinkedAt
+      ? new Date(tenant.billingLinkedAt).toISOString().slice(0, 10)
+      : undefined;
+    const disabledDate = tenant.billingDisabledAt
+      ? new Date(tenant.billingDisabledAt).toISOString().slice(0, 10)
+      : undefined;
+    return expected
+      .filter((date) => !linkedDate || date >= linkedDate)
+      .filter((date) => !disabledDate || date <= disabledDate)
+      .filter((date) => !dates.has(date))
+      .map((date) => `${tenant.name}: ${date}`);
+  });
+  return { expectedLastDate: expected.at(-1)!, missing };
 }
 
 function contractCoversMonth(
@@ -258,7 +318,11 @@ function findContractLineForRollupRow(
     contractLineMatchesUsage(row, candidate),
   );
   if (lineIndex < 0) return null;
-  return { contract: context.contract, line: context.lines[lineIndex], lineIndex };
+  return {
+    contract: context.contract,
+    line: context.lines[lineIndex],
+    lineIndex,
+  };
 }
 
 async function loadActiveContractPricingForMonth(
@@ -295,10 +359,7 @@ async function loadActiveContractPricingForMonth(
       contract,
       lines: lines.sort((a, b) => a.createdAt - b.createdAt),
       groupDiscountByKey: new Map(
-        groupDiscounts.map((rule) => [
-          rule.productGroup,
-          rule.discountPercent,
-        ]),
+        groupDiscounts.map((rule) => [rule.productGroup, rule.discountPercent]),
       ),
     });
   }
@@ -521,12 +582,11 @@ export function buildMonthlyRollupRows(args: {
                 monthFraction: 1,
               }).grossBaseAmount,
               overageQuantity: roundQuantity(overageQuantity),
-              overageUnitPrice:
-                contractOveragePrice(
-                  contractMatch.contract,
-                  contractMatch.line,
-                  currentCatalogPrice,
-                ),
+              overageUnitPrice: contractOveragePrice(
+                contractMatch.contract,
+                contractMatch.line,
+                currentCatalogPrice,
+              ),
             }
           : {}),
       } satisfies RollupRow;
@@ -730,9 +790,7 @@ function deterministicDigest(value: unknown) {
     first = Math.imul(first ^ code, 0x01000193);
     second = Math.imul(second ^ code, 0x85ebca6b);
   }
-  return `d1:${(first >>> 0).toString(16).padStart(8, "0")}${(
-    second >>> 0
-  )
+  return `d1:${(first >>> 0).toString(16).padStart(8, "0")}${(second >>> 0)
     .toString(16)
     .padStart(8, "0")}`;
 }
@@ -840,9 +898,7 @@ export function buildDailyUsageBillingSnapshotCandidate(args: {
   const rollupRows = args.reviewResult.rollup.rows;
   const latestCapturedAt = args.rows.reduce<number | undefined>(
     (latest, row) =>
-      latest === undefined || row.capturedAt > latest
-        ? row.capturedAt
-        : latest,
+      latest === undefined || row.capturedAt > latest ? row.capturedAt : latest,
     undefined,
   );
   const candidate: DailyUsageBillingSnapshotCandidate = {
@@ -877,13 +933,10 @@ export function buildDailyUsageBillingSnapshotCandidate(args: {
     ...(args.reviewResult.billingHealth.latestUsageDate
       ? { latestUsageDate: args.reviewResult.billingHealth.latestUsageDate }
       : {}),
-    capturedThroughToday:
-      args.reviewResult.billingHealth.capturedThroughToday,
+    capturedThroughToday: args.reviewResult.billingHealth.capturedThroughToday,
     latestDayRowCount: args.reviewResult.billingHealth.latestDayRowCount,
-    missingPriceRowCount:
-      args.reviewResult.billingHealth.missingPriceRowCount,
-    missingServiceCount:
-      args.reviewResult.billingHealth.missingServices.length,
+    missingPriceRowCount: args.reviewResult.billingHealth.missingPriceRowCount,
+    missingServiceCount: args.reviewResult.billingHealth.missingServices.length,
   };
   return candidate;
 }
@@ -929,7 +982,9 @@ export function shouldWriteDailyUsageBillingSnapshot(
     "calculationVersion" | "inputDigest" | "billingResultDigest"
   >,
 ) {
-  return compareDailyUsageBillingSnapshot(persisted, candidate).status !== "match";
+  return (
+    compareDailyUsageBillingSnapshot(persisted, candidate).status !== "match"
+  );
 }
 
 async function buildCompanyMonthBillingSnapshotCandidate(
@@ -1061,7 +1116,6 @@ export const compareCompanyMonthBillingSnapshot = internalQuery({
   },
 });
 
-
 export const findCompanyForMonthBillingSnapshotTest = internalQuery({
   args: {
     month: v.string(),
@@ -1091,7 +1145,6 @@ export const findCompanyForMonthBillingSnapshotTest = internalQuery({
     return null;
   },
 });
-
 
 export const findCompaniesForMonthBillingSnapshotTest = internalQuery({
   args: {
@@ -1134,7 +1187,6 @@ export const findCompaniesForMonthBillingSnapshotTest = internalQuery({
     return companies;
   },
 });
-
 
 export const findCompaniesForMonthBillingSnapshotTestPage = internalQuery({
   args: {
@@ -1294,6 +1346,8 @@ export const captureFromManageOneSnapshots = internalMutation({
     usageDate: v.optional(v.string()),
     capturedAt: v.optional(v.number()),
     tenantVdcIds: v.optional(v.array(v.string())),
+    runId: v.optional(v.id("dailyUsageCaptureRuns")),
+    requireFreshTenantData: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const capturedAt = args.capturedAt ?? Date.now();
@@ -1308,6 +1362,21 @@ export const captureFromManageOneSnapshots = internalMutation({
     const selectedTenants = tenantVdcIdFilter
       ? tenants.filter((tenant) => tenantVdcIdFilter.has(tenant.vdcId))
       : tenants;
+    if (args.requireFreshTenantData) {
+      const freshnessFloor = Date.parse(`${usageDate}T00:00:00.000Z`);
+      const stale = selectedTenants.find(
+        (tenant) =>
+          tenant.linkedCompanyId &&
+          tenant.enabled !== false &&
+          tenant.lastSyncedAt < freshnessFloor,
+      );
+      if (stale) {
+        throw new ConvexError({
+          code: "USAGE_SOURCE_STALE",
+          message: `ManageOne tenant ${stale.name} was not synced for ${usageDate}`,
+        });
+      }
+    }
     const catalog = await ctx.db.query("serviceCatalog").collect();
     const rows = buildDailyUsageRowsFromManageOneTenants(
       selectedTenants,
@@ -1326,12 +1395,17 @@ export const captureFromManageOneSnapshots = internalMutation({
         .withIndex("by_source_key", (q) => q.eq("sourceKey", row.sourceKey))
         .unique();
 
-      if (existing?.lockedAt || existing?.invoiceId) {
-        skippedLocked++;
-        continue;
-      }
-
       if (existing) {
+        if (existing.invoiceId) {
+          const invoice = await ctx.db.get(existing.invoiceId);
+          if (invoice?.status !== "draft") {
+            skippedLocked++;
+            continue;
+          }
+        } else if (existing.lockedAt) {
+          skippedLocked++;
+          continue;
+        }
         await ctx.db.patch(existing._id, row);
         updated++;
       } else {
@@ -1340,14 +1414,102 @@ export const captureFromManageOneSnapshots = internalMutation({
       }
     }
 
-    return {
+    const summary = {
       usageDate,
       inspectedTenants: selectedTenants.length,
       capturedRows: rows.length,
       inserted,
       updated,
       skippedLocked,
+      tenantIds: selectedTenants
+        .filter((tenant) => tenant.linkedCompanyId && tenant.enabled !== false)
+        .map((tenant) => tenant._id),
     };
+    const completedAt = Date.now();
+    if (args.runId) {
+      await ctx.db.patch(args.runId, {
+        completedAt,
+        status: "completed",
+        ...summary,
+        month: usageDate.slice(0, 7),
+      });
+    } else {
+      await ctx.db.insert("dailyUsageCaptureRuns", {
+        startedAt: capturedAt,
+        completedAt,
+        status: "completed",
+        month: usageDate.slice(0, 7),
+        ...summary,
+      });
+    }
+    return summary;
+  },
+});
+
+export const startDailyUsageCapture = internalMutation({
+  args: { usageDate: v.string() },
+  handler: async (ctx, args) =>
+    await ctx.db.insert("dailyUsageCaptureRuns", {
+      usageDate: args.usageDate,
+      month: args.usageDate.slice(0, 7),
+      startedAt: Date.now(),
+      status: "running",
+      tenantIds: [],
+      inspectedTenants: 0,
+      capturedRows: 0,
+      inserted: 0,
+      updated: 0,
+      skippedLocked: 0,
+    }),
+});
+
+export const failDailyUsageCapture = internalMutation({
+  args: { runId: v.id("dailyUsageCaptureRuns"), error: v.string() },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.runId, {
+      completedAt: Date.now(),
+      status: "failed",
+      error: args.error,
+    });
+    const owners = (await ctx.db.query("users").collect()).filter(isCeoOrHob);
+    for (const owner of owners) {
+      await ctx.db.insert("notifications", {
+        recipientId: owner._id,
+        type: "billing_exception",
+        title: "Daily usage capture failed",
+        body: args.error,
+        entityType: "daily_usage_capture",
+        entityId: args.runId,
+        href: "/billing-queue",
+        createdAt: Date.now(),
+      });
+    }
+  },
+});
+
+export const runScheduledDailyUsageCapture = internalAction({
+  args: {},
+  handler: async (ctx): Promise<unknown> => {
+    const usageDate = dateKeyForTimestamp(Date.now() - MS_PER_DAY);
+    const runId: Id<"dailyUsageCaptureRuns"> = await ctx.runMutation(
+      internal.dailyUsage.startDailyUsageCapture,
+      {
+        usageDate,
+      },
+    );
+    try {
+      return await ctx.runMutation(
+        internal.dailyUsage.captureFromManageOneSnapshots,
+        { usageDate, runId, requireFreshTenantData: true },
+      );
+    } catch (error) {
+      await ctx.runMutation(internal.dailyUsage.failDailyUsageCapture, {
+        runId,
+        error:
+          error instanceof Error ? error.message : "Daily usage capture failed",
+      });
+      throw error;
+    }
   },
 });
 
@@ -1458,6 +1620,693 @@ export const status = query({
   },
 });
 
+export async function createDailyUsageDraftInvoice(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  company: Doc<"companies">,
+  month: string,
+) {
+  if (Date.now() <= monthEndTimestamp(month)) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Only completed PAYG billing cycles can be invoiced",
+    });
+  }
+  if (
+    company.lifecycleStatus === "prospect" ||
+    company.lifecycleStatus === "lost"
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Customer is not eligible for PAYG billing",
+    });
+  }
+  const sourceReference = dailyUsageSourceReference(month);
+  const companyInvoices = await ctx.db
+    .query("invoices")
+    .withIndex("by_company", (q) => q.eq("companyId", company._id))
+    .collect();
+  const existingInvoice = companyInvoices.find(
+    (invoice) =>
+      invoice.sourceMonth === month &&
+      !invoice.contractId &&
+      invoice.status !== "cancelled" &&
+      invoice.status !== "void",
+  );
+  if (existingInvoice) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `${company.name} already has an invoice for ${month}`,
+    });
+  }
+
+  const overlappingContract = (
+    await ctx.db
+      .query("customerContracts")
+      .withIndex("by_company", (q) => q.eq("companyId", company._id))
+      .collect()
+  ).find(
+    (contract) =>
+      contract.status !== "terminated" && contractCoversMonth(contract, month),
+  );
+  if (overlappingContract) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `Use contract ${overlappingContract.contractNumber} to invoice this cycle`,
+    });
+  }
+
+  const [rows, captures] = await Promise.all([
+    ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_company_month", (q) =>
+        q.eq("companyId", company._id).eq("month", month),
+      )
+      .collect(),
+    ctx.db
+      .query("dailyUsageCaptureRuns")
+      .withIndex("by_month", (q) => q.eq("month", month))
+      .collect(),
+  ]);
+  if (rows.length === 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "No daily usage rows found for this customer and month",
+    });
+  }
+  const activeTenants = (
+    await ctx.db
+      .query("manageOneTenants")
+      .withIndex("by_linked_company", (q) =>
+        q.eq("linkedCompanyId", company._id),
+      )
+      .collect()
+  ).filter(
+    (tenant) =>
+      (tenant.enabled !== false ||
+        Boolean(
+          tenant.billingDisabledAt &&
+          tenant.billingDisabledAt >= monthStartTimestamp(month),
+        )) &&
+      (!tenant.billingLinkedAt ||
+        tenant.billingLinkedAt <= monthEndTimestamp(month)),
+  );
+  if (!activeTenants.length) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "No active ManageOne tenant is linked to this customer",
+    });
+  }
+  const coverage = paygCoverage(rows, activeTenants, month, captures);
+  if (coverage.missing.length) {
+    throw new ConvexError({
+      code: "USAGE_INCOMPLETE",
+      message: `Usage is incomplete (${coverage.missing.length} tenant-day gaps; first: ${coverage.missing[0]})`,
+    });
+  }
+  const replacement = companyInvoices
+    .filter(
+      (invoice) =>
+        invoice.sourceMonth === month &&
+        !invoice.contractId &&
+        isPaygUsageInvoice(invoice, month) &&
+        invoice.status === "void",
+    )
+    .sort((a, b) => b._creationTime - a._creationTime)[0];
+  const attachedRows = rows.filter(
+    (row) =>
+      (row.invoiceId || row.lockedAt) && row.invoiceId !== replacement?._id,
+  );
+  if (attachedRows.length > 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "Some daily usage rows are already attached to an invoice for this month",
+    });
+  }
+
+  const catalogById = new Map(
+    (await ctx.db.query("serviceCatalog").collect()).map((item) => [
+      item._id,
+      item,
+    ]),
+  );
+  const companyNameById = new Map<Id<"companies">, string>([
+    [company._id, company.name],
+  ]);
+  const contractPricingByCompany = await loadActiveContractPricingForMonth(
+    ctx,
+    [company._id],
+    month,
+  );
+  const activeContract = contractPricingByCompany.get(company._id)?.contract;
+  if (
+    activeContract?.commitmentModel === "flexible_value" ||
+    activeContract?.pricingModel
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "Dynamic-pricing contracts must be invoiced from the contract schedule so discounts and commitments are calculated once",
+    });
+  }
+  const rollupRows = buildMonthlyRollupRows({
+    rows,
+    catalogById,
+    companyNameById,
+    month,
+    contractPricingByCompany,
+  });
+  const unpriced = rollupRows.filter(
+    (row) =>
+      row.monthlyUnitPrice === undefined || row.estimatedAmount === undefined,
+  );
+  if (unpriced.length > 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "All daily usage rollup rows must have catalog pricing before creating an invoice",
+    });
+  }
+
+  let lineItems = rollupRows.flatMap((row) => {
+    const monthlyTotal = roundMoney(row.estimatedAmount ?? 0);
+    const common = {
+      ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
+      serviceCategory: row.serviceType,
+      billingUnit: row.unit,
+      ...(row.regionId ? { regionId: row.regionId } : {}),
+      ...(row.regionName ? { regionName: row.regionName } : {}),
+      ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
+    };
+    if (row.pricingSource !== "contract") {
+      return [
+        {
+          ...common,
+          itemName: row.itemName,
+          quantity: roundQuantity(row.billableQuantity),
+          monthlyUnitPrice: row.monthlyUnitPrice ?? 0,
+          monthlyTotal,
+          yearlyTotal: roundMoney(monthlyTotal * 12),
+        },
+      ];
+    }
+
+    const lines = [
+      {
+        ...common,
+        itemName: `${row.itemName} base`,
+        quantity:
+          (row.contractGrossMonthlyPrice ?? 0) > 0
+            ? roundQuantity(
+                (row.contractGrossBaseAmount ?? 0) /
+                  (row.contractGrossMonthlyPrice ?? 1),
+              )
+            : 0,
+        monthlyUnitPrice: row.contractGrossMonthlyPrice ?? 0,
+        monthlyTotal: row.contractGrossBaseAmount ?? 0,
+        yearlyTotal: roundMoney((row.contractGrossBaseAmount ?? 0) * 12),
+      },
+    ];
+    if ((row.contractDiscountAmount ?? 0) > 0) {
+      lines.push({
+        ...common,
+        itemName: `${row.itemName} contract discount`,
+        quantity: 1,
+        monthlyUnitPrice: -(row.contractDiscountAmount ?? 0),
+        monthlyTotal: -(row.contractDiscountAmount ?? 0),
+        yearlyTotal: -roundMoney((row.contractDiscountAmount ?? 0) * 12),
+      });
+    }
+    if ((row.overageQuantity ?? 0) > 0) {
+      const overageTotal = roundMoney(
+        (row.overageQuantity ?? 0) * (row.overageUnitPrice ?? 0),
+      );
+      lines.push({
+        ...common,
+        itemName: `${row.itemName} overage`,
+        quantity: roundQuantity(row.overageQuantity ?? 0),
+        monthlyUnitPrice: row.overageUnitPrice ?? 0,
+        monthlyTotal: overageTotal,
+        yearlyTotal: roundMoney(overageTotal * 12),
+      });
+    }
+    return lines;
+  });
+  const grossTotals = calculateInvoiceTotals(lineItems);
+  if (grossTotals.grandTotal === 0) {
+    throw new ConvexError({
+      code: "NO_CHARGE",
+      message: "Completed cycle has no billable charge; no invoice is required",
+    });
+  }
+  const applicableCredit = await findApplicableCredit(
+    ctx,
+    company._id,
+    rollupRows.some((row) => row.pricingSource === "contract"),
+    grossTotals.grandTotal,
+  );
+  if (applicableCredit) {
+    lineItems = [
+      ...lineItems,
+      {
+        itemName: "Onboarding credit",
+        serviceCategory: "Credit",
+        billingUnit: "one-time credit",
+        quantity: 1,
+        monthlyUnitPrice: -applicableCredit.amount,
+        monthlyTotal: -applicableCredit.amount,
+        yearlyTotal: -applicableCredit.amount,
+      },
+    ];
+  }
+  const totals = calculateInvoiceTotals(lineItems);
+  const grandTotal = totals.grandTotal;
+  const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
+  if (!invoiceProfile) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "No active invoice profile exists for this customer country",
+    });
+  }
+  assertSupportedCurrency(invoiceProfile?.currency);
+  const sellerSnapshot = invoiceProfile
+    ? sellerSnapshotFromProfile(invoiceProfile)
+    : {};
+  const now = Date.now();
+  const dueDate =
+    company.paymentTermDays === undefined
+      ? undefined
+      : monthEndTimestamp(month) + company.paymentTermDays * MS_PER_DAY;
+
+  const invoiceId = await ctx.db.insert("invoices", {
+    companyId: company._id,
+    sourceMonth: month,
+    sourceReference,
+    replacesInvoiceId: replacement?._id,
+    sourceType: "daily_usage",
+    invoiceProfileId: invoiceProfile?._id,
+    ...sellerSnapshot,
+    createdBy: user._id,
+    status: "draft",
+    dueDate,
+    companyName: company.name,
+    contactName: company.contactName,
+    contactEmail: company.contactEmail,
+    billingEmail: company.contactEmail,
+    lineItems: lineItems.map(withLineMoneyCents),
+    ...withInvoiceMoneyCents(totals),
+    grossBeforeCredit: grossTotals.grandTotal,
+    onboardingCreditId: applicableCredit?.credit._id,
+    onboardingCreditApplied: applicableCredit?.amount,
+    notes: `Draft invoice from daily usage snapshots for ${month}. Review before issuing.`,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  if (applicableCredit) {
+    await reserveCredit(
+      ctx,
+      applicableCredit.credit,
+      invoiceId,
+      applicableCredit.amount,
+      user._id,
+    );
+  }
+
+  for (const row of rows) {
+    await ctx.db.patch(row._id, { invoiceId, lockedAt: now });
+  }
+
+  await ctx.db.insert("invoiceEvents", {
+    invoiceId,
+    type: "draft_created",
+    actorId: user._id,
+    message: replacement
+      ? `Replacement draft created from daily usage ${month} for void invoice ${replacement.invoiceNumber ?? replacement._id}.`
+      : `Draft invoice created from daily usage ${month}.`,
+    createdAt: now,
+  });
+  if (replacement) {
+    await ctx.db.insert("invoiceEvents", {
+      invoiceId: replacement._id,
+      type: "draft_created",
+      actorId: user._id,
+      message: `Replacement draft ${invoiceId} created.`,
+      createdAt: now,
+    });
+  }
+
+  return { invoiceId, companyName: company.name, grandTotal };
+}
+
+type PaygBillingStatus =
+  | "ready"
+  | "already_invoiced"
+  | "needs_refresh"
+  | "not_due"
+  | "incomplete_usage"
+  | "unpriced"
+  | "missing_profile"
+  | "no_charge";
+
+export async function buildPaygBillingCandidates(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+  month: string,
+  now = Date.now(),
+) {
+  const monthEnd = monthEndTimestamp(month);
+  const [companies, tenants, rows, invoices, catalog, contracts, captures] =
+    await Promise.all([
+      ctx.db.query("companies").collect(),
+      ctx.db.query("manageOneTenants").collect(),
+      ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_month", (q) => q.eq("month", month))
+        .collect(),
+      ctx.db.query("invoices").collect(),
+      ctx.db.query("serviceCatalog").collect(),
+      ctx.db.query("customerContracts").collect(),
+      ctx.db
+        .query("dailyUsageCaptureRuns")
+        .withIndex("by_month", (q) => q.eq("month", month))
+        .collect(),
+    ]);
+  const visibleCompanies = companies.filter(
+    (company) =>
+      canViewCompany(user, company) &&
+      company.lifecycleStatus !== "prospect" &&
+      company.lifecycleStatus !== "lost" &&
+      !contracts.some(
+        (contract) =>
+          contract.companyId === company._id &&
+          contract.status !== "terminated" &&
+          contractCoversMonth(contract, month),
+      ),
+  );
+  const rowsByCompany = new Map<Id<"companies">, typeof rows>();
+  for (const row of rows) {
+    const companyRows = rowsByCompany.get(row.companyId) ?? [];
+    companyRows.push(row);
+    rowsByCompany.set(row.companyId, companyRows);
+  }
+  const catalogById = new Map(catalog.map((item) => [item._id, item]));
+
+  return await Promise.all(
+    visibleCompanies
+      .filter(
+        (company) =>
+          tenants.some(
+            (tenant) =>
+              tenant.linkedCompanyId === company._id &&
+              (tenant.enabled !== false ||
+                Boolean(
+                  tenant.billingDisabledAt &&
+                  tenant.billingDisabledAt >= monthStartTimestamp(month),
+                )) &&
+              (!tenant.billingLinkedAt || tenant.billingLinkedAt <= monthEnd),
+          ) || rowsByCompany.has(company._id),
+      )
+      .map(async (company) => {
+        const companyRows = rowsByCompany.get(company._id) ?? [];
+        const existing = invoices.find(
+          (invoice) =>
+            invoice.companyId === company._id &&
+            invoice.sourceMonth === month &&
+            !invoice.contractId &&
+            invoice.status !== "cancelled" &&
+            invoice.status !== "void",
+        );
+        const activeTenants = tenants.filter(
+          (tenant) =>
+            tenant.linkedCompanyId === company._id &&
+            (tenant.enabled !== false ||
+              Boolean(
+                tenant.billingDisabledAt &&
+                tenant.billingDisabledAt >= monthStartTimestamp(month),
+              )) &&
+            (!tenant.billingLinkedAt || tenant.billingLinkedAt <= monthEnd),
+        );
+        const latestUsageDate = companyRows.reduce<string | undefined>(
+          (latest, row) =>
+            !latest || row.usageDate > latest ? row.usageDate : latest,
+          undefined,
+        );
+        const rollup = buildMonthlyRollupRows({
+          rows: companyRows,
+          catalogById,
+          companyNameById: new Map([[company._id, company.name]]),
+          month,
+        });
+        const amount = sumMoney(rollup.map((row) => row.estimatedAmount ?? 0));
+        const profile = await resolveInvoiceProfileForCompany(ctx, company);
+        let status: PaygBillingStatus = "ready";
+        let reason = "Completed ManageOne usage is ready for review";
+        const coverage = paygCoverage(
+          companyRows,
+          activeTenants,
+          month,
+          captures,
+        );
+        const sourceChanged =
+          existing?.status === "draft" &&
+          isPaygUsageInvoice(existing, month) &&
+          companyRows.some((row) => row.capturedAt > existing.updatedAt);
+        if (sourceChanged) {
+          status = "needs_refresh";
+          reason = "ManageOne usage changed after this draft was prepared";
+        } else if (existing) {
+          status = "already_invoiced";
+          reason = existing.invoiceNumber
+            ? `Already has ${existing.invoiceNumber}`
+            : "Draft invoice already created";
+        } else if (now <= monthEnd) {
+          status = "not_due";
+          reason = "Billing month has not ended";
+        } else if (!activeTenants.length) {
+          status = "incomplete_usage";
+          reason = "No active ManageOne tenant is linked to this customer";
+        } else if (!companyRows.length || coverage.missing.length) {
+          status = "incomplete_usage";
+          reason = companyRows.length
+            ? `${coverage.missing.length} tenant-day usage gaps; first: ${coverage.missing[0]}`
+            : "No finalized daily usage found";
+        } else if (
+          rollup.some(
+            (row) =>
+              row.monthlyUnitPrice === undefined ||
+              row.estimatedAmount === undefined,
+          )
+        ) {
+          status = "unpriced";
+          reason = "One or more services have no catalogue price";
+        } else if (!profile) {
+          status = "missing_profile";
+          reason = "No active invoice profile for this customer country";
+        } else if (amount === 0) {
+          status = "no_charge";
+          reason =
+            "Completed cycle has no billable charge; no invoice required";
+        }
+        return {
+          companyId: company._id,
+          companyName: company.name,
+          model: "PAYG" as const,
+          period: month,
+          amount,
+          status,
+          reason,
+          latestUsageDate,
+          expectedLastDate: coverage.expectedLastDate,
+          tenantCount: tenants.filter(
+            (tenant) => tenant.linkedCompanyId === company._id,
+          ).length,
+          invoiceId: existing?._id,
+        };
+      }),
+  );
+}
+
+export const billingCandidates = query({
+  args: { month: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const candidates = await buildPaygBillingCandidates(ctx, user, args.month);
+    if (!isCeoOrHob(user)) return candidates;
+    const unlinked = (await ctx.db.query("manageOneTenants").collect())
+      .filter((tenant) => !tenant.linkedCompanyId && tenant.enabled !== false)
+      .map((tenant) => ({
+        tenantId: tenant._id,
+        companyName: tenant.name,
+        model: "Unlinked" as const,
+        period: args.month,
+        amount: 0,
+        status: "unlinked_tenant" as const,
+        reason: "Link this ManageOne tenant to a CRM customer before billing",
+        tenantCount: 1,
+      }));
+    return [...candidates, ...unlinked];
+  },
+});
+
+export const createDuePaygDrafts = internalMutation({
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const actor = (await ctx.db.query("users").collect()).find(isCeoOrHob);
+    if (!actor) {
+      const runId = await ctx.db.insert("billingAutomationRuns", {
+        startedAt: Date.now(),
+        completedAt: Date.now(),
+        status: "failed",
+        trigger: "scheduled",
+        contractsScanned: 0,
+        paygScanned: 0,
+        created: 0,
+        skipped: 0,
+        issues: [
+          { reason: "No CEO or HOB user is available to own billing drafts" },
+        ],
+      });
+      return { runId, created: 0, skipped: 0, reason: "No CEO or HOB user" };
+    }
+    const today = new Date(now);
+    const previousMonth = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1),
+    );
+    const latestCompletedMonth = `${previousMonth.getUTCFullYear()}-${String(previousMonth.getUTCMonth() + 1).padStart(2, "0")}`;
+    const [usageRows, invoices] = await Promise.all([
+      ctx.db.query("dailyUsageSnapshots").collect(),
+      ctx.db.query("invoices").collect(),
+    ]);
+    const activeInvoiceByCycle = new Map(
+      invoices
+        .filter(
+          (invoice) =>
+            !invoice.contractId &&
+            invoice.sourceMonth &&
+            invoice.status !== "cancelled" &&
+            invoice.status !== "void",
+        )
+        .map((invoice) => [
+          `${invoice.companyId}|${invoice.sourceMonth}`,
+          invoice,
+        ]),
+    );
+    const months = [...new Set(usageRows.map((row) => row.month))]
+      .filter((month) => month <= latestCompletedMonth)
+      .filter((month) =>
+        usageRows.some((row) => {
+          if (row.month !== month) return false;
+          const invoice = activeInvoiceByCycle.get(`${row.companyId}|${month}`);
+          return (
+            !invoice ||
+            (invoice.status === "draft" && row.capturedAt > invoice.updatedAt)
+          );
+        }),
+      )
+      .sort();
+    const candidateBatches = await Promise.all(
+      months.map(async (month) => ({
+        month,
+        candidates: await buildPaygBillingCandidates(ctx, actor, month, now),
+      })),
+    );
+    const scanned = candidateBatches.reduce(
+      (total, batch) => total + batch.candidates.length,
+      0,
+    );
+    const runId = await ctx.db.insert("billingAutomationRuns", {
+      startedAt: Date.now(),
+      status: "running",
+      trigger: "scheduled",
+      actorId: actor._id,
+      contractsScanned: 0,
+      paygScanned: scanned,
+      created: 0,
+      skipped: 0,
+      issues: [],
+    });
+    let created = 0;
+    const issues: Array<{
+      companyId: Id<"companies">;
+      sourceMonth: string;
+      reason: string;
+    }> = [];
+    for (const { month, candidates } of candidateBatches) {
+      for (const candidate of candidates) {
+        if (
+          candidate.status !== "ready" &&
+          candidate.status !== "needs_refresh"
+        ) {
+          if (
+            candidate.status !== "already_invoiced" &&
+            candidate.status !== "not_due" &&
+            candidate.status !== "no_charge"
+          ) {
+            issues.push({
+              companyId: candidate.companyId,
+              sourceMonth: month,
+              reason: candidate.reason,
+            });
+          }
+          continue;
+        }
+        const company = await ctx.db.get(candidate.companyId);
+        if (!company) continue;
+        try {
+          if (candidate.status === "needs_refresh" && candidate.invoiceId) {
+            const invoice = await ctx.db.get(candidate.invoiceId);
+            if (!invoice) continue;
+            await refreshDailyUsageDraftInvoice(ctx, actor, invoice, company);
+          } else {
+            await createDailyUsageDraftInvoice(ctx, actor, company, month);
+          }
+          created++;
+        } catch (error) {
+          issues.push({
+            companyId: candidate.companyId,
+            sourceMonth: month,
+            reason:
+              error instanceof Error
+                ? error.message
+                : "PAYG draft could not be created",
+          });
+        }
+      }
+    }
+    const skipped = scanned - created;
+    await ctx.db.patch(runId, {
+      completedAt: Date.now(),
+      status: "completed",
+      created,
+      skipped,
+      issues,
+    });
+    if (issues.length) {
+      await ctx.db.insert("notifications", {
+        recipientId: actor._id,
+        type: "billing_exception",
+        title: `${issues.length} PAYG billing exception${issues.length === 1 ? "" : "s"}`,
+        body: "Open the billing queue to resolve incomplete usage, pricing, or setup issues.",
+        entityType: "billing_run",
+        entityId: runId,
+        href: "/billing-queue",
+        createdAt: Date.now(),
+      });
+    }
+    return {
+      runId,
+      month: latestCompletedMonth,
+      scanned,
+      created,
+      skipped,
+      issues,
+    };
+  },
+});
+
 export const createDraftInvoiceFromRollup = mutation({
   args: {
     companyId: v.id("companies"),
@@ -1466,233 +2315,64 @@ export const createDraftInvoiceFromRollup = mutation({
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     const company = await assertCanManageUsage(ctx, user, args.companyId);
-    const sourceReference = dailyUsageSourceReference(args.month);
+    return await createDailyUsageDraftInvoice(ctx, user, company, args.month);
+  },
+});
 
-    const existingInvoice = (
-      await ctx.db
-        .query("invoices")
-        .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
-        .collect()
-    ).find(
-      (invoice) =>
-        invoice.sourceMonth === args.month &&
-        invoice.sourceReference === sourceReference &&
-        invoice.status !== "cancelled" &&
-        invoice.status !== "void",
-    );
-    if (existingInvoice) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: `A daily usage invoice already exists for ${company.name} and ${args.month}`,
-      });
-    }
-
-    const rows = await ctx.db
-      .query("dailyUsageSnapshots")
-      .withIndex("by_company_month", (q) =>
-        q.eq("companyId", args.companyId).eq("month", args.month),
-      )
-      .collect();
-    if (rows.length === 0) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "No daily usage rows found for this customer and month",
-      });
-    }
-    const attachedRows = rows.filter((row) => row.invoiceId || row.lockedAt);
-    if (attachedRows.length > 0) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message:
-          "Some daily usage rows are already attached to an invoice for this month",
-      });
-    }
-
-    const catalogById = new Map(
-      (await ctx.db.query("serviceCatalog").collect()).map((item) => [
-        item._id,
-        item,
-      ]),
-    );
-    const companyNameById = new Map<Id<"companies">, string>([
-      [company._id, company.name],
-    ]);
-    const contractPricingByCompany = await loadActiveContractPricingForMonth(
-      ctx,
-      [company._id],
-      args.month,
-    );
-    const activeContract = contractPricingByCompany.get(company._id)?.contract;
-    if (activeContract?.commitmentModel === "flexible_value" || activeContract?.pricingModel) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message:
-          "Dynamic-pricing contracts must be invoiced from the contract schedule so discounts and commitments are calculated once",
-      });
-    }
-    const rollupRows = buildMonthlyRollupRows({
-      rows,
-      catalogById,
-      companyNameById,
-      month: args.month,
-      contractPricingByCompany,
+async function refreshDailyUsageDraftInvoice(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+  invoice: Doc<"invoices">,
+  company: Doc<"companies">,
+) {
+  if (
+    invoice.status !== "draft" ||
+    !invoice.sourceMonth ||
+    !isPaygUsageInvoice(invoice, invoice.sourceMonth)
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Only a PAYG draft invoice can be refreshed from usage",
     });
-    const unpriced = rollupRows.filter(
-      (row) =>
-        row.monthlyUnitPrice === undefined || row.estimatedAmount === undefined,
-    );
-    if (unpriced.length > 0) {
+  }
+  const now = Date.now();
+  await releaseInvoiceCredit(ctx, invoice, user._id);
+  const rows = await ctx.db
+    .query("dailyUsageSnapshots")
+    .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice._id))
+    .collect();
+  for (const row of rows) {
+    await ctx.db.patch(row._id, { invoiceId: undefined, lockedAt: undefined });
+  }
+  await ctx.db.patch(invoice._id, { status: "cancelled", updatedAt: now });
+  await ctx.db.insert("invoiceEvents", {
+    invoiceId: invoice._id,
+    type: "cancelled",
+    actorId: user._id,
+    message: "Draft superseded by refreshed ManageOne usage.",
+    createdAt: now,
+  });
+  return await createDailyUsageDraftInvoice(
+    ctx,
+    user,
+    company,
+    invoice.sourceMonth,
+  );
+}
+
+export const refreshDraftInvoiceFromRollup = mutation({
+  args: { invoiceId: v.id("invoices") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const invoice = await ctx.db.get(args.invoiceId);
+    if (!invoice) {
       throw new ConvexError({
-        code: "BAD_REQUEST",
-        message:
-          "All daily usage rollup rows must have catalog pricing before creating an invoice",
+        code: "NOT_FOUND",
+        message: "Invoice not found",
       });
     }
-
-    let lineItems = rollupRows.flatMap((row) => {
-      const monthlyTotal = roundMoney(row.estimatedAmount ?? 0);
-      const common = {
-        ...(row.catalogItemId ? { catalogItemId: row.catalogItemId } : {}),
-        serviceCategory: row.serviceType,
-        billingUnit: row.unit,
-        ...(row.regionId ? { regionId: row.regionId } : {}),
-        ...(row.regionName ? { regionName: row.regionName } : {}),
-        ...(row.dataCenterName ? { dataCenterName: row.dataCenterName } : {}),
-      };
-      if (row.pricingSource !== "contract") {
-        return [
-          {
-            ...common,
-            itemName: row.itemName,
-            quantity: roundQuantity(row.billableQuantity),
-            monthlyUnitPrice: row.monthlyUnitPrice ?? 0,
-            monthlyTotal,
-            yearlyTotal: roundMoney(monthlyTotal * 12),
-          },
-        ];
-      }
-
-      const lines = [
-        {
-          ...common,
-          itemName: `${row.itemName} base`,
-          quantity:
-            (row.contractGrossMonthlyPrice ?? 0) > 0
-              ? roundQuantity(
-                  (row.contractGrossBaseAmount ?? 0) /
-                    (row.contractGrossMonthlyPrice ?? 1),
-                )
-              : 0,
-          monthlyUnitPrice: row.contractGrossMonthlyPrice ?? 0,
-          monthlyTotal: row.contractGrossBaseAmount ?? 0,
-          yearlyTotal: roundMoney((row.contractGrossBaseAmount ?? 0) * 12),
-        },
-      ];
-      if ((row.contractDiscountAmount ?? 0) > 0) {
-        lines.push({
-          ...common,
-          itemName: `${row.itemName} contract discount`,
-          quantity: 1,
-          monthlyUnitPrice: -(row.contractDiscountAmount ?? 0),
-          monthlyTotal: -(row.contractDiscountAmount ?? 0),
-          yearlyTotal: -roundMoney((row.contractDiscountAmount ?? 0) * 12),
-        });
-      }
-      if ((row.overageQuantity ?? 0) > 0) {
-        const overageTotal = roundMoney(
-          (row.overageQuantity ?? 0) * (row.overageUnitPrice ?? 0),
-        );
-        lines.push({
-          ...common,
-          itemName: `${row.itemName} overage`,
-          quantity: roundQuantity(row.overageQuantity ?? 0),
-          monthlyUnitPrice: row.overageUnitPrice ?? 0,
-          monthlyTotal: overageTotal,
-          yearlyTotal: roundMoney(overageTotal * 12),
-        });
-      }
-      return lines;
-    });
-    const grossTotals = calculateInvoiceTotals(lineItems);
-    const applicableCredit = await findApplicableCredit(
-      ctx,
-      company._id,
-      rollupRows.some((row) => row.pricingSource === "contract"),
-      grossTotals.grandTotal,
-    );
-    if (applicableCredit) {
-      lineItems = [
-        ...lineItems,
-        {
-          itemName: "Onboarding credit",
-          serviceCategory: "Credit",
-          billingUnit: "one-time credit",
-          quantity: 1,
-          monthlyUnitPrice: -applicableCredit.amount,
-          monthlyTotal: -applicableCredit.amount,
-          yearlyTotal: -applicableCredit.amount,
-        },
-      ];
-    }
-    const totals = calculateInvoiceTotals(lineItems);
-    const grandTotal = totals.grandTotal;
-    const invoiceProfile = await resolveInvoiceProfileForCompany(ctx, company);
-    assertSupportedCurrency(invoiceProfile?.currency);
-    const sellerSnapshot = invoiceProfile
-      ? sellerSnapshotFromProfile(invoiceProfile)
-      : {};
-    const now = Date.now();
-    const dueDate =
-      company.paymentTermDays === undefined
-        ? undefined
-        : monthEndTimestamp(args.month) + company.paymentTermDays * MS_PER_DAY;
-
-    const invoiceId = await ctx.db.insert("invoices", {
-      companyId: company._id,
-      sourceMonth: args.month,
-      sourceReference,
-      invoiceProfileId: invoiceProfile?._id,
-      ...sellerSnapshot,
-      createdBy: user._id,
-      status: "draft",
-      dueDate,
-      companyName: company.name,
-      contactName: company.contactName,
-      contactEmail: company.contactEmail,
-      billingEmail: company.contactEmail,
-      lineItems: lineItems.map(withLineMoneyCents),
-      ...withInvoiceMoneyCents(totals),
-      grossBeforeCredit: grossTotals.grandTotal,
-      onboardingCreditId: applicableCredit?.credit._id,
-      onboardingCreditApplied: applicableCredit?.amount,
-      notes: `Draft invoice from daily usage snapshots for ${args.month}. Review before issuing.`,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    if (applicableCredit) {
-      await reserveCredit(
-        ctx,
-        applicableCredit.credit,
-        invoiceId,
-        applicableCredit.amount,
-        user._id,
-      );
-    }
-
-    for (const row of rows) {
-      await ctx.db.patch(row._id, { invoiceId });
-    }
-
-    await ctx.db.insert("invoiceEvents", {
-      invoiceId,
-      type: "draft_created",
-      actorId: user._id,
-      message: `Draft invoice created from daily usage ${args.month}.`,
-      createdAt: now,
-    });
-
-    return { invoiceId, companyName: company.name, grandTotal };
+    const company = await assertCanManageUsage(ctx, user, invoice.companyId);
+    return await refreshDailyUsageDraftInvoice(ctx, user, invoice, company);
   },
 });
 
@@ -1721,8 +2401,9 @@ export const review = query({
       const company = await assertCanManageUsage(ctx, user, args.companyId);
       visibleCompanyById.set(company._id, company);
     } else {
-      const accessibleCompanies = (await ctx.db.query("companies").collect())
-        .filter((company) => canViewCompany(user, company));
+      const accessibleCompanies = (
+        await ctx.db.query("companies").collect()
+      ).filter((company) => canViewCompany(user, company));
       for (const company of accessibleCompanies) {
         visibleCompanyById.set(company._id, company);
       }
@@ -1883,7 +2564,10 @@ function estimateHourlySnapshotCost(
     const obsPrice = averageMonthlyCatalogPrice(catalog, ["obs"]);
     const sfsPrice = averageMonthlyCatalogPrice(catalog, ["sfs"]);
     const eipPrice = averageMonthlyCatalogPrice(catalog, ["eip", "public ip"]);
-    const elbPrice = averageMonthlyCatalogPrice(catalog, ["elb", "load balancer"]);
+    const elbPrice = averageMonthlyCatalogPrice(catalog, [
+      "elb",
+      "load balancer",
+    ]);
     const vpnPrice = averageMonthlyCatalogPrice(catalog, ["vpn"]);
     const natPrice = averageMonthlyCatalogPrice(catalog, ["nat"]);
     const wafPrice = averageMonthlyCatalogPrice(catalog, ["waf"]);
@@ -1929,7 +2613,9 @@ export const companyBillingSnapshot = query({
       .query("customerContracts")
       .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
       .collect();
-    const contractById = new Map(contracts.map((contract) => [contract._id, contract]));
+    const contractById = new Map(
+      contracts.map((contract) => [contract._id, contract]),
+    );
     const contractByNumber = new Map(
       contracts.map((contract) => [contract.contractNumber, contract]),
     );
@@ -2016,7 +2702,8 @@ export const companyBillingSnapshot = query({
     const upcomingCharges = sumMoney(
       upcomingRollupRows.map((row) => row.estimatedAmount ?? 0),
     );
-    const activeContractId = contractPricingByCompany.get(company._id)?.contract._id;
+    const activeContractId = contractPricingByCompany.get(company._id)?.contract
+      ._id;
     const currentBalanceForActiveContract =
       activeContractId === undefined
         ? 0
@@ -2065,7 +2752,9 @@ export const companyBillingSnapshot = query({
     const projectedMonthEnd =
       dailySeries.length === 0
         ? null
-        : roundMoney((cumulative / dailySeries.length) * daysInMonth(args.month));
+        : roundMoney(
+            (cumulative / dailySeries.length) * daysInMonth(args.month),
+          );
 
     const hourlyRows = await ctx.db
       .query("manageOneHourlySnapshots")
@@ -2073,8 +2762,13 @@ export const companyBillingSnapshot = query({
         q.eq("linkedCompanyId", args.companyId).gte("capturedHour", monthStart),
       )
       .collect();
-    const hourlyRowsByHour = new Map<number, Doc<"manageOneHourlySnapshots">[]>();
-    for (const row of hourlyRows.filter((row) => row.capturedHour <= monthEnd)) {
+    const hourlyRowsByHour = new Map<
+      number,
+      Doc<"manageOneHourlySnapshots">[]
+    >();
+    for (const row of hourlyRows.filter(
+      (row) => row.capturedHour <= monthEnd,
+    )) {
       const rowsForHour = hourlyRowsByHour.get(row.capturedHour) ?? [];
       rowsForHour.push(row);
       hourlyRowsByHour.set(row.capturedHour, rowsForHour);
@@ -2105,7 +2799,9 @@ export const companyBillingSnapshot = query({
         capturedDays: 0,
         unpricedCount: 0,
       };
-      existing.amount = roundMoney(existing.amount + (row.estimatedAmount ?? 0));
+      existing.amount = roundMoney(
+        existing.amount + (row.estimatedAmount ?? 0),
+      );
       existing.billableQuantity = roundQuantity(
         existing.billableQuantity + row.billableQuantity,
       );

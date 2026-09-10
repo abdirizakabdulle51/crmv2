@@ -286,6 +286,8 @@ export default defineSchema({
     ),
     lastSyncedAt: v.number(),
     linkedCompanyId: v.optional(v.id("companies")),
+    billingLinkedAt: v.optional(v.number()),
+    billingDisabledAt: v.optional(v.number()),
   })
     .index("by_vdc_id", ["vdcId"])
     .index("by_domain_id", ["domainId"])
@@ -596,12 +598,35 @@ export default defineSchema({
     lockedAt: v.optional(v.number()),
   })
     .index("by_source_key", ["sourceKey"])
+    .index("by_company", ["companyId"])
     .index("by_company_date", ["companyId", "usageDate"])
     .index("by_company_month", ["companyId", "month"])
     .index("by_company_month_date", ["companyId", "month", "usageDate"])
     .index("by_month_date", ["month", "usageDate"])
     .index("by_month", ["month"])
     .index("by_invoice", ["invoiceId"]),
+
+  dailyUsageCaptureRuns: defineTable({
+    usageDate: v.string(),
+    month: v.string(),
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    status: v.union(
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    tenantIds: v.array(v.id("manageOneTenants")),
+    inspectedTenants: v.number(),
+    capturedRows: v.number(),
+    inserted: v.number(),
+    updated: v.number(),
+    skippedLocked: v.number(),
+    error: v.optional(v.string()),
+  })
+    .index("by_month", ["month"])
+    .index("by_date", ["usageDate"])
+    .index("by_started_at", ["startedAt"]),
 
   dailyUsageBillingSnapshots: defineTable({
     companyId: v.id("companies"),
@@ -791,11 +816,22 @@ export default defineSchema({
       v.literal("quote_discount_approval_requested"),
       v.literal("quote_discount_approved"),
       v.literal("quote_discount_rejected"),
+      v.literal("billing_exception"),
     ),
     title: v.string(),
     body: v.optional(v.string()),
-    entityType: v.union(v.literal("task"), v.literal("quote")),
-    entityId: v.union(v.id("tasks"), v.id("quotes")),
+    entityType: v.union(
+      v.literal("task"),
+      v.literal("quote"),
+      v.literal("billing_run"),
+      v.literal("daily_usage_capture"),
+    ),
+    entityId: v.union(
+      v.id("tasks"),
+      v.id("quotes"),
+      v.id("billingAutomationRuns"),
+      v.id("dailyUsageCaptureRuns"),
+    ),
     href: v.string(),
     readAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -910,6 +946,7 @@ export default defineSchema({
     historicalImportedAt: v.optional(v.number()),
     sourceMonth: v.optional(v.string()),
     sourceReference: v.optional(v.string()),
+    replacesInvoiceId: v.optional(v.id("invoices")),
     cycleStartMonth: v.optional(v.string()),
     cycleEndMonth: v.optional(v.string()),
     billingTiming: v.optional(
@@ -1023,12 +1060,21 @@ export default defineSchema({
     .index("by_created_by", ["createdBy"])
     .index("by_source_quote", ["sourceQuoteId"])
     .index("by_source_contract", ["sourceContractId"])
-    .index("by_historical_identity", ["companyId", "sourceSystem", "normalizedOriginalReference"])
+    .index("by_historical_identity", [
+      "companyId",
+      "sourceSystem",
+      "normalizedOriginalReference",
+    ])
     .index("by_contract", ["contractId"])
     .index("by_invoice_number", ["invoiceNumber"]),
 
   invoicePayments: defineTable({
     invoiceId: v.id("invoices"),
+    reversesPaymentId: v.optional(v.id("invoicePayments")),
+    reversedByPaymentId: v.optional(v.id("invoicePayments")),
+    reversedAt: v.optional(v.number()),
+    reversedBy: v.optional(v.id("users")),
+    reversalReason: v.optional(v.string()),
     receivingAccountId: v.optional(v.id("receivingAccounts")),
     amount: v.number(),
     amountCents: v.optional(v.number()),
@@ -1144,6 +1190,7 @@ export default defineSchema({
       v.literal("unmarked_test"),
       v.literal("sent"),
       v.literal("payment_recorded"),
+      v.literal("payment_reversed"),
       v.literal("overdue"),
       v.literal("internal_reminder_sent"),
       v.literal("customer_reminder_sent"),
@@ -1158,14 +1205,20 @@ export default defineSchema({
   billingAutomationRuns: defineTable({
     startedAt: v.number(),
     completedAt: v.optional(v.number()),
-    status: v.union(v.literal("running"), v.literal("completed"), v.literal("failed")),
+    status: v.union(
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
     trigger: v.union(v.literal("scheduled"), v.literal("manual")),
     actorId: v.optional(v.id("users")),
     contractsScanned: v.number(),
+    paygScanned: v.optional(v.number()),
     created: v.number(),
     skipped: v.number(),
     issues: v.array(
       v.object({
+        companyId: v.optional(v.id("companies")),
         contractId: v.optional(v.id("customerContracts")),
         contractNumber: v.optional(v.string()),
         sourceMonth: v.optional(v.string()),
@@ -1377,6 +1430,7 @@ export default defineSchema({
     signedDocumentUploadedAt: v.optional(v.number()),
     notes: v.optional(v.string()),
     activatedAt: v.optional(v.number()),
+    terminatedAt: v.optional(v.number()),
     createdBy: v.id("users"),
     createdAt: v.number(),
     updatedAt: v.number(),

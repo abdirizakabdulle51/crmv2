@@ -12,6 +12,7 @@ const notificationTypeValidator = v.union(
   v.literal("quote_discount_approval_requested"),
   v.literal("quote_discount_approved"),
   v.literal("quote_discount_rejected"),
+  v.literal("billing_exception"),
 );
 
 async function getCurrentUserOrThrow(
@@ -53,9 +54,7 @@ export const listMine = query({
 
     return await ctx.db
       .query("notifications")
-      .withIndex("by_recipient_created", (q) =>
-        q.eq("recipientId", user._id),
-      )
+      .withIndex("by_recipient_created", (q) => q.eq("recipientId", user._id))
       .order("desc")
       .take(limit);
   },
@@ -135,8 +134,18 @@ export const createForRecipient = internalMutation({
     type: notificationTypeValidator,
     title: v.string(),
     body: v.optional(v.string()),
-    entityType: v.union(v.literal("task"), v.literal("quote")),
-    entityId: v.union(v.id("tasks"), v.id("quotes")),
+    entityType: v.union(
+      v.literal("task"),
+      v.literal("quote"),
+      v.literal("billing_run"),
+      v.literal("daily_usage_capture"),
+    ),
+    entityId: v.union(
+      v.id("tasks"),
+      v.id("quotes"),
+      v.id("billingAutomationRuns"),
+      v.id("dailyUsageCaptureRuns"),
+    ),
     href: v.string(),
   },
   handler: async (ctx, args) => {

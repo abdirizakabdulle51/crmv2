@@ -41,6 +41,13 @@ crons.daily(
 );
 
 crons.daily(
+  "capture previous-day ManageOne usage",
+  { hourUTC: 2, minuteUTC: 40 },
+  internal.dailyUsage.runScheduledDailyUsageCapture,
+  {},
+);
+
+crons.daily(
   "backfill contract revenue allocations",
   { hourUTC: 2, minuteUTC: 45 },
   internal.invoices.backfillContractAllocations,
@@ -51,6 +58,13 @@ crons.daily(
   "create due contract invoice drafts",
   { hourUTC: 2, minuteUTC: 50 },
   internal.invoices.createDueContractDrafts,
+  {},
+);
+
+crons.daily(
+  "create due PAYG invoice drafts",
+  { hourUTC: 2, minuteUTC: 55 },
+  internal.dailyUsage.createDuePaygDrafts,
   {},
 );
 

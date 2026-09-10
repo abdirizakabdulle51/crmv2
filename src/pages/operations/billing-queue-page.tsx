@@ -26,7 +26,13 @@ import { toast } from "sonner";
 const statusLabel = {
   ready: "Ready",
   already_invoiced: "Draft / Invoiced",
+  needs_refresh: "Refresh Required",
   no_services: "Requires Review",
+  incomplete_usage: "Incomplete Usage",
+  unpriced: "Unpriced Services",
+  missing_profile: "Missing Billing Profile",
+  no_charge: "No Charge",
+  unlinked_tenant: "Unlinked Tenant",
   not_in_period: "Not in Period",
   not_due: "Not Due",
   inactive: "Inactive",
@@ -35,8 +41,11 @@ const statusLabel = {
 export default function BillingQueuePage() {
   const navigate = useNavigate();
   const now = new Date();
+  const previousMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
+  );
   const [month, setMonth] = useState(
-    `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`,
+    `${previousMonth.getUTCFullYear()}-${String(previousMonth.getUTCMonth() + 1).padStart(2, "0")}`,
   );
   const [search, setSearch] = useState("");
   const [onlyActionable, setOnlyActionable] = useState(false);
@@ -44,11 +53,16 @@ export default function BillingQueuePage() {
   const contracts = useQuery(api.invoices.previewContractInvoiceBatch, {
     sourceMonth: month,
   });
-  const customers = useQuery(api.companies.dashboard, {});
+  const payg = useQuery(api.dailyUsage.billingCandidates, { month });
   const createContractDraft = useMutation(api.invoices.createDraftFromContract);
-  const createPaygDraft = useMutation(api.invoices.createPaygDraftFromUsage);
+  const createPaygDraft = useMutation(
+    api.dailyUsage.createDraftInvoiceFromRollup,
+  );
+  const refreshPaygDraft = useMutation(
+    api.dailyUsage.refreshDraftInvoiceFromRollup,
+  );
 
-  if (!contracts || !customers)
+  if (!contracts || !payg)
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-10 w-64" />
@@ -57,30 +71,19 @@ export default function BillingQueuePage() {
       </div>
     );
 
-  const payg =
-    month === customers.previousMonth
-      ? customers.rows
-          .filter((row) => row.missingInvoice)
-          .map((row) => ({
-            id: `payg:${row._id}`,
-            companyId: row._id,
-            companyName: row.name,
-            model: "PAYG" as const,
-            period: month,
-            amount: row.previousMonthUsage,
-            status: "ready" as const,
-            reason: "Completed month with uninvoiced usage",
-          }))
-      : [];
   const rows = [
-    ...payg,
+    ...payg.map((row) => ({
+      ...row,
+      id:
+        "companyId" in row ? `payg:${row.companyId}` : `tenant:${row.tenantId}`,
+    })),
     ...contracts.map((row) => ({
       id: `contract:${row.contractId}`,
       contractId: row.contractId,
       companyName: row.companyName,
       model: "Contracted" as const,
       period: month,
-      amount: undefined,
+      amount: row.amount,
       status: row.status,
       reason: row.reason,
       invoiceId: row.existingInvoiceId,
@@ -89,12 +92,24 @@ export default function BillingQueuePage() {
     if (search && !row.companyName.toLowerCase().includes(search.toLowerCase()))
       return false;
     return (
-      !onlyActionable || row.status === "ready" || row.status === "no_services"
+      !onlyActionable ||
+      !["already_invoiced", "not_in_period", "not_due", "inactive"].includes(
+        row.status,
+      )
     );
   });
   const counts = {
     ready: rows.filter((row) => row.status === "ready").length,
-    review: rows.filter((row) => row.status === "no_services").length,
+    review: rows.filter((row) =>
+      [
+        "no_services",
+        "incomplete_usage",
+        "unpriced",
+        "missing_profile",
+        "needs_refresh",
+        "unlinked_tenant",
+      ].includes(row.status),
+    ).length,
     existing: rows.filter((row) => row.status === "already_invoiced").length,
     waiting: rows.filter((row) => row.status === "not_due").length,
   };
@@ -128,9 +143,13 @@ export default function BillingQueuePage() {
   async function generate(row: (typeof rows)[number]) {
     setPendingId(row.id);
     try {
+      if (row.model === "Unlinked") return;
       const invoiceId =
-        "companyId" in row
-          ? await createPaygDraft({ companyId: row.companyId, month })
+        row.model === "PAYG"
+          ? row.status === "needs_refresh" && row.invoiceId
+            ? (await refreshPaygDraft({ invoiceId: row.invoiceId })).invoiceId
+            : (await createPaygDraft({ companyId: row.companyId, month }))
+                .invoiceId
           : await createContractDraft({
               contractId: row.contractId,
               sourceMonth: month,
@@ -153,7 +172,7 @@ export default function BillingQueuePage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Billing Queue</h1>
         <p className="mt-1 text-muted-foreground">
-          Review completed billing cycles before creating draft invoices.
+          Review automatically prepared drafts and billing exceptions.
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -171,8 +190,8 @@ export default function BillingQueuePage() {
       </div>
       <div className="flex items-center gap-2 rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
         <Info className="h-4 w-4" />
-        This queue creates drafts for review. It never issues invoices
-        automatically.
+        Completed PAYG and contract cycles create drafts automatically. Invoices
+        are never issued or emailed without review.
       </div>
       <Card>
         <CardHeader>
@@ -210,6 +229,7 @@ export default function BillingQueuePage() {
                   <th className="p-3">Model</th>
                   <th className="p-3">Billing Period</th>
                   <th className="p-3 text-right">Usage</th>
+                  <th className="p-3">Coverage</th>
                   <th className="p-3">Readiness</th>
                   <th className="p-3">Reason / Next Step</th>
                   <th className="p-3"></th>
@@ -226,6 +246,13 @@ export default function BillingQueuePage() {
                         ? "—"
                         : formatCurrency(row.amount)}
                     </td>
+                    <td className="p-3 text-muted-foreground">
+                      {"expectedLastDate" in row
+                        ? row.latestUsageDate
+                          ? `${row.latestUsageDate} / ${row.expectedLastDate}`
+                          : `No data / ${row.expectedLastDate}`
+                        : "—"}
+                    </td>
                     <td className="p-3">
                       <Badge
                         variant={
@@ -237,15 +264,18 @@ export default function BillingQueuePage() {
                     </td>
                     <td className="p-3 text-muted-foreground">{row.reason}</td>
                     <td className="p-3 text-right">
-                      {row.status === "ready" ? (
+                      {row.status === "ready" ||
+                      row.status === "needs_refresh" ? (
                         <Button
                           size="sm"
                           disabled={pendingId === row.id}
                           onClick={() => void generate(row)}
                         >
-                          Generate Draft
+                          {row.status === "needs_refresh"
+                            ? "Refresh Draft"
+                            : "Generate Draft"}
                         </Button>
-                      ) : row.invoiceId ? (
+                      ) : "invoiceId" in row && row.invoiceId ? (
                         <Button
                           size="sm"
                           variant="outline"
@@ -262,7 +292,7 @@ export default function BillingQueuePage() {
                 {rows.length === 0 && (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="p-10 text-center text-muted-foreground"
                     >
                       No billing candidates match this view.

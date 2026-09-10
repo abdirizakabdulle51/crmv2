@@ -233,6 +233,16 @@ async function createDraftForA(
   );
 }
 
+async function ensureContractInvoiceProfile(
+  t: ReturnType<typeof convexTest>,
+  s: Seed,
+) {
+  return await asUser(t, s.ceo).mutation(
+    api.invoiceProfiles.createInvoiceProfile,
+    invoiceProfileInput({ countryId: s.countryA }),
+  );
+}
+
 async function issueDraftForA(t: ReturnType<typeof convexTest>, s: Seed) {
   const invoiceId = await createDraftForA(t, s);
   await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
@@ -1955,6 +1965,46 @@ describe("invoices", () => {
     ).rejects.toThrow("transaction ID is required");
   });
 
+  it("reverses a payment immutably and restores the invoice balance", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const invoiceId = await issueDraftForA(t, s);
+    const paidAt = Date.UTC(2026, 7, 4);
+    await asUser(t, s.amA).mutation(api.invoices.recordPayment, {
+      invoiceId,
+      amount: 7.5,
+      paidAt,
+      receivingAccountId: s.bankAccountId,
+      transactionId: "PAY-REV-1",
+    });
+    const [payment] = await asUser(t, s.ceo).query(api.invoices.listPayments, {
+      invoiceId,
+    });
+    await asUser(t, s.ceo).mutation(api.invoices.reversePayment, {
+      paymentId: payment._id,
+      reversedAt: Date.UTC(2026, 7, 5),
+      transactionId: "PAY-REVERSAL-1",
+      reason: "Bank payment returned",
+    });
+    const invoice = await asUser(t, s.ceo).query(api.invoices.getById, {
+      invoiceId,
+    });
+    const payments = await asUser(t, s.ceo).query(api.invoices.listPayments, {
+      invoiceId,
+    });
+    expect(invoice).toMatchObject({
+      status: "issued",
+      amountPaid: 0,
+      balanceDue: 20,
+    });
+    expect(payments.map((row) => row.amount).sort((a, b) => a - b)).toEqual([
+      -7.5, 7.5,
+    ]);
+    expect(payments.find((row) => row.amount > 0)?.reversedByPaymentId).toBe(
+      payments.find((row) => row.amount < 0)?._id,
+    );
+  });
+
   it("enforces incoming eligibility and customer country for payment accounts", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -2240,6 +2290,7 @@ describe("invoices", () => {
   it("prorates partial contract months and separates base, discount, and overage", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
+    await ensureContractInvoiceProfile(t, s);
     const contractId = await t.run(async (ctx) => {
       const now = Date.UTC(2026, 6, 1);
       const id = await ctx.db.insert("customerContracts", {
@@ -2416,6 +2467,7 @@ describe("invoices", () => {
   it("creates an exact quarterly total-value cycle and rejects off-cycle billing", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
+    await ensureContractInvoiceProfile(t, s);
     const contractId = await t.run(async (ctx) => {
       const now = Date.UTC(2026, 0, 1);
       const id = await ctx.db.insert("customerContracts", {
@@ -2529,6 +2581,7 @@ describe("invoices", () => {
   it("applies a service discount override before the product-group discount", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
+    await ensureContractInvoiceProfile(t, s);
     const storageId = await t.run((ctx) =>
       ctx.db.insert("serviceCatalog", {
         productGroup: "storage",
@@ -2783,21 +2836,60 @@ describe("invoices", () => {
   it("creates one catalogue-price PAYG invoice for a completed unbilled cycle", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
-    await t.run((ctx) =>
-      ctx.db.insert("consumption", {
-        companyId: s.companyA,
-        month: "2026-07",
-        serviceType: "ECS",
-        amount: 999,
-        quantity: 2,
-        catalogItemId: s.catalogItemId,
-      }),
-    );
+    await t.run(async (ctx) => {
+      await ctx.db.insert("invoiceProfiles", {
+        name: "Somalia billing",
+        countryId: s.countryA,
+        isDefault: false,
+        isActive: true,
+        legalName: "HTG CLOUDS",
+        addressLines: ["Mogadishu"],
+        phone: "1",
+        email: "finance@example.com",
+        website: "https://example.com",
+        slogan: "Cloud",
+        bankName: "Bank",
+        bankAccountNumber: "1",
+        bankAccountName: "HTG",
+        bankLocation: "Somalia",
+        currency: "USD",
+        currencyNote: "USD",
+        paymentInstructions: "Pay",
+        createdBy: s.ceo._id,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const tenantId = await ctx.db.insert("manageOneTenants", {
+        vdcId: "payg-profile-vdc",
+        name: "Company A",
+        linkedCompanyId: s.companyA,
+        lastSyncedAt: 1,
+      });
+      for (let day = 1; day <= 31; day++) {
+        await ctx.db.insert("dailyUsageSnapshots", {
+          companyId: s.companyA,
+          tenantId,
+          tenantName: "Company A",
+          tenantVdcId: "payg-profile-vdc",
+          usageDate: `2026-07-${String(day).padStart(2, "0")}`,
+          month: "2026-07",
+          serviceType: "ECS",
+          itemName: "ECS Small",
+          serviceCategory: "ECS",
+          quantity: 2,
+          unit: "per instance",
+          catalogItemId: s.catalogItemId,
+          source: "manageone",
+          sourceKey: `profile-payg-${day}`,
+          capturedAt: Date.UTC(2026, 6, day),
+        });
+      }
+    });
     expect(
       await asUser(t, s.ceo).query(api.invoices.paygBillingStatus, {
         companyId: s.companyA,
       }),
-    ).toEqual([{ month: "2026-07", usageEntries: 1 }]);
+    ).toEqual([{ month: "2026-07", usageEntries: 31 }]);
     const invoiceId = await asUser(t, s.ceo).mutation(
       api.invoices.createPaygDraftFromUsage,
       { companyId: s.companyA, month: "2026-07" },
@@ -2806,7 +2898,7 @@ describe("invoices", () => {
     const catalog = await t.run((ctx) => ctx.db.get(s.catalogItemId));
     expect(invoice).toMatchObject({
       sourceMonth: "2026-07",
-      sourceReference: "PAYG-2026-07",
+      sourceReference: "PAYG:2026-07",
       status: "draft",
       grandTotal: catalog!.monthlyPrice * 2,
     });
@@ -2821,6 +2913,7 @@ describe("invoices", () => {
   it("lets flexible contracts use any service and bills only undiscounted overage", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
+    await ensureContractInvoiceProfile(t, s);
     const contractId = await asUser(t, s.ceo).mutation(
       api.customerContracts.createConfigured,
       {
@@ -2902,6 +2995,7 @@ describe("invoices", () => {
   it("bills a monthly minimum without exposing a shortfall charge line", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
+    await ensureContractInvoiceProfile(t, s);
     const contractId = await asUser(t, s.ceo).mutation(
       api.customerContracts.createConfigured,
       {
@@ -2980,6 +3074,7 @@ describe("invoices", () => {
   it("bills actual discounted usage with no minimum or overage", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
+    await ensureContractInvoiceProfile(t, s);
     const contractId = await asUser(t, s.ceo).mutation(
       api.customerContracts.createConfigured,
       {
@@ -3030,5 +3125,94 @@ describe("invoices", () => {
         cycleStartMonth: "2026-07",
       }),
     ).rejects.toThrow("do not have overage settlements");
+  });
+
+  it("bills discounted contracts directly from ManageOne daily usage", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await ensureContractInvoiceProfile(t, s);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "DAILY-USAGE-DISCOUNT-1",
+        title: "Automated discounted usage",
+        status: "draft",
+        startDate: Date.UTC(2026, 6, 1),
+        endDate: Date.UTC(2026, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "postpaid",
+        pricingBasis: "service_lines",
+        pricingModel: "discounted_usage",
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 20 }],
+        services: [],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.activate, {
+      contractId,
+    });
+    await t.run(async (ctx) => {
+      const tenantId = await ctx.db.insert("manageOneTenants", {
+        vdcId: "daily-contract-vdc",
+        name: "Company A",
+        linkedCompanyId: s.companyA,
+        lastSyncedAt: 1,
+      });
+      for (let day = 1; day <= 31; day++) {
+        await ctx.db.insert("dailyUsageSnapshots", {
+          companyId: s.companyA,
+          tenantId,
+          tenantName: "Company A",
+          tenantVdcId: "daily-contract-vdc",
+          usageDate: `2026-07-${String(day).padStart(2, "0")}`,
+          month: "2026-07",
+          serviceType: "ECS",
+          itemName: "ECS Small",
+          serviceCategory: "ECS",
+          quantity: 10,
+          unit: "per instance",
+          catalogItemId: s.catalogItemId,
+          source: "manageone",
+          sourceKey: `contract-daily-usage-${day}`,
+          capturedAt: Date.UTC(2026, 6, day),
+        });
+      }
+    });
+    const invoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-07" },
+    );
+    const invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.grandTotal).toBe(80);
+    expect(invoice.lineItems.map((line) => line.monthlyTotal)).toEqual([
+      100, -20,
+    ]);
+    const attachedUsage = await t.run((ctx) =>
+      ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId))
+        .collect(),
+    );
+    expect(attachedUsage).toHaveLength(31);
+    expect(attachedUsage[0].lockedAt).toBeGreaterThan(0);
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.updateDraft, {
+        invoiceId,
+        lineItems: [
+          {
+            catalogItemId: s.catalogItemId,
+            itemName: "Tampered service",
+            serviceCategory: "ECS",
+            billingUnit: "per instance",
+            quantity: 1,
+            monthlyUnitPrice: 10,
+          },
+        ],
+      }),
+    ).rejects.toThrow("Generated billing lines cannot be edited");
   });
 });

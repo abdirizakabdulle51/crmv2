@@ -194,6 +194,8 @@ function eventLabel(type: InvoiceEvent["type"]) {
       return "Sent";
     case "payment_recorded":
       return "Payment recorded";
+    case "payment_reversed":
+      return "Payment reversed";
     default:
       return type;
   }
@@ -354,6 +356,14 @@ function InvoiceDetailContent() {
   const [paymentReference, setPaymentReference] = useState("");
   const [receivingAccountId, setReceivingAccountId] = useState("");
   const [transactionId, setTransactionId] = useState("");
+  const [paymentToReverse, setPaymentToReverse] =
+    useState<InvoicePayment | null>(null);
+  const [reversalReason, setReversalReason] = useState("");
+  const [reversalTransactionId, setReversalTransactionId] = useState("");
+  const [reversalDate, setReversalDate] = useState(() =>
+    formatDateInput(Date.now()),
+  );
+  const [isReversingPayment, setIsReversingPayment] = useState(false);
   const invoice = useQuery(
     api.invoices.getById,
     invoiceId ? { invoiceId: invoiceId as Id<"invoices"> } : "skip",
@@ -388,6 +398,7 @@ function InvoiceDetailContent() {
   );
   const cancelDraftInvoice = useMutation(api.invoices.cancelDraftInvoice);
   const voidInvoice = useMutation(api.invoices.voidInvoice);
+  const reversePayment = useMutation(api.invoices.reversePayment);
   const sendInvoiceEmail = useAction(api.invoices.sendInvoiceEmail);
 
   if (!invoiceId) {
@@ -949,6 +960,7 @@ function InvoiceDetailContent() {
                     </th>
                     <th className="p-3 text-left font-medium">Recorded By</th>
                     <th className="p-3 text-left font-medium">Recorded At</th>
+                    {isCleanupAdmin ? <th className="p-3" /> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -973,6 +985,26 @@ function InvoiceDetailContent() {
                       <td className="p-3 text-muted-foreground">
                         {formatDateTime(payment.createdAt)}
                       </td>
+                      {isCleanupAdmin ? (
+                        <td className="p-3 text-right">
+                          {!payment.reversesPaymentId &&
+                          !payment.reversedByPaymentId ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setPaymentToReverse(payment)}
+                            >
+                              Reverse
+                            </Button>
+                          ) : (
+                            <Badge variant="secondary">
+                              {payment.reversesPaymentId
+                                ? "Reversal"
+                                : "Reversed"}
+                            </Badge>
+                          )}
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>
@@ -981,6 +1013,85 @@ function InvoiceDetailContent() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={paymentToReverse !== null}
+        onOpenChange={(open) => !open && setPaymentToReverse(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reverse Payment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="reversal-date">Reversal date</Label>
+              <Input
+                id="reversal-date"
+                type="date"
+                value={reversalDate}
+                onChange={(event) => setReversalDate(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reversal-transaction">Bank transaction ID</Label>
+              <Input
+                id="reversal-transaction"
+                value={reversalTransactionId}
+                onChange={(event) =>
+                  setReversalTransactionId(event.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reversal-reason">Reason</Label>
+              <Textarea
+                id="reversal-reason"
+                value={reversalReason}
+                onChange={(event) => setReversalReason(event.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPaymentToReverse(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                isReversingPayment ||
+                !paymentToReverse ||
+                !reversalReason.trim() ||
+                !reversalTransactionId.trim()
+              }
+              onClick={async () => {
+                if (!paymentToReverse) return;
+                setIsReversingPayment(true);
+                try {
+                  await reversePayment({
+                    paymentId: paymentToReverse._id,
+                    reversedAt: parsePaymentDate(reversalDate)!,
+                    transactionId: reversalTransactionId,
+                    reason: reversalReason,
+                  });
+                  toast.success("Payment reversed");
+                  setPaymentToReverse(null);
+                  setReversalReason("");
+                  setReversalTransactionId("");
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not reverse payment",
+                  );
+                } finally {
+                  setIsReversingPayment(false);
+                }
+              }}
+            >
+              {isReversingPayment ? "Reversing..." : "Reverse Payment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {invoice.notes ? (
         <Card>

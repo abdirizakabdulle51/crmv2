@@ -1112,7 +1112,9 @@ export const usageComparison = query({
         through,
       );
       const remainingCommitment =
-        allocations[allocations.length - 1]?.remainingCommitment ?? contract.contractValue ?? 0;
+        allocations[allocations.length - 1]?.remainingCommitment ??
+        contract.contractValue ??
+        0;
       return {
         month: args.month,
         rows: [],
@@ -1927,6 +1929,49 @@ export const activate = mutation({
   },
 });
 
+export const terminate = mutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    effectiveDate: v.number(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract || contract.status !== "active") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only an active contract can be terminated",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+    if (
+      args.effectiveDate < contract.startDate ||
+      args.effectiveDate > Math.min(contract.endDate, Date.now())
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Termination date must be within the active contract period",
+      });
+    }
+    const reason = requiredText(args.reason, "Termination reason");
+    const now = Date.now();
+    await ctx.db.patch(contract._id, {
+      status: "terminated",
+      terminatedAt: args.effectiveDate,
+      updatedAt: now,
+    });
+    await insertEvent(
+      ctx,
+      contract._id,
+      user._id,
+      "terminated",
+      `Contract terminated effective ${new Date(args.effectiveDate).toISOString().slice(0, 10)}. Reason: ${reason}`,
+    );
+  },
+});
+
 export const createAmendment = mutation({
   args: {
     contractId: v.id("customerContracts"),
@@ -2320,7 +2365,10 @@ async function buildIncorrectContractCleanupPlan(
 
   const counts = {
     invoices: invoices.length,
-    invoiceEvents: invoiceEvents.reduce((count, rows) => count + rows.length, 0),
+    invoiceEvents: invoiceEvents.reduce(
+      (count, rows) => count + rows.length,
+      0,
+    ),
     invoicePayments: invoicePayments.reduce(
       (count, rows) => count + rows.length,
       0,
