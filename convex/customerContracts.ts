@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import {
@@ -24,6 +24,7 @@ import {
   priceMonthlyContractUsage,
 } from "./contractUsagePricing";
 import { PRODUCT_GROUPS } from "../src/lib/product-groups";
+import { nextInvoiceSequence } from "./invoiceNumbers";
 
 type Ctx = QueryCtx | MutationCtx;
 type ContractStatus = "draft" | "active" | "expired" | "terminated" | "renewed";
@@ -2106,5 +2107,330 @@ export const removeLineItem = mutation({
       "updated",
       `Contract service ${existing.itemName} removed`,
     );
+  },
+});
+
+const INCORRECT_CONTRACT_CONFIRMATION = "DELETE_INCORRECT_CONTRACT";
+
+type IncorrectContractCleanupArgs = {
+  contractId: Id<"customerContracts">;
+  expectedContractNumber: string;
+  expectedCompanyId: Id<"companies">;
+  expectedContractStatus: ContractStatus;
+  expectedContractTitle: string;
+  expectedContractValue: number;
+  invoiceIds: Id<"invoices">[];
+  expectedInvoiceTotal: number;
+  dryRun: boolean;
+  confirm?: string;
+};
+
+type IncorrectContractCleanupPlan = {
+  contract: {
+    id: Id<"customerContracts">;
+    contractNumber: string;
+    companyId: Id<"companies">;
+    status: ContractStatus;
+    contractValue?: number;
+    title: string;
+  };
+  invoices: Array<{
+    id: Id<"invoices">;
+    invoiceNumber?: string;
+    sourceMonth?: string;
+    status: Doc<"invoices">["status"];
+    grandTotal: number;
+    amountPaid: number;
+    balanceDue: number;
+  }>;
+  dependencyCounts: {
+    invoices: number;
+    invoiceEvents: number;
+    invoicePayments: number;
+    usageSnapshots: number;
+    creditLedger: number;
+    contractEvents: number;
+    amendments: number;
+    contractLineItems: number;
+    groupDiscounts: number;
+  };
+  billingAutomationRunsPreserved: true;
+  invoiceNumberAllocatorSafe: boolean;
+  invoiceNumberAllocatorCollision?: string;
+};
+
+function futureInvoiceNumberCollision(
+  invoices: Doc<"invoices">[],
+  deletingInvoiceIds: Set<Id<"invoices">>,
+): string | undefined {
+  const remaining = invoices.filter(
+    (invoice) => !deletingInvoiceIds.has(invoice._id),
+  );
+  const nextSequence = nextInvoiceSequence(remaining);
+  const nextYear = new Date().getUTCFullYear();
+  const collision = remaining.find((invoice) => {
+    const invoiceNumber = invoice.invoiceNumber;
+    if (!invoiceNumber?.startsWith(`INV-${nextYear}-`)) return false;
+    const sequence = Number(invoiceNumber.slice(`INV-${nextYear}-`.length));
+    return Number.isInteger(sequence) && sequence >= nextSequence;
+  });
+  return collision?.invoiceNumber;
+}
+
+async function buildIncorrectContractCleanupPlan(
+  ctx: MutationCtx,
+  args: IncorrectContractCleanupArgs,
+): Promise<IncorrectContractCleanupPlan> {
+  if (args.invoiceIds.length === 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "At least one exact invoice ID is required",
+    });
+  }
+  const invoiceIdSet = new Set(args.invoiceIds);
+  if (invoiceIdSet.size !== args.invoiceIds.length) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Invoice IDs must be distinct",
+    });
+  }
+
+  const contract = await ctx.db.get(args.contractId);
+  const company = await ctx.db.get(args.expectedCompanyId);
+  if (
+    !contract ||
+    contract._id !== args.contractId ||
+    contract.contractNumber !== args.expectedContractNumber ||
+    contract.companyId !== args.expectedCompanyId ||
+    contract.status !== args.expectedContractStatus ||
+    contract.title !== args.expectedContractTitle ||
+    contract.contractValue !== args.expectedContractValue ||
+    !company
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Refusing cleanup: exact contract validation failed",
+    });
+  }
+
+  const allInvoices = await ctx.db.query("invoices").collect();
+  const linkedInvoices = allInvoices.filter(
+    (invoice) =>
+      invoice.contractId === contract._id ||
+      invoice.sourceContractId === contract._id ||
+      (invoice.companyId === contract.companyId &&
+        invoice.sourceReference === contract.contractNumber),
+  );
+  if (
+    linkedInvoices.length !== args.invoiceIds.length ||
+    linkedInvoices.some((invoice) => !invoiceIdSet.has(invoice._id))
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Refusing cleanup: all contract invoices must be supplied",
+    });
+  }
+
+  const invoices = args.invoiceIds
+    .map((invoiceId) =>
+      allInvoices.find((invoice) => invoice._id === invoiceId),
+    )
+    .filter((invoice): invoice is Doc<"invoices"> => invoice !== undefined);
+  if (
+    invoices.length !== args.invoiceIds.length ||
+    invoices.some(
+      (invoice) =>
+        invoice.contractId !== contract._id ||
+        invoice.companyId !== args.expectedCompanyId ||
+        invoice.sourceReference !== args.expectedContractNumber,
+    )
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Refusing cleanup: invoice relationship validation failed",
+    });
+  }
+
+  const [invoiceEvents, invoicePayments, usageSnapshots, creditLedger] =
+    await Promise.all([
+      Promise.all(
+        args.invoiceIds.map((invoiceId) =>
+          ctx.db
+            .query("invoiceEvents")
+            .withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId))
+            .collect(),
+        ),
+      ),
+      Promise.all(
+        args.invoiceIds.map((invoiceId) =>
+          ctx.db
+            .query("invoicePayments")
+            .withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId))
+            .collect(),
+        ),
+      ),
+      Promise.all(
+        args.invoiceIds.map((invoiceId) =>
+          ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId))
+            .collect(),
+        ),
+      ),
+      Promise.all(
+        args.invoiceIds.map((invoiceId) =>
+          ctx.db
+            .query("customerCreditLedger")
+            .withIndex("by_invoice", (q) => q.eq("invoiceId", invoiceId))
+            .collect(),
+        ),
+      ),
+    ]);
+  const contractEvents = await ctx.db
+    .query("customerContractEvents")
+    .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+    .collect();
+  const amendments = await ctx.db
+    .query("customerContractAmendments")
+    .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+    .collect();
+  const contractLineItems = await ctx.db
+    .query("customerContractLineItems")
+    .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+    .collect();
+  const groupDiscounts = await ctx.db
+    .query("customerContractGroupDiscounts")
+    .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+    .collect();
+
+  for (const invoice of invoices) {
+    if (
+      invoice.grandTotal !== args.expectedInvoiceTotal ||
+      invoice.amountPaid !== 0 ||
+      invoice.balanceDue !== args.expectedInvoiceTotal ||
+      invoice.status === "paid" ||
+      invoice.onboardingCreditId !== undefined
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Refusing cleanup: invoice financial validation failed",
+      });
+    }
+  }
+
+  const counts = {
+    invoices: invoices.length,
+    invoiceEvents: invoiceEvents.reduce((count, rows) => count + rows.length, 0),
+    invoicePayments: invoicePayments.reduce(
+      (count, rows) => count + rows.length,
+      0,
+    ),
+    usageSnapshots: usageSnapshots.reduce(
+      (count, rows) => count + rows.length,
+      0,
+    ),
+    creditLedger: creditLedger.reduce((count, rows) => count + rows.length, 0),
+    contractEvents: contractEvents.length,
+    amendments: amendments.length,
+    contractLineItems: contractLineItems.length,
+    groupDiscounts: groupDiscounts.length,
+  };
+  if (
+    counts.invoicePayments !== 0 ||
+    counts.usageSnapshots !== 0 ||
+    counts.creditLedger !== 0 ||
+    counts.amendments !== 0 ||
+    counts.contractLineItems !== 0 ||
+    counts.groupDiscounts !== 0 ||
+    contract.signedDocumentStorageId !== undefined
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `Refusing cleanup: linked records found (invoicePayments=${counts.invoicePayments}, usageSnapshots=${counts.usageSnapshots}, creditLedger=${counts.creditLedger}, amendments=${counts.amendments}, contractLineItems=${counts.contractLineItems}, groupDiscounts=${counts.groupDiscounts}, signedDocument=${contract.signedDocumentStorageId ? 1 : 0})`,
+    });
+  }
+
+  const allocatorCollision = futureInvoiceNumberCollision(
+    allInvoices,
+    invoiceIdSet,
+  );
+  const plan: IncorrectContractCleanupPlan = {
+    contract: {
+      id: contract._id,
+      contractNumber: contract.contractNumber,
+      companyId: contract.companyId,
+      status: contract.status,
+      contractValue: contract.contractValue,
+      title: contract.title,
+    },
+    invoices: invoices.map((invoice) => ({
+      id: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      sourceMonth: invoice.sourceMonth,
+      status: invoice.status,
+      grandTotal: invoice.grandTotal,
+      amountPaid: invoice.amountPaid,
+      balanceDue: invoice.balanceDue,
+    })),
+    dependencyCounts: counts,
+    billingAutomationRunsPreserved: true,
+    invoiceNumberAllocatorSafe: allocatorCollision === undefined,
+    ...(allocatorCollision
+      ? { invoiceNumberAllocatorCollision: allocatorCollision }
+      : {}),
+  };
+  if (!args.dryRun && allocatorCollision) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `Refusing cleanup: count-based invoice allocator would collide with ${allocatorCollision}`,
+    });
+  }
+  return plan;
+}
+
+export const permanentlyDeleteIncorrectContract = internalMutation({
+  args: {
+    contractId: v.id("customerContracts"),
+    expectedContractNumber: v.string(),
+    expectedCompanyId: v.id("companies"),
+    expectedContractStatus: v.union(
+      v.literal("draft"),
+      v.literal("active"),
+      v.literal("expired"),
+      v.literal("terminated"),
+      v.literal("renewed"),
+    ),
+    expectedContractTitle: v.string(),
+    expectedContractValue: v.number(),
+    invoiceIds: v.array(v.id("invoices")),
+    expectedInvoiceTotal: v.number(),
+    dryRun: v.boolean(),
+    confirm: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (!args.dryRun && args.confirm !== INCORRECT_CONTRACT_CONFIRMATION) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Exact confirmation required: ${INCORRECT_CONTRACT_CONFIRMATION}`,
+      });
+    }
+    const plan = await buildIncorrectContractCleanupPlan(ctx, args);
+    if (!args.dryRun) {
+      for (const invoice of plan.invoices) {
+        const events = await ctx.db
+          .query("invoiceEvents")
+          .withIndex("by_invoice", (q) => q.eq("invoiceId", invoice.id))
+          .collect();
+        for (const event of events) await ctx.db.delete(event._id);
+        await ctx.db.delete(invoice.id);
+      }
+      const contractEvents = await ctx.db
+        .query("customerContractEvents")
+        .withIndex("by_contract", (q) => q.eq("contractId", plan.contract.id))
+        .collect();
+      for (const event of contractEvents) await ctx.db.delete(event._id);
+      await ctx.db.delete(plan.contract.id);
+    }
+    return plan;
   },
 });
