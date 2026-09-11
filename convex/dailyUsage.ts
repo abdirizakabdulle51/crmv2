@@ -275,7 +275,7 @@ function paygCoverage(
       .filter((date) => !dates.has(date))
       .map((date) => `${tenant.name}: ${date}`);
   });
-  return { expectedLastDate: expected.at(-1)!, missing };
+  return { expectedLastDate: expected[expected.length - 1]!, missing };
 }
 
 function contractCoversMonth(
