@@ -36,6 +36,7 @@ import type * as financeReports from "../financeReports.js";
 import type * as financialInstitutions from "../financialInstitutions.js";
 import type * as flexibleCommitment from "../flexibleCommitment.js";
 import type * as http from "../http.js";
+import type * as hr from "../hr.js";
 import type * as invoiceProfiles from "../invoiceProfiles.js";
 import type * as invoices from "../invoices.js";
 import type * as leads from "../leads.js";
@@ -97,6 +98,7 @@ declare const fullApi: ApiFromModules<{
   financialInstitutions: typeof financialInstitutions;
   flexibleCommitment: typeof flexibleCommitment;
   http: typeof http;
+  hr: typeof hr;
   invoiceProfiles: typeof invoiceProfiles;
   invoices: typeof invoices;
   leads: typeof leads;

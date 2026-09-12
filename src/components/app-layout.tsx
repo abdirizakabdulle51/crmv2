@@ -37,6 +37,8 @@ import {
   ShieldCheck,
   ListChecks,
   Inbox,
+  Network,
+  ContactRound,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -159,6 +161,9 @@ const NAV_ITEMS = [
   { to: "/documentation", label: "Documentation", icon: BookOpen },
   { to: "/tasks", label: "My Work", icon: ClipboardList },
   { to: "/approvals", label: "Approval Inbox", icon: Inbox },
+  { to: "/people", label: "HR Overview", icon: ContactRound },
+  { to: "/people/employees", label: "Employees", icon: Users },
+  { to: "/people/org-chart", label: "Organization Chart", icon: Network },
   { to: "/team", label: "Team", icon: Users },
   { to: "/settings", label: "Settings", icon: Settings },
   {
@@ -216,6 +221,10 @@ const NAV_GROUPS = [
       "/finance/daily-usage",
       "/recommendations",
     ],
+  },
+  {
+    label: "People",
+    items: ["/people", "/people/employees", "/people/org-chart"],
   },
   {
     label: "Workspace",

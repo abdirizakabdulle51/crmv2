@@ -16,12 +16,14 @@ type CrmContextType = {
   currentUser: CrmUser | null | undefined;
   isAdmin: boolean;
   canViewAll: boolean;
+  canManageHr: boolean;
 };
 
 const CrmContext = createContext<CrmContextType>({
   currentUser: undefined,
   isAdmin: false,
   canViewAll: false,
+  canManageHr: false,
 });
 
 export function CrmProvider({ children }: { children: React.ReactNode }) {
@@ -30,9 +32,12 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   const isAdmin =
     currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
   const canViewAll = isAdmin;
+  const canManageHr = isAdmin || currentUser?.hrAccessRole === "administrator";
 
   return (
-    <CrmContext.Provider value={{ currentUser, isAdmin, canViewAll }}>
+    <CrmContext.Provider
+      value={{ currentUser, isAdmin, canViewAll, canManageHr }}
+    >
       {children}
     </CrmContext.Provider>
   );

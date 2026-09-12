@@ -560,7 +560,7 @@ export const deleteTeamMember = mutation({
     }
     assertCanManageUser(currentUser, user);
 
-    const [companies, leads, targets] = await Promise.all([
+    const [companies, leads, targets, employeeProfile] = await Promise.all([
       ctx.db
         .query("companies")
         .withIndex("by_account_manager", (q) =>
@@ -579,7 +579,19 @@ export const deleteTeamMember = mutation({
           q.eq("accountManagerId", args.userId),
         )
         .collect(),
+      ctx.db
+        .query("employeeProfiles")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .unique(),
     ]);
+
+    if (employeeProfile) {
+      throw new ConvexError({
+        code: "HAS_HR_RECORD",
+        message:
+          "Cannot delete a user linked to an employee record. Disable access instead to preserve HR history.",
+      });
+    }
 
     if (companies.length > 0 || leads.length > 0 || targets.length > 0) {
       throw new ConvexError({

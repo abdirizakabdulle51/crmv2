@@ -6,6 +6,15 @@ import AppLayout from "./components/app-layout.tsx";
 
 const DashboardPage = lazy(() => import("./pages/dashboard/page.tsx"));
 const TeamPage = lazy(() => import("./pages/team/page.tsx"));
+const HrOverviewPage = lazy(() => import("./pages/hr/overview-page.tsx"));
+const EmployeesPage = lazy(() => import("./pages/hr/employees-page.tsx"));
+const OrgChartPage = lazy(() => import("./pages/hr/org-chart-page.tsx"));
+const EmployeeDetailPage = lazy(
+  () => import("./pages/hr/employee-detail-page.tsx"),
+);
+const EmployeeFormPage = lazy(
+  () => import("./pages/hr/employee-form-page.tsx"),
+);
 const SettingsPage = lazy(() => import("./pages/settings/page.tsx"));
 const CompaniesPage = lazy(() => import("./pages/companies/page.tsx"));
 const CompanyDetailPage = lazy(
@@ -333,6 +342,27 @@ export default function App() {
               element={lazyPage(<TaskDetailPage />)}
             />
             <Route path="/team" element={lazyPage(<TeamPage />)} />
+            <Route path="/people" element={lazyPage(<HrOverviewPage />)} />
+            <Route
+              path="/people/employees"
+              element={lazyPage(<EmployeesPage />)}
+            />
+            <Route
+              path="/people/org-chart"
+              element={lazyPage(<OrgChartPage />)}
+            />
+            <Route
+              path="/people/employees/:employeeId"
+              element={lazyPage(<EmployeeDetailPage />)}
+            />
+            <Route
+              path="/people/employees/new"
+              element={lazyPage(<EmployeeFormPage />)}
+            />
+            <Route
+              path="/people/employees/:employeeId/edit"
+              element={lazyPage(<EmployeeFormPage />)}
+            />
             <Route path="/settings" element={lazyPage(<SettingsPage />)} />
             <Route
               path="/operations/data-health"

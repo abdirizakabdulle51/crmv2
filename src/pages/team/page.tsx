@@ -34,6 +34,7 @@ import {
   Trash2,
   UserCheck,
   UserX,
+  UserCog,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -60,6 +61,7 @@ export default function TeamPage() {
   const updateRole = useMutation(api.users.updateRole);
   const assignCountry = useMutation(api.users.assignCountry);
   const setOrganizationScope = useMutation(api.users.setOrganizationScope);
+  const setHrAccess = useMutation(api.users.setHrAccess);
   const createTeamMember = useAction(api.auth.createTeamMember);
   const resetTeamMemberPassword = useAction(api.auth.resetTeamMemberPassword);
   const disableTeamMember = useMutation(api.auth.disableTeamMember);
@@ -84,6 +86,16 @@ export default function TeamPage() {
   const [createScope, setCreateScope] = useState<"country" | "global">(
     "country",
   );
+  const [hrUserId, setHrUserId] = useState<Id<"users"> | null>(null);
+  const [hrAssignment, setHrAssignment] = useState<
+    | "none"
+    | "country_administrator"
+    | "regional_administrator"
+    | "global_administrator"
+    | "global_auditor"
+  >("none");
+  const [hrCountryId, setHrCountryId] = useState("");
+  const [hrRegion, setHrRegion] = useState("");
 
   if (!users || !countries) {
     return (
@@ -244,6 +256,58 @@ export default function TeamPage() {
     }
     await navigator.clipboard.writeText(resetPassword.password);
     toast.success("Temporary password copied");
+  };
+
+  const regions = [...new Set(countries.map((country) => country.region))]
+    .filter(Boolean)
+    .sort();
+  const openHrAccess = (user: (typeof users)[number]) => {
+    setHrUserId(user._id);
+    setHrCountryId(
+      user.hrCountryId ?? user.countryId ?? countries[0]?._id ?? "",
+    );
+    setHrRegion(user.hrRegion ?? regions[0] ?? "");
+    if (!user.hrAccessRole) setHrAssignment("none");
+    else if (user.hrAccessRole === "auditor") setHrAssignment("global_auditor");
+    else if (user.hrAccessScope === "country")
+      setHrAssignment("country_administrator");
+    else if (user.hrAccessScope === "region")
+      setHrAssignment("regional_administrator");
+    else setHrAssignment("global_administrator");
+  };
+  const saveHrAccess = async () => {
+    if (!hrUserId) return;
+    try {
+      await setHrAccess({
+        userId: hrUserId,
+        assignment: hrAssignment,
+        countryId:
+          hrAssignment === "country_administrator"
+            ? (hrCountryId as Id<"countries">)
+            : undefined,
+        region:
+          hrAssignment === "regional_administrator" ? hrRegion : undefined,
+      });
+      toast.success("HR access updated");
+      setHrUserId(null);
+    } catch (error) {
+      toast.error("Failed to update HR access", {
+        description:
+          error instanceof Error ? error.message : "Please review the scope",
+      });
+    }
+  };
+
+  const hrAccessLabel = (user: (typeof users)[number]) => {
+    if (!user.hrAccessRole) return "No HR access";
+    if (user.hrAccessRole === "auditor") return "Global HR Auditor";
+    if (user.hrAccessScope === "country") {
+      const country = countries.find((row) => row._id === user.hrCountryId);
+      return `Country HR Admin${country ? ` · ${country.name}` : ""}`;
+    }
+    if (user.hrAccessScope === "region")
+      return `Regional HR Admin · ${user.hrRegion ?? "Unassigned"}`;
+    return "Global HR Admin";
   };
 
   return (
@@ -516,6 +580,15 @@ export default function TeamPage() {
                     <Button
                       type="button"
                       variant="outline"
+                      onClick={() => openHrAccess(user)}
+                    >
+                      <UserCog className="size-4" />
+                      HR Access
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
                       onClick={() => handleResetPassword(user._id)}
                       disabled={resettingUserId === user._id}
                     >
@@ -559,6 +632,9 @@ export default function TeamPage() {
                 ) : (
                   <>
                     <Badge variant="secondary">{getRoleLabel(user.role)}</Badge>
+                    {user.hrAccessRole ? (
+                      <Badge variant="outline">{hrAccessLabel(user)}</Badge>
+                    ) : null}
                     {user.countryId && (
                       <Badge variant="secondary">
                         {countries.find((c) => c._id === user.countryId)
@@ -602,9 +678,92 @@ export default function TeamPage() {
         }}
         onConfirm={handleDeleteTeamMember}
         title="Delete this team member?"
-        description="This permanently removes the team member account. Users assigned to companies, leads, or targets cannot be deleted."
+        description="This permanently removes the account. Users linked to employees or assigned business records cannot be deleted; disable them instead."
         loading={isDeleting}
       />
+      <Dialog
+        open={hrUserId !== null}
+        onOpenChange={(open) => !open && setHrUserId(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>HR access</DialogTitle>
+            <DialogDescription>
+              HR authority is independent from the user&apos;s business role.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Assignment</Label>
+              <Select
+                value={hrAssignment}
+                onValueChange={(value) =>
+                  setHrAssignment(value as typeof hrAssignment)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No HR access</SelectItem>
+                  <SelectItem value="country_administrator">
+                    Country HR Admin
+                  </SelectItem>
+                  <SelectItem value="regional_administrator">
+                    Regional HR Admin
+                  </SelectItem>
+                  <SelectItem value="global_administrator">
+                    Global HR Admin
+                  </SelectItem>
+                  <SelectItem value="global_auditor">
+                    Global HR Auditor
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {hrAssignment === "country_administrator" ? (
+              <div className="space-y-2">
+                <Label>HR country</Label>
+                <Select value={hrCountryId} onValueChange={setHrCountryId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select country" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {countries.map((country) => (
+                      <SelectItem key={country._id} value={country._id}>
+                        {country.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            {hrAssignment === "regional_administrator" ? (
+              <div className="space-y-2">
+                <Label>HR region</Label>
+                <Select value={hrRegion} onValueChange={setHrRegion}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select region" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {regions.map((region) => (
+                      <SelectItem key={region} value={region}>
+                        {region}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHrUserId(null)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void saveHrAccess()}>Save HR access</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

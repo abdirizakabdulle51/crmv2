@@ -324,3 +324,113 @@ export const setOrganizationScope = mutation({
     });
   },
 });
+
+export const setHrAccess = mutation({
+  args: {
+    userId: v.id("users"),
+    assignment: v.union(
+      v.literal("none"),
+      v.literal("country_administrator"),
+      v.literal("regional_administrator"),
+      v.literal("global_administrator"),
+      v.literal("global_auditor"),
+    ),
+    countryId: v.optional(v.id("countries")),
+    region: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError({
+        code: "UNAUTHENTICATED",
+        message: "User not logged in",
+      });
+    }
+    const actor = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!actor || !isCeoOrHob(actor)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can assign HR access",
+      });
+    }
+    const target = await ctx.db.get(args.userId);
+    if (!target) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "User not found" });
+    }
+    const audit = async () => {
+      await ctx.db.insert("hrEvents", {
+        actorId: actor._id,
+        type: "hr_access_changed",
+        message: `Changed HR access for ${target.name ?? target.email ?? "user"}`,
+        changes: JSON.stringify({
+          userId: target._id,
+          assignment: args.assignment,
+          countryId: args.countryId,
+          region: args.region,
+        }),
+        createdAt: Date.now(),
+      });
+    };
+    if (args.assignment === "none") {
+      await ctx.db.patch(target._id, {
+        hrAccessRole: undefined,
+        hrAccessScope: undefined,
+        hrCountryId: undefined,
+        hrRegion: undefined,
+      });
+      await audit();
+      return;
+    }
+    if (args.assignment === "country_administrator") {
+      if (!args.countryId || !(await ctx.db.get(args.countryId))) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Select a valid country for Country HR Admin",
+        });
+      }
+      await ctx.db.patch(target._id, {
+        hrAccessRole: "administrator",
+        hrAccessScope: "country",
+        hrCountryId: args.countryId,
+        hrRegion: undefined,
+      });
+      await audit();
+      return;
+    }
+    if (args.assignment === "regional_administrator") {
+      const region = args.region?.trim();
+      const regions = new Set(
+        (await ctx.db.query("countries").collect()).map((country) =>
+          country.region.trim(),
+        ),
+      );
+      if (!region || !regions.has(region)) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: "Select a valid region for Regional HR Admin",
+        });
+      }
+      await ctx.db.patch(target._id, {
+        hrAccessRole: "administrator",
+        hrAccessScope: "region",
+        hrCountryId: undefined,
+        hrRegion: region,
+      });
+      await audit();
+      return;
+    }
+    await ctx.db.patch(target._id, {
+      hrAccessRole:
+        args.assignment === "global_auditor" ? "auditor" : "administrator",
+      hrAccessScope: "global",
+      hrCountryId: undefined,
+      hrRegion: undefined,
+    });
+    await audit();
+  },
+});

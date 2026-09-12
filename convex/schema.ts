@@ -28,6 +28,14 @@ export default defineSchema({
       v.union(v.literal("country"), v.literal("global")),
     ),
     countryId: v.optional(v.id("countries")),
+    hrAccessRole: v.optional(
+      v.union(v.literal("administrator"), v.literal("auditor")),
+    ),
+    hrAccessScope: v.optional(
+      v.union(v.literal("country"), v.literal("region"), v.literal("global")),
+    ),
+    hrCountryId: v.optional(v.id("countries")),
+    hrRegion: v.optional(v.string()),
   })
     .index("by_token", ["tokenIdentifier"])
     .index("email", ["email"])
@@ -39,6 +47,125 @@ export default defineSchema({
     name: v.string(),
     region: v.string(),
   }).index("by_name", ["name"]),
+
+  hrDepartments: defineTable({
+    name: v.string(),
+    code: v.string(),
+    countryId: v.optional(v.id("countries")),
+    isActive: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_code", ["code"])
+    .index("by_country", ["countryId"]),
+
+  employeeProfiles: defineTable({
+    employeeNumber: v.string(),
+    userId: v.optional(v.id("users")),
+    firstName: v.string(),
+    lastName: v.string(),
+    workEmail: v.string(),
+    phone: v.optional(v.string()),
+    countryId: v.id("countries"),
+    departmentId: v.optional(v.id("hrDepartments")),
+    jobTitle: v.string(),
+    workLocation: v.optional(v.string()),
+    employmentType: v.union(
+      v.literal("permanent"),
+      v.literal("temporary"),
+      v.literal("contractor"),
+      v.literal("intern"),
+    ),
+    status: v.union(
+      v.literal("preboarding"),
+      v.literal("active"),
+      v.literal("on_leave"),
+      v.literal("suspended"),
+      v.literal("departed"),
+    ),
+    startDate: v.string(),
+    endDate: v.optional(v.string()),
+    probationEndDate: v.optional(v.string()),
+    departureType: v.optional(
+      v.union(
+        v.literal("resignation"),
+        v.literal("termination"),
+        v.literal("contract_end"),
+        v.literal("retirement"),
+        v.literal("other"),
+      ),
+    ),
+    departureReason: v.optional(v.string()),
+    offboardedAt: v.optional(v.number()),
+    screeningStatus: v.union(
+      v.literal("not_required"),
+      v.literal("pending"),
+      v.literal("completed"),
+    ),
+    ndaAcknowledgedAt: v.optional(v.number()),
+    securityTrainingCompletedAt: v.optional(v.number()),
+    createdBy: v.id("users"),
+    updatedBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_employee_number", ["employeeNumber"])
+    .index("by_user", ["userId"])
+    .index("by_country", ["countryId"])
+    .index("by_department", ["departmentId"])
+    .index("by_status", ["status"])
+    .index("by_work_email", ["workEmail"]),
+
+  employeeReportingLines: defineTable({
+    employeeId: v.id("employeeProfiles"),
+    managerId: v.id("employeeProfiles"),
+    type: v.union(v.literal("primary"), v.literal("secondary")),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    endedBy: v.optional(v.id("users")),
+    endedAt: v.optional(v.number()),
+  })
+    .index("by_employee", ["employeeId"])
+    .index("by_manager", ["managerId"])
+    .index("by_employee_type", ["employeeId", "type"]),
+
+  employeeLifecycleTasks: defineTable({
+    employeeId: v.id("employeeProfiles"),
+    phase: v.union(v.literal("onboarding"), v.literal("offboarding")),
+    code: v.string(),
+    title: v.string(),
+    status: v.union(v.literal("pending"), v.literal("completed")),
+    completedBy: v.optional(v.id("users")),
+    completedAt: v.optional(v.number()),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_employee", ["employeeId"])
+    .index("by_employee_phase", ["employeeId", "phase"]),
+
+  hrEvents: defineTable({
+    employeeId: v.optional(v.id("employeeProfiles")),
+    actorId: v.id("users"),
+    type: v.union(
+      v.literal("employee_created"),
+      v.literal("employee_updated"),
+      v.literal("reporting_lines_updated"),
+      v.literal("status_changed"),
+      v.literal("department_created"),
+      v.literal("compliance_corrected"),
+      v.literal("access_disabled"),
+      v.literal("hr_access_changed"),
+      v.literal("lifecycle_task_updated"),
+    ),
+    message: v.string(),
+    changes: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_employee", ["employeeId"])
+    .index("by_actor", ["actorId"])
+    .index("by_created_at", ["createdAt"]),
 
   sectors: defineTable({
     name: v.string(),
