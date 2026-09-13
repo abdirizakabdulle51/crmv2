@@ -210,6 +210,7 @@ const NAV_GROUPS = [
       "/finance/account-transactions",
       "/finance/banks",
       "/finance/historical-invoices",
+      "/finance/invoice-profiles",
     ],
   },
   {
