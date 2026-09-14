@@ -3127,6 +3127,73 @@ describe("invoices", () => {
     ).rejects.toThrow("do not have overage settlements");
   });
 
+  it("explains why a completed contract period is not invoice-ready", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await ensureContractInvoiceProfile(t, s);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "READINESS-1",
+        title: "Readiness diagnostics",
+        status: "draft",
+        startDate: Date.UTC(2026, 6, 1),
+        endDate: Date.UTC(2026, 6, 31),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "postpaid",
+        pricingBasis: "service_lines",
+        pricingModel: "discounted_usage",
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [{ productGroup: "compute", discountPercent: 20 }],
+        services: [],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.activate, {
+      contractId,
+    });
+    await t.run(async (ctx) => {
+      const tenantId = await ctx.db.insert("manageOneTenants", {
+        vdcId: "readiness-vdc",
+        name: "Company A tenant",
+        linkedCompanyId: s.companyA,
+        lastSyncedAt: 1,
+      });
+      await ctx.db.insert("dailyUsageSnapshots", {
+        companyId: s.companyA,
+        tenantId,
+        tenantName: "Company A tenant",
+        tenantVdcId: "readiness-vdc",
+        usageDate: "2026-07-01",
+        month: "2026-07",
+        serviceType: "ECS",
+        itemName: "ECS Small",
+        serviceCategory: "ECS",
+        quantity: 10,
+        unit: "per instance",
+        catalogItemId: s.catalogItemId,
+        source: "manageone",
+        sourceKey: "readiness-usage-1",
+        capturedAt: Date.UTC(2026, 6, 1),
+      });
+    });
+
+    const readiness = await asUser(t, s.amA).query(
+      api.invoices.contractInvoiceReadiness,
+      { contractId, sourceMonth: "2026-07" },
+    );
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.expectedCaptureCount).toBe(31);
+    expect(readiness.recordedCaptureCount).toBe(1);
+    expect(readiness.missingCaptureCount).toBe(30);
+    expect(readiness.issues).toContainEqual(
+      expect.objectContaining({ code: "USAGE_INCOMPLETE" }),
+    );
+    expect(readiness.issues[0]?.message).toContain("2026-07-02");
+  });
+
   it("bills discounted contracts directly from ManageOne daily usage", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

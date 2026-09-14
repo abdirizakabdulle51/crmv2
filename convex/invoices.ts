@@ -862,6 +862,29 @@ async function assertLinkedUsageComplete(
   contractStart: number,
   contractEnd: number,
 ) {
+  const diagnostics = await linkedUsageDiagnostics(
+    ctx,
+    companyId,
+    cycleMonths,
+    contractStart,
+    contractEnd,
+  );
+  const firstMissing = diagnostics.missing[0];
+  if (firstMissing) {
+    throw new ConvexError({
+      code: "USAGE_INCOMPLETE",
+      message: `ManageOne usage is missing for ${firstMissing.tenantName} on ${firstMissing.date}`,
+    });
+  }
+}
+
+async function linkedUsageDiagnostics(
+  ctx: Ctx,
+  companyId: Id<"companies">,
+  cycleMonths: string[],
+  contractStart: number,
+  contractEnd: number,
+) {
   const linkedTenants = (
     await ctx.db
       .query("manageOneTenants")
@@ -878,7 +901,14 @@ async function assertLinkedUsageComplete(
         tenant.billingLinkedAt <=
           monthEndTimestamp(cycleMonths[cycleMonths.length - 1]!)),
   );
-  if (!linkedTenants.length) return;
+  if (!linkedTenants.length) {
+    return {
+      linkedTenantCount: 0,
+      expectedCaptureCount: 0,
+      recordedCaptureCount: 0,
+      missing: [] as Array<{ tenantName: string; date: string }>,
+    };
+  }
   const expectedDates = cycleMonths.flatMap((month) => {
     const start = Math.max(monthStartTimestamp(month), contractStart);
     const end = Math.min(monthEndTimestamp(month), contractEnd);
@@ -916,26 +946,27 @@ async function assertLinkedUsageComplete(
       present.add(`${tenantId}|${capture.usageDate}`);
     }
   }
-  const firstMissing = linkedTenants
-    .flatMap((tenant) => {
-      const linkedDate = tenant.billingLinkedAt
-        ? new Date(tenant.billingLinkedAt).toISOString().slice(0, 10)
-        : undefined;
-      const disabledDate = tenant.billingDisabledAt
-        ? new Date(tenant.billingDisabledAt).toISOString().slice(0, 10)
-        : undefined;
-      return expectedDates
-        .filter((date) => !linkedDate || date >= linkedDate)
-        .filter((date) => !disabledDate || date <= disabledDate)
-        .map((date) => ({ tenant, date }));
-    })
-    .find(({ tenant, date }) => !present.has(`${tenant._id}|${date}`));
-  if (firstMissing) {
-    throw new ConvexError({
-      code: "USAGE_INCOMPLETE",
-      message: `ManageOne usage is missing for ${firstMissing.tenant.name} on ${firstMissing.date}`,
-    });
-  }
+  const expected = linkedTenants.flatMap((tenant) => {
+    const linkedDate = tenant.billingLinkedAt
+      ? new Date(tenant.billingLinkedAt).toISOString().slice(0, 10)
+      : undefined;
+    const disabledDate = tenant.billingDisabledAt
+      ? new Date(tenant.billingDisabledAt).toISOString().slice(0, 10)
+      : undefined;
+    return expectedDates
+      .filter((date) => !linkedDate || date >= linkedDate)
+      .filter((date) => !disabledDate || date <= disabledDate)
+      .map((date) => ({ tenant, date }));
+  });
+  const missing = expected
+    .filter(({ tenant, date }) => !present.has(`${tenant._id}|${date}`))
+    .map(({ tenant, date }) => ({ tenantName: tenant.name, date }));
+  return {
+    linkedTenantCount: linkedTenants.length,
+    expectedCaptureCount: expected.length,
+    recordedCaptureCount: expected.length - missing.length,
+    missing,
+  };
 }
 
 function monthKeyFromTimestamp(timestamp: number) {
@@ -1978,6 +2009,205 @@ export const createDraftFromContract = mutation({
     });
 
     return result.invoiceId;
+  },
+});
+
+export const contractInvoiceReadiness = query({
+  args: {
+    contractId: v.id("customerContracts"),
+    sourceMonth: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    const company = await getCompanyOrThrow(ctx, contract.companyId);
+    assertCanManageCompany(user, company);
+    monthStartTimestamp(args.sourceMonth);
+
+    const issues: Array<{ code: string; message: string }> = [];
+    let cycleMonths: string[] = [];
+    if (contract.status === "draft" || contract.status === "renewed") {
+      issues.push({
+        code: "CONTRACT_INACTIVE",
+        message: "Contract must be active before it can be invoiced.",
+      });
+    }
+    if (!contractCoversMonth(contract, args.sourceMonth)) {
+      issues.push({
+        code: "OUTSIDE_CONTRACT",
+        message: "The selected month is outside the contract period.",
+      });
+    } else {
+      try {
+        cycleMonths = contractCycleMonths(contract, args.sourceMonth);
+      } catch (error) {
+        issues.push({
+          code: "INVALID_CYCLE",
+          message:
+            error instanceof ConvexError
+              ? String(error.data?.message ?? error.message)
+              : "The selected month is not a billing-cycle boundary.",
+        });
+      }
+    }
+
+    const existing = await findContractInvoiceForMonth(
+      ctx,
+      contract,
+      args.sourceMonth,
+    );
+    if (existing) {
+      issues.push({
+        code: "ALREADY_INVOICED",
+        message: existing.invoiceNumber
+          ? `Invoice ${existing.invoiceNumber} already exists for this period.`
+          : "A draft invoice already exists for this period.",
+      });
+    }
+    const contractLines = await ctx.db
+      .query("customerContractLineItems")
+      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+      .collect();
+    if (!isDynamicPricingContract(contract) && !contractLines.length) {
+      issues.push({
+        code: "NO_CONTRACT_SERVICES",
+        message: "Add at least one contract service before invoicing.",
+      });
+    }
+
+    const cycleEndMonth = cycleMonths.at(-1);
+    const periodEnd = cycleEndMonth
+      ? Math.min(monthEndTimestamp(cycleEndMonth), contractBillingEnd(contract))
+      : undefined;
+    const usageBased = (contract.billingTiming ?? "postpaid") === "postpaid";
+    if (usageBased && periodEnd !== undefined && Date.now() < periodEnd) {
+      issues.push({
+        code: "PERIOD_OPEN",
+        message: "The postpaid billing period has not ended yet.",
+      });
+    }
+
+    const usageDiagnostics = cycleMonths.length
+      ? await linkedUsageDiagnostics(
+          ctx,
+          contract.companyId,
+          cycleMonths,
+          contract.startDate,
+          contractBillingEnd(contract),
+        )
+      : {
+          linkedTenantCount: 0,
+          expectedCaptureCount: 0,
+          recordedCaptureCount: 0,
+          missing: [] as Array<{ tenantName: string; date: string }>,
+        };
+    if (usageBased && usageDiagnostics.missing.length) {
+      const first = usageDiagnostics.missing[0]!;
+      issues.push({
+        code: "USAGE_INCOMPLETE",
+        message: `${usageDiagnostics.missing.length} daily usage capture${usageDiagnostics.missing.length === 1 ? " is" : "s are"} missing. First: ${first.tenantName} on ${first.date}.`,
+      });
+    }
+    const cycleUsage = cycleMonths.length
+      ? (
+          await Promise.all(
+            cycleMonths.map((month) =>
+              ctx.db
+                .query("dailyUsageSnapshots")
+                .withIndex("by_company_month", (q) =>
+                  q.eq("companyId", contract.companyId).eq("month", month),
+                )
+                .collect(),
+            ),
+          )
+        ).flat()
+      : [];
+    const conflictingUsage = cycleUsage.filter((row) => {
+      if (!row.invoiceId) return false;
+      const usageAt = Date.parse(`${row.usageDate}T00:00:00.000Z`);
+      return (
+        usageAt >= contract.startDate &&
+        usageAt <= contractBillingEnd(contract) &&
+        row.invoiceId !== existing?._id
+      );
+    });
+    if (usageBased && conflictingUsage.length) {
+      const conflictingInvoice = await ctx.db.get(
+        conflictingUsage[0]!.invoiceId!,
+      );
+      issues.push({
+        code: "USAGE_ALREADY_BILLED",
+        message: `${conflictingUsage.length} usage record${conflictingUsage.length === 1 ? " is" : "s are"} already attached to ${conflictingInvoice?.invoiceNumber ? `invoice ${conflictingInvoice.invoiceNumber}` : "another invoice"}.`,
+      });
+    }
+
+    let usageEntries: number | undefined;
+    let calculatedAmount: number | undefined;
+    const isMonthlyUsageModel =
+      contract.pricingModel === "monthly_minimum" ||
+      contract.pricingModel === "discounted_usage";
+    if (isMonthlyUsageModel && cycleMonths.length) {
+      try {
+        const pricing = await priceMonthlyContractUsage(
+          ctx,
+          contract,
+          args.sourceMonth,
+        );
+        usageEntries = pricing.entries;
+        calculatedAmount = pricing.payable;
+        if (contract.pricingModel === "discounted_usage" && !pricing.entries) {
+          issues.push({
+            code: "NO_BILLABLE_USAGE",
+            message:
+              "No usage within the contract dates is available to invoice.",
+          });
+        }
+      } catch (error) {
+        issues.push({
+          code: "USAGE_PRICING_ERROR",
+          message:
+            error instanceof ConvexError
+              ? String(error.data?.message ?? error.message)
+              : "Usage could not be priced. Review its catalogue classification.",
+        });
+      }
+    }
+
+    const profile = await resolveInvoiceProfileForCompany(ctx, company);
+    if (!profile) {
+      issues.push({
+        code: "MISSING_INVOICE_PROFILE",
+        message: "No active invoice profile exists for the customer country.",
+      });
+    }
+
+    return {
+      ready: issues.length === 0,
+      contractStatus: contract.status,
+      billingTiming: contract.billingTiming ?? "postpaid",
+      billingFrequency: contract.billingFrequency,
+      sourceMonth: args.sourceMonth,
+      cycleMonths,
+      periodEnd,
+      linkedTenantCount: usageDiagnostics.linkedTenantCount,
+      expectedCaptureCount: usageDiagnostics.expectedCaptureCount,
+      recordedCaptureCount: usageDiagnostics.recordedCaptureCount,
+      missingCaptureCount: usageDiagnostics.missing.length,
+      missingCaptureExamples: usageDiagnostics.missing.slice(0, 3),
+      conflictingUsageCount: conflictingUsage.length,
+      usageEntries,
+      calculatedAmount,
+      invoiceProfileReady: Boolean(profile),
+      existingInvoiceId: existing?._id,
+      existingInvoiceNumber: existing?.invoiceNumber,
+      issues,
+    };
   },
 });
 

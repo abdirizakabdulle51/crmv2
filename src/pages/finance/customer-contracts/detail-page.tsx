@@ -10,6 +10,7 @@ import {
 import { useConvex, useMutation, useQuery } from "convex/react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+  AlertCircle,
   ArrowLeft,
   Check,
   ChevronsUpDown,
@@ -505,6 +506,12 @@ function CustomerContractDetailContent() {
         }
       : "skip",
   );
+  const invoiceReadiness = useQuery(
+    api.invoices.contractInvoiceReadiness,
+    parsedContractId && activeComparisonMonth
+      ? { contractId: parsedContractId, sourceMonth: activeComparisonMonth }
+      : "skip",
+  );
 
   const groupDiscountByKey = useMemo(
     () =>
@@ -816,11 +823,13 @@ function CustomerContractDetailContent() {
       toast.success("Invoice ready");
       navigate(`/invoices/${invoiceId}`);
     } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Could not create draft invoice",
-      );
+      toast.error("Invoice could not be created", {
+        description:
+          invoiceReadiness?.issues.map((issue) => issue.message).join(" ") ||
+          (error instanceof Error
+            ? error.message
+            : "The billing checks failed unexpectedly."),
+      });
     } finally {
       setInvoicePending(false);
     }
@@ -991,6 +1000,91 @@ function CustomerContractDetailContent() {
           enables contract invoicing.
         </div>
       )}
+
+      {contractIsActive && activeComparisonMonth ? (
+        <Card
+          className={cn(
+            "border-l-4",
+            invoiceReadiness?.ready
+              ? "border-l-emerald-500"
+              : "border-l-amber-500",
+          )}
+        >
+          <CardHeader className="pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-base">Invoice readiness</CardTitle>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Billing checks for {activeComparisonMonth} before invoice
+                  generation.
+                </p>
+              </div>
+              {invoiceReadiness ? (
+                <Badge
+                  variant={invoiceReadiness.ready ? "default" : "secondary"}
+                >
+                  {invoiceReadiness.ready ? "Ready" : "Needs attention"}
+                </Badge>
+              ) : null}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {!invoiceReadiness ? (
+              <Skeleton className="h-20 w-full" />
+            ) : (
+              <div className="space-y-4">
+                <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <p className="text-muted-foreground">Billing period</p>
+                    <p className="font-medium">
+                      {invoiceReadiness.cycleMonths.join(", ") || "Invalid"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Usage captures</p>
+                    <p className="font-medium">
+                      {invoiceReadiness.recordedCaptureCount}/
+                      {invoiceReadiness.expectedCaptureCount} complete
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Billable entries</p>
+                    <p className="font-medium">
+                      {invoiceReadiness.usageEntries ?? "Not applicable"}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Invoice profile</p>
+                    <p className="font-medium">
+                      {invoiceReadiness.invoiceProfileReady
+                        ? "Configured"
+                        : "Missing"}
+                    </p>
+                  </div>
+                </div>
+                {invoiceReadiness.issues.length ? (
+                  <div className="space-y-2">
+                    {invoiceReadiness.issues.map((issue) => (
+                      <div
+                        key={issue.code}
+                        className="flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100"
+                      >
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>{issue.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-emerald-700 dark:text-emerald-300">
+                    Contract period, usage, catalogue pricing, and invoice
+                    profile passed all pre-generation checks.
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <InfoCard label="Customer" value={contract.companyName} />
