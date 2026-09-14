@@ -2081,7 +2081,7 @@ export const contractInvoiceReadiness = query({
       });
     }
 
-    const cycleEndMonth = cycleMonths.at(-1);
+    const cycleEndMonth = cycleMonths[cycleMonths.length - 1];
     const periodEnd = cycleEndMonth
       ? Math.min(monthEndTimestamp(cycleEndMonth), contractBillingEnd(contract))
       : undefined;
