@@ -55,6 +55,12 @@ import {
   buildPaygBillingCandidates,
   createDailyUsageDraftInvoice,
 } from "./dailyUsage";
+import {
+  applyAvailableCustomerAdvances,
+  postInvoiceIssued,
+  postInvoicePayment,
+  reverseJournal,
+} from "./accountingEngine";
 
 type Ctx = QueryCtx | MutationCtx;
 type InvoiceStatus = Doc<"invoices">["status"];
@@ -2821,6 +2827,10 @@ export const issueInvoice = mutation({
       lockedAt: now,
       updatedAt: now,
     });
+    const issuedInvoice = await ctx.db.get(args.invoiceId);
+    if (issuedInvoice) {
+      await postInvoiceIssued(ctx, user._id, issuedInvoice);
+    }
     await consumeInvoiceCredit(ctx, invoice, user._id);
     await insertEvent(ctx, {
       invoiceId: args.invoiceId,
@@ -2829,6 +2839,9 @@ export const issueInvoice = mutation({
       message: `Invoice ${invoiceNumber} issued and locked.`,
       now,
     });
+    if (issuedInvoice) {
+      await applyAvailableCustomerAdvances(ctx, user._id, issuedInvoice);
+    }
     const dailyUsageRows = await ctx.db
       .query("dailyUsageSnapshots")
       .withIndex("by_invoice", (q) => q.eq("invoiceId", args.invoiceId))
@@ -3305,6 +3318,41 @@ export const voidInvoice = mutation({
       status: "void" satisfies InvoiceStatus,
       updatedAt: now,
     });
+    const issuedJournal = await ctx.db
+      .query("journalEntries")
+      .withIndex("by_source", (q) =>
+        q
+          .eq("sourceType", "invoice_issued")
+          .eq("sourceId", String(invoice._id)),
+      )
+      .unique();
+    if (issuedJournal?.status === "posted") {
+      await reverseJournal(ctx, {
+        journalId: issuedJournal._id,
+        actorId: user._id,
+        accountingDate: now,
+        reason,
+        idempotencyKey: `invoice-void:${invoice._id}`,
+      });
+    }
+    const recognizedJournals = await ctx.db
+      .query("journalEntries")
+      .withIndex("by_source", (q) =>
+        q.eq("sourceType", "deferred_revenue_recognition"),
+      )
+      .collect();
+    for (const journal of recognizedJournals.filter(
+      (row) =>
+        row.status === "posted" && row.sourceId?.startsWith(`${invoice._id}:`),
+    )) {
+      await reverseJournal(ctx, {
+        journalId: journal._id,
+        actorId: user._id,
+        accountingDate: now,
+        reason,
+        idempotencyKey: `invoice-void-recognition:${journal._id}`,
+      });
+    }
     await restoreInvoiceCredit(ctx, invoice, user._id);
     await insertEvent(ctx, {
       invoiceId: args.invoiceId,
@@ -3554,11 +3602,13 @@ export const recordPayment = mutation({
       );
     }
 
-    await ctx.db.insert("invoicePayments", {
+    const paymentId = await ctx.db.insert("invoicePayments", {
       invoiceId: args.invoiceId,
       amount,
       appliedAmount,
-      ...(extraServiceRevenueAmount > 0 ? { extraServiceRevenueAmount } : {}),
+      ...(extraServiceRevenueAmount > 0
+        ? { unappliedAmount: extraServiceRevenueAmount }
+        : {}),
       amountCents: toCents(amount),
       paidAt,
       method,
@@ -3577,6 +3627,24 @@ export const recordPayment = mutation({
       recordedBy: user._id,
       createdAt: now,
     });
+    const storedPayment = await ctx.db.get(paymentId);
+    if (storedPayment) {
+      await postInvoicePayment(ctx, user._id, invoice, storedPayment);
+      if (extraServiceRevenueAmount > 0) {
+        const amountCents = toCents(extraServiceRevenueAmount);
+        await ctx.db.insert("customerAdvances", {
+          companyId: invoice.companyId,
+          originatingPaymentId: paymentId,
+          currency: receivingAccount?.currency ?? invoiceCurrency,
+          originalAmountCents: amountCents,
+          remainingAmountCents: amountCents,
+          status: "available",
+          createdBy: user._id,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
 
     await ctx.db.patch(args.invoiceId, {
       amountPaid: nextAmountPaid,
@@ -3590,7 +3658,7 @@ export const recordPayment = mutation({
     const details = [
       `Payment of ${formatMoney(amount)} recorded.`,
       extraServiceRevenueAmount > 0
-        ? `Applied to invoice: ${formatMoney(appliedAmount)}. Extra Service Revenue: ${formatMoney(extraServiceRevenueAmount)}.`
+        ? `Applied to invoice: ${formatMoney(appliedAmount)}. Customer advance retained: ${formatMoney(extraServiceRevenueAmount)}.`
         : undefined,
       method ? `Method: ${method}.` : undefined,
       receivingAccount ? `Account: ${receivingAccount.name}.` : undefined,
@@ -3680,7 +3748,7 @@ export const reconcileLegacyPayment = mutation({
     }
     await assertUniqueAccountTransactionId(ctx, account._id, transactionId);
     const now = Date.now();
-    await ctx.db.insert("invoicePayments", {
+    const paymentId = await ctx.db.insert("invoicePayments", {
       invoiceId: invoice._id,
       receivingAccountId: account._id,
       amount,
@@ -3697,6 +3765,8 @@ export const reconcileLegacyPayment = mutation({
       recordedBy: user._id,
       createdAt: now,
     });
+    const payment = await ctx.db.get(paymentId);
+    if (payment) await postInvoicePayment(ctx, user._id, invoice, payment);
     await insertEvent(ctx, {
       invoiceId: invoice._id,
       type: "payment_recorded",
@@ -3732,6 +3802,20 @@ export const reversePayment = mutation({
     const invoice = await getInvoiceOrThrow(ctx, payment.invoiceId);
     await assertCanAccessInvoice(ctx, user, invoice);
     const reason = requireCleanupReason(args.reason);
+    const advance = await ctx.db
+      .query("customerAdvances")
+      .withIndex("by_payment", (q) => q.eq("originatingPaymentId", payment._id))
+      .unique();
+    if (
+      advance &&
+      advance.remainingAmountCents !== advance.originalAmountCents
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Reverse customer advance applications before reversing this payment",
+      });
+    }
     const transactionId = trimOptional(args.transactionId);
     if (!transactionId || !payment.receivingAccountId) {
       throw new ConvexError({
@@ -3785,6 +3869,30 @@ export const reversePayment = mutation({
       reversedBy: user._id,
       reversalReason: reason,
     });
+    if (advance) {
+      await ctx.db.patch(advance._id, {
+        remainingAmountCents: 0,
+        status: "reversed",
+        updatedAt: now,
+      });
+    }
+    const paymentJournal = await ctx.db
+      .query("journalEntries")
+      .withIndex("by_source", (q) =>
+        q
+          .eq("sourceType", "invoice_payment")
+          .eq("sourceId", String(payment._id)),
+      )
+      .unique();
+    if (paymentJournal?.status === "posted") {
+      await reverseJournal(ctx, {
+        journalId: paymentJournal._id,
+        actorId: user._id,
+        accountingDate: args.reversedAt,
+        reason,
+        idempotencyKey: `invoice-payment-reversal:${payment._id}`,
+      });
+    }
     await ctx.db.patch(invoice._id, {
       amountPaid: nextAmountPaid,
       balanceDue: nextBalanceDue,

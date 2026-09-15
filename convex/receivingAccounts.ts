@@ -15,6 +15,11 @@ import {
   toCents,
 } from "./money";
 import { assertUniqueAccountTransactionId } from "./accountTransactionIdentity";
+import {
+  postCashTransaction,
+  postExpenseReturn,
+  reverseJournal,
+} from "./accountingEngine";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -526,7 +531,7 @@ export const recordNonInvoiceInflow = mutation({
           message: "This account already has an active opening balance",
         });
     }
-    return await insertAccountTransaction(ctx, {
+    const transactionId = await insertAccountTransaction(ctx, {
       account,
       user,
       direction: "incoming",
@@ -537,6 +542,9 @@ export const recordNonInvoiceInflow = mutation({
       source: args.source,
       description: args.description,
     });
+    const transaction = await ctx.db.get(transactionId);
+    if (transaction) await postCashTransaction(ctx, user._id, transaction);
+    return transactionId;
   },
 });
 
@@ -614,6 +622,9 @@ export const recordExpenseReturn = mutation({
       expenseId: expense._id,
       description: `Return for ${expense.title}: ${required(args.reason, "Return reason")}`,
     });
+    const transaction = await ctx.db.get(transactionId);
+    if (transaction)
+      await postExpenseReturn(ctx, user._id, transaction, expense);
     await ctx.db.insert("expenseEvents", {
       expenseId: expense._id,
       type: "return_recorded",
@@ -712,6 +723,25 @@ export const reverseAccountTransaction = mutation({
       reversedBy: user._id,
       reversalReason: reason,
     });
+    const sourceType =
+      original.type === "expense_return"
+        ? "expense_return"
+        : "cash_transaction";
+    const journal = await ctx.db
+      .query("journalEntries")
+      .withIndex("by_source", (q) =>
+        q.eq("sourceType", sourceType).eq("sourceId", String(original._id)),
+      )
+      .unique();
+    if (journal?.status === "posted") {
+      await reverseJournal(ctx, {
+        journalId: journal._id,
+        actorId: user._id,
+        accountingDate: args.transactionDate,
+        reason,
+        idempotencyKey: `account-transaction-reversal:${original._id}`,
+      });
+    }
     if (original.expenseId) {
       await ctx.db.insert("expenseEvents", {
         expenseId: original.expenseId,

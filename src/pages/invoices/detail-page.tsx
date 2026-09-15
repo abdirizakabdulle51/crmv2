@@ -1271,7 +1271,7 @@ function RecordPaymentDialog({
     ? numericAmount > balanceDue
     : false;
   const appliedAmount = Math.min(numericAmount, balanceDue);
-  const extraServiceRevenueAmount = Math.max(numericAmount - balanceDue, 0);
+  const customerAdvanceAmount = Math.max(numericAmount - balanceDue, 0);
   const accountType = method === "Bank Transfer" ? "bank" : "mobile_money";
   const eligibleAccounts = accounts.filter(
     (account) => account.type === accountType,
@@ -1315,9 +1315,8 @@ function RecordPaymentDialog({
                 </div>
                 <div className="mt-1">
                   {formatCurrency(appliedAmount)} will be applied to the
-                  invoice. {formatCurrency(extraServiceRevenueAmount)} will be
-                  recorded as Extra Service Revenue and will not become customer
-                  credit.
+                  invoice. {formatCurrency(customerAdvanceAmount)} will be
+                  retained as a customer advance for future invoices.
                 </div>
               </div>
             ) : null}

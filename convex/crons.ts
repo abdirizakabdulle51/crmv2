@@ -55,6 +55,13 @@ crons.daily(
 );
 
 crons.daily(
+  "recognize prepaid accounting revenue",
+  { hourUTC: 2, minuteUTC: 47 },
+  internal.accounting.recognizeDeferredRevenueScheduled,
+  {},
+);
+
+crons.daily(
   "create due contract invoice drafts",
   { hourUTC: 2, minuteUTC: 50 },
   internal.invoices.createDueContractDrafts,

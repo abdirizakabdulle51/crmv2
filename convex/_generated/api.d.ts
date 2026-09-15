@@ -10,6 +10,8 @@
 
 import type * as activities from "../activities.js";
 import type * as aiRecommendations from "../aiRecommendations.js";
+import type * as accounting from "../accounting.js";
+import type * as accountingEngine from "../accountingEngine.js";
 import type * as auth from "../auth.js";
 import type * as authorization from "../authorization.js";
 import type * as cloudAdvisorKeys from "../cloudAdvisorKeys.js";
@@ -72,6 +74,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   activities: typeof activities;
   aiRecommendations: typeof aiRecommendations;
+  accounting: typeof accounting;
+  accountingEngine: typeof accountingEngine;
   auth: typeof auth;
   authorization: typeof authorization;
   cloudAdvisorKeys: typeof cloudAdvisorKeys;

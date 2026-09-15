@@ -5,6 +5,11 @@ import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { assertSupportedCurrency, roundMoney } from "./money";
 import { assertUniqueAccountTransactionId } from "./accountTransactionIdentity";
 import {
+  postExpenseApproved,
+  postExpensePaid,
+  reverseJournal,
+} from "./accountingEngine";
+import {
   assertCanManageCompany,
   assertNotMonitoring,
   canViewCompany,
@@ -821,6 +826,9 @@ export const approveExpenseRequest = mutation({
       fundingAccountType: fundingAccount.type,
       updatedAt: now,
     });
+    const approvedExpense = await ctx.db.get(args.expenseId);
+    if (approvedExpense)
+      await postExpenseApproved(ctx, user._id, approvedExpense);
     await insertExpenseEvent(ctx, {
       expenseId: args.expenseId,
       type: "approved",
@@ -947,6 +955,8 @@ export const markExpensePaid = mutation({
       paymentTransactionId,
       updatedAt: now,
     });
+    const paidExpense = await ctx.db.get(args.expenseId);
+    if (paidExpense) await postExpensePaid(ctx, user._id, paidExpense);
     const details = [
       paymentMethod ? `Method: ${paymentMethod}` : undefined,
       paymentReference ? `Reference: ${paymentReference}` : undefined,
@@ -988,6 +998,21 @@ export const reconcilePaidExpenseDate = mutation({
       });
     }
     const reason = normalizeRequiredText(args.reason, "Correction reason");
+    const accountingEntries = await ctx.db
+      .query("journalEntries")
+      .withIndex("by_source", (q) =>
+        q
+          .eq("sourceType", "expense_payment")
+          .eq("sourceId", String(expense._id)),
+      )
+      .take(1);
+    if (accountingEntries.length) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Posted payment dates cannot be edited. Reverse and repost the accounting entry instead.",
+      });
+    }
     const now = Date.now();
     if (args.paidAt > now) {
       throw new ConvexError({
@@ -1037,6 +1062,23 @@ export const cancelExpenseRequest = mutation({
       status: "cancelled",
       updatedAt: now,
     });
+    const approvalJournal = await ctx.db
+      .query("journalEntries")
+      .withIndex("by_source", (q) =>
+        q
+          .eq("sourceType", "expense_approved")
+          .eq("sourceId", String(expense._id)),
+      )
+      .unique();
+    if (approvalJournal?.status === "posted") {
+      await reverseJournal(ctx, {
+        journalId: approvalJournal._id,
+        actorId: user._id,
+        accountingDate: now,
+        reason,
+        idempotencyKey: `expense-cancel:${expense._id}`,
+      });
+    }
     await insertExpenseEvent(ctx, {
       expenseId: args.expenseId,
       type: "cancelled",
@@ -1225,11 +1267,7 @@ export const permanentlyDeleteTwoIncorrectExpenses = internalMutation({
     confirm: v.optional(v.string()),
   },
   handler: async (ctx, args) =>
-    performTwoIncorrectExpenseCleanup(
-      ctx,
-      args,
-      TWO_INCORRECT_EXPENSE_TARGETS,
-    ),
+    performTwoIncorrectExpenseCleanup(ctx, args, TWO_INCORRECT_EXPENSE_TARGETS),
 });
 
 const INCORRECT_EXPENSE_CONFIRMATION = "DELETE_INCORRECT_EXPENSE";
