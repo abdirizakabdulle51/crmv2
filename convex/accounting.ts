@@ -18,6 +18,7 @@ import {
   type PostingLine,
 } from "./accountingEngine";
 import { calculateBalance, roundMoney, toCents } from "./money";
+import { assertUniqueAccountTransactionId } from "./accountTransactionIdentity";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -1094,6 +1095,7 @@ export const reconciliation = query({
         .filter((row) => row.countryId === args.countryId)
         .map((row) => row._id),
     );
+    const invoiceMap = new Map(invoices.map((row) => [row._id, row]));
     const gl = (systemKey: string, normal: "debit" | "credit") => {
       const account = data.accounts.find((row) => row.systemKey === systemKey);
       if (!account) return 0;
@@ -1128,11 +1130,41 @@ export const reconciliation = query({
           !row.onboardingCreditId,
       )
       .reduce((sum, row) => sum + toCents(row.amount), 0);
-    const advanceSource = advances
-      .filter(
-        (row) => companyIds.has(row.companyId) && row.currency === currency,
-      )
-      .reduce((sum, row) => sum + row.remainingAmountCents, 0);
+    const advancePaymentIds = new Set(
+      advances.map((row) => row.originatingPaymentId),
+    );
+    const advanceSource =
+      advances
+        .filter(
+          (row) => companyIds.has(row.companyId) && row.currency === currency,
+        )
+        .reduce((sum, row) => sum + row.remainingAmountCents, 0) +
+      payments
+        .filter((payment) => {
+          const invoice = invoiceMap.get(payment.invoiceId);
+          return (
+            invoice !== undefined &&
+            companyIds.has(invoice.companyId) &&
+            (payment.receivingCurrencyNote ??
+              invoice.sellerCurrency ??
+              "USD") === currency &&
+            !advancePaymentIds.has(payment._id) &&
+            !payment.reversedByPaymentId
+          );
+        })
+        .reduce(
+          (sum, payment) =>
+            sum +
+            toCents(
+              payment.unappliedAmount ??
+                payment.extraServiceRevenueAmount ??
+                Math.max(
+                  0,
+                  payment.amount - (payment.appliedAmount ?? payment.amount),
+                ),
+            ),
+          0,
+        );
     const banks = physicalAccounts
       .filter((account) => account.currency === currency)
       .map((account) => {
@@ -1208,13 +1240,232 @@ export const listMigrationExceptions = query({
   handler: async (ctx, args) => {
     const user = await currentUser(ctx);
     await assertCountryAccess(ctx, user, args.countryId);
-    return (await ctx.db.query("accountingExceptions").collect())
+    const rows = (await ctx.db.query("accountingExceptions").collect())
       .filter(
         (row) =>
           (!row.countryId || row.countryId === args.countryId) &&
           (args.includeResolved || row.status === "open"),
       )
       .sort((a, b) => b.updatedAt - a.updatedAt);
+    return await Promise.all(
+      rows.map(async (row) => {
+        if (row.sourceType === "expense") {
+          const expense = await ctx.db.get(
+            row.sourceId as Id<"expenseRequests">,
+          );
+          const account = expense?.fundingAccountId
+            ? await ctx.db.get(expense.fundingAccountId)
+            : null;
+          return {
+            ...row,
+            sourceLabel: expense?.title ?? `Expense ${row.sourceId}`,
+            sourceHref: expense
+              ? `/finance/expenses/${expense._id}`
+              : undefined,
+            details: expense
+              ? `${expense.currency} ${expense.amount.toFixed(2)} · expense ${new Date(expense.expenseDate).toLocaleDateString()} · paid ${expense.paidAt ? new Date(expense.paidAt).toLocaleDateString() : "missing"} · account ${account?.name ?? "missing"} · ${expense.status}`
+              : "The source expense no longer exists",
+          };
+        }
+        if (row.sourceType === "invoice_payment") {
+          const payment = await ctx.db.get(
+            row.sourceId as Id<"invoicePayments">,
+          );
+          const invoice = payment ? await ctx.db.get(payment.invoiceId) : null;
+          const company = invoice ? await ctx.db.get(invoice.companyId) : null;
+          return {
+            ...row,
+            sourceLabel: `Payment · ${invoice?.invoiceNumber ?? row.sourceId}`,
+            sourceHref: invoice ? `/invoices/${invoice._id}` : undefined,
+            details: payment
+              ? `${company?.name ?? "Unknown customer"} · ${payment.amount.toFixed(2)} · ${new Date(payment.paidAt).toLocaleDateString()} · transaction ${payment.transactionId ?? "missing"}`
+              : "The source payment no longer exists",
+          };
+        }
+        if (row.sourceType === "invoice") {
+          const invoice = await ctx.db.get(row.sourceId as Id<"invoices">);
+          const company = invoice ? await ctx.db.get(invoice.companyId) : null;
+          return {
+            ...row,
+            sourceLabel: invoice?.invoiceNumber ?? `Invoice ${row.sourceId}`,
+            sourceHref: invoice ? `/invoices/${invoice._id}` : undefined,
+            details: invoice
+              ? `${company?.name ?? "Unknown customer"} · ${invoice.sellerCurrency ?? "USD"} ${invoice.grandTotal.toFixed(2)} · ${invoice.status} · paid ${invoice.amountPaid.toFixed(2)}`
+              : "The source invoice no longer exists",
+          };
+        }
+        if (row.sourceType === "account_transaction") {
+          const transaction = await ctx.db.get(
+            row.sourceId as Id<"accountTransactions">,
+          );
+          const account = transaction
+            ? await ctx.db.get(transaction.accountId)
+            : null;
+          return {
+            ...row,
+            sourceLabel:
+              transaction?.transactionId ?? `Transaction ${row.sourceId}`,
+            sourceHref: "/finance/account-transactions",
+            details: transaction
+              ? `${account?.name ?? "Missing account"} · ${transaction.currency} ${(transaction.amountCents / 100).toFixed(2)} · ${new Date(transaction.transactionDate).toLocaleDateString()} · ${transaction.type.replaceAll("_", " ")}`
+              : "The source transaction no longer exists",
+          };
+        }
+        return {
+          ...row,
+          sourceLabel: row.sourceId,
+          sourceHref: undefined,
+          details: row.message,
+        };
+      }),
+    );
+  },
+});
+
+export const classifyHistoricalInflow = mutation({
+  args: {
+    transactionId: v.id("accountTransactions"),
+    type: v.union(
+      v.literal("capital_contribution"),
+      v.literal("other_non_invoice_inflow"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const user = await currentUser(ctx);
+    assertCanManage(user);
+    const transaction = await ctx.db.get(args.transactionId);
+    if (
+      !transaction ||
+      !["capital_contribution", "other_non_invoice_inflow"].includes(
+        transaction.type,
+      ) ||
+      transaction.direction !== "incoming"
+    )
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only a non-invoice incoming transaction can be classified",
+      });
+    await assertCountryAccess(ctx, user, transaction.countryId);
+    const journal = await ctx.db
+      .query("journalEntries")
+      .withIndex("by_source", (q) =>
+        q
+          .eq("sourceType", "cash_transaction")
+          .eq("sourceId", String(transaction._id)),
+      )
+      .unique();
+    if (journal)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "This transaction is already posted. Reclassify it with an auditable Historical Correction journal.",
+      });
+    await ctx.db.patch(transaction._id, { type: args.type });
+    await resolveException(
+      ctx,
+      user._id,
+      "account_transaction",
+      String(transaction._id),
+    );
+  },
+});
+
+export const listHistoricalInflows = query({
+  args: { countryId: v.id("countries") },
+  handler: async (ctx, args) => {
+    const user = await currentUser(ctx);
+    await assertCountryAccess(ctx, user, args.countryId);
+    const [transactions, accounts, journals] = await Promise.all([
+      ctx.db.query("accountTransactions").collect(),
+      ctx.db
+        .query("receivingAccounts")
+        .withIndex("by_country", (q) => q.eq("countryId", args.countryId))
+        .collect(),
+      ctx.db
+        .query("journalEntries")
+        .withIndex("by_country", (q) => q.eq("countryId", args.countryId))
+        .collect(),
+    ]);
+    const accountNames = new Map(accounts.map((row) => [row._id, row.name]));
+    const postedSources = new Set(
+      journals
+        .filter((row) => row.sourceType === "cash_transaction")
+        .map((row) => row.sourceId),
+    );
+    return transactions
+      .filter(
+        (row) =>
+          row.countryId === args.countryId &&
+          row.direction === "incoming" &&
+          ["capital_contribution", "other_non_invoice_inflow"].includes(
+            row.type,
+          ) &&
+          !row.reversedAt,
+      )
+      .map((row) => ({
+        ...row,
+        accountName: accountNames.get(row.accountId) ?? "Unknown account",
+        isPosted: postedSources.has(String(row._id)),
+      }))
+      .sort((a, b) => b.transactionDate - a.transactionDate);
+  },
+});
+
+export const assignHistoricalPaymentAccount = mutation({
+  args: {
+    paymentId: v.id("invoicePayments"),
+    accountId: v.id("receivingAccounts"),
+    transactionId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await currentUser(ctx);
+    assertCanManage(user);
+    const [payment, account] = await Promise.all([
+      ctx.db.get(args.paymentId),
+      ctx.db.get(args.accountId),
+    ]);
+    const invoice = payment ? await ctx.db.get(payment.invoiceId) : null;
+    const company = invoice ? await ctx.db.get(invoice.companyId) : null;
+    if (!payment || !invoice || !company?.countryId || !account?.isActive)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Payment, invoice, customer, or account is unavailable",
+      });
+    await assertCountryAccess(ctx, user, company.countryId);
+    const currency = invoice.sellerCurrency ?? "USD";
+    if (
+      account.countryId !== company.countryId ||
+      account.currency !== currency ||
+      account.usage === "outgoing"
+    )
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Select an incoming ${currency} account in the customer country`,
+      });
+    const transactionId = args.transactionId.trim();
+    if (!transactionId)
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Bank or provider transaction ID is required",
+      });
+    await assertUniqueAccountTransactionId(ctx, account._id, transactionId);
+    await ctx.db.patch(payment._id, {
+      receivingAccountId: account._id,
+      transactionId,
+      receivingBankName: account.providerName,
+      receivingAccountNumber: account.accountNumber,
+      receivingAccountName: account.accountHolderName,
+      receivingBankLocation: account.location,
+      receivingCurrencyNote: account.currency,
+    });
+    const updated = await ctx.db.get(payment._id);
+    if (updated) await postInvoicePayment(ctx, user._id, invoice, updated);
+    await resolveException(
+      ctx,
+      user._id,
+      "invoice_payment",
+      String(payment._id),
+    );
   },
 });
 
@@ -1366,7 +1617,9 @@ export const migrateBatch = mutation({
           continue;
         }
         const unappliedAmount = roundMoney(
-          payment.amount - (payment.appliedAmount ?? payment.amount),
+          payment.unappliedAmount ??
+            payment.extraServiceRevenueAmount ??
+            payment.amount - (payment.appliedAmount ?? payment.amount),
         );
         if (unappliedAmount > 0) {
           const existing = await ctx.db
@@ -1507,6 +1760,20 @@ export const migrateBatch = mutation({
         skipped++;
         continue;
       }
+      if (
+        transaction.type === "other_non_invoice_inflow" &&
+        /\b(capital|investment|investor|shareholder|owner contribution)\b/i.test(
+          `${transaction.source ?? ""} ${transaction.description}`,
+        )
+      ) {
+        await flag(
+          "account_transaction",
+          String(transaction._id),
+          "CAPITAL_CLASSIFICATION_REQUIRED",
+          `Confirm whether ${transaction.transactionId} is a capital contribution before posting`,
+        );
+        continue;
+      }
       if (transaction.type === "expense_return") {
         const expense = transaction.expenseId
           ? await ctx.db.get(transaction.expenseId)
@@ -1613,7 +1880,9 @@ export const backfill = internalMutation({
         await postInvoicePayment(ctx, user._id, invoice, payment);
         posted++;
         const unappliedAmount = roundMoney(
-          payment.amount - (payment.appliedAmount ?? payment.amount),
+          payment.unappliedAmount ??
+            payment.extraServiceRevenueAmount ??
+            payment.amount - (payment.appliedAmount ?? payment.amount),
         );
         if (unappliedAmount > 0) {
           const existing = await ctx.db

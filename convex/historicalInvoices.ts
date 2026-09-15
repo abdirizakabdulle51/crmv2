@@ -23,6 +23,7 @@ import {
   nextInvoiceNumber,
   nextInvoiceSequence,
 } from "./invoiceNumbers";
+import { postInvoiceIssued, postInvoicePayment } from "./accountingEngine";
 
 const PAYMENT_METHOD_BANK_TRANSFER = "Bank Transfer";
 const PAYMENT_METHOD_MOBILE_MONEY = "Mobile Money";
@@ -42,8 +43,7 @@ const OUTSTANDING_HISTORICAL_STATUSES = new Set([
 const HISTORICAL_DESCRIPTION_CORRECTION_CONFIRMATION =
   "CORRECT_HISTORICAL_INVOICE_DESCRIPTIONS";
 const HISTORICAL_DESCRIPTION_CORRECTION_PREFIX = "Historical Odoo coverage";
-const CORRECTED_HISTORICAL_ITEM_NAME =
-  "Compute, Storage and Network Services";
+const CORRECTED_HISTORICAL_ITEM_NAME = "Compute, Storage and Network Services";
 const HISTORICAL_DESCRIPTION_CORRECTION_TARGETS = [
   {
     invoiceId: "ph7db1cvdarxkvxqcpqem93dqs8e23nt",
@@ -172,8 +172,12 @@ function prepareHistoricalInvoice(
   args: HistoricalInvoiceInput,
   validated?: { normalizedReference: string; invoiceDate: number },
 ) {
-  const normalizedReference = validated?.normalizedReference ?? normalizeReference(args.originalReference);
-  const invoiceDate = validated?.invoiceDate ?? dateOnlyTimestamp(args.invoiceDate, "Invoice date");
+  const normalizedReference =
+    validated?.normalizedReference ??
+    normalizeReference(args.originalReference);
+  const invoiceDate =
+    validated?.invoiceDate ??
+    dateOnlyTimestamp(args.invoiceDate, "Invoice date");
   const months = coverageMonths(args.coverageStartMonth, args.monthsCovered);
   const monthlyCents = toCents(args.monthlyAmount, "Monthly amount");
   if (monthlyCents <= 0) {
@@ -185,7 +189,8 @@ function prepareHistoricalInvoice(
   const monthlyAmount = fromCents(monthlyCents);
   const lineItems = calculateLineItems([
     {
-      itemName: args.itemDescription?.trim() || "Compute, Network and Storage Services",
+      itemName:
+        args.itemDescription?.trim() || "Compute, Network and Storage Services",
       serviceCategory: "Historical Invoice",
       billingUnit: "month",
       quantity: args.monthsCovered,
@@ -336,8 +341,7 @@ async function buildOutstandingHistoricalRenumberPlan(ctx: MutationCtx) {
         (left.issueDate ?? 0) - (right.issueDate ?? 0);
       if (issueDateDifference !== 0) return issueDateDifference;
       const importedDateDifference =
-        (left.historicalImportedAt ?? 0) -
-        (right.historicalImportedAt ?? 0);
+        (left.historicalImportedAt ?? 0) - (right.historicalImportedAt ?? 0);
       if (importedDateDifference !== 0) return importedDateDifference;
       const createdDateDifference = left.createdAt - right.createdAt;
       if (createdDateDifference !== 0) return createdDateDifference;
@@ -349,7 +353,9 @@ async function buildOutstandingHistoricalRenumberPlan(ctx: MutationCtx) {
   const usedNumbers = new Set(
     invoices
       .map((invoice) => invoice.invoiceNumber)
-      .filter((invoiceNumber): invoiceNumber is string => Boolean(invoiceNumber)),
+      .filter((invoiceNumber): invoiceNumber is string =>
+        Boolean(invoiceNumber),
+      ),
   );
   const collisions: string[] = [];
   const plan = targets.map((invoice, index) => {
@@ -412,7 +418,9 @@ async function buildOutstandingHistoricalDueDatePlan(ctx: MutationCtx) {
     ctx.db.query("invoices").collect(),
     ctx.db.query("companies").collect(),
   ]);
-  const companyMap = new Map(companies.map((company) => [company._id, company]));
+  const companyMap = new Map(
+    companies.map((company) => [company._id, company]),
+  );
   const targets = invoices
     .filter(
       (invoice) =>
@@ -423,7 +431,8 @@ async function buildOutstandingHistoricalDueDatePlan(ctx: MutationCtx) {
         invoice.dueDate === invoice.issueDate,
     )
     .sort((left, right) => {
-      const issueDateDifference = (left.issueDate ?? 0) - (right.issueDate ?? 0);
+      const issueDateDifference =
+        (left.issueDate ?? 0) - (right.issueDate ?? 0);
       if (issueDateDifference !== 0) return issueDateDifference;
       const createdDateDifference = left.createdAt - right.createdAt;
       if (createdDateDifference !== 0) return createdDateDifference;
@@ -459,10 +468,7 @@ export const correctOutstandingDueDates = internalMutation({
     confirm: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (
-      !args.dryRun &&
-      args.confirm !== DUE_DATE_CORRECTION_CONFIRMATION
-    ) {
+    if (!args.dryRun && args.confirm !== DUE_DATE_CORRECTION_CONFIRMATION) {
       throw new ConvexError({
         code: "BAD_REQUEST",
         message: `Exact confirmation required: ${DUE_DATE_CORRECTION_CONFIRMATION}`,
@@ -607,7 +613,10 @@ export const create = mutation({
     const normalizedReference = normalizeReference(args.originalReference);
     const invoiceDate = dateOnlyTimestamp(args.invoiceDate, "Invoice date");
     const paymentDate = dateOnlyTimestamp(args.paymentDate, "Payment date");
-    const prepared = prepareHistoricalInvoice(args, { normalizedReference, invoiceDate });
+    const prepared = prepareHistoricalInvoice(args, {
+      normalizedReference,
+      invoiceDate,
+    });
     const { invoiceId, totals, now } = await insertHistoricalInvoiceBase(
       ctx,
       user,
@@ -637,10 +646,11 @@ export const create = mutation({
     }
     const reference = args.paymentReference?.trim() || undefined;
     const transactionId = args.transactionId?.trim() || undefined;
-    if (transactionId && !args.receivingAccountId) {
+    if (!args.receivingAccountId || !transactionId) {
       throw new ConvexError({
         code: "BAD_REQUEST",
-        message: "Select an active receiving account",
+        message:
+          "Paid historical invoices require a receiving account and transaction ID",
       });
     }
     const receivingAccount = args.receivingAccountId
@@ -698,7 +708,7 @@ export const create = mutation({
         transactionId!,
       );
     }
-    await ctx.db.insert("invoicePayments", {
+    const paymentId = await ctx.db.insert("invoicePayments", {
       invoiceId,
       amount: payment.amount,
       amountCents: toCents(payment.amount),
@@ -728,6 +738,14 @@ export const create = mutation({
       status: payment.nextStatus,
       updatedAt: now,
     });
+    const [storedInvoice, storedPayment] = await Promise.all([
+      ctx.db.get(invoiceId),
+      ctx.db.get(paymentId),
+    ]);
+    if (storedInvoice && storedPayment) {
+      await postInvoiceIssued(ctx, user._id, storedInvoice);
+      await postInvoicePayment(ctx, user._id, storedInvoice, storedPayment);
+    }
     await ctx.db.insert("invoiceEvents", {
       invoiceId,
       type: "payment_recorded",
@@ -769,6 +787,8 @@ export const createUnpaid = mutation({
       prepared,
       defaultDueDateForIssue(prepared.invoiceDate, company.paymentTermDays),
     );
+    const invoice = await ctx.db.get(invoiceId);
+    if (invoice) await postInvoiceIssued(ctx, user._id, invoice);
     return invoiceId;
   },
 });

@@ -138,6 +138,9 @@ export default function AccountingPage({
   view?: AccountingView;
 }) {
   const countries = useQuery(api.countries.list, {});
+  const receivingAccounts = useQuery(api.receivingAccounts.list, {
+    purpose: "incoming",
+  });
   const [countryId, setCountryId] = useState("");
   const [currency, setCurrency] = useState("USD");
   const today = new Date();
@@ -203,9 +206,19 @@ export default function AccountingPage({
     api.accounting.reconciliation,
     ready ? { countryId: selectedCountry, currency } : "skip",
   );
+  const historicalInflows = useQuery(
+    api.accounting.listHistoricalInflows,
+    ready && view === "migration" ? { countryId: selectedCountry } : "skip",
+  );
   const initialize = useMutation(api.accounting.initialize);
   const createAccount = useMutation(api.accounting.createAccount);
   const migrateBatch = useMutation(api.accounting.migrateBatch);
+  const classifyHistoricalInflow = useMutation(
+    api.accounting.classifyHistoricalInflow,
+  );
+  const assignHistoricalPaymentAccount = useMutation(
+    api.accounting.assignHistoricalPaymentAccount,
+  );
   const setPeriodStatus = useMutation(api.accounting.setPeriodStatus);
   const postManualJournal = useMutation(api.accounting.postManualJournal);
   const [accountId, setAccountId] = useState("");
@@ -243,6 +256,12 @@ export default function AccountingPage({
   const [creditAccountId, setCreditAccountId] = useState("");
   const [migrationProgress, setMigrationProgress] = useState("");
   const [migrationPreviewed, setMigrationPreviewed] = useState(false);
+  const [exceptionAccounts, setExceptionAccounts] = useState<
+    Record<string, string>
+  >({});
+  const [exceptionReferences, setExceptionReferences] = useState<
+    Record<string, string>
+  >({});
   const heading = titles[view];
 
   const periodControls =
@@ -1185,7 +1204,9 @@ export default function AccountingPage({
                     <thead>
                       <tr className="border-b bg-muted/40">
                         <th className="p-3 text-left">Type</th>
+                        <th className="p-3 text-left">Record</th>
                         <th className="p-3 text-left">Issue</th>
+                        <th className="p-3 text-left">Details</th>
                         <th className="p-3 text-left">Required correction</th>
                       </tr>
                     </thead>
@@ -1195,12 +1216,120 @@ export default function AccountingPage({
                           <td className="p-3">
                             {row.sourceType.replaceAll("_", " ")}
                           </td>
+                          <td className="p-3 font-medium">
+                            {row.sourceHref ? (
+                              <Link
+                                className="text-primary underline-offset-4 hover:underline"
+                                to={row.sourceHref}
+                              >
+                                {row.sourceLabel}
+                              </Link>
+                            ) : (
+                              row.sourceLabel
+                            )}
+                          </td>
                           <td className="p-3">
                             <Badge variant="destructive">
                               {row.code.replaceAll("_", " ")}
                             </Badge>
                           </td>
-                          <td className="p-3">{row.message}</td>
+                          <td className="p-3 text-muted-foreground">
+                            {row.details}
+                          </td>
+                          <td className="p-3">
+                            <div>{row.message}</div>
+                            {row.code === "CAPITAL_CLASSIFICATION_REQUIRED" ? (
+                              <Button
+                                className="mt-2"
+                                size="sm"
+                                variant="outline"
+                                disabled={pending}
+                                onClick={() =>
+                                  run(
+                                    () =>
+                                      classifyHistoricalInflow({
+                                        transactionId:
+                                          row.sourceId as Id<"accountTransactions">,
+                                        type: "capital_contribution",
+                                      }),
+                                    "Transaction classified as capital contribution",
+                                  )
+                                }
+                              >
+                                Mark as capital
+                              </Button>
+                            ) : null}
+                            {row.code === "MISSING_RECEIVING_ACCOUNT" ? (
+                              <div className="mt-2 grid min-w-72 gap-2">
+                                <Select
+                                  value={exceptionAccounts[row._id] ?? ""}
+                                  onValueChange={(value) =>
+                                    setExceptionAccounts((current) => ({
+                                      ...current,
+                                      [row._id]: value,
+                                    }))
+                                  }
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select receiving account" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {receivingAccounts
+                                      ?.filter(
+                                        (account) =>
+                                          account.countryId ===
+                                            selectedCountry &&
+                                          account.currency === currency,
+                                      )
+                                      .map((account) => (
+                                        <SelectItem
+                                          key={account._id}
+                                          value={account._id}
+                                        >
+                                          {account.name} ·{" "}
+                                          {account.accountNumber}
+                                        </SelectItem>
+                                      ))}
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  placeholder="Bank transaction ID"
+                                  value={exceptionReferences[row._id] ?? ""}
+                                  onChange={(event) =>
+                                    setExceptionReferences((current) => ({
+                                      ...current,
+                                      [row._id]: event.target.value,
+                                    }))
+                                  }
+                                />
+                                <Button
+                                  size="sm"
+                                  disabled={
+                                    pending ||
+                                    !exceptionAccounts[row._id] ||
+                                    !exceptionReferences[row._id]?.trim()
+                                  }
+                                  onClick={() =>
+                                    run(
+                                      () =>
+                                        assignHistoricalPaymentAccount({
+                                          paymentId:
+                                            row.sourceId as Id<"invoicePayments">,
+                                          accountId: exceptionAccounts[
+                                            row._id
+                                          ] as Id<"receivingAccounts">,
+                                          transactionId:
+                                            exceptionReferences[row._id],
+                                        }),
+                                      "Historical payment account assigned",
+                                    )
+                                  }
+                                >
+                                  Assign and post payment
+                                </Button>
+                              </div>
+                            ) : null}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1209,6 +1338,86 @@ export default function AccountingPage({
               ) : (
                 <p className="py-10 text-center text-muted-foreground">
                   No open migration exceptions.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Non-invoice inflow classification</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!historicalInflows ? (
+                <Skeleton className="h-32" />
+              ) : historicalInflows.length ? (
+                <div className="overflow-x-auto rounded-lg border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/40">
+                        <th className="p-3 text-left">Date</th>
+                        <th className="p-3 text-left">Reference</th>
+                        <th className="p-3 text-left">Account</th>
+                        <th className="p-3 text-left">Description</th>
+                        <th className="p-3 text-right">Amount</th>
+                        <th className="p-3 text-left">Classification</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historicalInflows.map((row) => (
+                        <tr key={row._id} className="border-b last:border-0">
+                          <td className="p-3">
+                            {new Date(row.transactionDate).toLocaleDateString()}
+                          </td>
+                          <td className="p-3 font-mono">{row.transactionId}</td>
+                          <td className="p-3">{row.accountName}</td>
+                          <td className="p-3">{row.description}</td>
+                          <td className="p-3 text-right">
+                            {money(row.amountCents, row.currency)}
+                          </td>
+                          <td className="p-3">
+                            <Select
+                              value={row.type}
+                              disabled={row.isPosted || pending}
+                              onValueChange={(value) =>
+                                run(
+                                  () =>
+                                    classifyHistoricalInflow({
+                                      transactionId: row._id,
+                                      type: value as
+                                        | "capital_contribution"
+                                        | "other_non_invoice_inflow",
+                                    }),
+                                  "Inflow classification updated",
+                                )
+                              }
+                            >
+                              <SelectTrigger className="min-w-48">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="capital_contribution">
+                                  Capital contribution
+                                </SelectItem>
+                                <SelectItem value="other_non_invoice_inflow">
+                                  Other non-invoice inflow
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {row.isPosted ? (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Posted classifications must use Historical
+                                Corrections.
+                              </p>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="py-8 text-center text-muted-foreground">
+                  No non-invoice inflows found.
                 </p>
               )}
             </CardContent>

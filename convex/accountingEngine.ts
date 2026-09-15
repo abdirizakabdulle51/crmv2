@@ -453,9 +453,21 @@ export async function postInvoicePayment(
     "ACCOUNTS_RECEIVABLE",
   );
   const total = payment.amountCents ?? Math.round(payment.amount * 100);
+  const storedUnapplied = Math.max(
+    0,
+    Math.min(
+      total,
+      Math.round(
+        (payment.unappliedAmount ?? payment.extraServiceRevenueAmount ?? 0) *
+          100,
+      ),
+    ),
+  );
   const applied = Math.min(
     total,
-    Math.round((payment.appliedAmount ?? payment.amount) * 100),
+    payment.appliedAmount === undefined
+      ? total - storedUnapplied
+      : Math.round(payment.appliedAmount * 100),
   );
   const unapplied = total - applied;
   const lines: PostingLine[] = [

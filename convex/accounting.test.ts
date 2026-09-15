@@ -20,6 +20,14 @@ async function seed(t: ReturnType<typeof convexTest>) {
       tokenIdentifier: "accounting-ceo",
       role: "ceo",
     });
+    const sectorId = await ctx.db.insert("sectors", { name: "Technology" });
+    const companyId = await ctx.db.insert("companies", {
+      name: "Customer",
+      sectorId,
+      countryId,
+      accountManagerId: userId,
+      contractStatus: "active",
+    });
     const accountId = await ctx.db.insert("receivingAccounts", {
       countryId,
       name: "Operating Bank",
@@ -34,7 +42,12 @@ async function seed(t: ReturnType<typeof convexTest>) {
       createdAt: 1,
       updatedAt: 1,
     });
-    return { countryId, accountId, user: (await ctx.db.get(userId))! };
+    return {
+      countryId,
+      accountId,
+      companyId,
+      user: (await ctx.db.get(userId))!,
+    };
   });
 }
 
@@ -213,5 +226,58 @@ describe("accounting", () => {
         .collect(),
     );
     expect(journals).toHaveLength(1);
+  });
+
+  it("migrates legacy extra service revenue as a customer advance", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      const invoiceId = await ctx.db.insert("invoices", {
+        companyId: s.companyId,
+        createdBy: s.user._id,
+        invoiceNumber: "INV-LEGACY-1",
+        status: "paid",
+        issueDate: 1000,
+        companyName: "Customer",
+        sellerCurrency: "USD",
+        lineItems: [],
+        subtotal: 170,
+        monthlyTotal: 170,
+        yearlyTotal: 170,
+        grandTotal: 170,
+        amountPaid: 170,
+        balanceDue: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+      });
+      await ctx.db.insert("invoicePayments", {
+        invoiceId,
+        receivingAccountId: s.accountId,
+        amount: 350,
+        appliedAmount: 170,
+        extraServiceRevenueAmount: 180,
+        paidAt: 1100,
+        transactionId: "LEGACY-OVERPAYMENT",
+        recordedBy: s.user._id,
+        createdAt: 1100,
+      });
+    });
+    await asUser(t, s.user).mutation(api.accounting.migrateBatch, {
+      countryId: s.countryId,
+      phase: "payments",
+      paginationOpts: { cursor: null, numItems: 25 },
+    });
+    const result = await t.run(async (ctx) => ({
+      advances: await ctx.db.query("customerAdvances").collect(),
+      payment: (await ctx.db.query("invoicePayments").first())!,
+    }));
+    expect(result.advances).toHaveLength(1);
+    expect(result.advances[0]).toMatchObject({
+      originalAmountCents: 18000,
+      remainingAmountCents: 18000,
+      status: "available",
+    });
+    expect(result.payment.unappliedAmount).toBe(180);
+    expect(result.payment.extraServiceRevenueAmount).toBeUndefined();
   });
 });

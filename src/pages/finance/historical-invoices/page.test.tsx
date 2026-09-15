@@ -15,7 +15,11 @@ vi.mock("@/convex/_generated/api.js", () => ({
   api: {
     companies: { list: "companies.list" },
     receivingAccounts: { list: "receivingAccounts.list" },
-    historicalInvoices: { list: "historicalInvoices.list", create: "historicalInvoices.create", createUnpaid: "historicalInvoices.createUnpaid" },
+    historicalInvoices: {
+      list: "historicalInvoices.list",
+      create: "historicalInvoices.create",
+      createUnpaid: "historicalInvoices.createUnpaid",
+    },
   },
 }));
 
@@ -26,29 +30,46 @@ vi.mock("convex/react", () => ({
     if (query === "historicalInvoices.list") return mocks.invoices;
     return undefined;
   },
-  useMutation: (mutation: string) => mutation === "historicalInvoices.createUnpaid" ? mocks.createUnpaid : mocks.createPaid,
+  useMutation: (mutation: string) =>
+    mutation === "historicalInvoices.createUnpaid"
+      ? mocks.createUnpaid
+      : mocks.createPaid,
 }));
 
 describe("HistoricalInvoicesPage", () => {
   beforeEach(() => {
-    mocks.companies = [{
-      _id: "company-1" as Id<"companies">,
-      _creationTime: 1,
-      name: "AICC",
-      sectorId: "sector-1" as Id<"sectors">,
-      countryId: "country-1" as Id<"countries">,
-      contractStatus: "active",
-    }];
-    mocks.accounts = [];
+    mocks.companies = [
+      {
+        _id: "company-1" as Id<"companies">,
+        _creationTime: 1,
+        name: "AICC",
+        sectorId: "sector-1" as Id<"sectors">,
+        countryId: "country-1" as Id<"countries">,
+        contractStatus: "active",
+      },
+    ];
+    mocks.accounts = [
+      {
+        _id: "account-1" as Id<"receivingAccounts">,
+        name: "Main Bank",
+        providerName: "Islamic Bank",
+      } as Doc<"receivingAccounts">,
+    ];
     mocks.invoices = [];
   });
 
   it("renders the historical entry workflow and existing ledger", () => {
     render(<HistoricalInvoicesPage />);
 
-    expect(screen.getByRole("heading", { name: "Historical Invoices" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Record Historical Paid Invoice" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Invoice Item Description *")).toHaveValue("Compute, Network and Storage Services");
+    expect(
+      screen.getByRole("heading", { name: "Historical Invoices" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Record Historical Paid Invoice" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Invoice Item Description *")).toHaveValue(
+      "Compute, Network and Storage Services",
+    );
     expect(screen.getByText("Historical ledger")).toBeInTheDocument();
   });
 
@@ -58,24 +79,39 @@ describe("HistoricalInvoicesPage", () => {
     render(<HistoricalInvoicesPage />);
     await userSelectsCompany();
     fireEvent.click(screen.getByRole("button", { name: "Unpaid Invoice" }));
-    fireEvent.change(screen.getByLabelText("Original Odoo / Historical Reference *"), { target: { value: "UNPAID-1" } });
-    fireEvent.change(screen.getByLabelText("Invoice Date *"), { target: { value: "2026-02-02" } });
-    fireEvent.change(screen.getByLabelText("Coverage Start Month *"), { target: { value: "2026-02" } });
-    fireEvent.change(screen.getByLabelText("Monthly Amount (USD) *"), { target: { value: "100" } });
-    fireEvent.change(screen.getByLabelText("Invoice Item Description *"), { target: { value: "Custom historical services" } });
+    fireEvent.change(
+      screen.getByLabelText("Original Odoo / Historical Reference *"),
+      { target: { value: "UNPAID-1" } },
+    );
+    fireEvent.change(screen.getByLabelText("Invoice Date *"), {
+      target: { value: "2026-02-02" },
+    });
+    fireEvent.change(screen.getByLabelText("Coverage Start Month *"), {
+      target: { value: "2026-02" },
+    });
+    fireEvent.change(screen.getByLabelText("Monthly Amount (USD) *"), {
+      target: { value: "100" },
+    });
+    fireEvent.change(screen.getByLabelText("Invoice Item Description *"), {
+      target: { value: "Custom historical services" },
+    });
     expect(screen.queryByLabelText("Payment Date *")).not.toBeInTheDocument();
     expect(screen.getByText("Amount Paid:")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Record Historical Unpaid Invoice" }));
-    await waitFor(() => expect(mocks.createUnpaid).toHaveBeenCalledWith({
-      companyId: "company-1",
-      originalReference: "UNPAID-1",
-      invoiceDate: "2026-02-02",
-      coverageStartMonth: "2026-02",
-      monthsCovered: 1,
-      monthlyAmount: 100,
-      itemDescription: "Custom historical services",
-      notes: undefined,
-    }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Record Historical Unpaid Invoice" }),
+    );
+    await waitFor(() =>
+      expect(mocks.createUnpaid).toHaveBeenCalledWith({
+        companyId: "company-1",
+        originalReference: "UNPAID-1",
+        invoiceDate: "2026-02-02",
+        coverageStartMonth: "2026-02",
+        monthsCovered: 1,
+        monthlyAmount: 100,
+        itemDescription: "Custom historical services",
+        notes: undefined,
+      }),
+    );
     expect(mocks.createPaid).not.toHaveBeenCalled();
   });
 
@@ -84,42 +120,67 @@ describe("HistoricalInvoicesPage", () => {
     mocks.createPaid.mockClear();
     render(<HistoricalInvoicesPage />);
     await userSelectsCompany();
-    fireEvent.change(screen.getByLabelText("Original Odoo / Historical Reference *"), { target: { value: "PAID-1" } });
-    fireEvent.change(screen.getByLabelText("Invoice Date *"), { target: { value: "2026-02-02" } });
-    fireEvent.change(screen.getByLabelText("Coverage Start Month *"), { target: { value: "2026-02" } });
-    fireEvent.change(screen.getByLabelText("Monthly Amount (USD) *"), { target: { value: "100" } });
-    fireEvent.change(screen.getByLabelText("Payment Date *"), { target: { value: "2026-02-03" } });
-    fireEvent.click(screen.getByRole("button", { name: "Record Historical Paid Invoice" }));
-    await waitFor(() => expect(mocks.createPaid).toHaveBeenCalledWith(expect.objectContaining({
-      companyId: "company-1",
-      originalReference: "PAID-1",
-      paymentDate: "2026-02-03",
-    })));
+    fireEvent.change(
+      screen.getByLabelText("Original Odoo / Historical Reference *"),
+      { target: { value: "PAID-1" } },
+    );
+    fireEvent.change(screen.getByLabelText("Invoice Date *"), {
+      target: { value: "2026-02-02" },
+    });
+    fireEvent.change(screen.getByLabelText("Coverage Start Month *"), {
+      target: { value: "2026-02" },
+    });
+    fireEvent.change(screen.getByLabelText("Monthly Amount (USD) *"), {
+      target: { value: "100" },
+    });
+    fireEvent.change(screen.getByLabelText("Payment Date *"), {
+      target: { value: "2026-02-03" },
+    });
+    fireEvent.change(screen.getByLabelText("Receiving Account *"), {
+      target: { value: "account-1" },
+    });
+    fireEvent.change(screen.getByLabelText("Transaction ID *"), {
+      target: { value: "PAID-1-TXN" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Record Historical Paid Invoice" }),
+    );
+    await waitFor(() =>
+      expect(mocks.createPaid).toHaveBeenCalledWith(
+        expect.objectContaining({
+          companyId: "company-1",
+          originalReference: "PAID-1",
+          paymentDate: "2026-02-03",
+        }),
+      ),
+    );
     expect(mocks.createUnpaid).not.toHaveBeenCalled();
   });
 
   it("renders overdue historical invoices with the red overdue badge", () => {
-    mocks.invoices = [{
-      _id: "invoice-overdue" as Id<"invoices">,
-      _creationTime: 1,
-      companyId: "company-1" as Id<"companies">,
-      companyName: "AICC",
-      originalReference: "OVERDUE-1",
-      isHistorical: true,
-      sourceSystem: "odoo",
-      historicalCoverageStartMonth: "2026-01",
-      historicalCoverageMonths: 1,
-      issueDate: Date.UTC(2026, 0, 1),
-      dueDate: Date.UTC(2026, 0, 8),
-      grandTotal: 100,
-      amountPaid: 0,
-      balanceDue: 100,
-      status: "overdue",
-      createdBy: "user-1" as Id<"users">,
-      lineItems: [],
-      createdAt: 1,
-      updatedAt: 1,
-    } as unknown as Doc<"invoices">];
+    mocks.invoices = [
+      {
+        _id: "invoice-overdue" as Id<"invoices">,
+        _creationTime: 1,
+        companyId: "company-1" as Id<"companies">,
+        companyName: "AICC",
+        originalReference: "OVERDUE-1",
+        isHistorical: true,
+        sourceSystem: "odoo",
+        historicalCoverageStartMonth: "2026-01",
+        historicalCoverageMonths: 1,
+        issueDate: Date.UTC(2026, 0, 1),
+        dueDate: Date.UTC(2026, 0, 8),
+        grandTotal: 100,
+        amountPaid: 0,
+        balanceDue: 100,
+        status: "overdue",
+        createdBy: "user-1" as Id<"users">,
+        lineItems: [],
+        createdAt: 1,
+        updatedAt: 1,
+      } as unknown as Doc<"invoices">,
+    ];
 
     render(<HistoricalInvoicesPage />);
 
