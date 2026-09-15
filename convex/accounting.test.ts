@@ -324,4 +324,48 @@ describe("accounting", () => {
       resolvedBy: s.user._id,
     });
   });
+
+  it("captures a record-level posting failure instead of aborting migration", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const transactionId = await t.run((ctx) =>
+      ctx.db.insert("accountTransactions", {
+        accountId: s.accountId,
+        countryId: s.countryId,
+        currency: "USD",
+        direction: "incoming",
+        type: "opening_balance",
+        amount: -10,
+        amountCents: -1000,
+        transactionDate: 1000,
+        transactionId: "INVALID-AMOUNT",
+        description: "Invalid historical amount",
+        createdBy: s.user._id,
+        createdAt: 1000,
+      }),
+    );
+    await expect(
+      asUser(t, s.user).mutation(api.accounting.migrateBatch, {
+        countryId: s.countryId,
+        phase: "transactions",
+        paginationOpts: { cursor: null, numItems: 25 },
+      }),
+    ).resolves.toMatchObject({ exceptions: 1 });
+    const exception = await t.run((ctx) =>
+      ctx.db
+        .query("accountingExceptions")
+        .withIndex("by_source", (q) =>
+          q
+            .eq("sourceType", "account_transaction")
+            .eq("sourceId", String(transactionId)),
+        )
+        .unique(),
+    );
+    expect(exception).toMatchObject({
+      code: "POSTING_FAILED",
+      status: "open",
+    });
+    expect(exception?.message).toContain("INVALID-AMOUNT");
+    expect(exception?.message).toContain("transactions");
+  });
 });

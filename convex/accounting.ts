@@ -1560,6 +1560,54 @@ export const migrateBatch = mutation({
       });
       exceptions++;
     };
+    const postSafely = async (
+      sourceType: string,
+      sourceId: string,
+      label: string,
+      accountingDate: number,
+      action: () => Promise<unknown>,
+    ) => {
+      if (!Number.isFinite(accountingDate) || accountingDate <= 0) {
+        await flag(
+          sourceType,
+          sourceId,
+          "INVALID_ACCOUNTING_DATE",
+          `${label} has an invalid accounting date`,
+        );
+        return false;
+      }
+      const month = new Date(accountingDate).toISOString().slice(0, 7);
+      const period = await ctx.db
+        .query("accountingPeriods")
+        .withIndex("by_country_month", (q) =>
+          q.eq("countryId", args.countryId).eq("month", month),
+        )
+        .unique();
+      if (period?.status === "closed") {
+        await flag(
+          sourceType,
+          sourceId,
+          "ACCOUNTING_PERIOD_CLOSED",
+          `${label} is dated ${month}, which is closed. Reopen the period before posting.`,
+        );
+        return false;
+      }
+      if (args.dryRun) return true;
+      try {
+        await action();
+        return true;
+      } catch (error) {
+        const reason =
+          error instanceof Error ? error.message : "Unknown accounting error";
+        await flag(
+          sourceType,
+          sourceId,
+          "POSTING_FAILED",
+          `${label} failed in ${args.phase}: ${reason}`,
+        );
+        return false;
+      }
+    };
 
     if (args.phase === "invoices") {
       const page = await ctx.db.query("invoices").paginate(args.paginationOpts);
@@ -1589,9 +1637,14 @@ export const migrateBatch = mutation({
           );
           continue;
         }
-        if (!args.dryRun) {
-          await postInvoiceIssued(ctx, user._id, invoice);
-        }
+        const invoicePosted = await postSafely(
+          "invoice",
+          String(invoice._id),
+          `Invoice ${invoice.invoiceNumber ?? invoice._id}`,
+          invoice.issueDate,
+          () => postInvoiceIssued(ctx, user._id, invoice),
+        );
+        if (!invoicePosted) continue;
         await resolveException(ctx, user._id, "invoice", String(invoice._id));
         posted++;
         const payments = await ctx.db
@@ -1639,9 +1692,30 @@ export const migrateBatch = mutation({
           );
           continue;
         }
-        if (!args.dryRun) {
-          await postInvoicePayment(ctx, user._id, invoice, payment);
+        const account = await ctx.db.get(payment.receivingAccountId);
+        const paymentCurrency =
+          payment.receivingCurrencyNote ?? invoice.sellerCurrency ?? "USD";
+        if (
+          !account?.isActive ||
+          account.countryId !== args.countryId ||
+          account.currency !== paymentCurrency
+        ) {
+          await flag(
+            "invoice_payment",
+            String(payment._id),
+            "INVALID_RECEIVING_ACCOUNT",
+            `Payment for ${invoice.invoiceNumber ?? invoice._id} requires an active ${paymentCurrency} account in the selected country`,
+          );
+          continue;
         }
+        const paymentPosted = await postSafely(
+          "invoice_payment",
+          String(payment._id),
+          `Payment for ${invoice.invoiceNumber ?? invoice._id}`,
+          payment.paidAt,
+          () => postInvoicePayment(ctx, user._id, invoice, payment),
+        );
+        if (!paymentPosted) continue;
         await resolveException(
           ctx,
           user._id,
@@ -1649,28 +1723,46 @@ export const migrateBatch = mutation({
           String(payment._id),
         );
         posted++;
-        if (args.dryRun) continue;
         if (payment.reversedByPaymentId) {
           const reversal = await ctx.db.get(payment.reversedByPaymentId);
-          const journal = await ctx.db
-            .query("journalEntries")
-            .withIndex("by_source", (q) =>
-              q
-                .eq("sourceType", "invoice_payment")
-                .eq("sourceId", String(payment._id)),
-            )
-            .unique();
-          if (reversal && journal?.status === "posted") {
-            await reverseJournal(ctx, {
-              journalId: journal._id,
-              actorId: user._id,
-              accountingDate: reversal.paidAt,
-              reason: payment.reversalReason ?? "Historical payment reversal",
-              idempotencyKey: `invoice-payment-reversal:${payment._id}`,
-            });
+          if (!reversal) {
+            await flag(
+              "invoice_payment",
+              String(payment._id),
+              "MISSING_PAYMENT_REVERSAL",
+              `Payment for ${invoice.invoiceNumber ?? invoice._id} references a missing reversal`,
+            );
+            continue;
           }
+          const reversalPosted = await postSafely(
+            "invoice_payment",
+            String(payment._id),
+            `Reversal for payment on ${invoice.invoiceNumber ?? invoice._id}`,
+            reversal.paidAt,
+            async () => {
+              const journal = await ctx.db
+                .query("journalEntries")
+                .withIndex("by_source", (q) =>
+                  q
+                    .eq("sourceType", "invoice_payment")
+                    .eq("sourceId", String(payment._id)),
+                )
+                .unique();
+              if (journal?.status === "posted")
+                await reverseJournal(ctx, {
+                  journalId: journal._id,
+                  actorId: user._id,
+                  accountingDate: reversal.paidAt,
+                  reason:
+                    payment.reversalReason ?? "Historical payment reversal",
+                  idempotencyKey: `invoice-payment-reversal:${payment._id}`,
+                });
+            },
+          );
+          if (!reversalPosted) continue;
           continue;
         }
+        if (args.dryRun) continue;
         const unappliedAmount = roundMoney(
           payment.unappliedAmount ??
             payment.extraServiceRevenueAmount ??
@@ -1739,34 +1831,41 @@ export const migrateBatch = mutation({
           if (allocation.month > currentMonth || allocation.amount <= 0)
             continue;
           const [year, month] = allocation.month.split("-").map(Number);
-          if (!args.dryRun)
-            await postJournal(ctx, {
-              actorId: user._id,
-              countryId: args.countryId,
-              accountingDate: Math.min(
-                Date.now(),
-                Date.UTC(year, month, 0, 23, 59, 59, 999),
-              ),
-              currency: invoice.sellerCurrency ?? "USD",
-              description: `Revenue recognition for ${invoice.invoiceNumber ?? invoice._id} · ${allocation.month}`,
-              sourceType: "deferred_revenue_recognition",
-              sourceId: `${invoice._id}:${allocation.month}`,
-              idempotencyKey: `revenue-recognition:${invoice._id}:${allocation.month}`,
-              lines: [
-                {
-                  accountId: deferred._id,
-                  debitCents: toCents(allocation.amount),
-                  companyId: invoice.companyId,
-                  invoiceId: invoice._id,
-                },
-                {
-                  accountId: revenue._id,
-                  creditCents: toCents(allocation.amount),
-                  companyId: invoice.companyId,
-                  invoiceId: invoice._id,
-                },
-              ],
-            });
+          const recognitionPosted = await postSafely(
+            "invoice",
+            String(invoice._id),
+            `Revenue allocation ${allocation.month} for ${invoice.invoiceNumber ?? invoice._id}`,
+            Math.min(Date.now(), Date.UTC(year, month, 0, 23, 59, 59, 999)),
+            () =>
+              postJournal(ctx, {
+                actorId: user._id,
+                countryId: args.countryId,
+                accountingDate: Math.min(
+                  Date.now(),
+                  Date.UTC(year, month, 0, 23, 59, 59, 999),
+                ),
+                currency: invoice.sellerCurrency ?? "USD",
+                description: `Revenue recognition for ${invoice.invoiceNumber ?? invoice._id} · ${allocation.month}`,
+                sourceType: "deferred_revenue_recognition",
+                sourceId: `${invoice._id}:${allocation.month}`,
+                idempotencyKey: `revenue-recognition:${invoice._id}:${allocation.month}`,
+                lines: [
+                  {
+                    accountId: deferred._id,
+                    debitCents: toCents(allocation.amount),
+                    companyId: invoice.companyId,
+                    invoiceId: invoice._id,
+                  },
+                  {
+                    accountId: revenue._id,
+                    creditCents: toCents(allocation.amount),
+                    companyId: invoice.companyId,
+                    invoiceId: invoice._id,
+                  },
+                ],
+              }),
+          );
+          if (!recognitionPosted) continue;
           posted++;
         }
       }
@@ -1786,7 +1885,14 @@ export const migrateBatch = mutation({
           skipped++;
           continue;
         }
-        if (!args.dryRun) await postExpenseApproved(ctx, user._id, expense);
+        const approvalPosted = await postSafely(
+          "expense",
+          String(expense._id),
+          `Expense ${expense.title}`,
+          expense.expenseDate,
+          () => postExpenseApproved(ctx, user._id, expense),
+        );
+        if (!approvalPosted) continue;
         posted++;
         if (expense.status === "paid") {
           if (!expense.fundingAccountId || !expense.paidAt) {
@@ -1798,7 +1904,28 @@ export const migrateBatch = mutation({
             );
             continue;
           }
-          if (!args.dryRun) await postExpensePaid(ctx, user._id, expense);
+          const account = await ctx.db.get(expense.fundingAccountId);
+          if (
+            !account?.isActive ||
+            account.countryId !== args.countryId ||
+            account.currency !== expense.currency
+          ) {
+            await flag(
+              "expense",
+              String(expense._id),
+              "INVALID_FUNDING_ACCOUNT",
+              `Paid expense ${expense.title} requires an active ${expense.currency} funding account in the selected country`,
+            );
+            continue;
+          }
+          const paymentPosted = await postSafely(
+            "expense",
+            String(expense._id),
+            `Payment for expense ${expense.title}`,
+            expense.paidAt,
+            () => postExpensePaid(ctx, user._id, expense),
+          );
+          if (!paymentPosted) continue;
           posted++;
         }
         await resolveException(ctx, user._id, "expense", String(expense._id));
@@ -1829,6 +1956,20 @@ export const migrateBatch = mutation({
         );
         continue;
       }
+      const physicalAccount = await ctx.db.get(transaction.accountId);
+      if (
+        !physicalAccount?.isActive ||
+        physicalAccount.countryId !== args.countryId ||
+        physicalAccount.currency !== transaction.currency
+      ) {
+        await flag(
+          "account_transaction",
+          String(transaction._id),
+          "INVALID_CASH_ACCOUNT",
+          `Transaction ${transaction.transactionId} requires an active ${transaction.currency} account in the selected country`,
+        );
+        continue;
+      }
       if (transaction.type === "expense_return") {
         const expense = transaction.expenseId
           ? await ctx.db.get(transaction.expenseId)
@@ -1842,19 +1983,26 @@ export const migrateBatch = mutation({
           );
           continue;
         }
-        if (!args.dryRun)
-          await postExpenseReturn(ctx, user._id, transaction, expense);
+        const returnPosted = await postSafely(
+          "account_transaction",
+          String(transaction._id),
+          `Expense return ${transaction.transactionId}`,
+          transaction.transactionDate,
+          () => postExpenseReturn(ctx, user._id, transaction, expense),
+        );
+        if (!returnPosted) continue;
       } else {
-        if (!args.dryRun) await postCashTransaction(ctx, user._id, transaction);
+        const cashPosted = await postSafely(
+          "account_transaction",
+          String(transaction._id),
+          `Transaction ${transaction.transactionId}`,
+          transaction.transactionDate,
+          () => postCashTransaction(ctx, user._id, transaction),
+        );
+        if (!cashPosted) continue;
       }
-      await resolveException(
-        ctx,
-        user._id,
-        "account_transaction",
-        String(transaction._id),
-      );
       posted++;
-      if (transaction.reversedAt && !args.dryRun) {
+      if (transaction.reversedAt) {
         const related = await ctx.db
           .query("accountTransactions")
           .withIndex("by_account", (q) =>
@@ -1862,29 +2010,45 @@ export const migrateBatch = mutation({
           )
           .filter((q) => q.eq(q.field("relatedTransactionId"), transaction._id))
           .first();
-        const sourceType =
-          transaction.type === "expense_return"
-            ? "expense_return"
-            : "cash_transaction";
-        const journal = await ctx.db
-          .query("journalEntries")
-          .withIndex("by_source", (q) =>
-            q
-              .eq("sourceType", sourceType)
-              .eq("sourceId", String(transaction._id)),
-          )
-          .unique();
-        if (journal?.status === "posted") {
-          await reverseJournal(ctx, {
-            journalId: journal._id,
-            actorId: user._id,
-            accountingDate: related?.transactionDate ?? transaction.reversedAt,
-            reason:
-              transaction.reversalReason ?? "Historical transaction reversal",
-            idempotencyKey: `account-transaction-reversal:${transaction._id}`,
-          });
-        }
+        const reversalPosted = await postSafely(
+          "account_transaction",
+          String(transaction._id),
+          `Reversal for transaction ${transaction.transactionId}`,
+          related?.transactionDate ?? transaction.reversedAt,
+          async () => {
+            const sourceType =
+              transaction.type === "expense_return"
+                ? "expense_return"
+                : "cash_transaction";
+            const journal = await ctx.db
+              .query("journalEntries")
+              .withIndex("by_source", (q) =>
+                q
+                  .eq("sourceType", sourceType)
+                  .eq("sourceId", String(transaction._id)),
+              )
+              .unique();
+            if (journal?.status === "posted")
+              await reverseJournal(ctx, {
+                journalId: journal._id,
+                actorId: user._id,
+                accountingDate:
+                  related?.transactionDate ?? transaction.reversedAt!,
+                reason:
+                  transaction.reversalReason ??
+                  "Historical transaction reversal",
+                idempotencyKey: `account-transaction-reversal:${transaction._id}`,
+              });
+          },
+        );
+        if (!reversalPosted) continue;
       }
+      await resolveException(
+        ctx,
+        user._id,
+        "account_transaction",
+        String(transaction._id),
+      );
     }
     return { ...page, posted, skipped, exceptions };
   },
