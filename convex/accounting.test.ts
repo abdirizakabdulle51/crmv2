@@ -280,4 +280,48 @@ describe("accounting", () => {
     expect(result.payment.unappliedAmount).toBe(180);
     expect(result.payment.extraServiceRevenueAmount).toBeUndefined();
   });
+
+  it("resolves migration exceptions whose source was deleted", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const exceptionId = await t.run(async (ctx) => {
+      const transactionId = await ctx.db.insert("accountTransactions", {
+        accountId: s.accountId,
+        countryId: s.countryId,
+        currency: "USD",
+        direction: "incoming",
+        type: "capital_contribution",
+        amount: 10,
+        amountCents: 1000,
+        transactionDate: 1000,
+        transactionId: "DELETED-1",
+        description: "Deleted source",
+        createdBy: s.user._id,
+        createdAt: 1000,
+      });
+      const id = await ctx.db.insert("accountingExceptions", {
+        countryId: s.countryId,
+        sourceType: "account_transaction",
+        sourceId: String(transactionId),
+        code: "TEST_EXCEPTION",
+        message: "Old exception",
+        status: "open",
+        createdAt: 1000,
+        updatedAt: 1000,
+      });
+      await ctx.db.delete(transactionId);
+      return id;
+    });
+    await asUser(t, s.user).mutation(api.accounting.migrateBatch, {
+      countryId: s.countryId,
+      phase: "transactions",
+      dryRun: true,
+      paginationOpts: { cursor: null, numItems: 25 },
+    });
+    expect(await t.run((ctx) => ctx.db.get(exceptionId))).toMatchObject({
+      status: "resolved",
+      code: "SOURCE_DELETED",
+      resolvedBy: s.user._id,
+    });
+  });
 });

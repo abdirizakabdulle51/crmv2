@@ -130,6 +130,45 @@ async function resolveException(
   }
 }
 
+async function resolveDeletedSourceExceptions(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  countryId: Id<"countries">,
+  sourceType: "invoice" | "invoice_payment" | "expense" | "account_transaction",
+) {
+  const table = {
+    invoice: "invoices",
+    invoice_payment: "invoicePayments",
+    expense: "expenseRequests",
+    account_transaction: "accountTransactions",
+  } as const;
+  const rows = await ctx.db
+    .query("accountingExceptions")
+    .withIndex("by_status", (q) => q.eq("status", "open"))
+    .collect();
+  const now = Date.now();
+  let resolved = 0;
+  for (const row of rows.filter(
+    (item) =>
+      item.sourceType === sourceType &&
+      (!item.countryId || item.countryId === countryId),
+  )) {
+    const id = ctx.db.normalizeId(table[sourceType], row.sourceId);
+    const source = id ? await ctx.db.get(id) : null;
+    if (source) continue;
+    await ctx.db.patch(row._id, {
+      code: "SOURCE_DELETED",
+      message: `Source ${sourceType.replaceAll("_", " ")} ${row.sourceId} no longer exists`,
+      status: "resolved",
+      resolvedBy: userId,
+      resolvedAt: now,
+      updatedAt: now,
+    });
+    resolved++;
+  }
+  return resolved;
+}
+
 async function ledgerData(
   ctx: QueryCtx,
   countryId: Id<"countries">,
@@ -1486,6 +1525,22 @@ export const migrateBatch = mutation({
     const user = await currentUser(ctx);
     assertCanManage(user);
     await assertCountryAccess(ctx, user, args.countryId);
+    if (args.paginationOpts.cursor === null) {
+      const sourceType =
+        args.phase === "payments"
+          ? "invoice_payment"
+          : args.phase === "expenses"
+            ? "expense"
+            : args.phase === "transactions"
+              ? "account_transaction"
+              : "invoice";
+      await resolveDeletedSourceExceptions(
+        ctx,
+        user._id,
+        args.countryId,
+        sourceType,
+      );
+    }
     let posted = 0;
     let skipped = 0;
     let exceptions = 0;
