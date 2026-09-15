@@ -696,7 +696,7 @@ describe("InvoiceDetailPage", () => {
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Payment recorded");
   });
 
-  it("allows over-balance payment submission as extra service revenue", async () => {
+  it("allows over-balance payment submission as a customer advance", async () => {
     const user = userEvent.setup();
     renderDetailPage();
 
@@ -708,7 +708,7 @@ describe("InvoiceDetailPage", () => {
       within(dialog).getByText("This payment is above the invoice balance."),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByText(/Extra Service Revenue/i),
+      within(dialog).getByText(/customer advance for future invoices/i),
     ).toBeInTheDocument();
 
     await user.click(

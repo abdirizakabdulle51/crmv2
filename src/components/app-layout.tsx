@@ -39,6 +39,7 @@ import {
   Inbox,
   Network,
   ContactRound,
+  Scale,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -71,6 +72,72 @@ const NAV_ITEMS = [
   { to: "/invoices", label: "Invoices", icon: ReceiptText },
   { to: "/billing-queue", label: "Billing Queue", icon: ListChecks },
   { to: "/finance/expenses", label: "Expenses", icon: WalletCards },
+  {
+    to: "/accounting",
+    label: "Accounting Overview",
+    icon: Landmark,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/chart-of-accounts",
+    label: "Chart of Accounts",
+    icon: ListChecks,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/journals",
+    label: "Journal Entries",
+    icon: BookOpen,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/general-ledger",
+    label: "General Ledger",
+    icon: ReceiptText,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/trial-balance",
+    label: "Trial Balance",
+    icon: Scale,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/balance-sheet",
+    label: "Balance Sheet",
+    icon: Landmark,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/income-statement",
+    label: "Income Statement",
+    icon: ChartColumn,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/customer-advances",
+    label: "Customer Advances",
+    icon: HandCoins,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/historical-corrections",
+    label: "Historical Corrections",
+    icon: BookOpen,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/historical-migration",
+    label: "Historical Migration",
+    icon: ListChecks,
+    adminOnly: true,
+  },
+  {
+    to: "/accounting/periods",
+    label: "Accounting Periods",
+    icon: CalendarClock,
+    adminOnly: true,
+  },
   {
     to: "/finance/reports",
     label: "Financial Overview",
@@ -210,6 +277,22 @@ const NAV_GROUPS = [
       "/finance/account-transactions",
       "/finance/banks",
       "/finance/historical-invoices",
+    ],
+  },
+  {
+    label: "Accounting",
+    items: [
+      "/accounting",
+      "/accounting/chart-of-accounts",
+      "/accounting/journals",
+      "/accounting/general-ledger",
+      "/accounting/trial-balance",
+      "/accounting/balance-sheet",
+      "/accounting/income-statement",
+      "/accounting/customer-advances",
+      "/accounting/historical-corrections",
+      "/accounting/historical-migration",
+      "/accounting/periods",
     ],
   },
   {

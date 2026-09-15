@@ -2148,7 +2148,7 @@ describe("invoices", () => {
     });
   });
 
-  it("records above-balance payments as extra service revenue", async () => {
+  it("records above-balance payments as customer advances", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const invoiceId = await issueDraftForA(t, s);
@@ -2176,15 +2176,31 @@ describe("invoices", () => {
     expect(payments[0]).toMatchObject({
       amount: 25,
       appliedAmount: 20,
-      extraServiceRevenueAmount: 5,
+      unappliedAmount: 5,
       reference: "SSB-EXTRA",
+    });
+
+    const advances = await t.run((ctx) =>
+      ctx.db
+        .query("customerAdvances")
+        .withIndex("by_payment", (q) =>
+          q.eq("originatingPaymentId", payments[0]._id),
+        )
+        .collect(),
+    );
+    expect(advances).toHaveLength(1);
+    expect(advances[0]).toMatchObject({
+      companyId: s.companyA,
+      originalAmountCents: 500,
+      remainingAmountCents: 500,
+      status: "available",
     });
 
     const events = await asUser(t, s.amA).query(api.invoices.listEvents, {
       invoiceId,
     });
     expect(events[events.length - 1].message).toContain(
-      "Applied to invoice: $20.00. Extra Service Revenue: $5.00.",
+      "Applied to invoice: $20.00. Customer advance retained: $5.00.",
     );
   });
 

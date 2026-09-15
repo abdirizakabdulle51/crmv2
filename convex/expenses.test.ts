@@ -482,18 +482,20 @@ describe("expenses", () => {
       }),
     );
     expect(result).toEqual(dryRun);
-    expect(await t.run(async (ctx) => ({
-      target: await ctx.db.get(targetId),
-      unrelated: await ctx.db.get(unrelatedId),
-      targetEvents: await ctx.db
-        .query("expenseEvents")
-        .withIndex("by_expense", (q) => q.eq("expenseId", targetId))
-        .collect(),
-      unrelatedEvents: await ctx.db
-        .query("expenseEvents")
-        .withIndex("by_expense", (q) => q.eq("expenseId", unrelatedId))
-        .collect(),
-    }))).toMatchObject({
+    expect(
+      await t.run(async (ctx) => ({
+        target: await ctx.db.get(targetId),
+        unrelated: await ctx.db.get(unrelatedId),
+        targetEvents: await ctx.db
+          .query("expenseEvents")
+          .withIndex("by_expense", (q) => q.eq("expenseId", targetId))
+          .collect(),
+        unrelatedEvents: await ctx.db
+          .query("expenseEvents")
+          .withIndex("by_expense", (q) => q.eq("expenseId", unrelatedId))
+          .collect(),
+      })),
+    ).toMatchObject({
       target: null,
       unrelated: { _id: unrelatedId },
       targetEvents: [],
@@ -555,12 +557,16 @@ describe("expenses", () => {
   it("fails closed and preserves linked account transactions and invoice payments", async () => {
     const accountTest = convexTest(schema, modules);
     const accountSeed = await seed(accountTest);
-    const accountTargetId = await insertCleanupExpense(accountTest, accountSeed, {
-      title: "Salary jan2026 - duplicate",
-      amount: 1500,
-      paymentTransactionId: "117125",
-      fundingAccountId: accountSeed.fundingAccount,
-    });
+    const accountTargetId = await insertCleanupExpense(
+      accountTest,
+      accountSeed,
+      {
+        title: "Salary jan2026 - duplicate",
+        amount: 1500,
+        paymentTransactionId: "117125",
+        fundingAccountId: accountSeed.fundingAccount,
+      },
+    );
     const accountTransactionId = await accountTest.run(async (ctx) =>
       ctx.db.insert("accountTransactions", {
         accountId: accountSeed.fundingAccount,
@@ -597,21 +603,27 @@ describe("expenses", () => {
         }),
       ),
     ).rejects.toThrow("linked records found");
-    expect(await accountTest.run(async (ctx) => ({
-      expense: await ctx.db.get(accountTargetId),
-      transaction: await ctx.db.get(accountTransactionId),
-    }))).toMatchObject({
+    expect(
+      await accountTest.run(async (ctx) => ({
+        expense: await ctx.db.get(accountTargetId),
+        transaction: await ctx.db.get(accountTransactionId),
+      })),
+    ).toMatchObject({
       expense: { _id: accountTargetId },
       transaction: { _id: accountTransactionId },
     });
 
     const invoiceTest = convexTest(schema, modules);
     const invoiceSeed = await seed(invoiceTest);
-    const invoiceTargetId = await insertCleanupExpense(invoiceTest, invoiceSeed, {
-      title: "Salary jan2026 - duplicate",
-      amount: 1500,
-      paymentTransactionId: "117125",
-    });
+    const invoiceTargetId = await insertCleanupExpense(
+      invoiceTest,
+      invoiceSeed,
+      {
+        title: "Salary jan2026 - duplicate",
+        amount: 1500,
+        paymentTransactionId: "117125",
+      },
+    );
     const { paymentId } = await insertCleanupInvoicePayment(
       invoiceTest,
       invoiceSeed,
@@ -636,9 +648,11 @@ describe("expenses", () => {
         }),
       ),
     ).rejects.toThrow("linked records found");
-    expect(await invoiceTest.run((ctx) => ctx.db.get(paymentId))).toMatchObject({
-      _id: paymentId,
-    });
+    expect(await invoiceTest.run((ctx) => ctx.db.get(paymentId))).toMatchObject(
+      {
+        _id: paymentId,
+      },
+    );
   });
 
   it("requires global users to select a country", async () => {
@@ -1012,7 +1026,7 @@ describe("expenses", () => {
     ]);
   });
 
-  it("requires a reason and audits CEO payment-date corrections", async () => {
+  it("requires a reason and blocks changes to posted payment dates", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const expenseId = await createSubmittedExpense(t, s);
@@ -1025,7 +1039,6 @@ describe("expenses", () => {
       paymentTransactionId: "PAY-CORRECTION-1",
     });
 
-    const original = await t.run((ctx) => ctx.db.get(expenseId));
     await expect(
       asUser(t, s.ceo).mutation(api.expenses.reconcilePaidExpenseDate, {
         expenseId,
@@ -1041,28 +1054,13 @@ describe("expenses", () => {
       }),
     ).rejects.toThrow();
 
-    await asUser(t, s.ceo).mutation(api.expenses.reconcilePaidExpenseDate, {
-      expenseId,
-      paidAt: Date.UTC(2026, 7, 14),
-      reason: "Correct bank posting date",
-    });
-    const corrected = await t.run((ctx) => ctx.db.get(expenseId));
-    const { updatedAt: _originalUpdatedAt, ...unchangedFields } = original!;
-    expect(corrected).toMatchObject({
-      ...unchangedFields,
-      paidAt: Date.UTC(2026, 7, 14),
-      paidBy: s.ceo._id,
-    });
-    expect(corrected?.amount).toBe(original?.amount);
-    expect(corrected?.status).toBe("paid");
-
-    const events = await asUser(t, s.ceo).query(
-      api.expenses.listExpenseEvents,
-      { expenseId },
-    );
-    expect(events[events.length - 1]?.message).toContain(
-      `Payment date corrected from ${new Date(original!.paidAt!).toISOString().slice(0, 10)} to 2026-08-14. Reason: Correct bank posting date.`,
-    );
+    await expect(
+      asUser(t, s.ceo).mutation(api.expenses.reconcilePaidExpenseDate, {
+        expenseId,
+        paidAt: Date.UTC(2026, 7, 14),
+        reason: "Correct bank posting date",
+      }),
+    ).rejects.toThrow("Posted payment dates cannot be edited");
   });
 
   it("blocks submitting receipt-required expenses until a receipt is uploaded", async () => {

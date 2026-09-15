@@ -126,6 +126,7 @@ const BillingQueuePage = lazy(
 const ApprovalInboxPage = lazy(
   () => import("./pages/operations/approval-inbox-page.tsx"),
 );
+const AccountingPage = lazy(() => import("./pages/accounting/page.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 function PageLoading() {
@@ -256,6 +257,47 @@ export default function App() {
             <Route
               path="/finance/contract-renewals"
               element={lazyPage(<ContractRenewalsPage />)}
+            />
+            <Route path="/accounting" element={lazyPage(<AccountingPage />)} />
+            <Route
+              path="/accounting/chart-of-accounts"
+              element={lazyPage(<AccountingPage view="chart" />)}
+            />
+            <Route
+              path="/accounting/journals"
+              element={lazyPage(<AccountingPage view="journals" />)}
+            />
+            <Route
+              path="/accounting/general-ledger"
+              element={lazyPage(<AccountingPage view="ledger" />)}
+            />
+            <Route
+              path="/accounting/trial-balance"
+              element={lazyPage(<AccountingPage view="trial-balance" />)}
+            />
+            <Route
+              path="/accounting/balance-sheet"
+              element={lazyPage(<AccountingPage view="balance-sheet" />)}
+            />
+            <Route
+              path="/accounting/income-statement"
+              element={lazyPage(<AccountingPage view="income-statement" />)}
+            />
+            <Route
+              path="/accounting/historical-corrections"
+              element={lazyPage(<AccountingPage view="corrections" />)}
+            />
+            <Route
+              path="/accounting/historical-migration"
+              element={lazyPage(<AccountingPage view="migration" />)}
+            />
+            <Route
+              path="/accounting/customer-advances"
+              element={lazyPage(<AccountingPage view="advances" />)}
+            />
+            <Route
+              path="/accounting/periods"
+              element={lazyPage(<AccountingPage view="periods" />)}
             />
             <Route
               path="/finance/contract-performance"

@@ -1207,6 +1207,7 @@ export default defineSchema({
     amountCents: v.optional(v.number()),
     appliedAmount: v.optional(v.number()),
     extraServiceRevenueAmount: v.optional(v.number()),
+    unappliedAmount: v.optional(v.number()),
     paidAt: v.number(),
     method: v.optional(v.string()),
     reference: v.optional(v.string()),
@@ -1260,6 +1261,7 @@ export default defineSchema({
     currency: v.string(),
     location: v.optional(v.string()),
     isActive: v.boolean(),
+    accountingAccountId: v.optional(v.id("accountingAccounts")),
     createdBy: v.id("users"),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1304,6 +1306,140 @@ export default defineSchema({
     .index("by_account_transaction", ["accountId", "transactionId"])
     .index("by_expense", ["expenseId"])
     .index("by_type", ["type"]),
+
+  accountingAccounts: defineTable({
+    countryId: v.id("countries"),
+    code: v.string(),
+    name: v.string(),
+    type: v.union(
+      v.literal("asset"),
+      v.literal("liability"),
+      v.literal("equity"),
+      v.literal("income"),
+      v.literal("expense"),
+    ),
+    systemKey: v.optional(v.string()),
+    parentId: v.optional(v.id("accountingAccounts")),
+    currency: v.optional(v.string()),
+    isActive: v.boolean(),
+    allowManualPosting: v.boolean(),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_country", ["countryId"])
+    .index("by_country_code", ["countryId", "code"])
+    .index("by_country_system", ["countryId", "systemKey"]),
+
+  accountingPeriods: defineTable({
+    countryId: v.id("countries"),
+    month: v.string(),
+    status: v.union(
+      v.literal("open"),
+      v.literal("soft_closed"),
+      v.literal("closed"),
+    ),
+    closedBy: v.optional(v.id("users")),
+    closedAt: v.optional(v.number()),
+    reopenedBy: v.optional(v.id("users")),
+    reopenedAt: v.optional(v.number()),
+    reason: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_country", ["countryId"])
+    .index("by_country_month", ["countryId", "month"]),
+
+  accountingSequences: defineTable({
+    countryId: v.id("countries"),
+    year: v.number(),
+    nextNumber: v.number(),
+  }).index("by_country_year", ["countryId", "year"]),
+
+  journalEntries: defineTable({
+    journalNumber: v.string(),
+    countryId: v.id("countries"),
+    accountingDate: v.number(),
+    description: v.string(),
+    sourceType: v.string(),
+    sourceId: v.optional(v.string()),
+    idempotencyKey: v.string(),
+    status: v.union(v.literal("posted"), v.literal("reversed")),
+    reversalOfId: v.optional(v.id("journalEntries")),
+    reversedById: v.optional(v.id("journalEntries")),
+    correctionReason: v.optional(v.string()),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    postedAt: v.number(),
+  })
+    .index("by_country", ["countryId"])
+    .index("by_country_date", ["countryId", "accountingDate"])
+    .index("by_idempotency", ["idempotencyKey"])
+    .index("by_source", ["sourceType", "sourceId"]),
+
+  journalLines: defineTable({
+    journalId: v.id("journalEntries"),
+    accountId: v.id("accountingAccounts"),
+    debitCents: v.number(),
+    creditCents: v.number(),
+    currency: v.string(),
+    memo: v.optional(v.string()),
+    companyId: v.optional(v.id("companies")),
+    invoiceId: v.optional(v.id("invoices")),
+    expenseId: v.optional(v.id("expenseRequests")),
+    receivingAccountId: v.optional(v.id("receivingAccounts")),
+    createdAt: v.number(),
+  })
+    .index("by_journal", ["journalId"])
+    .index("by_account", ["accountId"])
+    .index("by_invoice", ["invoiceId"])
+    .index("by_expense", ["expenseId"]),
+
+  customerAdvances: defineTable({
+    companyId: v.id("companies"),
+    originatingPaymentId: v.id("invoicePayments"),
+    currency: v.string(),
+    originalAmountCents: v.number(),
+    remainingAmountCents: v.number(),
+    status: v.union(
+      v.literal("available"),
+      v.literal("applied"),
+      v.literal("refunded"),
+      v.literal("reversed"),
+    ),
+    createdBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_company", ["companyId"])
+    .index("by_payment", ["originatingPaymentId"]),
+
+  customerAdvanceApplications: defineTable({
+    advanceId: v.id("customerAdvances"),
+    invoiceId: v.id("invoices"),
+    amountCents: v.number(),
+    appliedBy: v.id("users"),
+    appliedAt: v.number(),
+    reversedAt: v.optional(v.number()),
+    reversedBy: v.optional(v.id("users")),
+    reversalReason: v.optional(v.string()),
+  })
+    .index("by_advance", ["advanceId"])
+    .index("by_invoice", ["invoiceId"]),
+
+  accountingExceptions: defineTable({
+    countryId: v.optional(v.id("countries")),
+    sourceType: v.string(),
+    sourceId: v.string(),
+    code: v.string(),
+    message: v.string(),
+    status: v.union(v.literal("open"), v.literal("resolved")),
+    resolvedBy: v.optional(v.id("users")),
+    resolvedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_status", ["status"])
+    .index("by_source", ["sourceType", "sourceId"]),
 
   invoiceEvents: defineTable({
     invoiceId: v.id("invoices"),
@@ -1360,6 +1496,7 @@ export default defineSchema({
     description: v.optional(v.string()),
     isActive: v.boolean(),
     requiresReceipt: v.optional(v.boolean()),
+    accountingAccountId: v.optional(v.id("accountingAccounts")),
     createdBy: v.id("users"),
     createdAt: v.number(),
     updatedAt: v.number(),
