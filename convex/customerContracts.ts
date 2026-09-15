@@ -844,21 +844,37 @@ export const performance = query({
       );
       let consumed: number | undefined;
       let overage = 0;
+      let usageDataWarning: string | undefined;
       if (
         contract.pricingModel === "flexible_total_commitment" &&
         Date.now() >= contract.startDate
       ) {
-        const allocations = await priceFlexibleContractUsage(
-          ctx,
-          contract,
-          Math.min(Date.now(), contract.endDate),
-        );
-        consumed = sumMoney(
-          allocations.map((allocation) => allocation.commitmentConsumed),
-        );
-        overage = sumMoney(
-          allocations.map((allocation) => allocation.overageAmount),
-        );
+        try {
+          const allocations = await priceFlexibleContractUsage(
+            ctx,
+            contract,
+            Math.min(Date.now(), contract.endDate),
+          );
+          consumed = sumMoney(
+            allocations.map(
+              (allocation) => allocation.commitmentConsumed,
+            ),
+          );
+          overage = sumMoney(
+            allocations.map((allocation) => allocation.overageAmount),
+          );
+        } catch (error) {
+          const errorCode =
+            error instanceof ConvexError &&
+            typeof error.data === "object" &&
+            error.data !== null &&
+            "code" in error.data
+              ? error.data.code
+              : undefined;
+          if (errorCode !== "USAGE_CATALOG_REQUIRED") throw error;
+          usageDataWarning =
+            "Unclassified catalogue usage omitted from performance metrics";
+        }
       } else {
         overage = sumMoney(
           invoices
@@ -902,6 +918,7 @@ export const performance = query({
         outstanding,
         overage,
         signal,
+        usageDataWarning,
       });
     }
     return rows.sort((a, b) => b.outstanding - a.outstanding);
