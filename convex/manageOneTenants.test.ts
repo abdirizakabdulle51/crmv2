@@ -1309,6 +1309,91 @@ describe("ManageOne tenant billing links", () => {
     });
   }
 
+  it("uses the earliest open usage date for tenant suggestions", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedTenantLinkData(t);
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("dailyUsageSnapshots", {
+        companyId: s.oldCompanyId,
+        tenantId: s.tenantId,
+        tenantName: "Hormuud-ISP",
+        tenantVdcId: "vdc-hormuud-isp",
+        usageDate: "2026-08-14",
+        month: "2026-08",
+        serviceType: "EIP",
+        itemName: "EIP - Active",
+        serviceCategory: "EIP",
+        quantity: 1,
+        unit: "per IP/month",
+        source: "manageone",
+        sourceKey: `manageone|2026-08-14|${s.oldCompanyId}|${s.tenantId}|eip|eip-active|`,
+        capturedAt: 1,
+        lockedAt: 1,
+      });
+      await ctx.db.insert("dailyUsageSnapshots", {
+        companyId: s.oldCompanyId,
+        tenantId: s.tenantId,
+        tenantName: "Hormuud-ISP",
+        tenantVdcId: "vdc-hormuud-isp",
+        usageDate: "2026-08-18",
+        month: "2026-08",
+        serviceType: "EIP",
+        itemName: "EIP - Active",
+        serviceCategory: "EIP",
+        quantity: 1,
+        unit: "per IP/month",
+        source: "manageone",
+        sourceKey: `manageone|2026-08-18|${s.oldCompanyId}|${s.tenantId}|eip|eip-active|`,
+        capturedAt: 1,
+      });
+    });
+
+    const tenants = await asUser(t, s.ceo).query(
+      api.manageOneTenants.listWithSuggestions,
+      {},
+    );
+
+    expect(tenants.find((tenant) => tenant._id === s.tenantId)).toMatchObject({
+      linkedCompanyName: "Hormuud",
+      recommendedBillingEffectiveFrom: "2026-08-16",
+    });
+  });
+
+  it("treats lockedAt zero as open when suggesting a usage date", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedTenantLinkData(t);
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("dailyUsageSnapshots", {
+        companyId: s.oldCompanyId,
+        tenantId: s.tenantId,
+        tenantName: "Hormuud-ISP",
+        tenantVdcId: "vdc-hormuud-isp",
+        usageDate: "2026-08-14",
+        month: "2026-08",
+        serviceType: "EIP",
+        itemName: "EIP - Active",
+        serviceCategory: "EIP",
+        quantity: 1,
+        unit: "per IP/month",
+        source: "manageone",
+        sourceKey: `manageone|2026-08-14|${s.oldCompanyId}|${s.tenantId}|eip|eip-active|`,
+        capturedAt: 1,
+        lockedAt: 0,
+      });
+    });
+
+    const tenants = await asUser(t, s.ceo).query(
+      api.manageOneTenants.listWithSuggestions,
+      {},
+    );
+
+    expect(tenants.find((tenant) => tenant._id === s.tenantId)).toMatchObject({
+      recommendedBillingEffectiveFrom: "2026-08-14",
+    });
+  });
+
   it("reassigns a tenant and moves only open daily usage rows", async () => {
     const t = convexTest(schema, modules);
     const s = await seedTenantLinkData(t);
