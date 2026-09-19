@@ -1769,19 +1769,41 @@ export const listWithSuggestions = query({
 
     const tenants = await ctx.db.query("manageOneTenants").collect();
     const companies = await ctx.db.query("companies").collect();
-    const usage = await ctx.db.query("dailyUsageSnapshots").collect();
+    const recommendedDates = new Map(
+      await Promise.all(
+        tenants.map(async (tenant) => {
+          const earliestOpenUsageFor = (lockedAt: number | undefined) =>
+            ctx.db
+              .query("dailyUsageSnapshots")
+              .withIndex("by_tenant_open_date", (q) =>
+                q
+                  .eq("tenantId", tenant._id)
+                  .eq("invoiceId", undefined)
+                  .eq("lockedAt", lockedAt),
+              )
+              .order("asc")
+              .first();
+          const [unlockedUsage, zeroLockedUsage] = await Promise.all([
+            earliestOpenUsageFor(undefined),
+            earliestOpenUsageFor(0),
+          ]);
+          const earliestEligibleDate = [
+            unlockedUsage?.usageDate,
+            zeroLockedUsage?.usageDate,
+          ]
+            .filter((usageDate): usageDate is string => usageDate !== undefined)
+            .sort()[0];
+
+          return [
+            tenant._id,
+            earliestEligibleDate ?? dateKey(),
+          ] as const;
+        }),
+      ),
+    );
 
     const recommendedDate = (tenantId: Id<"manageOneTenants">) =>
-      usage
-        .filter(
-          (row) =>
-            row.tenantId === tenantId && !row.invoiceId && !row.lockedAt,
-        )
-        .reduce<string | undefined>(
-          (earliest, row) =>
-            !earliest || row.usageDate < earliest ? row.usageDate : earliest,
-          undefined,
-        ) ?? dateKey();
+      recommendedDates.get(tenantId) ?? dateKey();
 
     return tenants.map((tenant) => {
       const linkedCompany = tenant.linkedCompanyId

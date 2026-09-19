@@ -766,6 +766,12 @@ export default defineSchema({
     lockedAt: v.optional(v.number()),
   })
     .index("by_source_key", ["sourceKey"])
+    .index("by_tenant_open_date", [
+      "tenantId",
+      "invoiceId",
+      "lockedAt",
+      "usageDate",
+    ])
     .index("by_company", ["companyId"])
     .index("by_company_date", ["companyId", "usageDate"])
     .index("by_company_month", ["companyId", "month"])
