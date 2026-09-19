@@ -96,10 +96,19 @@ export default function DailyUsagePage() {
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [showCapturedRows, setShowCapturedRows] = useState(false);
   const [showRollup, setShowRollup] = useState(false);
+  const [showUnpricedOnly, setShowUnpricedOnly] = useState(false);
   const shouldLoadCapturedRows = showCapturedRows || companyId !== "all";
   const shouldLoadDetailedQueries = showRollup || companyId !== "all";
   const shouldLoadHealth = companyId !== "all" && !showRollup;
   const status = useQuery(api.dailyUsage.status, { month });
+  const billingCandidates = useQuery(
+    api.dailyUsage.billingCandidates,
+    companyId === "all" ? "skip" : { month },
+  );
+  const billingCandidate = billingCandidates?.find(
+    (candidate) =>
+      "companyId" in candidate && candidate.companyId === companyId,
+  );
 
   const review = useQuery(
     api.dailyUsage.review,
@@ -164,6 +173,7 @@ export default function DailyUsagePage() {
   const rollupRows = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
     return (review?.rollup.rows ?? []).filter((row) => {
+      if (showUnpricedOnly && row.estimatedAmount !== undefined) return false;
       if (serviceType !== "all" && row.serviceType !== serviceType) {
         return false;
       }
@@ -183,7 +193,7 @@ export default function DailyUsagePage() {
         .toLowerCase();
       return haystack.includes(normalizedSearch);
     });
-  }, [review?.rollup.rows, search, serviceType]);
+  }, [review?.rollup.rows, search, serviceType, showUnpricedOnly]);
 
   const reviewLoading = shouldLoadDetailedQueries && !review;
   const totals = useMemo(() => {
@@ -228,24 +238,26 @@ export default function DailyUsagePage() {
 
   const rollupTotals = useMemo(
     () => ({
-      estimatedAmount: rollupRows.reduce(
+      estimatedAmount: (review?.rollup.rows ?? []).reduce(
         (total, row) => total + (row.estimatedAmount ?? 0),
         0,
       ),
-      pricedRows: rollupRows.filter((row) => row.estimatedAmount !== undefined)
-        .length,
-      unpricedRows: rollupRows.filter(
+      pricedRows: (review?.rollup.rows ?? []).filter(
+        (row) => row.estimatedAmount !== undefined,
+      ).length,
+      unpricedRows: (review?.rollup.rows ?? []).filter(
         (row) => row.estimatedAmount === undefined,
       ).length,
     }),
-    [rollupRows],
+    [review?.rollup.rows],
   );
   const canCreateDraft =
     Boolean(review) &&
     companyId !== "all" &&
-    rollupRows.length > 0 &&
+    (review?.rollup.rows.length ?? 0) > 0 &&
     rollupTotals.unpricedRows === 0 &&
-    totals.attached === 0;
+    totals.attached === 0 &&
+    billingCandidate?.status === "ready";
 
   async function handleCreateDraftInvoice() {
     if (companyId === "all") {
@@ -351,6 +363,7 @@ export default function DailyUsagePage() {
                   setMonth(event.target.value);
                   setUsageDate("all");
                   setShowCapturedRows(false);
+                  setShowUnpricedOnly(false);
                 }}
               />
             </div>
@@ -363,6 +376,7 @@ export default function DailyUsagePage() {
                   setCompanyId(value);
                   setUsageDate("all");
                   setShowCapturedRows(false);
+                  setShowUnpricedOnly(false);
                 }}
                 className="sm:w-full"
               />
@@ -470,6 +484,88 @@ export default function DailyUsagePage() {
                   rollup.
                 </div>
               ) : null}
+              {companyId !== "all" && billingCandidates === undefined ? (
+                <div className="mb-4 rounded-md border px-3 py-2 text-sm text-muted-foreground">
+                  Checking invoice readiness…
+                </div>
+              ) : null}
+              {companyId !== "all" &&
+              billingCandidates !== undefined &&
+              billingCandidate?.status !== "ready" ? (
+                <div className="mb-4 flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="font-semibold">Invoice is not ready</div>
+                    <div className="mt-1">
+                      {billingCandidate?.reason ??
+                        "This customer is not eligible for PAYG invoicing for this month. Check whether it is covered by a contract in the Billing Queue."}
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigate("/billing-queue")}
+                  >
+                    Open Billing Queue
+                  </Button>
+                </div>
+              ) : null}
+              {rollupTotals.unpricedRows > 0 ? (
+                <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="font-semibold text-destructive">
+                        {rollupTotals.unpricedRows} service
+                        {rollupTotals.unpricedRows === 1 ? "" : "s"} require
+                        catalogue pricing
+                      </div>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        These services are excluded from the displayed total and
+                        must be mapped or priced before creating the invoice.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowUnpricedOnly((value) => !value)}
+                      >
+                        {showUnpricedOnly ? "Show all services" : "Show unpriced only"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigate("/settings")}
+                      >
+                        Open Service Catalog
+                      </Button>
+                    </div>
+                  </div>
+                  {billingCandidate &&
+                  "pricingIssues" in billingCandidate &&
+                  billingCandidate.pricingIssues.length > 0 ? (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {billingCandidate.pricingIssues.map((issue) => (
+                        <div
+                          key={`${issue.serviceType}|${issue.itemName}|${issue.region ?? ""}`}
+                          className="rounded border bg-background px-3 py-2 text-sm"
+                        >
+                          <div className="font-medium">
+                            {issue.serviceType} — {issue.itemName}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {issue.issue === "missing_catalog_mapping"
+                              ? "No catalogue service mapping"
+                              : "Catalogue service has no monthly price"}
+                            {issue.region ? ` · ${issue.region}` : ""} ·{" "}
+                            {issue.capturedDays} captured day
+                            {issue.capturedDays === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="mb-4 grid gap-4 sm:grid-cols-3">
                 <SummaryCard
                   label="Estimated monthly total"
@@ -530,7 +626,11 @@ export default function DailyUsagePage() {
                             row.itemName,
                             row.regionName ?? row.dataCenterName ?? "",
                           ].join("|")}
-                          className="border-b last:border-0"
+                          className={
+                            row.estimatedAmount === undefined
+                              ? "border-b bg-amber-50/70 last:border-0 dark:bg-amber-950/20"
+                              : "border-b last:border-0"
+                          }
                         >
                           <td className="px-3 py-3 font-medium">
                             {row.companyName}
@@ -559,7 +659,11 @@ export default function DailyUsagePage() {
                               {formatMoney(row.monthlyUnitPrice)}
                             </div>
                             <div className="mt-1 text-xs text-muted-foreground">
-                              {row.pricingSource === "contract"
+                              {row.monthlyUnitPrice === undefined
+                                ? row.catalogItemId
+                                  ? "Missing catalogue price"
+                                  : "Missing catalogue mapping"
+                                : row.pricingSource === "contract"
                                 ? `Contract ${row.contractNumber ?? ""}`.trim()
                                 : "Catalog"}
                             </div>

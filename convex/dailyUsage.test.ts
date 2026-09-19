@@ -13,8 +13,52 @@ import {
   findCompanyForMonthBillingSnapshotTest,
   findCompaniesForMonthBillingSnapshotTest,
   findCompaniesForMonthBillingSnapshotTestPage,
+  pricingIssuesFor,
   shouldWriteDailyUsageBillingSnapshot,
 } from "./dailyUsage";
+
+describe("PAYG pricing diagnostics", () => {
+  it("identifies the exact unmapped and unpriced services", () => {
+    const issues = pricingIssuesFor([
+      {
+        companyId: "company1" as Id<"companies">,
+        companyName: "Customer",
+        serviceType: "ECS",
+        itemName: "C6.large",
+        unit: "instance/month",
+        capturedDays: 31,
+        dailyQuantityTotal: 31,
+        billableQuantity: 1,
+      },
+      {
+        companyId: "company1" as Id<"companies">,
+        companyName: "Customer",
+        serviceType: "EVS",
+        itemName: "SSD Storage",
+        unit: "GB/month",
+        catalogItemId: "catalog1" as Id<"serviceCatalog">,
+        regionName: "Mogadishu",
+        capturedDays: 30,
+        dailyQuantityTotal: 300,
+        billableQuantity: 10,
+      },
+    ]);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        serviceType: "ECS",
+        itemName: "C6.large",
+        issue: "missing_catalog_mapping",
+      }),
+      expect.objectContaining({
+        serviceType: "EVS",
+        itemName: "SSD Storage",
+        region: "Mogadishu",
+        issue: "missing_price",
+      }),
+    ]);
+  });
+});
 
 function catalogItem(
   id: string,

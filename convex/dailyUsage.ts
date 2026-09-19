@@ -64,6 +64,36 @@ type RollupRow = {
   contractGrossMonthlyPrice?: number;
 };
 
+export function pricingIssuesFor(rows: RollupRow[]) {
+  return rows
+    .filter(
+      (row) =>
+        row.monthlyUnitPrice === undefined || row.estimatedAmount === undefined,
+    )
+    .map((row) => ({
+      serviceType: row.serviceType,
+      itemName: row.itemName,
+      region: row.regionName ?? row.dataCenterName,
+      catalogItemId: row.catalogItemId,
+      capturedDays: row.capturedDays,
+      issue: row.catalogItemId
+        ? ("missing_price" as const)
+        : ("missing_catalog_mapping" as const),
+    }));
+}
+
+function pricingIssueMessage(issues: ReturnType<typeof pricingIssuesFor>) {
+  const examples = issues
+    .slice(0, 5)
+    .map(
+      (issue) =>
+        `${issue.serviceType} / ${issue.itemName}${issue.region ? ` / ${issue.region}` : ""}`,
+    )
+    .join("; ");
+  const remaining = Math.max(0, issues.length - 5);
+  return `Missing catalogue pricing for ${examples}${remaining ? ` and ${remaining} more` : ""}`;
+}
+
 export type DailyUsageSnapshotInput = {
   companyId: Id<"companies">;
   tenantId: Id<"manageOneTenants">;
@@ -1816,15 +1846,11 @@ export async function createDailyUsageDraftInvoice(
     month,
     contractPricingByCompany,
   });
-  const unpriced = rollupRows.filter(
-    (row) =>
-      row.monthlyUnitPrice === undefined || row.estimatedAmount === undefined,
-  );
-  if (unpriced.length > 0) {
+  const pricingIssues = pricingIssuesFor(rollupRows);
+  if (pricingIssues.length > 0) {
     throw new ConvexError({
       code: "BAD_REQUEST",
-      message:
-        "All daily usage rollup rows must have catalog pricing before creating an invoice",
+      message: pricingIssueMessage(pricingIssues),
     });
   }
 
@@ -2113,6 +2139,7 @@ export async function buildPaygBillingCandidates(
           month,
         });
         const amount = sumMoney(rollup.map((row) => row.estimatedAmount ?? 0));
+        const pricingIssues = pricingIssuesFor(rollup);
         const profile = await resolveInvoiceProfileForCompany(ctx, company);
         let status: PaygBillingStatus = "ready";
         let reason = "Completed ManageOne usage is ready for review";
@@ -2145,15 +2172,9 @@ export async function buildPaygBillingCandidates(
           reason = companyRows.length
             ? `${coverage.missing.length} tenant-day usage gaps; first: ${coverage.missing[0]}`
             : "No finalized daily usage found";
-        } else if (
-          rollup.some(
-            (row) =>
-              row.monthlyUnitPrice === undefined ||
-              row.estimatedAmount === undefined,
-          )
-        ) {
+        } else if (pricingIssues.length) {
           status = "unpriced";
-          reason = "One or more services have no catalogue price";
+          reason = pricingIssueMessage(pricingIssues);
         } else if (!profile) {
           status = "missing_profile";
           reason = "No active invoice profile for this customer country";
@@ -2182,6 +2203,7 @@ export async function buildPaygBillingCandidates(
                 companyRows,
               ) !== null,
           ).length,
+          pricingIssues,
           invoiceId: existing?._id,
         };
       }),
