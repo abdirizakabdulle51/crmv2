@@ -286,7 +286,7 @@ function tenantForCompanyMonth(
   rows: Doc<"dailyUsageSnapshots">[],
 ) {
   const monthStart = `${month}-01`;
-  const monthEnd = expectedDateKeys(month).at(-1)!;
+  const monthEnd = expectedDateKeys(month).slice(-1)[0]!;
   const tenantAssignments = assignments.filter(
     (assignment) => assignment.tenantId === tenant._id,
   );

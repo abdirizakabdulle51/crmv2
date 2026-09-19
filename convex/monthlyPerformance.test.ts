@@ -50,13 +50,13 @@ async function seed(t: ReturnType<typeof convexTest>) {
 
 async function insertInvoice(
   t: ReturnType<typeof convexTest>,
-  seed: Awaited<ReturnType<typeof seed>>,
+  seedData: Awaited<ReturnType<typeof seed>>,
   values: Partial<Doc<"invoices">> = {},
 ) {
   return await t.run(async (ctx) => {
     return await ctx.db.insert("invoices", {
-      companyId: seed.companyId,
-      createdBy: seed.ceo._id,
+      companyId: seedData.companyId,
+      createdBy: seedData.ceo._id,
       status: "issued",
       invoiceNumber: `INV-${Math.random()}`,
       companyName: "Customer A",
