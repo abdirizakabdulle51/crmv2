@@ -252,6 +252,32 @@ export default defineSchema({
     target: v.number(),
   }).index("by_am_year_quarter", ["accountManagerId", "year", "quarter"]),
 
+  monthlyPerformanceTargets: defineTable({
+    countryId: v.id("countries"),
+    teamMemberId: v.optional(v.id("users")),
+    month: v.string(),
+    currency: v.string(),
+    billingTargetCents: v.number(),
+    collectionTargetCents: v.number(),
+    createdBy: v.id("users"),
+    updatedBy: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_country_month", ["countryId", "month"])
+    .index("by_team_member_month", ["teamMemberId", "month"]),
+
+  monthlyPerformanceTargetEvents: defineTable({
+    targetId: v.id("monthlyPerformanceTargets"),
+    changedBy: v.id("users"),
+    previousBillingTargetCents: v.optional(v.number()),
+    previousCollectionTargetCents: v.optional(v.number()),
+    billingTargetCents: v.number(),
+    collectionTargetCents: v.number(),
+    currency: v.string(),
+    changedAt: v.number(),
+  }).index("by_target", ["targetId"]),
+
   manageOneTenants: defineTable({
     vdcId: v.string(),
     domainId: v.optional(v.string()),
@@ -420,6 +446,21 @@ export default defineSchema({
     .index("by_domain_id", ["domainId"])
     .index("by_region_id", ["regionId"])
     .index("by_linked_company", ["linkedCompanyId"]),
+
+  manageOneTenantAssignments: defineTable({
+    tenantId: v.id("manageOneTenants"),
+    companyId: v.id("companies"),
+    effectiveFrom: v.string(), // YYYY-MM-DD
+    effectiveTo: v.optional(v.string()), // Inclusive YYYY-MM-DD.
+    status: v.union(v.literal("active"), v.literal("ended")),
+    createdBy: v.id("users"),
+    endedBy: v.optional(v.id("users")),
+    createdAt: v.number(),
+    endedAt: v.optional(v.number()),
+  })
+    .index("by_tenant", ["tenantId"])
+    .index("by_tenant_status", ["tenantId", "status"])
+    .index("by_company", ["companyId"]),
 
   cloudCapacityRegions: defineTable({
     regionId: v.string(),

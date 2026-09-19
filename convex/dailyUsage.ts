@@ -278,6 +278,55 @@ function paygCoverage(
   return { expectedLastDate: expected[expected.length - 1]!, missing };
 }
 
+function tenantForCompanyMonth(
+  tenant: Doc<"manageOneTenants">,
+  companyId: Id<"companies">,
+  month: string,
+  assignments: Doc<"manageOneTenantAssignments">[],
+  rows: Doc<"dailyUsageSnapshots">[],
+) {
+  const monthStart = `${month}-01`;
+  const monthEnd = expectedDateKeys(month).at(-1)!;
+  const tenantAssignments = assignments.filter(
+    (assignment) => assignment.tenantId === tenant._id,
+  );
+  const assignment = tenantAssignments.find(
+    (candidate) =>
+      candidate.companyId === companyId &&
+      candidate.effectiveFrom <= monthEnd &&
+      (!candidate.effectiveTo || candidate.effectiveTo >= monthStart),
+  );
+  if (tenantAssignments.length && !assignment) return null;
+  if (assignment) {
+    return {
+      ...tenant,
+      billingLinkedAt: Date.parse(`${assignment.effectiveFrom}T00:00:00.000Z`),
+      billingDisabledAt: assignment.effectiveTo
+        ? Date.parse(`${assignment.effectiveTo}T23:59:59.999Z`)
+        : tenant.billingDisabledAt,
+    };
+  }
+  const evidence = rows
+    .filter((row) => row.tenantId === tenant._id && row.companyId === companyId)
+    .sort((a, b) => a.usageDate.localeCompare(b.usageDate));
+  if (evidence.length) {
+    return {
+      ...tenant,
+      billingLinkedAt: Date.parse(`${evidence[0]!.usageDate}T00:00:00.000Z`),
+    };
+  }
+  if (
+    tenant.linkedCompanyId !== companyId ||
+    (tenant.enabled === false &&
+      (!tenant.billingDisabledAt ||
+        tenant.billingDisabledAt < monthStartTimestamp(month))) ||
+    (tenant.billingLinkedAt && tenant.billingLinkedAt > monthEndTimestamp(month))
+  ) {
+    return null;
+  }
+  return tenant;
+}
+
 function contractCoversMonth(
   contract: Doc<"customerContracts">,
   month: string,
@@ -1676,7 +1725,7 @@ export async function createDailyUsageDraftInvoice(
     });
   }
 
-  const [rows, captures] = await Promise.all([
+  const [rows, captures, tenants, assignments] = await Promise.all([
     ctx.db
       .query("dailyUsageSnapshots")
       .withIndex("by_company_month", (q) =>
@@ -1687,6 +1736,8 @@ export async function createDailyUsageDraftInvoice(
       .query("dailyUsageCaptureRuns")
       .withIndex("by_month", (q) => q.eq("month", month))
       .collect(),
+    ctx.db.query("manageOneTenants").collect(),
+    ctx.db.query("manageOneTenantAssignments").collect(),
   ]);
   if (rows.length === 0) {
     throw new ConvexError({
@@ -1694,23 +1745,11 @@ export async function createDailyUsageDraftInvoice(
       message: "No daily usage rows found for this customer and month",
     });
   }
-  const activeTenants = (
-    await ctx.db
-      .query("manageOneTenants")
-      .withIndex("by_linked_company", (q) =>
-        q.eq("linkedCompanyId", company._id),
-      )
-      .collect()
-  ).filter(
-    (tenant) =>
-      (tenant.enabled !== false ||
-        Boolean(
-          tenant.billingDisabledAt &&
-          tenant.billingDisabledAt >= monthStartTimestamp(month),
-        )) &&
-      (!tenant.billingLinkedAt ||
-        tenant.billingLinkedAt <= monthEndTimestamp(month)),
-  );
+  const activeTenants = tenants
+    .map((tenant) =>
+      tenantForCompanyMonth(tenant, company._id, month, assignments, rows),
+    )
+    .filter((tenant): tenant is Doc<"manageOneTenants"> => tenant !== null);
   if (!activeTenants.length) {
     throw new ConvexError({
       code: "BAD_REQUEST",
@@ -1977,10 +2016,20 @@ export async function buildPaygBillingCandidates(
   now = Date.now(),
 ) {
   const monthEnd = monthEndTimestamp(month);
-  const [companies, tenants, rows, invoices, catalog, contracts, captures] =
+  const [
+    companies,
+    tenants,
+    assignments,
+    rows,
+    invoices,
+    catalog,
+    contracts,
+    captures,
+  ] =
     await Promise.all([
       ctx.db.query("companies").collect(),
       ctx.db.query("manageOneTenants").collect(),
+      ctx.db.query("manageOneTenantAssignments").collect(),
       ctx.db
         .query("dailyUsageSnapshots")
         .withIndex("by_month", (q) => q.eq("month", month))
@@ -2018,14 +2067,15 @@ export async function buildPaygBillingCandidates(
       .filter(
         (company) =>
           tenants.some(
-            (tenant) =>
-              tenant.linkedCompanyId === company._id &&
-              (tenant.enabled !== false ||
-                Boolean(
-                  tenant.billingDisabledAt &&
-                  tenant.billingDisabledAt >= monthStartTimestamp(month),
-                )) &&
-              (!tenant.billingLinkedAt || tenant.billingLinkedAt <= monthEnd),
+            (tenant) => Boolean(
+              tenantForCompanyMonth(
+                tenant,
+                company._id,
+                month,
+                assignments,
+                rowsByCompany.get(company._id) ?? [],
+              ),
+            ),
           ) || rowsByCompany.has(company._id),
       )
       .map(async (company) => {
@@ -2038,16 +2088,19 @@ export async function buildPaygBillingCandidates(
             invoice.status !== "cancelled" &&
             invoice.status !== "void",
         );
-        const activeTenants = tenants.filter(
-          (tenant) =>
-            tenant.linkedCompanyId === company._id &&
-            (tenant.enabled !== false ||
-              Boolean(
-                tenant.billingDisabledAt &&
-                tenant.billingDisabledAt >= monthStartTimestamp(month),
-              )) &&
-            (!tenant.billingLinkedAt || tenant.billingLinkedAt <= monthEnd),
-        );
+        const activeTenants = tenants
+          .map((tenant) =>
+            tenantForCompanyMonth(
+              tenant,
+              company._id,
+              month,
+              assignments,
+              companyRows,
+            ),
+          )
+          .filter(
+            (tenant): tenant is Doc<"manageOneTenants"> => tenant !== null,
+          );
         const latestUsageDate = companyRows.reduce<string | undefined>(
           (latest, row) =>
             !latest || row.usageDate > latest ? row.usageDate : latest,
@@ -2120,7 +2173,14 @@ export async function buildPaygBillingCandidates(
           latestUsageDate,
           expectedLastDate: coverage.expectedLastDate,
           tenantCount: tenants.filter(
-            (tenant) => tenant.linkedCompanyId === company._id,
+            (tenant) =>
+              tenantForCompanyMonth(
+                tenant,
+                company._id,
+                month,
+                assignments,
+                companyRows,
+              ) !== null,
           ).length,
           invoiceId: existing?._id,
         };

@@ -560,30 +560,37 @@ export const deleteTeamMember = mutation({
     }
     assertCanManageUser(currentUser, user);
 
-    const [companies, leads, targets, employeeProfile] = await Promise.all([
-      ctx.db
-        .query("companies")
-        .withIndex("by_account_manager", (q) =>
-          q.eq("accountManagerId", args.userId),
-        )
-        .collect(),
-      ctx.db
-        .query("leads")
-        .withIndex("by_account_manager", (q) =>
-          q.eq("accountManagerId", args.userId),
-        )
-        .collect(),
-      ctx.db
-        .query("salesTargets")
-        .withIndex("by_am_year_quarter", (q) =>
-          q.eq("accountManagerId", args.userId),
-        )
-        .collect(),
-      ctx.db
-        .query("employeeProfiles")
-        .withIndex("by_user", (q) => q.eq("userId", args.userId))
-        .unique(),
-    ]);
+    const [companies, leads, targets, monthlyTargets, employeeProfile] =
+      await Promise.all([
+        ctx.db
+          .query("companies")
+          .withIndex("by_account_manager", (q) =>
+            q.eq("accountManagerId", args.userId),
+          )
+          .collect(),
+        ctx.db
+          .query("leads")
+          .withIndex("by_account_manager", (q) =>
+            q.eq("accountManagerId", args.userId),
+          )
+          .collect(),
+        ctx.db
+          .query("salesTargets")
+          .withIndex("by_am_year_quarter", (q) =>
+            q.eq("accountManagerId", args.userId),
+          )
+          .collect(),
+        ctx.db
+          .query("monthlyPerformanceTargets")
+          .withIndex("by_team_member_month", (q) =>
+            q.eq("teamMemberId", args.userId),
+          )
+          .collect(),
+        ctx.db
+          .query("employeeProfiles")
+          .withIndex("by_user", (q) => q.eq("userId", args.userId))
+          .unique(),
+      ]);
 
     if (employeeProfile) {
       throw new ConvexError({
@@ -593,10 +600,15 @@ export const deleteTeamMember = mutation({
       });
     }
 
-    if (companies.length > 0 || leads.length > 0 || targets.length > 0) {
+    if (
+      companies.length > 0 ||
+      leads.length > 0 ||
+      targets.length > 0 ||
+      monthlyTargets.length > 0
+    ) {
       throw new ConvexError({
         code: "HAS_ASSIGNMENTS",
-        message: `Cannot delete: assigned to ${companies.length} companies, ${leads.length} leads, ${targets.length} targets - reassign or disable instead`,
+        message: `Cannot delete: assigned to ${companies.length} companies, ${leads.length} leads, ${targets.length + monthlyTargets.length} targets - reassign or disable instead`,
       });
     }
 

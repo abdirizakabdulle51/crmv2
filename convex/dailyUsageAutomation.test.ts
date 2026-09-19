@@ -41,6 +41,9 @@ describe("automated PAYG billing", () => {
         enabled: true,
         lastSyncedAt: 1,
         linkedCompanyId: companyId,
+        // A later CRM link must not invalidate usage already captured for the
+        // same tenant/customer in the billing period.
+        billingLinkedAt: Date.UTC(2026, 8, 10),
       });
       await ctx.db.insert("customerContracts", {
         companyId,

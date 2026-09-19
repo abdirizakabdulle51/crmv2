@@ -1318,6 +1318,7 @@ describe("ManageOne tenant billing links", () => {
       {
         tenantId: s.tenantId,
         companyId: s.newCompanyId,
+        billingEffectiveFrom: "2026-08-16",
       },
     );
 
@@ -1327,15 +1328,26 @@ describe("ManageOne tenant billing links", () => {
       tenant: await ctx.db.get(s.tenantId),
       open: await ctx.db.get(s.openRowId),
       invoiced: await ctx.db.get(s.invoicedRowId),
+      assignments: await ctx.db
+        .query("manageOneTenantAssignments")
+        .collect(),
     }));
 
     expect(rows.tenant?.linkedCompanyId).toBe(s.newCompanyId);
     expect(rows.open?.companyId).toBe(s.newCompanyId);
     expect(rows.open?.sourceKey).toContain(String(s.newCompanyId));
     expect(rows.invoiced?.companyId).toBe(s.oldCompanyId);
+    expect(rows.assignments).toEqual([
+      expect.objectContaining({
+        tenantId: s.tenantId,
+        companyId: s.newCompanyId,
+        effectiveFrom: "2026-08-16",
+        status: "active",
+      }),
+    ]);
   });
 
-  it("unlinks a tenant and removes only open daily usage rows", async () => {
+  it("unlinks a tenant without deleting historical usage", async () => {
     const t = convexTest(schema, modules);
     const s = await seedTenantLinkData(t);
 
@@ -1344,7 +1356,7 @@ describe("ManageOne tenant billing links", () => {
       { tenantId: s.tenantId },
     );
 
-    expect(result.removedOpenUsageRows).toBe(1);
+    expect(result.preservedUsageRows).toBe(true);
 
     const rows = await t.run(async (ctx) => ({
       tenant: await ctx.db.get(s.tenantId),
@@ -1353,7 +1365,7 @@ describe("ManageOne tenant billing links", () => {
     }));
 
     expect(rows.tenant?.linkedCompanyId).toBeUndefined();
-    expect(rows.open).toBeNull();
+    expect(rows.open?.companyId).toBe(s.oldCompanyId);
     expect(rows.invoiced?.companyId).toBe(s.oldCompanyId);
   });
 });

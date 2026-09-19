@@ -45,6 +45,7 @@ import {
   contractOveragePrice,
   isDynamicPricingContract,
 } from "./contractPricing";
+import { contractValueAllocations } from "./contractSchedule";
 import {
   priceFlexibleContractUsage,
   priceMonthlyContractUsage,
@@ -1021,26 +1022,6 @@ function contractCycleMonths(
     });
   }
   return allMonths.slice(startIndex, startIndex + frequency);
-}
-
-function contractValueAllocations(contract: Doc<"customerContracts">) {
-  if (contract.pricingBasis !== "total_contract" || !contract.contractValue)
-    return null;
-  const months = monthsBetweenInclusive(
-    monthKeyFromTimestamp(contract.startDate),
-    monthKeyFromTimestamp(contract.endDate),
-  );
-  return allocateMoney(
-    contract.contractValue,
-    months.map((month) => ({
-      month,
-      weight: calculateMonthProration({
-        startDate: contract.startDate,
-        endDate: contract.endDate,
-        month,
-      }).fraction,
-    })),
-  );
 }
 
 async function previouslyBilledFlexibleOverage(

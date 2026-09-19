@@ -27,6 +27,9 @@ import { toast } from "sonner";
 import { Cloud, ShieldAlert } from "lucide-react";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
+type TenantRow = Doc<"manageOneTenants"> & {
+  recommendedBillingEffectiveFrom?: string;
+};
 
 function formatNumber(value: number | undefined) {
   return value == null ? "-" : value.toLocaleString();
@@ -62,6 +65,13 @@ export default function ManageOneTenantsPage() {
   const [accountManagerId, setAccountManagerId] = useState("");
   const [submittingTenantId, setSubmittingTenantId] = useState<string | null>(
     null,
+  );
+  const [pendingAssignment, setPendingAssignment] = useState<{
+    tenant: TenantRow;
+    companyId: Doc<"companies">["_id"];
+  } | null>(null);
+  const [billingEffectiveFrom, setBillingEffectiveFrom] = useState(
+    new Date().toISOString().slice(0, 10),
   );
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
@@ -118,41 +128,42 @@ export default function ManageOneTenantsPage() {
     setAccountManagerId("");
   };
 
-  const handleConfirmLink = async (
-    tenantId: Doc<"manageOneTenants">["_id"],
+  const openAssignment = (
+    tenant: TenantRow,
     companyId: Doc<"companies">["_id"],
   ) => {
-    setSubmittingTenantId(tenantId);
-    try {
-      await linkToCompany({ tenantId, companyId });
-      toast.success("Tenant linked to company");
-    } catch (error) {
-      toast.error("Failed to link tenant", {
-        description:
-          error instanceof Error ? error.message : "Please try again",
-      });
-    } finally {
-      setSubmittingTenantId(null);
-    }
+    setPendingAssignment({ tenant, companyId });
+    setBillingEffectiveFrom(
+      tenant.recommendedBillingEffectiveFrom ??
+        new Date().toISOString().slice(0, 10),
+    );
   };
 
-  const handleReassignCompany = async (
-    tenantId: Doc<"manageOneTenants">["_id"],
-    companyId: Doc<"companies">["_id"],
-  ) => {
-    setSubmittingTenantId(tenantId);
+  const handleConfirmAssignment = async () => {
+    if (!pendingAssignment || !billingEffectiveFrom) return;
+    const { tenant, companyId } = pendingAssignment;
+    setSubmittingTenantId(tenant._id);
     try {
-      const result = await reassignCompany({ tenantId, companyId });
-      const movedCount =
-        result.usageRows.moved + result.usageRows.merged;
-      toast.success(`Tenant linked to ${result.linkedCompanyName}`, {
-        description:
-          movedCount > 0
-            ? `${movedCount} open usage row(s) moved with this tenant`
-            : "No open usage rows needed to move",
+      const result = tenant.linkedCompanyId
+        ? await reassignCompany({
+            tenantId: tenant._id,
+            companyId,
+            billingEffectiveFrom,
+          })
+        : await linkToCompany({
+            tenantId: tenant._id,
+            companyId,
+            billingEffectiveFrom,
+          });
+      const movedCount = "usageRows" in result
+        ? result.usageRows.moved + result.usageRows.merged
+        : result.moved + result.merged;
+      toast.success("Tenant assignment saved", {
+        description: `${movedCount} open usage row(s) assigned from ${billingEffectiveFrom}`,
       });
+      setPendingAssignment(null);
     } catch (error) {
-      toast.error("Failed to reassign tenant", {
+      toast.error("Failed to assign tenant", {
         description:
           error instanceof Error ? error.message : "Please try again",
       });
@@ -166,10 +177,9 @@ export default function ManageOneTenantsPage() {
     try {
       const result = await unlinkFromCompany({ tenantId });
       toast.success("Tenant unlinked", {
-        description:
-          result.removedOpenUsageRows > 0
-            ? `${result.removedOpenUsageRows} open usage row(s) removed`
-            : "No open usage rows needed to be removed",
+        description: result.preservedUsageRows
+          ? "Existing usage was preserved for audit and reconciliation"
+          : undefined,
       });
     } catch (error) {
       toast.error("Failed to unlink tenant", {
@@ -328,8 +338,8 @@ export default function ManageOneTenantsPage() {
                           <Select
                             value={tenant.linkedCompanyId ?? undefined}
                             onValueChange={(companyId) =>
-                              handleReassignCompany(
-                                tenant._id,
+                              openAssignment(
+                                tenant,
                                 companyId as Doc<"companies">["_id"],
                               )
                             }
@@ -357,8 +367,8 @@ export default function ManageOneTenantsPage() {
                                   size="sm"
                                   variant="secondary"
                                   onClick={() =>
-                                    handleConfirmLink(
-                                      tenant._id,
+                                    openAssignment(
+                                      tenant,
                                       tenant.suggestedCompanyId as Doc<"companies">["_id"],
                                     )
                                   }
@@ -439,6 +449,51 @@ export default function ManageOneTenantsPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog
+        open={pendingAssignment !== null}
+        onOpenChange={(open) => !open && setPendingAssignment(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign ManageOne Tenant</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Assign <strong>{pendingAssignment?.tenant.name}</strong> to{" "}
+              <strong>
+                {sortedCompanies.find(
+                  (company) => company._id === pendingAssignment?.companyId,
+                )?.name ?? "the selected company"}
+              </strong>
+              . Usage on and after this date will belong to that customer.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="billing-effective-from">
+                Billing effective from
+              </Label>
+              <Input
+                id="billing-effective-from"
+                type="date"
+                value={billingEffectiveFrom}
+                onChange={(event) =>
+                  setBillingEffectiveFrom(event.target.value)
+                }
+              />
+            </div>
+            <Button
+              className="w-full"
+              onClick={handleConfirmAssignment}
+              disabled={
+                !billingEffectiveFrom ||
+                submittingTenantId === pendingAssignment?.tenant._id
+              }
+            >
+              Confirm assignment
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={creatingTenant !== null}

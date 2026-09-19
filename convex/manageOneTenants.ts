@@ -1577,11 +1577,13 @@ async function migrateOpenDailyUsageRows(
   ctx: MutationCtx,
   tenantId: Id<"manageOneTenants">,
   companyId: Id<"companies">,
+  effectiveFrom?: string,
 ) {
   const rows = (await ctx.db.query("dailyUsageSnapshots").collect()).filter(
     (row) =>
       row.tenantId === tenantId &&
       row.companyId !== companyId &&
+      (!effectiveFrom || row.usageDate >= effectiveFrom) &&
       !row.invoiceId &&
       !row.lockedAt,
   );
@@ -1635,19 +1637,123 @@ async function migrateOpenDailyUsageRows(
   return { moved, merged, skipped };
 }
 
-async function deleteOpenDailyUsageRows(
+function dateKey(timestamp = Date.now()) {
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function previousDate(date: string) {
+  return dateKey(Date.parse(`${date}T00:00:00.000Z`) - 86_400_000);
+}
+
+function assertDateKey(date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Billing effective date must be a valid YYYY-MM-DD date",
+    });
+  }
+}
+
+async function defaultEffectiveFrom(
   ctx: MutationCtx,
   tenantId: Id<"manageOneTenants">,
 ) {
   const rows = (await ctx.db.query("dailyUsageSnapshots").collect()).filter(
-    (row) => row.tenantId === tenantId && !row.invoiceId && !row.lockedAt,
+    (row) => row.tenantId === tenantId,
   );
 
-  for (const row of rows) {
-    await ctx.db.delete(row._id);
-  }
+  return rows.reduce<string | undefined>(
+    (earliest, row) =>
+      !earliest || row.usageDate < earliest ? row.usageDate : earliest,
+    undefined,
+  ) ?? dateKey();
+}
 
-  return rows.length;
+async function assignTenant(
+  ctx: MutationCtx,
+  args: {
+    tenantId: Id<"manageOneTenants">;
+    companyId: Id<"companies">;
+    effectiveFrom: string;
+    actorId: Id<"users">;
+  },
+) {
+  assertDateKey(args.effectiveFrom);
+  if (args.effectiveFrom > dateKey()) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "Billing effective date cannot be in the future",
+    });
+  }
+  const lockedConflict = (
+    await ctx.db.query("dailyUsageSnapshots").collect()
+  ).find(
+    (row) =>
+      row.tenantId === args.tenantId &&
+      row.usageDate >= args.effectiveFrom &&
+      row.companyId !== args.companyId &&
+      Boolean(row.invoiceId || row.lockedAt),
+  );
+  if (lockedConflict) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `Usage from ${lockedConflict.usageDate} is already invoiced to another customer. Void or correct that invoice before reassigning this tenant from ${args.effectiveFrom}.`,
+    });
+  }
+  const history = await ctx.db
+    .query("manageOneTenantAssignments")
+    .withIndex("by_tenant", (q) => q.eq("tenantId", args.tenantId))
+    .collect();
+  const current = await ctx.db
+    .query("manageOneTenantAssignments")
+    .withIndex("by_tenant_status", (q) =>
+      q.eq("tenantId", args.tenantId).eq("status", "active"),
+    )
+    .unique();
+  if (current?.companyId === args.companyId) {
+    const overlap = history.find(
+      (assignment) =>
+        assignment._id !== current._id &&
+        (!assignment.effectiveTo ||
+          assignment.effectiveTo >= args.effectiveFrom),
+    );
+    if (overlap) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: `Billing assignment overlaps an existing period ending ${overlap.effectiveTo ?? "without an end date"}`,
+      });
+    }
+    if (current.effectiveFrom !== args.effectiveFrom) {
+      await ctx.db.patch(current._id, { effectiveFrom: args.effectiveFrom });
+    }
+  } else {
+    if (current) {
+      if (args.effectiveFrom <= current.effectiveFrom) {
+        throw new ConvexError({
+          code: "BAD_REQUEST",
+          message: `Reassignment must start after the current assignment began on ${current.effectiveFrom}`,
+        });
+      }
+      await ctx.db.patch(current._id, {
+        effectiveTo: previousDate(args.effectiveFrom),
+        status: "ended",
+        endedBy: args.actorId,
+        endedAt: Date.now(),
+      });
+    }
+    await ctx.db.insert("manageOneTenantAssignments", {
+      tenantId: args.tenantId,
+      companyId: args.companyId,
+      effectiveFrom: args.effectiveFrom,
+      status: "active",
+      createdBy: args.actorId,
+      createdAt: Date.now(),
+    });
+  }
+  await ctx.db.patch(args.tenantId, {
+    linkedCompanyId: args.companyId,
+    billingLinkedAt: Date.parse(`${args.effectiveFrom}T00:00:00.000Z`),
+  });
 }
 
 export const listWithSuggestions = query({
@@ -1663,6 +1769,19 @@ export const listWithSuggestions = query({
 
     const tenants = await ctx.db.query("manageOneTenants").collect();
     const companies = await ctx.db.query("companies").collect();
+    const usage = await ctx.db.query("dailyUsageSnapshots").collect();
+
+    const recommendedDate = (tenantId: Id<"manageOneTenants">) =>
+      usage
+        .filter(
+          (row) =>
+            row.tenantId === tenantId && !row.invoiceId && !row.lockedAt,
+        )
+        .reduce<string | undefined>(
+          (earliest, row) =>
+            !earliest || row.usageDate < earliest ? row.usageDate : earliest,
+          undefined,
+        ) ?? dateKey();
 
     return tenants.map((tenant) => {
       const linkedCompany = tenant.linkedCompanyId
@@ -1675,6 +1794,7 @@ export const listWithSuggestions = query({
           linkedCompanyName: linkedCompany?.name ?? null,
           suggestedCompanyId: null,
           suggestedCompanyName: null,
+          recommendedBillingEffectiveFrom: recommendedDate(tenant._id),
         };
       }
 
@@ -1693,13 +1813,18 @@ export const listWithSuggestions = query({
         linkedCompanyName: null,
         suggestedCompanyId: match?._id ?? null,
         suggestedCompanyName: match?.name ?? null,
+        recommendedBillingEffectiveFrom: recommendedDate(tenant._id),
       };
     });
   },
 });
 
 export const linkToCompany = mutation({
-  args: { tenantId: v.id("manageOneTenants"), companyId: v.id("companies") },
+  args: {
+    tenantId: v.id("manageOneTenants"),
+    companyId: v.id("companies"),
+    billingEffectiveFrom: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     if (user.role !== "ceo" && user.role !== "head_of_business") {
@@ -1709,15 +1834,30 @@ export const linkToCompany = mutation({
       });
     }
 
-    await ctx.db.patch(args.tenantId, {
-      linkedCompanyId: args.companyId,
-      billingLinkedAt: Date.now(),
+    const effectiveFrom =
+      args.billingEffectiveFrom ??
+      (await defaultEffectiveFrom(ctx, args.tenantId));
+    await assignTenant(ctx, {
+      tenantId: args.tenantId,
+      companyId: args.companyId,
+      effectiveFrom,
+      actorId: user._id,
     });
+    return await migrateOpenDailyUsageRows(
+      ctx,
+      args.tenantId,
+      args.companyId,
+      effectiveFrom,
+    );
   },
 });
 
 export const reassignCompany = mutation({
-  args: { tenantId: v.id("manageOneTenants"), companyId: v.id("companies") },
+  args: {
+    tenantId: v.id("manageOneTenants"),
+    companyId: v.id("companies"),
+    billingEffectiveFrom: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     if (user.role !== "ceo" && user.role !== "head_of_business") {
@@ -1740,14 +1880,18 @@ export const reassignCompany = mutation({
       });
     }
 
-    await ctx.db.patch(args.tenantId, {
-      linkedCompanyId: args.companyId,
-      billingLinkedAt: Date.now(),
+    const effectiveFrom = args.billingEffectiveFrom ?? dateKey();
+    await assignTenant(ctx, {
+      tenantId: args.tenantId,
+      companyId: args.companyId,
+      effectiveFrom,
+      actorId: user._id,
     });
     const usageRows = await migrateOpenDailyUsageRows(
       ctx,
       args.tenantId,
       args.companyId,
+      effectiveFrom,
     );
 
     return { linkedCompanyName: company.name, usageRows };
@@ -1770,16 +1914,25 @@ export const unlinkFromCompany = mutation({
       throw new ConvexError({ code: "NOT_FOUND", message: "Tenant not found" });
     }
 
+    const current = await ctx.db
+      .query("manageOneTenantAssignments")
+      .withIndex("by_tenant_status", (q) =>
+        q.eq("tenantId", args.tenantId).eq("status", "active"),
+      )
+      .unique();
+    if (current) {
+      await ctx.db.patch(current._id, {
+        effectiveTo: dateKey(),
+        status: "ended",
+        endedBy: user._id,
+        endedAt: Date.now(),
+      });
+    }
     await ctx.db.patch(args.tenantId, {
       linkedCompanyId: undefined,
       billingLinkedAt: undefined,
     });
-    const removedOpenUsageRows = await deleteOpenDailyUsageRows(
-      ctx,
-      args.tenantId,
-    );
-
-    return { removedOpenUsageRows };
+    return { preservedUsageRows: true };
   },
 });
 
@@ -1814,10 +1967,14 @@ export const createCompanyFromTenant = mutation({
       contactEmail: tenant.managerEmail,
     });
 
-    await ctx.db.patch(args.tenantId, {
-      linkedCompanyId: companyId,
-      billingLinkedAt: Date.now(),
+    const effectiveFrom = await defaultEffectiveFrom(ctx, args.tenantId);
+    await assignTenant(ctx, {
+      tenantId: args.tenantId,
+      companyId,
+      effectiveFrom,
+      actorId: user._id,
     });
+    await migrateOpenDailyUsageRows(ctx, args.tenantId, companyId, effectiveFrom);
     return companyId;
   },
 });

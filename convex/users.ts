@@ -1,10 +1,43 @@
 import { ConvexError, v } from "convex/values";
-import { internalQuery, mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import {
+  internalQuery,
+  mutation,
+  query,
+  type MutationCtx,
+} from "./_generated/server";
 import {
   assertNotMonitoring,
   canManageUser,
   isCeoOrHob,
 } from "./authorization";
+
+function currentMonth() {
+  return new Date().toISOString().slice(0, 7);
+}
+
+async function assertNoActivePerformanceTargets(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+) {
+  const targets = await ctx.db
+    .query("monthlyPerformanceTargets")
+    .withIndex("by_team_member_month", (q) => q.eq("teamMemberId", userId))
+    .collect();
+  if (
+    targets.some(
+      (target) =>
+        target.month >= currentMonth() &&
+        (target.billingTargetCents > 0 || target.collectionTargetCents > 0),
+    )
+  ) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message:
+        "Clear this team member's current and future billing and collection targets before changing their role, country, or scope.",
+    });
+  }
+}
 
 export const updateCurrentUser = mutation({
   args: {},
@@ -208,6 +241,9 @@ export const updateRole = mutation({
         message: "User not found",
       });
     }
+    if (targetUser.role === "account_manager" && args.role !== targetUser.role) {
+      await assertNoActivePerformanceTargets(ctx, args.userId);
+    }
     if (isCeoOrHob(currentUser)) {
       await ctx.db.patch(args.userId, { role: args.role });
       return;
@@ -259,6 +295,9 @@ export const assignCountry = mutation({
         code: "NOT_FOUND",
         message: "User not found",
       });
+    }
+    if (targetUser.countryId && targetUser.countryId !== args.countryId) {
+      await assertNoActivePerformanceTargets(ctx, args.userId);
     }
     if (isCeoOrHob(currentUser)) {
       await ctx.db.patch(args.userId, {
@@ -313,6 +352,12 @@ export const setOrganizationScope = mutation({
     const target = await ctx.db.get(args.userId);
     if (!target)
       throw new ConvexError({ code: "NOT_FOUND", message: "User not found" });
+    if (
+      args.organizationScope === "global" &&
+      target.organizationScope !== "global"
+    ) {
+      await assertNoActivePerformanceTargets(ctx, args.userId);
+    }
     if (args.organizationScope === "country" && !target.countryId)
       throw new ConvexError({
         code: "BAD_REQUEST",

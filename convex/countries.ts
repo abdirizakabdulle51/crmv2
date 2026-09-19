@@ -84,25 +84,30 @@ export const remove = mutation({
         message: "Only CEO or Head of Business can remove countries",
       });
     }
-    const [employee, department, scopedUser] = await Promise.all([
-      ctx.db
-        .query("employeeProfiles")
-        .withIndex("by_country", (q) => q.eq("countryId", args.id))
-        .first(),
-      ctx.db
-        .query("hrDepartments")
-        .withIndex("by_country", (q) => q.eq("countryId", args.id))
-        .first(),
-      ctx.db
-        .query("users")
-        .filter((q) => q.eq(q.field("hrCountryId"), args.id))
-        .first(),
-    ]);
-    if (employee || department || scopedUser) {
+    const [employee, department, scopedUser, performanceTarget] =
+      await Promise.all([
+        ctx.db
+          .query("employeeProfiles")
+          .withIndex("by_country", (q) => q.eq("countryId", args.id))
+          .first(),
+        ctx.db
+          .query("hrDepartments")
+          .withIndex("by_country", (q) => q.eq("countryId", args.id))
+          .first(),
+        ctx.db
+          .query("users")
+          .filter((q) => q.eq(q.field("hrCountryId"), args.id))
+          .first(),
+        ctx.db
+          .query("monthlyPerformanceTargets")
+          .withIndex("by_country_month", (q) => q.eq("countryId", args.id))
+          .first(),
+      ]);
+    if (employee || department || scopedUser || performanceTarget) {
       throw new ConvexError({
         code: "CONFLICT",
         message:
-          "This country is referenced by HR records and cannot be removed",
+          "This country is referenced by HR or target records and cannot be removed",
       });
     }
     await ctx.db.delete(args.id);

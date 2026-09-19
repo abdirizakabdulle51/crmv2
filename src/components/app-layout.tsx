@@ -159,6 +159,11 @@ const NAV_ITEMS = [
     icon: Building2,
   },
   { to: "/finance/collections", label: "Collections", icon: HandCoins },
+  {
+    to: "/finance/collection-command",
+    label: "Billing & Collection Targets",
+    icon: Target,
+  },
   { to: "/finance/accounts", label: "Accounts", icon: Landmark },
   {
     to: "/finance/account-transactions",
@@ -268,6 +273,7 @@ const NAV_GROUPS = [
     label: "Finance",
     items: [
       "/finance/collections",
+      "/finance/collection-command",
       "/finance/expenses",
       "/finance/reports",
       "/finance/reports/revenue",
