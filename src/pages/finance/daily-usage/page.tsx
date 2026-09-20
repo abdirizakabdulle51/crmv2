@@ -88,12 +88,16 @@ export default function DailyUsagePage() {
   const createDraftInvoice = useMutation(
     api.dailyUsage.createDraftInvoiceFromRollup,
   );
+  const reconcileCatalogMappings = useMutation(
+    api.dailyUsage.reconcileCatalogMappings,
+  );
   const [month, setMonth] = useState(currentMonthInputValue());
   const [companyId, setCompanyId] = useState("all");
   const [serviceType, setServiceType] = useState("all");
   const [usageDate, setUsageDate] = useState("all");
   const [search, setSearch] = useState("");
   const [creatingDraft, setCreatingDraft] = useState(false);
+  const [reconcilingCatalog, setReconcilingCatalog] = useState(false);
   const [showCapturedRows, setShowCapturedRows] = useState(false);
   const [showRollup, setShowRollup] = useState(false);
   const [showUnpricedOnly, setShowUnpricedOnly] = useState(false);
@@ -289,6 +293,48 @@ export default function DailyUsagePage() {
       );
     } finally {
       setCreatingDraft(false);
+    }
+  }
+
+  async function handleReconcileCatalog() {
+    if (companyId === "all") return;
+    setReconcilingCatalog(true);
+    try {
+      const result = await reconcileCatalogMappings({
+        companyId: companyId as Id<"companies">,
+        month,
+      });
+      const unresolved =
+        result.ambiguous.length +
+        result.unmatched.length +
+        result.conflicts.length;
+      if (result.mappedRows > 0) {
+        toast.success(
+          `${result.mappedRows} historical usage row${result.mappedRows === 1 ? "" : "s"} reconciled`,
+          {
+            description: unresolved
+              ? `${unresolved} service issue${unresolved === 1 ? "" : "s"} still require manual review.`
+              : "Invoice readiness will update automatically.",
+          },
+        );
+      } else {
+        const firstIssue =
+          result.ambiguous[0]?.service ??
+          result.unmatched[0] ??
+          result.conflicts[0];
+        toast.error("No catalogue mappings could be applied safely", {
+          description: firstIssue
+            ? `${firstIssue}. Review the service name or catalogue duplicates.`
+            : "No open historical usage requires reconciliation.",
+        });
+      }
+    } catch (error) {
+      toast.error("Catalogue reconciliation failed", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setReconcilingCatalog(false);
     }
   }
 
@@ -524,6 +570,16 @@ export default function DailyUsagePage() {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={handleReconcileCatalog}
+                        disabled={reconcilingCatalog}
+                      >
+                        <Link2 className="mr-2 h-4 w-4" />
+                        {reconcilingCatalog
+                          ? "Reconciling…"
+                          : "Reconcile catalogue mappings"}
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"

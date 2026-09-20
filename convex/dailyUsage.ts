@@ -1337,6 +1337,120 @@ function sourceKeyFor(input: {
   ].join("|");
 }
 
+function catalogMatchesForUsage(
+  row: Doc<"dailyUsageSnapshots">,
+  catalog: CatalogItem[],
+) {
+  const itemKey = stableSegment(row.itemName);
+  const categoryKey = stableSegment(row.serviceType);
+  const exactName = catalog.filter(
+    (item) => stableSegment(item.itemName) === itemKey,
+  );
+  const exactNameAndCategory = exactName.filter(
+    (item) =>
+      stableSegment(item.serviceCategory) === categoryKey ||
+      stableSegment(item.serviceCode) === categoryKey,
+  );
+  if (exactNameAndCategory.length) return exactNameAndCategory;
+  if (exactName.length === 1) return exactName;
+  const category = catalog.filter(
+    (item) =>
+      stableSegment(item.serviceCategory) === categoryKey ||
+      stableSegment(item.serviceCode) === categoryKey,
+  );
+  return category.length === 1 ? category : exactName;
+}
+
+export const reconcileCatalogMappings = mutation({
+  args: {
+    companyId: v.id("companies"),
+    month: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    await assertCanManageUsage(ctx, user, args.companyId);
+    const [rows, catalog] = await Promise.all([
+      ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", args.companyId).eq("month", args.month),
+        )
+        .collect(),
+      ctx.db.query("serviceCatalog").collect(),
+    ]);
+    const catalogById = new Map(catalog.map((item) => [item._id, item]));
+    const unresolved = rows.filter(
+      (row) => !row.catalogItemId || !catalogById.has(row.catalogItemId),
+    );
+    let mappedRows = 0;
+    const mappedServices = new Set<string>();
+    const ambiguous = new Map<string, string[]>();
+    const unmatched = new Set<string>();
+    const conflicts = new Set<string>();
+
+    for (const row of unresolved) {
+      const label = `${row.serviceType} / ${row.itemName}${row.regionName ? ` / ${row.regionName}` : ""}`;
+      if (row.invoiceId || row.lockedAt) {
+        conflicts.add(`${label} is already attached to an invoice`);
+        continue;
+      }
+      const matches = catalogMatchesForUsage(row, catalog);
+      if (matches.length === 0) {
+        unmatched.add(label);
+        continue;
+      }
+      if (matches.length > 1) {
+        ambiguous.set(
+          label,
+          matches.map((item) => `${item.serviceCategory} / ${item.itemName}`),
+        );
+        continue;
+      }
+      const item = matches[0]!;
+      const sourceKey = sourceKeyFor({
+        companyId: row.companyId,
+        tenantId: row.tenantId,
+        usageDate: row.usageDate,
+        serviceType: item.serviceCategory,
+        itemName: item.itemName,
+        catalogItemId: item._id,
+        regionId: row.regionId,
+        regionName: row.regionName,
+        dataCenterName: row.dataCenterName,
+      });
+      const duplicate = await ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_source_key", (q) => q.eq("sourceKey", sourceKey))
+        .unique();
+      if (duplicate && duplicate._id !== row._id) {
+        conflicts.add(`${label} has a duplicate captured row on ${row.usageDate}`);
+        continue;
+      }
+      await ctx.db.patch(row._id, {
+        catalogItemId: item._id,
+        itemName: item.itemName,
+        serviceType: item.serviceCategory,
+        serviceCategory: item.serviceCategory,
+        unit: item.billingUnit,
+        sourceKey,
+      });
+      mappedRows++;
+      mappedServices.add(label);
+    }
+
+    return {
+      mappedRows,
+      mappedServices: [...mappedServices].sort(),
+      ambiguous: [...ambiguous].map(([service, candidates]) => ({
+        service,
+        candidates,
+      })),
+      unmatched: [...unmatched].sort(),
+      conflicts: [...conflicts].sort(),
+    };
+  },
+});
+
 export function buildDailyUsageRowsFromManageOneTenants(
   tenants: ManageOneTenant[],
   catalog: CatalogItem[],
