@@ -2003,6 +2003,8 @@ export const createAmendment = mutation({
     effectiveDate: v.number(),
     summary: v.string(),
     monthlyDelta: v.optional(v.number()),
+    correctedStartDate: v.optional(v.number()),
+    correctedEndDate: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -2026,6 +2028,25 @@ export const createAmendment = mutation({
       args.monthlyDelta,
       "Monthly delta",
     );
+    if (
+      args.correctedStartDate !== undefined &&
+      args.correctedStartDate < contract.startDate &&
+      args.type !== "correction"
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Only a correction amendment can move the contract start date earlier",
+      });
+    }
+    const correctedStartDate = args.correctedStartDate ?? contract.startDate;
+    const correctedEndDate = args.correctedEndDate ?? contract.endDate;
+    if (correctedStartDate >= correctedEndDate) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Corrected contract end date must be after the start date",
+      });
+    }
     const existing = await ctx.db
       .query("customerContractAmendments")
       .withIndex("by_contract", (q) => q.eq("contractId", args.contractId))
@@ -2039,6 +2060,8 @@ export const createAmendment = mutation({
       effectiveDate: args.effectiveDate,
       summary,
       monthlyDelta,
+      correctedStartDate: args.correctedStartDate,
+      correctedEndDate: args.correctedEndDate,
       status: "approved",
       createdBy: user._id,
       createdAt: now,
@@ -2053,6 +2076,113 @@ export const createAmendment = mutation({
       `${amendmentTypeLabel(args.type)} amendment ${amendmentNumber} recorded`,
     );
     return amendmentId;
+  },
+});
+
+export const applyAmendment = mutation({
+  args: { amendmentId: v.id("customerContractAmendments") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    assertCanManageContracts(user);
+    const amendment = await ctx.db.get(args.amendmentId);
+    if (!amendment) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Contract amendment not found",
+      });
+    }
+    if (amendment.status !== "approved" || amendment.appliedAt) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Only an approved, unapplied amendment can be applied",
+      });
+    }
+    const contract = await ctx.db.get(amendment.contractId);
+    if (!contract) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Customer contract not found",
+      });
+    }
+    await getVisibleCompany(ctx, user, contract.companyId);
+    const invoices = await ctx.db
+      .query("invoices")
+      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+      .collect();
+    const protectedInvoice = invoices.find(
+      (invoice) => invoice.status !== "cancelled" && invoice.status !== "void",
+    );
+    if (protectedInvoice) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          protectedInvoice.status === "draft"
+            ? `Cancel draft invoice ${protectedInvoice.invoiceNumber ?? protectedInvoice._id} before applying this amendment`
+            : `Invoice ${protectedInvoice.invoiceNumber ?? protectedInvoice._id} is already ${protectedInvoice.status}. Void or correct it before restating the contract`,
+      });
+    }
+    const delta = amendment.monthlyDelta ?? 0;
+    if (!Number.isFinite(delta) || delta === 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Enter a non-zero contract value change before applying",
+      });
+    }
+    if (
+      contract.pricingBasis !== "total_contract" ||
+      contract.contractValue === undefined
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Contract value amendments currently apply only to total-value contracts",
+      });
+    }
+    const resultingContractValue = sumMoney([contract.contractValue, delta]);
+    if (resultingContractValue <= 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Resulting contract value must be greater than zero",
+      });
+    }
+    const startDate = amendment.correctedStartDate ?? contract.startDate;
+    const endDate = amendment.correctedEndDate ?? contract.endDate;
+    if (startDate < contract.startDate && amendment.type !== "correction") {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message:
+          "Only a correction amendment can move the contract start date earlier",
+      });
+    }
+    if (startDate >= endDate) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Corrected contract end date must be after the start date",
+      });
+    }
+    const now = Date.now();
+    await ctx.db.patch(contract._id, {
+      contractValue: resultingContractValue,
+      startDate,
+      endDate,
+      updatedAt: now,
+    });
+    await ctx.db.patch(amendment._id, {
+      previousContractValue: contract.contractValue,
+      resultingContractValue,
+      status: "effective",
+      appliedAt: now,
+      appliedBy: user._id,
+      updatedAt: now,
+    });
+    await insertEvent(
+      ctx,
+      contract._id,
+      user._id,
+      "amended",
+      `${amendment.amendmentNumber} applied: contract value ${contract.contractValue.toFixed(2)} → ${resultingContractValue.toFixed(2)}`,
+    );
+    return { contractValue: resultingContractValue, startDate, endDate };
   },
 });
 

@@ -78,6 +78,8 @@ type AmendmentFormState = {
   effectiveDate: string;
   summary: string;
   monthlyDelta: string;
+  correctedStartDate: string;
+  correctedEndDate: string;
 };
 type LineItemFormState = {
   catalogItemId?: Id<"serviceCatalog">;
@@ -131,6 +133,8 @@ function emptyAmendmentForm(): AmendmentFormState {
     effectiveDate: monthInputValue(),
     summary: "",
     monthlyDelta: "",
+    correctedStartDate: "",
+    correctedEndDate: "",
   };
 }
 
@@ -216,6 +220,12 @@ function buildAmendmentPayload(
     effectiveDate: timestampFromDateInput(form.effectiveDate),
     summary: form.summary.trim(),
     monthlyDelta,
+    correctedStartDate: form.correctedStartDate
+      ? timestampFromDateInput(form.correctedStartDate)
+      : undefined,
+    correctedEndDate: form.correctedEndDate
+      ? timestampFromDateInput(form.correctedEndDate)
+      : undefined,
   };
 }
 
@@ -468,6 +478,7 @@ function CustomerContractDetailContent() {
   );
   const activateContract = useMutation(api.customerContracts.activate);
   const createAmendment = useMutation(api.customerContracts.createAmendment);
+  const applyAmendment = useMutation(api.customerContracts.applyAmendment);
   const generateSignedDocumentUploadUrl = useMutation(
     api.customerContracts.generateSignedDocumentUploadUrl,
   );
@@ -492,6 +503,7 @@ function CustomerContractDetailContent() {
   const [invoicePending, setInvoicePending] = useState(false);
   const [activationPending, setActivationPending] = useState(false);
   const [amendmentPending, setAmendmentPending] = useState(false);
+  const [applyingAmendmentId, setApplyingAmendmentId] = useState<string>();
   const [signedDocumentPending, setSignedDocumentPending] = useState<
     "upload" | "download" | null
   >(null);
@@ -723,7 +735,10 @@ function CustomerContractDetailContent() {
     setAmendmentPending(true);
     try {
       await createAmendment(payload);
-      toast.success("Contract amendment recorded");
+      toast.success("Contract amendment approved", {
+        description:
+          "Review it in the amendment history and apply it to update the contract schedule.",
+      });
       setAmendmentForm(emptyAmendmentForm());
     } catch (error) {
       toast.error(
@@ -731,6 +746,25 @@ function CustomerContractDetailContent() {
       );
     } finally {
       setAmendmentPending(false);
+    }
+  };
+
+  const handleApplyAmendment = async (
+    amendmentId: Id<"customerContractAmendments">,
+  ) => {
+    setApplyingAmendmentId(amendmentId);
+    try {
+      const result = await applyAmendment({ amendmentId });
+      toast.success("Contract amendment applied", {
+        description: `Current contract value is now ${formatMoney(result.contractValue, contract?.currency)}.`,
+      });
+    } catch (error) {
+      toast.error("Could not apply contract amendment", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setApplyingAmendmentId(undefined);
     }
   };
 
@@ -1758,8 +1792,13 @@ function CustomerContractDetailContent() {
                       <th className="px-3 py-3">Amendment</th>
                       <th className="px-3 py-3">Type</th>
                       <th className="px-3 py-3">Effective</th>
-                      <th className="px-3 py-3">Monthly Delta</th>
+                      <th className="px-3 py-3">
+                        {contract.pricingBasis === "total_contract"
+                          ? "Value Change"
+                          : "Monthly Delta"}
+                      </th>
                       <th className="px-3 py-3">Status</th>
+                      <th className="px-3 py-3 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1792,6 +1831,34 @@ function CustomerContractDetailContent() {
                           <Badge variant="secondary">
                             {formatAmendmentStatus(amendment.status)}
                           </Badge>
+                          {amendment.resultingContractValue !== undefined ? (
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              New value: {formatMoney(
+                                amendment.resultingContractValue,
+                                contract.currency,
+                              )}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          {amendment.status === "approved" ? (
+                            <Button
+                              size="sm"
+                              onClick={() =>
+                                handleApplyAmendment(amendment._id)
+                              }
+                              disabled={
+                                !canManage ||
+                                applyingAmendmentId === amendment._id
+                              }
+                            >
+                              {applyingAmendmentId === amendment._id
+                                ? "Applying..."
+                                : "Apply amendment"}
+                            </Button>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1853,7 +1920,13 @@ function CustomerContractDetailContent() {
                 placeholder="Describe the approved upgrade, downgrade, renewal, or price change"
               />
             </Field>
-            <Field label="Monthly delta">
+            <Field
+              label={
+                contract.pricingBasis === "total_contract"
+                  ? "Contract value change"
+                  : "Monthly delta"
+              }
+            >
               <Input
                 step="any"
                 type="number"
@@ -1864,9 +1937,52 @@ function CustomerContractDetailContent() {
                     monthlyDelta: event.target.value,
                   })
                 }
-                placeholder="Use negative value for downgrade"
+                placeholder="Example: 75000 or -10000"
               />
             </Field>
+            {contract.pricingBasis === "total_contract" &&
+            amendmentForm.monthlyDelta &&
+            Number.isFinite(Number(amendmentForm.monthlyDelta)) ? (
+              <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                Current value: {formatMoney(contract.contractValue, contract.currency)}
+                {" → "}
+                <strong>
+                  {formatMoney(
+                    (contract.contractValue ?? 0) +
+                      Number(amendmentForm.monthlyDelta),
+                    contract.currency,
+                  )}
+                </strong>
+              </div>
+            ) : null}
+            {amendmentForm.type === "correction" ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Corrected start date (optional)">
+                  <Input
+                    type="date"
+                    value={amendmentForm.correctedStartDate}
+                    onChange={(event) =>
+                      setAmendmentForm({
+                        ...amendmentForm,
+                        correctedStartDate: event.target.value,
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Corrected end date (optional)">
+                  <Input
+                    type="date"
+                    value={amendmentForm.correctedEndDate}
+                    onChange={(event) =>
+                      setAmendmentForm({
+                        ...amendmentForm,
+                        correctedEndDate: event.target.value,
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+            ) : null}
             <Button
               disabled={
                 !canManage || contract.status === "draft" || amendmentPending
@@ -2287,6 +2403,7 @@ function formatAmendmentStatus(status: ContractAmendment["status"]) {
   const labels: Record<ContractAmendment["status"], string> = {
     draft: "Draft",
     approved: "Approved",
+    effective: "Effective",
     cancelled: "Cancelled",
   };
   return labels[status];
