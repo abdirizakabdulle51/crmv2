@@ -222,6 +222,8 @@ export default function AccountingPage({
   const setPeriodStatus = useMutation(api.accounting.setPeriodStatus);
   const postManualJournal = useMutation(api.accounting.postManualJournal);
   const [accountId, setAccountId] = useState("");
+  const [accountSearch, setAccountSearch] = useState("");
+  const [ledgerSearch, setLedgerSearch] = useState("");
   const [newAccountCode, setNewAccountCode] = useState("");
   const [newAccountName, setNewAccountName] = useState("");
   const [newAccountType, setNewAccountType] = useState<
@@ -263,6 +265,21 @@ export default function AccountingPage({
     Record<string, string>
   >({});
   const heading = titles[view];
+  const matchingAccounts = (accounts ?? []).filter((row) => {
+    const term = accountSearch.trim().toLowerCase();
+    return !term || `${row.code} ${row.name}`.toLowerCase().includes(term);
+  });
+  const matchingLedgerRows = (ledger?.rows ?? []).filter((row) => {
+    const term = ledgerSearch.trim().toLowerCase();
+    if (!term) return true;
+    return [
+      row.journal.journalNumber,
+      row.journal.description,
+      row.journal.sourceType,
+      row.journal.sourceId,
+      row.memo,
+    ].some((value) => value?.toLowerCase().includes(term));
+  });
 
   const periodControls =
     view === "income-statement" || view === "journals" || view === "ledger";
@@ -796,20 +813,40 @@ export default function AccountingPage({
       {view === "ledger" ? (
         <Card>
           <CardContent className="space-y-4 pt-6">
-            <div className="max-w-md">
-              <Label>Ledger account</Label>
-              <Select value={accountId} onValueChange={setAccountId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select account" />
-                </SelectTrigger>
-                <SelectContent>
-                  {accounts?.map((row) => (
-                    <SelectItem key={row._id} value={row._id}>
-                      {row.code} · {row.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label htmlFor="ledger-account-search">
+                  Find ledger account
+                </Label>
+                <Input
+                  id="ledger-account-search"
+                  value={accountSearch}
+                  onChange={(event) => setAccountSearch(event.target.value)}
+                  placeholder="Search account code or name..."
+                  className="mb-2"
+                />
+                <Select value={accountId} onValueChange={setAccountId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {matchingAccounts.map((row) => (
+                      <SelectItem key={row._id} value={row._id}>
+                        {row.code} · {row.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="ledger-row-search">Search transactions</Label>
+                <Input
+                  id="ledger-row-search"
+                  value={ledgerSearch}
+                  onChange={(event) => setLedgerSearch(event.target.value)}
+                  placeholder="Journal, description, memo, or source..."
+                />
+              </div>
             </div>
             {!ledger ? (
               <Skeleton className="h-72" />
@@ -827,7 +864,7 @@ export default function AccountingPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {ledger.rows.map((row) => (
+                    {matchingLedgerRows.map((row) => (
                       <tr key={row._id} className="border-b last:border-0">
                         <td className="p-3">
                           {new Date(
@@ -849,6 +886,16 @@ export default function AccountingPage({
                         </td>
                       </tr>
                     ))}
+                    {matchingLedgerRows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="p-8 text-center text-muted-foreground"
+                        >
+                          No ledger transactions match this search.
+                        </td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>

@@ -198,7 +198,7 @@ describe("InvoicesPage", () => {
     expect(screen.getAllByText("Paid").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Overdue").length).toBeGreaterThan(0);
     expect(screen.getByText("$2,450.00")).toBeInTheDocument();
-    expect(screen.getAllByText("$1,700.00")).toHaveLength(1);
+    expect(screen.getAllByText("$1,700.00")).toHaveLength(2);
     expect(screen.getAllByText("$750.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$500.00").length).toBeGreaterThan(0);
   });
@@ -206,8 +206,9 @@ describe("InvoicesPage", () => {
   it("renders invoices from api.invoices.list in the table", () => {
     renderInvoicesPage();
 
-    expect(screen.getByRole("columnheader", { name: "Invoice Number" }))
-      .toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Invoice Number" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("INV-2026-00001")).toBeInTheDocument();
     expect(screen.getByText("Hormuud")).toBeInTheDocument();
     expect(screen.getByText("INV-2026-00002")).toBeInTheDocument();
@@ -219,9 +220,7 @@ describe("InvoicesPage", () => {
     const user = userEvent.setup();
     renderInvoicesPage();
 
-    await user.click(
-      screen.getByRole("button", { name: /INV-2026-00001/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /INV-2026-00001/i }));
 
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/invoices/invoice-1",
@@ -285,40 +284,27 @@ describe("InvoicesPage", () => {
     expect(
       within(table).getByRole("columnheader", { name: "Date / Issue Date" }),
     ).toBeInTheDocument();
-    expect(within(table).getByRole("columnheader", { name: "Customer" }))
-      .toBeInTheDocument();
-    expect(within(table).getByRole("columnheader", { name: "Balance Due" }))
-      .toBeInTheDocument();
-    expect(within(table).getByRole("columnheader", { name: "Due Date" }))
-      .toBeInTheDocument();
+    expect(
+      within(table).getByRole("columnheader", { name: "Customer" }),
+    ).toBeInTheDocument();
+    expect(
+      within(table).getByRole("columnheader", { name: "Balance Due" }),
+    ).toBeInTheDocument();
+    expect(
+      within(table).getByRole("columnheader", { name: "Due Date" }),
+    ).toBeInTheDocument();
+    expect(
+      within(table).getByRole("columnheader", { name: "Age / Overdue" }),
+    ).toBeInTheDocument();
   });
 
-  it("shows an admin include toggle and requests test/hidden invoices when enabled", async () => {
-    const user = userEvent.setup();
+  it("always excludes test and hidden invoices from the operational list", () => {
     mocks.currentUser = crmUser({ role: "ceo" });
-
     renderInvoicesPage();
 
     expect(mocks.invoiceListArgs.at(-1)).toEqual({
       includeTestHidden: false,
     });
-    await user.click(
-      screen.getByRole("button", { name: "Include test/hidden" }),
-    );
-
-    expect(mocks.invoiceListArgs.at(-1)).toEqual({
-      includeTestHidden: true,
-    });
-    expect(
-      screen.getByRole("button", { name: "Hide test/hidden" }),
-    ).toBeInTheDocument();
-  });
-
-  it("does not show the include test/hidden toggle to non-admin users", () => {
-    mocks.currentUser = crmUser({ role: "country_gm" });
-
-    renderInvoicesPage();
-
     expect(
       screen.queryByRole("button", { name: "Include test/hidden" }),
     ).not.toBeInTheDocument();
@@ -365,6 +351,16 @@ describe("InvoicesPage", () => {
     expect(screen.getByText("$300.00")).toBeInTheDocument();
     expect(screen.getAllByText("$100.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("$200.00").length).toBeGreaterThan(0);
-    expect(screen.getByText("Test/Hidden")).toBeInTheDocument();
+    expect(screen.queryByText("Test/Hidden")).not.toBeInTheDocument();
+  });
+
+  it("recalculates summary cards from the selected company", async () => {
+    renderInvoicesPage();
+
+    await chooseSelectOption(/Filter by company/i, "Telesom");
+
+    expect(screen.getAllByText("$750.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText("$2,450.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("$1,700.00")).not.toBeInTheDocument();
   });
 });

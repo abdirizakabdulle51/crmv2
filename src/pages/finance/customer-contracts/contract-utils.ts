@@ -21,6 +21,28 @@ export const FREQUENCY_LABELS: Record<BillingFrequency, string> = {
   yearly: "Yearly",
 };
 
+export const MODEL_LABELS = {
+  flexible_total_commitment: "Overall commitment",
+  monthly_minimum: "Monthly minimum commitment",
+  discounted_usage: "Discounted usage",
+  legacy_service_lines: "Legacy service-line contract",
+} as const;
+
+export function contractModel(
+  contract: Pick<Doc<"customerContracts">, "pricingModel" | "commitmentModel">,
+) {
+  if (contract.pricingModel) return contract.pricingModel;
+  return contract.commitmentModel === "flexible_value"
+    ? ("flexible_total_commitment" as const)
+    : ("legacy_service_lines" as const);
+}
+
+export function contractModelLabel(
+  contract: Pick<Doc<"customerContracts">, "pricingModel" | "commitmentModel">,
+) {
+  return MODEL_LABELS[contractModel(contract)];
+}
+
 export function dateInputFromTimestamp(timestamp?: number) {
   if (!timestamp) return "";
   return new Date(timestamp).toISOString().slice(0, 10);

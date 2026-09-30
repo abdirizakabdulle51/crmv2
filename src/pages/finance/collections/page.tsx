@@ -122,7 +122,9 @@ export default function CollectionsPage({
   const [direction, setDirection] = useState<"all" | "incoming" | "outgoing">(
     "all",
   );
-  const [sourceFilter, setSourceFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState(
+    transactionsMode ? (searchParams.get("source") ?? "all") : "all",
+  );
   const [detailKey, setDetailKey] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editAccountId, setEditAccountId] =

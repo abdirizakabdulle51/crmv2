@@ -120,12 +120,8 @@ function statusFilterLabel(selectedStatuses: InvoiceStatus[]) {
 
 export default function InvoicesPage() {
   const navigate = useNavigate();
-  const currentUser = useQuery(api.users.getCurrentUser, {});
-  const [includeTestHidden, setIncludeTestHidden] = useState(false);
-  const canIncludeTestHidden =
-    currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
   const invoices = useQuery(api.invoices.list, {
-    includeTestHidden: canIncludeTestHidden ? includeTestHidden : false,
+    includeTestHidden: false,
   });
   const companies = useQuery(api.companies.list, {});
   const [selectedStatusFilters, setSelectedStatusFilters] = useState<
@@ -153,39 +149,10 @@ export default function InvoicesPage() {
     );
   }
 
-  const normalSummaryInvoices = invoices.filter(
-    (invoice) =>
-      invoice.status !== "void" &&
-      invoice.status !== "cancelled" &&
-      !invoice.isTest &&
-      !invoice.hiddenAt,
-  );
-
-  const totalInvoiced = normalSummaryInvoices
-    .filter(
-      (invoice) =>
-        invoice.status !== "void" && invoice.status !== "cancelled",
-    )
-    .reduce((sum, invoice) => sum + invoice.grandTotal, 0);
-  const outstanding = normalSummaryInvoices
-    .filter(
-      (invoice) =>
-        invoice.status !== "void" &&
-        invoice.status !== "cancelled" &&
-        invoice.status !== "paid",
-    )
-    .reduce((sum, invoice) => sum + invoice.balanceDue, 0);
-  const paid = normalSummaryInvoices.reduce(
-    (sum, invoice) => sum + invoice.amountPaid,
-    0,
-  );
-  const overdue = normalSummaryInvoices
-    .filter((invoice) => invoice.status === "overdue")
-    .reduce((sum, invoice) => sum + invoice.balanceDue, 0);
-
   const normalizedSearch = search.trim().toLowerCase();
   const filteredInvoices = invoices
     .filter((invoice) => {
+      if (invoice.isTest || invoice.hiddenAt) return false;
       if (
         selectedStatusFilters.length > 0 &&
         !selectedStatusFilters.includes(invoice.status)
@@ -211,6 +178,32 @@ export default function InvoicesPage() {
       const bDate = b.issueDate ?? b.createdAt;
       return bDate - aDate;
     });
+  const issuedFilteredInvoices = filteredInvoices.filter(
+    (invoice) =>
+      invoice.status !== "draft" &&
+      invoice.status !== "void" &&
+      invoice.status !== "cancelled",
+  );
+  const totalInvoiced = issuedFilteredInvoices.reduce(
+    (sum, invoice) => sum + invoice.grandTotal,
+    0,
+  );
+  const outstanding = issuedFilteredInvoices.reduce(
+    (sum, invoice) => sum + Math.max(0, invoice.balanceDue),
+    0,
+  );
+  const paid = issuedFilteredInvoices.reduce(
+    (sum, invoice) => sum + invoice.amountPaid,
+    0,
+  );
+  const overdue = issuedFilteredInvoices
+    .filter(
+      (invoice) =>
+        invoice.balanceDue > 0 &&
+        (invoice.status === "overdue" ||
+          (invoice.dueDate !== undefined && invoice.dueDate < Date.now())),
+    )
+    .reduce((sum, invoice) => sum + invoice.balanceDue, 0);
 
   return (
     <div className="space-y-6 p-6 md:p-8">
@@ -333,15 +326,6 @@ export default function InvoicesPage() {
             ))}
           </SelectContent>
         </Select>
-        {canIncludeTestHidden ? (
-          <Button
-            type="button"
-            variant={includeTestHidden ? "secondary" : "outline"}
-            onClick={() => setIncludeTestHidden((value) => !value)}
-          >
-            {includeTestHidden ? "Hide test/hidden" : "Include test/hidden"}
-          </Button>
-        ) : null}
       </div>
 
       {invoices.length === 0 ? (
@@ -383,6 +367,7 @@ export default function InvoicesPage() {
                   <th className="p-3 text-right font-medium">Balance Due</th>
                   <th className="p-3 text-left font-medium">Status</th>
                   <th className="p-3 text-left font-medium">Due Date</th>
+                  <th className="p-3 text-left font-medium">Age / Overdue</th>
                   <th className="p-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
@@ -426,6 +411,16 @@ export default function InvoicesPage() {
                       <td className="p-3">{statusBadge(invoice.status)}</td>
                       <td className="p-3 text-muted-foreground">
                         {formatDate(invoice.dueDate)}
+                      </td>
+                      <td className="p-3 text-muted-foreground">
+                        {invoice.balanceDue <= 0 ||
+                        invoice.status === "void" ||
+                        invoice.status === "cancelled" ||
+                        invoice.status === "draft"
+                          ? "—"
+                          : invoice.dueDate && invoice.dueDate < Date.now()
+                            ? `${Math.max(1, Math.floor((Date.now() - invoice.dueDate) / 86_400_000))} days overdue`
+                            : `${Math.max(0, Math.floor((Date.now() - (invoice.issueDate ?? invoice.createdAt)) / 86_400_000))} days old`}
                       </td>
                       <td className="p-3 text-right">
                         <Button

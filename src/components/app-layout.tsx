@@ -10,7 +10,6 @@ import {
   Activity,
   Gauge,
   BarChart3,
-  AlertTriangle,
   LogOut,
   FileText,
   ReceiptText,
@@ -40,6 +39,7 @@ import {
   Network,
   ContactRound,
   Scale,
+  History,
 } from "lucide-react";
 import { useCrm, getRoleLabel } from "@/lib/crm-context.tsx";
 import { useAuth } from "@/hooks/use-auth.ts";
@@ -67,7 +67,6 @@ const NAV_ITEMS = [
   { to: "/coach", label: "Coach", icon: Zap },
   { to: "/activities", label: "Activities", icon: Activity },
   { to: "/usage", label: "Usage", icon: BarChart3 },
-  { to: "/at-risk", label: "At Risk", icon: AlertTriangle },
   { to: "/quotes", label: "Opportunity Quotes", icon: FileText },
   { to: "/invoices", label: "Invoices", icon: ReceiptText },
   { to: "/billing-queue", label: "Billing Queue", icon: ListChecks },
@@ -159,6 +158,11 @@ const NAV_ITEMS = [
     icon: Building2,
   },
   { to: "/finance/collections", label: "Collections", icon: HandCoins },
+  {
+    to: "/finance/customer-activity",
+    label: "Customer Billing Activity",
+    icon: History,
+  },
   {
     to: "/finance/collection-command",
     label: "Billing & Collection Targets",
@@ -255,7 +259,6 @@ const NAV_GROUPS = [
       "/quotes",
       "/performance",
       "/activities",
-      "/at-risk",
     ],
   },
   {
@@ -273,6 +276,7 @@ const NAV_GROUPS = [
     label: "Finance",
     items: [
       "/finance/collections",
+      "/finance/customer-activity",
       "/finance/collection-command",
       "/finance/expenses",
       "/finance/reports",

@@ -856,9 +856,7 @@ export const performance = query({
             Math.min(Date.now(), contract.endDate),
           );
           consumed = sumMoney(
-            allocations.map(
-              (allocation) => allocation.commitmentConsumed,
-            ),
+            allocations.map((allocation) => allocation.commitmentConsumed),
           );
           overage = sumMoney(
             allocations.map((allocation) => allocation.overageAmount),
@@ -909,6 +907,13 @@ export const performance = query({
         contractId: contract._id,
         contractNumber: contract.contractNumber,
         companyName: company.name,
+        countryId: company.countryId,
+        pricingModel: contract.pricingModel,
+        commitmentModel: contract.commitmentModel,
+        billingFrequency: contract.billingFrequency,
+        billingTiming: contract.billingTiming ?? "postpaid",
+        startDate: contract.startDate,
+        endDate: contract.endDate,
         contractValue: contract.contractValue,
         elapsedPercent,
         utilizationPercent,

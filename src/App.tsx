@@ -31,7 +31,6 @@ const UsagePage = lazy(() => import("./pages/usage/page.tsx"));
 const UsageAutoFillPage = lazy(
   () => import("./pages/usage/auto-fill-page.tsx"),
 );
-const AtRiskPage = lazy(() => import("./pages/at-risk/page.tsx"));
 const QuotesPage = lazy(() => import("./pages/quotes/page.tsx"));
 const NewOpportunityQuotePage = lazy(
   () => import("./pages/quotes/new-page.tsx"),
@@ -72,6 +71,9 @@ const CollectionsPage = lazy(
 );
 const CollectionCommandPage = lazy(
   () => import("./pages/finance/collection-command/page.tsx"),
+);
+const CustomerBillingActivityPage = lazy(
+  () => import("./pages/finance/customer-activity/page.tsx"),
 );
 const HistoricalInvoicesPage = lazy(
   () => import("./pages/finance/historical-invoices/page.tsx"),
@@ -178,7 +180,10 @@ export default function App() {
               path="/usage/auto-fill"
               element={lazyPage(<UsageAutoFillPage />)}
             />
-            <Route path="/at-risk" element={lazyPage(<AtRiskPage />)} />
+            <Route
+              path="/at-risk"
+              element={<Navigate to="/companies?signal=overdue" replace />}
+            />
             <Route path="/quotes" element={lazyPage(<QuotesPage />)} />
             <Route
               path="/quotes/new"
@@ -232,6 +237,10 @@ export default function App() {
             <Route
               path="/finance/collection-command"
               element={lazyPage(<CollectionCommandPage />)}
+            />
+            <Route
+              path="/finance/customer-activity"
+              element={lazyPage(<CustomerBillingActivityPage />)}
             />
             <Route
               path="/finance/accounts"

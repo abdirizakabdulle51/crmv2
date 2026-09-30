@@ -25,6 +25,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
+  Download,
   FileWarning,
   Plus,
   Search,
@@ -73,7 +74,9 @@ export default function CompaniesPage() {
   const [search, setSearch] = useState(searchParams.get("search") ?? "");
   const [typeFilter, setTypeFilter] = useState("all");
   const [healthFilter, setHealthFilter] = useState("all");
-  const [signalFilter, setSignalFilter] = useState("all");
+  const [signalFilter, setSignalFilter] = useState(
+    searchParams.get("signal") ?? "all",
+  );
   const [countryFilter, setCountryFilter] = useState("all");
   const [selectedOwnerFilter, setSelectedOwnerFilter] = useState<string>();
   const [page, setPage] = useState(1);
@@ -136,6 +139,54 @@ export default function CompaniesPage() {
     (safePage - 1) * PAGE_SIZE,
     safePage * PAGE_SIZE,
   );
+  const exportCustomers = () => {
+    const countryNames = new Map(
+      (countries ?? []).map((row) => [row._id, row.name]),
+    );
+    const headings = [
+      "Customer",
+      "Lifecycle",
+      "Commercial model",
+      "Country",
+      "Account manager",
+      "Contact",
+      "Contact email",
+      "Contract",
+      "Contract end",
+      "Monthly usage",
+      "Outstanding",
+      "Last payment",
+      "Health",
+    ];
+    const cell = (value: unknown) =>
+      `"${String(value ?? "").replaceAll('"', '""')}"`;
+    const lines = filtered.map((row) => [
+      row.name,
+      row.lifecycleStatus,
+      row.commercialModel,
+      countryNames.get(row.countryId),
+      row.ownerName ?? "Unassigned",
+      row.contactName,
+      row.contactEmail,
+      row.contractNumber,
+      row.contractEndDate ? formatDate(row.contractEndDate) : "",
+      row.monthlyUsage,
+      row.outstanding,
+      row.lastPaymentAt ? formatDate(row.lastPaymentAt) : "",
+      healthLabel[row.health],
+    ]);
+    const csv = [headings, ...lines]
+      .map((line) => line.map(cell).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(
+      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "customers.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
   const mixTotal =
     (dashboard?.summary.contracted ?? 0) +
     (dashboard?.summary.payg ?? 0) +
@@ -250,6 +301,9 @@ export default function CompaniesPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={exportCustomers}>
+            <Download className="mr-2 h-4 w-4" /> Export Customers
+          </Button>
           <Button variant="secondary" onClick={() => setImportOpen(true)}>
             <Upload className="mr-2 h-4 w-4" /> Import CSV
           </Button>

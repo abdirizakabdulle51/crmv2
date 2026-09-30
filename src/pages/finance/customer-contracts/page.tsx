@@ -1,13 +1,28 @@
+import { useState } from "react";
 import { useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
-import { FileSignature, Pencil, Plus } from "lucide-react";
+import { FileSignature, Pencil, Plus, Search } from "lucide-react";
 import { api } from "@/convex/_generated/api.js";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Card, CardContent } from "@/components/ui/card.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
+import { Input } from "@/components/ui/input.tsx";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.tsx";
 import { useCrm } from "@/lib/crm-context.tsx";
-import { FREQUENCY_LABELS, STATUS_LABELS } from "./contract-utils.ts";
+import {
+  contractModel,
+  contractModelLabel,
+  FREQUENCY_LABELS,
+  MODEL_LABELS,
+  STATUS_LABELS,
+} from "./contract-utils.ts";
 
 const date = (value: number) =>
   new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(value);
@@ -16,6 +31,11 @@ export default function CustomerContractsPage() {
   const navigate = useNavigate();
   const { currentUser } = useCrm();
   const contracts = useQuery(api.customerContracts.list, {});
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const [model, setModel] = useState("all");
+  const [frequency, setFrequency] = useState("all");
+  const [timing, setTiming] = useState("all");
   const canManage =
     currentUser?.role === "ceo" || currentUser?.role === "head_of_business";
 
@@ -26,6 +46,19 @@ export default function CustomerContractsPage() {
         <Skeleton className="h-80" />
       </div>
     );
+
+  const term = search.trim().toLowerCase();
+  const filtered = contracts.filter(
+    (contract) =>
+      (!term ||
+        contract.contractNumber.toLowerCase().includes(term) ||
+        contract.title.toLowerCase().includes(term) ||
+        contract.companyName.toLowerCase().includes(term)) &&
+      (status === "all" || contract.status === status) &&
+      (model === "all" || contractModel(contract) === model) &&
+      (frequency === "all" || contract.billingFrequency === frequency) &&
+      (timing === "all" || (contract.billingTiming ?? "postpaid") === timing),
+  );
 
   return (
     <div className="space-y-6 p-6 md:p-8">
@@ -44,18 +77,78 @@ export default function CustomerContractsPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <Metric label="All contracts" value={contracts.length} />
+        <Metric label="Filtered contracts" value={filtered.length} />
         <Metric
           label="Active"
-          value={contracts.filter((row) => row.status === "active").length}
+          value={filtered.filter((row) => row.status === "active").length}
         />
         <Metric
           label="Drafts"
-          value={contracts.filter((row) => row.status === "draft").length}
+          value={filtered.filter((row) => row.status === "draft").length}
         />
       </div>
 
       <Card>
+        <div className="grid gap-3 border-b p-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="relative md:col-span-2 xl:col-span-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search contracts..."
+              className="pl-9"
+            />
+          </div>
+          <Select value={status} onValueChange={setStatus}>
+            <SelectTrigger aria-label="Contract status">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              {Object.entries(STATUS_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={model} onValueChange={setModel}>
+            <SelectTrigger aria-label="Contract model">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All models</SelectItem>
+              {Object.entries(MODEL_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={frequency} onValueChange={setFrequency}>
+            <SelectTrigger aria-label="Billing frequency">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All billing cycles</SelectItem>
+              {Object.entries(FREQUENCY_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={timing} onValueChange={setTiming}>
+            <SelectTrigger aria-label="Billing timing">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All billing timing</SelectItem>
+              <SelectItem value="prepaid">Prepaid</SelectItem>
+              <SelectItem value="postpaid">Postpaid</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <CardContent className="overflow-x-auto p-0">
           <table className="w-full min-w-[1050px] text-sm">
             <thead>
@@ -70,7 +163,7 @@ export default function CustomerContractsPage() {
               </tr>
             </thead>
             <tbody>
-              {contracts.map((contract) => (
+              {filtered.map((contract) => (
                 <tr key={contract._id} className="border-b last:border-0">
                   <td className="p-3">
                     <div className="font-medium">{contract.contractNumber}</div>
@@ -79,11 +172,7 @@ export default function CustomerContractsPage() {
                     </div>
                   </td>
                   <td>{contract.companyName}</td>
-                  <td className="capitalize">
-                    {(
-                      contract.pricingModel ?? "legacy service lines"
-                    ).replaceAll("_", " ")}
-                  </td>
+                  <td>{contractModelLabel(contract)}</td>
                   <td>
                     {FREQUENCY_LABELS[contract.billingFrequency]} ·{" "}
                     {contract.billingTiming ?? "postpaid"}
@@ -137,9 +226,9 @@ export default function CustomerContractsPage() {
               ))}
             </tbody>
           </table>
-          {contracts.length === 0 ? (
+          {filtered.length === 0 ? (
             <p className="p-8 text-center text-muted-foreground">
-              No contracts have been created.
+              No contracts match these filters.
             </p>
           ) : null}
         </CardContent>
