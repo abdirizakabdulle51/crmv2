@@ -802,6 +802,19 @@ export default defineSchema({
     .index("by_date", ["usageDate"])
     .index("by_started_at", ["startedAt"]),
 
+  dailyUsageGapResolutions: defineTable({
+    companyId: v.id("companies"),
+    tenantId: v.id("manageOneTenants"),
+    usageDate: v.string(),
+    month: v.string(),
+    resolution: v.literal("confirmed_zero_usage"),
+    reason: v.string(),
+    resolvedBy: v.id("users"),
+    resolvedAt: v.number(),
+  })
+    .index("by_company_month", ["companyId", "month"])
+    .index("by_tenant_date", ["tenantId", "usageDate"]),
+
   dailyUsageBillingSnapshots: defineTable({
     companyId: v.id("companies"),
     month: v.string(),

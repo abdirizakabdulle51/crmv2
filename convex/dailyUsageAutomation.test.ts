@@ -127,25 +127,29 @@ describe("automated PAYG billing", () => {
       status: "incomplete_usage",
     });
 
-    await t.run((ctx) =>
-      ctx.db.insert("dailyUsageSnapshots", {
-        companyId: seeded.companyId,
+    const gaps = await ceo.query(api.dailyUsage.usageGaps, {
+      companyId: seeded.companyId,
+      month: "2026-08",
+    });
+    expect(gaps).toEqual([
+      expect.objectContaining({
         tenantId: seeded.tenantId,
         tenantName: "PAYG Tenant",
-        tenantVdcId: "vdc-payg",
         usageDate: "2026-08-15",
-        month: "2026-08",
-        serviceType: "Storage",
-        itemName: "EVS Storage",
-        serviceCategory: "Storage",
-        quantity: 1,
-        unit: "GB/month",
-        catalogItemId: seeded.catalogItemId,
-        source: "manageone",
-        sourceKey: "payg-2026-08-15",
-        capturedAt: Date.UTC(2026, 7, 15),
       }),
-    );
+    ]);
+    await ceo.mutation(api.dailyUsage.confirmZeroUsageGap, {
+      companyId: seeded.companyId,
+      tenantId: seeded.tenantId,
+      usageDate: "2026-08-15",
+      reason: "Verified as zero usage in ManageOne",
+    });
+    expect(
+      await ceo.query(api.dailyUsage.usageGaps, {
+        companyId: seeded.companyId,
+        month: "2026-08",
+      }),
+    ).toEqual([]);
     const completeCandidates = await ceo.query(
       api.dailyUsage.billingCandidates,
       { month: "2026-08" },
@@ -156,7 +160,7 @@ describe("automated PAYG billing", () => {
       ),
     ).toMatchObject({
       status: "ready",
-      amount: 10,
+      amount: 9.68,
       latestUsageDate: "2026-08-31",
       expectedLastDate: "2026-08-31",
     });
@@ -174,7 +178,7 @@ describe("automated PAYG billing", () => {
       candidatePage.rows.find(
         (row) => "companyId" in row && row.companyId === seeded.companyId,
       ),
-    ).toMatchObject({ status: "ready", amount: 10 });
+    ).toMatchObject({ status: "ready", amount: 9.68 });
     expect(candidates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -203,7 +207,7 @@ describe("automated PAYG billing", () => {
       companyId: seeded.companyId,
       sourceMonth: "2026-08",
       status: "draft",
-      grandTotal: 10,
+      grandTotal: 9.68,
     });
     expect(stored.usage?.invoiceId).toBe(stored.invoices[0]._id);
     expect(stored.usage?.lockedAt).toBeGreaterThan(0);

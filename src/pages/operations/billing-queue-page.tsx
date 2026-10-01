@@ -17,8 +17,17 @@ import {
   CardTitle,
 } from "@/components/ui/card.tsx";
 import { Input } from "@/components/ui/input.tsx";
+import { Label } from "@/components/ui/label.tsx";
 import { Skeleton } from "@/components/ui/skeleton.tsx";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
+import { Textarea } from "@/components/ui/textarea.tsx";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog.tsx";
 import { formatCurrency } from "@/lib/format.ts";
 import { useDebounce } from "@/hooks/use-debounce.ts";
 import {
@@ -63,6 +72,19 @@ function BillingQueuePageContent() {
   const [page, setPage] = useState(0);
   const [onlyActionable, setOnlyActionable] = useState(false);
   const [pendingId, setPendingId] = useState<string>();
+  const [gapReview, setGapReview] = useState<{
+    companyId: string;
+    companyName: string;
+  }>();
+  const [zeroGap, setZeroGap] = useState<{
+    tenantId: string;
+    tenantName: string;
+    usageDate: string;
+  }>();
+  const [zeroReason, setZeroReason] = useState("");
+  const [assignmentDates, setAssignmentDates] = useState<
+    Record<string, string>
+  >({});
   const contracts = useQuery(
     api.invoices.previewContractInvoiceBatch,
     queueType === "contracts" ? { sourceMonth: month } : "skip",
@@ -78,12 +100,20 @@ function BillingQueuePageContent() {
         }
       : "skip",
   );
+  const usageGaps = useQuery(
+    api.dailyUsage.usageGaps,
+    gapReview ? { companyId: gapReview.companyId as never, month } : "skip",
+  );
   const createContractDraft = useMutation(api.invoices.createDraftFromContract);
   const createPaygDraft = useMutation(
     api.dailyUsage.createDraftInvoiceFromRollup,
   );
   const refreshPaygDraft = useMutation(
     api.dailyUsage.refreshDraftInvoiceFromRollup,
+  );
+  const confirmZeroUsageGap = useMutation(api.dailyUsage.confirmZeroUsageGap);
+  const correctTenantAssignmentStart = useMutation(
+    api.dailyUsage.correctTenantAssignmentStart,
   );
 
   useEffect(() => setPage(0), [month, debouncedSearch, queueType]);
@@ -182,6 +212,48 @@ function BillingQueuePageContent() {
         error instanceof Error
           ? error.message
           : "Could not create draft invoice",
+      );
+    } finally {
+      setPendingId(undefined);
+    }
+  }
+
+  async function confirmZero() {
+    if (!gapReview || !zeroGap) return;
+    setPendingId(`gap:${zeroGap.tenantId}:${zeroGap.usageDate}`);
+    try {
+      await confirmZeroUsageGap({
+        companyId: gapReview.companyId as never,
+        tenantId: zeroGap.tenantId as never,
+        usageDate: zeroGap.usageDate,
+        reason: zeroReason,
+      });
+      toast.success("Zero usage confirmed", {
+        description: `${zeroGap.tenantName} · ${zeroGap.usageDate}`,
+      });
+      setZeroGap(undefined);
+      setZeroReason("");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not resolve gap",
+      );
+    } finally {
+      setPendingId(undefined);
+    }
+  }
+
+  async function correctAssignment(tenantId: string, assignmentId: string) {
+    if (!assignmentDates[tenantId]) return;
+    setPendingId(`assignment:${tenantId}`);
+    try {
+      await correctTenantAssignmentStart({
+        assignmentId: assignmentId as never,
+        effectiveFrom: assignmentDates[tenantId],
+      });
+      toast.success("Tenant assignment date updated");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not update assignment",
       );
     } finally {
       setPendingId(undefined);
@@ -304,8 +376,22 @@ function BillingQueuePageContent() {
                         {row.reason}
                       </td>
                       <td className="p-3 text-right">
-                        {row.status === "ready" ||
-                        row.status === "needs_refresh" ? (
+                        {row.status === "incomplete_usage" &&
+                        row.model === "PAYG" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setGapReview({
+                                companyId: row.companyId,
+                                companyName: row.companyName,
+                              })
+                            }
+                          >
+                            Review Usage Gaps
+                          </Button>
+                        ) : row.status === "ready" ||
+                          row.status === "needs_refresh" ? (
                           <Button
                             size="sm"
                             disabled={pendingId === row.id}
@@ -372,6 +458,137 @@ function BillingQueuePageContent() {
           ) : null}
         </CardContent>
       </Card>
+      <Dialog
+        open={Boolean(gapReview)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setGapReview(undefined);
+            setZeroGap(undefined);
+            setZeroReason("");
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Review usage gaps</DialogTitle>
+            <DialogDescription>
+              {gapReview?.companyName} · {month}. Confirm zero usage only after
+              checking ManageOne, or correct an assignment that began later.
+            </DialogDescription>
+          </DialogHeader>
+          {!usageGaps ? (
+            <Skeleton className="h-40" />
+          ) : usageGaps.length === 0 ? (
+            <div className="rounded-lg border border-teal-200 bg-teal-50 p-4 text-sm text-teal-900">
+              All tenant-day gaps are resolved. The queue will update
+              automatically.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {usageGaps.map((gap) => {
+                const assignmentDate =
+                  assignmentDates[gap.tenantId] ??
+                  gap.assignmentEffectiveFrom ??
+                  "";
+                const gapKey = `gap:${gap.tenantId}:${gap.usageDate}`;
+                return (
+                  <div key={gapKey} className="rounded-lg border p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium">{gap.tenantName}</div>
+                        <div className="text-sm text-muted-foreground">
+                          Missing capture: {gap.usageDate}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setZeroGap(gap);
+                          setZeroReason("");
+                        }}
+                      >
+                        Confirm Zero Usage
+                      </Button>
+                    </div>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+                      <div className="space-y-1">
+                        <Label htmlFor={`assignment-${gap.tenantId}`}>
+                          Assignment effective from
+                        </Label>
+                        <Input
+                          id={`assignment-${gap.tenantId}`}
+                          type="date"
+                          value={assignmentDate}
+                          onChange={(event) =>
+                            setAssignmentDates((current) => ({
+                              ...current,
+                              [gap.tenantId]: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <Button
+                        variant="secondary"
+                        disabled={
+                          !assignmentDate ||
+                          !gap.assignmentId ||
+                          assignmentDate === gap.assignmentEffectiveFrom ||
+                          pendingId === `assignment:${gap.tenantId}`
+                        }
+                        onClick={() =>
+                          gap.assignmentId &&
+                          void correctAssignment(gap.tenantId, gap.assignmentId)
+                        }
+                      >
+                        Update Assignment
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {zeroGap ? (
+            <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <div>
+                <div className="font-medium">Confirm genuine zero usage</div>
+                <div className="text-sm text-muted-foreground">
+                  {zeroGap.tenantName} · {zeroGap.usageDate}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="zero-usage-reason">Audit reason</Label>
+                <Textarea
+                  id="zero-usage-reason"
+                  value={zeroReason}
+                  onChange={(event) => setZeroReason(event.target.value)}
+                  placeholder="Example: Verified in ManageOne; tenant had no active resources."
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setZeroGap(undefined)}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={
+                    zeroReason.trim().length < 5 ||
+                    pendingId === `gap:${zeroGap.tenantId}:${zeroGap.usageDate}`
+                  }
+                  onClick={() => void confirmZero()}
+                >
+                  Confirm Zero Usage
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <p className="text-xs text-muted-foreground">
+            If ManageOne contains usage for a missing day, recover the
+            historical source data before confirming anything. This screen never
+            substitutes current usage for a past date.
+          </p>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

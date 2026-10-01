@@ -276,6 +276,7 @@ function paygCoverage(
   tenants: Doc<"manageOneTenants">[],
   month: string,
   captures: Doc<"dailyUsageCaptureRuns">[],
+  resolutions: Doc<"dailyUsageGapResolutions">[] = [],
 ) {
   const expected = expectedDateKeys(month);
   const datesByTenant = new Map<Id<"manageOneTenants">, Set<string>>();
@@ -291,6 +292,11 @@ function paygCoverage(
       datesByTenant.set(tenantId, dates);
     }
   }
+  for (const resolution of resolutions) {
+    const dates = datesByTenant.get(resolution.tenantId) ?? new Set<string>();
+    dates.add(resolution.usageDate);
+    datesByTenant.set(resolution.tenantId, dates);
+  }
   const missing = tenants.flatMap((tenant) => {
     const dates = datesByTenant.get(tenant._id) ?? new Set<string>();
     const linkedDate = tenant.billingLinkedAt
@@ -303,7 +309,11 @@ function paygCoverage(
       .filter((date) => !linkedDate || date >= linkedDate)
       .filter((date) => !disabledDate || date <= disabledDate)
       .filter((date) => !dates.has(date))
-      .map((date) => `${tenant.name}: ${date}`);
+      .map((usageDate) => ({
+        tenantId: tenant._id,
+        tenantName: tenant.name,
+        usageDate,
+      }));
   });
   return { expectedLastDate: expected[expected.length - 1]!, missing };
 }
@@ -1872,20 +1882,28 @@ export async function createDailyUsageDraftInvoice(
     });
   }
 
-  const [rows, captures, tenants, assignments] = await Promise.all([
-    ctx.db
-      .query("dailyUsageSnapshots")
-      .withIndex("by_company_month", (q) =>
-        q.eq("companyId", company._id).eq("month", month),
-      )
-      .collect(),
-    ctx.db
-      .query("dailyUsageCaptureRuns")
-      .withIndex("by_month", (q) => q.eq("month", month))
-      .collect(),
-    ctx.db.query("manageOneTenants").collect(),
-    ctx.db.query("manageOneTenantAssignments").collect(),
-  ]);
+  const [rows, captures, tenants, assignments, resolutions] = await Promise.all(
+    [
+      ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", company._id).eq("month", month),
+        )
+        .collect(),
+      ctx.db
+        .query("dailyUsageCaptureRuns")
+        .withIndex("by_month", (q) => q.eq("month", month))
+        .collect(),
+      ctx.db.query("manageOneTenants").collect(),
+      ctx.db.query("manageOneTenantAssignments").collect(),
+      ctx.db
+        .query("dailyUsageGapResolutions")
+        .withIndex("by_company_month", (q) =>
+          q.eq("companyId", company._id).eq("month", month),
+        )
+        .collect(),
+    ],
+  );
   if (rows.length === 0) {
     throw new ConvexError({
       code: "BAD_REQUEST",
@@ -1903,11 +1921,17 @@ export async function createDailyUsageDraftInvoice(
       message: "No active ManageOne tenant is linked to this customer",
     });
   }
-  const coverage = paygCoverage(rows, activeTenants, month, captures);
+  const coverage = paygCoverage(
+    rows,
+    activeTenants,
+    month,
+    captures,
+    resolutions,
+  );
   if (coverage.missing.length) {
     throw new ConvexError({
       code: "USAGE_INCOMPLETE",
-      message: `Usage is incomplete (${coverage.missing.length} tenant-day gaps; first: ${coverage.missing[0]})`,
+      message: `Usage is incomplete (${coverage.missing.length} tenant-day gaps; first: ${coverage.missing[0].tenantName}: ${coverage.missing[0].usageDate})`,
     });
   }
   const replacement = companyInvoices
@@ -2197,6 +2221,7 @@ export async function buildPaygBillingCandidates(
     catalog,
     contracts,
     captures,
+    resolutions,
   ] = await Promise.all([
     companyId
       ? ctx.db.get(companyId).then((company) => (company ? [company] : []))
@@ -2231,6 +2256,14 @@ export async function buildPaygBillingCandidates(
       .query("dailyUsageCaptureRuns")
       .withIndex("by_month", (q) => q.eq("month", month))
       .collect(),
+    companyId
+      ? ctx.db
+          .query("dailyUsageGapResolutions")
+          .withIndex("by_company_month", (q) =>
+            q.eq("companyId", companyId).eq("month", month),
+          )
+          .collect()
+      : ctx.db.query("dailyUsageGapResolutions").collect(),
   ]);
   const visibleCompanies = companies.filter(
     (company) =>
@@ -2312,6 +2345,11 @@ export async function buildPaygBillingCandidates(
           activeTenants,
           month,
           captures,
+          resolutions.filter(
+            (resolution) =>
+              resolution.companyId === company._id &&
+              resolution.month === month,
+          ),
         );
         const sourceChanged =
           existing?.status === "draft" &&
@@ -2334,7 +2372,7 @@ export async function buildPaygBillingCandidates(
         } else if (!companyRows.length || coverage.missing.length) {
           status = "incomplete_usage";
           reason = companyRows.length
-            ? `${coverage.missing.length} tenant-day usage gaps; first: ${coverage.missing[0]}`
+            ? `${coverage.missing.length} tenant-day usage gaps; first: ${coverage.missing[0].tenantName}: ${coverage.missing[0].usageDate}`
             : "No finalized daily usage found";
         } else if (pricingIssues.length) {
           status = "unpriced";
@@ -2478,6 +2516,210 @@ export const billingCandidatesPage = query({
       total: eligible.length,
       hasMore: (page + 1) * pageSize < eligible.length,
     };
+  },
+});
+
+export const usageGaps = query({
+  args: { companyId: v.id("companies"), month: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    await assertCanManageUsage(ctx, user, args.companyId);
+    const [rows, captures, tenants, assignments, resolutions] =
+      await Promise.all([
+        ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_company_month", (q) =>
+            q.eq("companyId", args.companyId).eq("month", args.month),
+          )
+          .collect(),
+        ctx.db
+          .query("dailyUsageCaptureRuns")
+          .withIndex("by_month", (q) => q.eq("month", args.month))
+          .collect(),
+        ctx.db.query("manageOneTenants").collect(),
+        ctx.db
+          .query("manageOneTenantAssignments")
+          .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+          .collect(),
+        ctx.db
+          .query("dailyUsageGapResolutions")
+          .withIndex("by_company_month", (q) =>
+            q.eq("companyId", args.companyId).eq("month", args.month),
+          )
+          .collect(),
+      ]);
+    const activeTenants = tenants
+      .map((tenant) =>
+        tenantForCompanyMonth(
+          tenant,
+          args.companyId,
+          args.month,
+          assignments,
+          rows,
+        ),
+      )
+      .filter((tenant): tenant is Doc<"manageOneTenants"> => tenant !== null);
+    const coverage = paygCoverage(
+      rows,
+      activeTenants,
+      args.month,
+      captures,
+      resolutions,
+    );
+    return coverage.missing.map((gap) => {
+      const assignment = assignments.find(
+        (assignment) =>
+          assignment.tenantId === gap.tenantId &&
+          assignment.companyId === args.companyId &&
+          assignment.effectiveFrom <= gap.usageDate &&
+          (!assignment.effectiveTo || assignment.effectiveTo >= gap.usageDate),
+      );
+      return {
+        ...gap,
+        assignmentId: assignment?._id ?? null,
+        assignmentEffectiveFrom: assignment?.effectiveFrom ?? null,
+      };
+    });
+  },
+});
+
+export const correctTenantAssignmentStart = mutation({
+  args: {
+    assignmentId: v.id("manageOneTenantAssignments"),
+    effectiveFrom: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    if (!isCeoOrHob(user)) {
+      throw new ConvexError({
+        code: "FORBIDDEN",
+        message: "Only CEO or Head of Business can correct tenant assignments",
+      });
+    }
+    assertValidDateKey(args.effectiveFrom);
+    const assignment = await ctx.db.get(args.assignmentId);
+    if (!assignment) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Tenant assignment not found",
+      });
+    }
+    if (assignment.effectiveTo && args.effectiveFrom > assignment.effectiveTo) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Assignment start cannot be after its end date",
+      });
+    }
+    const history = await ctx.db
+      .query("manageOneTenantAssignments")
+      .withIndex("by_tenant", (q) => q.eq("tenantId", assignment.tenantId))
+      .collect();
+    const overlap = history.find(
+      (candidate) =>
+        candidate._id !== assignment._id &&
+        candidate.effectiveFrom <= (assignment.effectiveTo ?? "9999-12-31") &&
+        (!candidate.effectiveTo || candidate.effectiveTo >= args.effectiveFrom),
+    );
+    if (overlap) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Corrected assignment would overlap another tenant assignment",
+      });
+    }
+    await ctx.db.patch(assignment._id, { effectiveFrom: args.effectiveFrom });
+    if (assignment.status === "active") {
+      await ctx.db.patch(assignment.tenantId, {
+        billingLinkedAt: Date.parse(`${args.effectiveFrom}T00:00:00.000Z`),
+      });
+    }
+  },
+});
+
+export const confirmZeroUsageGap = mutation({
+  args: {
+    companyId: v.id("companies"),
+    tenantId: v.id("manageOneTenants"),
+    usageDate: v.string(),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    await assertCanManageUsage(ctx, user, args.companyId);
+    assertValidDateKey(args.usageDate);
+    const reason = args.reason.trim();
+    if (reason.length < 5) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Enter a clear reason for confirming zero usage",
+      });
+    }
+    const tenant = await ctx.db.get(args.tenantId);
+    if (!tenant) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Tenant not found" });
+    }
+    const assignments = await ctx.db
+      .query("manageOneTenantAssignments")
+      .withIndex("by_tenant", (q) => q.eq("tenantId", args.tenantId))
+      .collect();
+    const assignedForDate = assignments.some(
+      (assignment) =>
+        assignment.companyId === args.companyId &&
+        assignment.effectiveFrom <= args.usageDate &&
+        (!assignment.effectiveTo || assignment.effectiveTo >= args.usageDate),
+    );
+    const linkedFrom = tenant.billingLinkedAt
+      ? new Date(tenant.billingLinkedAt).toISOString().slice(0, 10)
+      : undefined;
+    const companyRows = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_company_month", (q) =>
+        q
+          .eq("companyId", args.companyId)
+          .eq("month", args.usageDate.slice(0, 7)),
+      )
+      .collect();
+    const hasCompanyEvidence = companyRows.some(
+      (candidate) => candidate.tenantId === args.tenantId,
+    );
+    if (
+      !assignedForDate &&
+      !hasCompanyEvidence &&
+      (tenant.linkedCompanyId !== args.companyId ||
+        (linkedFrom && linkedFrom > args.usageDate))
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "This tenant was not assigned to the customer on that date",
+      });
+    }
+    const row = companyRows.find(
+      (candidate) =>
+        candidate.tenantId === args.tenantId &&
+        candidate.usageDate === args.usageDate,
+    );
+    if (row) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "Usage now exists for this tenant and date; reload the review",
+      });
+    }
+    const existing = await ctx.db
+      .query("dailyUsageGapResolutions")
+      .withIndex("by_tenant_date", (q) =>
+        q.eq("tenantId", args.tenantId).eq("usageDate", args.usageDate),
+      )
+      .first();
+    if (existing) return existing._id;
+    return await ctx.db.insert("dailyUsageGapResolutions", {
+      companyId: args.companyId,
+      tenantId: args.tenantId,
+      usageDate: args.usageDate,
+      month: args.usageDate.slice(0, 7),
+      resolution: "confirmed_zero_usage",
+      reason,
+      resolvedBy: user._id,
+      resolvedAt: Date.now(),
+    });
   },
 });
 
