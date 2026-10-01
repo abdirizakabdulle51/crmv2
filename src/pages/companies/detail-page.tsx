@@ -1,6 +1,12 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  Component,
+  useEffect,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import {
   Bar,
   BarChart,
@@ -1500,48 +1506,64 @@ function OnboardingCreditSection({
   );
 }
 
-export default function CompanyDetailPage() {
+function CompanyDetailPageContent() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { currentUser } = useCrm();
   const companyId = id as Id<"companies"> | undefined;
   const canViewTrends = canViewUsageHistory(currentUser?.role);
   const canGrantCredit = canGrantOnboardingCredit(currentUser?.role);
+  const [activeTab, setActiveTab] = useState("billing-usage");
+  const billingActive = activeTab === "billing-usage";
+  const trendsActive = activeTab === "usage-trends";
+  const resourcesActive = activeTab === "manageone-usage";
+  const companyInfoActive = activeTab === "company-info";
 
   const convexCompany = useQuery(
     api.companies.getById,
     companyId && !isDrMode ? { id: companyId } : "skip",
   );
-  const convexCountries = useQuery(api.countries.list, isDrMode ? "skip" : {});
-  const convexSectors = useQuery(api.sectors.list, isDrMode ? "skip" : {});
-  const convexUsers = useQuery(api.users.listAll, isDrMode ? "skip" : {});
+  const convexCountries = useQuery(
+    api.countries.list,
+    !isDrMode && companyInfoActive ? {} : "skip",
+  );
+  const convexSectors = useQuery(
+    api.sectors.list,
+    !isDrMode && companyInfoActive ? {} : "skip",
+  );
+  const convexUsers = useQuery(
+    api.users.listAll,
+    !isDrMode && companyInfoActive ? {} : "skip",
+  );
   const convexUsageHistory = useQuery(
     api.tenantUsageHistory.history,
-    companyId && canViewTrends && !isDrMode ? { companyId } : "skip",
+    companyId && canViewTrends && trendsActive && !isDrMode
+      ? { companyId }
+      : "skip",
   );
   const convexManageOneTenants = useQuery(
     api.manageOneTenants.getByCompanyId,
-    companyId && !isDrMode ? { companyId } : "skip",
+    companyId && resourcesActive && !isDrMode ? { companyId } : "skip",
   );
   const usageHealth = useQuery(
     api.dailyUsage.health,
-    companyId && !isDrMode
+    companyId && resourcesActive && !isDrMode
       ? { companyId, month: currentMonthInputValue() }
       : "skip",
   );
   const billingSnapshot = useQuery(
     api.dailyUsage.companyBillingSnapshot,
-    companyId && !isDrMode
+    companyId && (billingActive || resourcesActive) && !isDrMode
       ? { companyId, month: currentMonthInputValue() }
       : "skip",
   );
   const customerCredits = useQuery(
     api.customerCredits.listByCompany,
-    companyId && !isDrMode ? { companyId } : "skip",
+    companyId && companyInfoActive && !isDrMode ? { companyId } : "skip",
   );
   const paygBilling = useQuery(
     api.invoices.paygBillingStatus,
-    companyId && !isDrMode ? { companyId } : "skip",
+    companyId && billingActive && !isDrMode ? { companyId } : "skip",
   );
   const createPaygInvoice = useMutation(api.invoices.createPaygDraftFromUsage);
   const [billingMonthPending, setBillingMonthPending] = useState<string | null>(
@@ -1551,14 +1573,16 @@ export default function CompanyDetailPage() {
     isDrMode && companyId ? `/api/companies/${companyId}` : null,
   );
   const drCountries = useDrRows<Country>(
-    isDrMode ? "/api/countries?limit=1000" : null,
+    isDrMode && companyInfoActive ? "/api/countries?limit=1000" : null,
   );
   const drSectors = useDrRows<Sector>(
-    isDrMode ? "/api/sectors?limit=1000" : null,
+    isDrMode && companyInfoActive ? "/api/sectors?limit=1000" : null,
   );
-  const drUsers = useDrRows<User>(isDrMode ? "/api/users?limit=1000" : null);
+  const drUsers = useDrRows<User>(
+    isDrMode && companyInfoActive ? "/api/users?limit=1000" : null,
+  );
   const drUsageHistory = useDrRows<TenantUsageHistoryRow>(
-    isDrMode && companyId && canViewTrends
+    isDrMode && companyId && canViewTrends && trendsActive
       ? `/api/tenant-usage-history?companyId=${companyId}&limit=2000`
       : null,
   );
@@ -1573,7 +1597,7 @@ export default function CompanyDetailPage() {
 
   const goBack = () => navigate("/companies");
 
-  if (!company || !countries || !sectors || !users) {
+  if (!company) {
     return (
       <div className="space-y-4 p-6 md:p-8">
         <Skeleton className="h-9 w-40" />
@@ -1597,7 +1621,7 @@ export default function CompanyDetailPage() {
         <p className="mt-1 text-muted-foreground">{company.name}</p>
       </div>
 
-      {!isDrMode ? (
+      {!isDrMode && billingActive ? (
         <Card className="max-w-5xl">
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1666,7 +1690,11 @@ export default function CompanyDetailPage() {
         </Card>
       ) : null}
 
-      <Tabs defaultValue="billing-usage" className="max-w-5xl">
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="max-w-5xl"
+      >
         <TabsList className="grid h-auto w-full grid-cols-2 lg:grid-cols-4">
           <TabsTrigger value="billing-usage">Billing</TabsTrigger>
           <TabsTrigger value="usage-trends">Usage Trends</TabsTrigger>
@@ -1675,7 +1703,14 @@ export default function CompanyDetailPage() {
         </TabsList>
 
         <TabsContent value="company-info" className="mt-4">
-          {isDrMode ? (
+          {!countries || !sectors || !users ? (
+            <Card>
+              <CardContent className="space-y-3 pt-6">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-72 w-full" />
+              </CardContent>
+            </Card>
+          ) : isDrMode ? (
             <Card>
               <CardHeader>
                 <CardTitle>Company Detail</CardTitle>
@@ -1813,5 +1848,58 @@ export default function CompanyDetailPage() {
 
       <div className="h-12" aria-hidden="true" />
     </div>
+  );
+}
+
+class CustomerPageErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Customer page failed", error, info);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="p-6 md:p-8">
+        <Card className="max-w-2xl border-destructive/40">
+          <CardHeader>
+            <CardTitle>Customer section could not load</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {this.state.error.message || "A customer data query failed."}
+            </p>
+            <div className="flex gap-2">
+              <Button onClick={() => this.setState({ error: null })}>
+                Try again
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => window.location.assign("/companies")}
+              >
+                Back to customers
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+}
+
+export default function CompanyDetailPage() {
+  const { id } = useParams();
+  return (
+    <CustomerPageErrorBoundary key={id}>
+      <CompanyDetailPageContent />
+    </CustomerPageErrorBoundary>
   );
 }

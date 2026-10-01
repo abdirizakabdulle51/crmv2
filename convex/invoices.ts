@@ -2208,13 +2208,36 @@ export const paygBillingStatus = query({
       .query("dailyUsageSnapshots")
       .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
       .collect();
+    const invoices = await ctx.db
+      .query("invoices")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect();
+    const invoicedMonths = new Set(
+      invoices
+        .filter(
+          (invoice) =>
+            invoice.sourceMonth &&
+            invoice.status !== "cancelled" &&
+            invoice.status !== "void",
+        )
+        .map((invoice) => invoice.sourceMonth!),
+    );
     const currentMonth = new Date().toISOString().slice(0, 7);
     const months = [...new Set(rows.map((row) => row.month))]
-      .filter((month) => month < currentMonth)
+      .filter((month) => month < currentMonth && !invoicedMonths.has(month))
       .sort();
-    const results = await Promise.all(
-      months.map((month) => buildPaygBillingCandidates(ctx, user, month)),
-    );
+    const results = [];
+    for (const month of months) {
+      results.push(
+        await buildPaygBillingCandidates(
+          ctx,
+          user,
+          month,
+          Date.now(),
+          args.companyId,
+        ),
+      );
+    }
     return results
       .flat()
       .filter(

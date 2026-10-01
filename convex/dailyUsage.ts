@@ -350,7 +350,8 @@ function tenantForCompanyMonth(
     (tenant.enabled === false &&
       (!tenant.billingDisabledAt ||
         tenant.billingDisabledAt < monthStartTimestamp(month))) ||
-    (tenant.billingLinkedAt && tenant.billingLinkedAt > monthEndTimestamp(month))
+    (tenant.billingLinkedAt &&
+      tenant.billingLinkedAt > monthEndTimestamp(month))
   ) {
     return null;
   }
@@ -1423,7 +1424,9 @@ export const reconcileCatalogMappings = mutation({
         .withIndex("by_source_key", (q) => q.eq("sourceKey", sourceKey))
         .unique();
       if (duplicate && duplicate._id !== row._id) {
-        conflicts.add(`${label} has a duplicate captured row on ${row.usageDate}`);
+        conflicts.add(
+          `${label} has a duplicate captured row on ${row.usageDate}`,
+        );
         continue;
       }
       await ctx.db.patch(row._id, {
@@ -2154,8 +2157,37 @@ export async function buildPaygBillingCandidates(
   user: Doc<"users">,
   month: string,
   now = Date.now(),
+  companyId?: Id<"companies">,
 ) {
   const monthEnd = monthEndTimestamp(month);
+  const scopedAssignments = companyId
+    ? await ctx.db
+        .query("manageOneTenantAssignments")
+        .withIndex("by_company", (q) => q.eq("companyId", companyId))
+        .collect()
+    : undefined;
+  const scopedTenants = companyId
+    ? await Promise.all([
+        ctx.db
+          .query("manageOneTenants")
+          .withIndex("by_linked_company", (q) =>
+            q.eq("linkedCompanyId", companyId),
+          )
+          .collect(),
+        Promise.all(
+          (scopedAssignments ?? []).map((assignment) =>
+            ctx.db.get(assignment.tenantId),
+          ),
+        ),
+      ]).then(([linked, assigned]) => [
+        ...new Map(
+          [...linked, ...assigned.filter((row) => row !== null)].map((row) => [
+            row._id,
+            row,
+          ]),
+        ).values(),
+      ])
+    : undefined;
   const [
     companies,
     tenants,
@@ -2165,23 +2197,41 @@ export async function buildPaygBillingCandidates(
     catalog,
     contracts,
     captures,
-  ] =
-    await Promise.all([
-      ctx.db.query("companies").collect(),
-      ctx.db.query("manageOneTenants").collect(),
-      ctx.db.query("manageOneTenantAssignments").collect(),
-      ctx.db
-        .query("dailyUsageSnapshots")
-        .withIndex("by_month", (q) => q.eq("month", month))
-        .collect(),
-      ctx.db.query("invoices").collect(),
-      ctx.db.query("serviceCatalog").collect(),
-      ctx.db.query("customerContracts").collect(),
-      ctx.db
-        .query("dailyUsageCaptureRuns")
-        .withIndex("by_month", (q) => q.eq("month", month))
-        .collect(),
-    ]);
+  ] = await Promise.all([
+    companyId
+      ? ctx.db.get(companyId).then((company) => (company ? [company] : []))
+      : ctx.db.query("companies").collect(),
+    scopedTenants ?? ctx.db.query("manageOneTenants").collect(),
+    scopedAssignments ?? ctx.db.query("manageOneTenantAssignments").collect(),
+    companyId
+      ? ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_company_month", (q) =>
+            q.eq("companyId", companyId).eq("month", month),
+          )
+          .collect()
+      : ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_month", (q) => q.eq("month", month))
+          .collect(),
+    companyId
+      ? ctx.db
+          .query("invoices")
+          .withIndex("by_company", (q) => q.eq("companyId", companyId))
+          .collect()
+      : ctx.db.query("invoices").collect(),
+    ctx.db.query("serviceCatalog").collect(),
+    companyId
+      ? ctx.db
+          .query("customerContracts")
+          .withIndex("by_company", (q) => q.eq("companyId", companyId))
+          .collect()
+      : ctx.db.query("customerContracts").collect(),
+    ctx.db
+      .query("dailyUsageCaptureRuns")
+      .withIndex("by_month", (q) => q.eq("month", month))
+      .collect(),
+  ]);
   const visibleCompanies = companies.filter(
     (company) =>
       canViewCompany(user, company) &&
@@ -2206,8 +2256,8 @@ export async function buildPaygBillingCandidates(
     visibleCompanies
       .filter(
         (company) =>
-          tenants.some(
-            (tenant) => Boolean(
+          tenants.some((tenant) =>
+            Boolean(
               tenantForCompanyMonth(
                 tenant,
                 company._id,
