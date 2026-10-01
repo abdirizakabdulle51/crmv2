@@ -160,6 +160,21 @@ describe("automated PAYG billing", () => {
       latestUsageDate: "2026-08-31",
       expectedLastDate: "2026-08-31",
     });
+    const candidatePage = await ceo.query(
+      api.dailyUsage.billingCandidatesPage,
+      { month: "2026-08", page: 0, pageSize: 20 },
+    );
+    expect(candidatePage).toMatchObject({
+      page: 0,
+      pageSize: 20,
+      total: 1,
+      hasMore: false,
+    });
+    expect(
+      candidatePage.rows.find(
+        (row) => "companyId" in row && row.companyId === seeded.companyId,
+      ),
+    ).toMatchObject({ status: "ready", amount: 10 });
     expect(candidates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

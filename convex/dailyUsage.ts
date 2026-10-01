@@ -2396,6 +2396,91 @@ export const billingCandidates = query({
   },
 });
 
+export const billingCandidatesPage = query({
+  args: {
+    month: v.string(),
+    page: v.number(),
+    pageSize: v.optional(v.number()),
+    search: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const page = Math.max(0, Math.floor(args.page));
+    const pageSize = Math.min(50, Math.max(5, Math.floor(args.pageSize ?? 20)));
+    const search = args.search?.trim().toLowerCase() ?? "";
+    const [companies, contracts, tenants, assignments] = await Promise.all([
+      ctx.db.query("companies").collect(),
+      ctx.db.query("customerContracts").collect(),
+      ctx.db.query("manageOneTenants").collect(),
+      ctx.db.query("manageOneTenantAssignments").collect(),
+    ]);
+    const billableCompanyIds = new Set([
+      ...tenants
+        .map((tenant) => tenant.linkedCompanyId)
+        .filter((companyId) => companyId !== undefined),
+      ...assignments.map((assignment) => assignment.companyId),
+    ]);
+    const eligible = companies
+      .filter(
+        (company) =>
+          canViewCompany(user, company) &&
+          billableCompanyIds.has(company._id) &&
+          company.lifecycleStatus !== "prospect" &&
+          company.lifecycleStatus !== "lost" &&
+          (!search || company.name.toLowerCase().includes(search)) &&
+          !contracts.some(
+            (contract) =>
+              contract.companyId === company._id &&
+              contract.status !== "terminated" &&
+              contractCoversMonth(contract, args.month),
+          ),
+      )
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const selected = eligible.slice(page * pageSize, (page + 1) * pageSize);
+    const rows = [];
+    for (const company of selected) {
+      const candidates = await buildPaygBillingCandidates(
+        ctx,
+        user,
+        args.month,
+        Date.now(),
+        company._id,
+      );
+      rows.push(...candidates);
+    }
+    if (page === 0 && isCeoOrHob(user)) {
+      rows.push(
+        ...tenants
+          .filter(
+            (tenant) =>
+              !tenant.linkedCompanyId &&
+              tenant.enabled !== false &&
+              (!search || tenant.name.toLowerCase().includes(search)),
+          )
+          .slice(0, pageSize)
+          .map((tenant) => ({
+            tenantId: tenant._id,
+            companyName: tenant.name,
+            model: "Unlinked" as const,
+            period: args.month,
+            amount: 0,
+            status: "unlinked_tenant" as const,
+            reason:
+              "Link this ManageOne tenant to a CRM customer before billing",
+            tenantCount: 1,
+          })),
+      );
+    }
+    return {
+      rows,
+      page,
+      pageSize,
+      total: eligible.length,
+      hasMore: (page + 1) * pageSize < eligible.length,
+    };
+  },
+});
+
 export const createDuePaygDrafts = internalMutation({
   args: { now: v.optional(v.number()) },
   handler: async (ctx, args) => {

@@ -99,6 +99,20 @@ type CustomerReminderRunResult = {
   failed: number;
 };
 
+async function mapInBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  mapper: (item: T) => Promise<R>,
+) {
+  const results: R[] = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    results.push(
+      ...(await Promise.all(items.slice(index, index + batchSize).map(mapper))),
+    );
+  }
+  return results;
+}
+
 async function invoiceLinesWithOnboardingCredit(
   ctx: MutationCtx,
   args: {
@@ -2304,137 +2318,141 @@ export const previewContractInvoiceBatch = query({
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     monthStartTimestamp(args.sourceMonth);
-    const contracts = await ctx.db.query("customerContracts").collect();
-    const rows = await Promise.all(
-      contracts.map(async (contract) => {
-        const company = await ctx.db.get(contract.companyId);
-        if (!company || !canViewCompany(user, company)) return null;
-        const lineItems = await ctx.db
-          .query("customerContractLineItems")
-          .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
-          .collect();
-        const existingInvoice = await findContractInvoiceForMonth(
-          ctx,
-          contract,
-          args.sourceMonth,
-        );
-        let status:
-          | "ready"
-          | "already_invoiced"
-          | "no_services"
-          | "incomplete_usage"
-          | "missing_profile"
-          | "not_in_period"
-          | "not_due"
-          | "inactive" = "ready";
-        let reason = "Ready to create draft";
-        let amount: number | undefined;
-        let cycleMonths: string[] = [];
+    const contracts = (
+      await ctx.db.query("customerContracts").collect()
+    ).filter(
+      (contract) =>
+        contract.status !== "draft" &&
+        contract.status !== "renewed" &&
+        contractCoversMonth(contract, args.sourceMonth),
+    );
+    const rows = await mapInBatches(contracts, 8, async (contract) => {
+      const company = await ctx.db.get(contract.companyId);
+      if (!company || !canViewCompany(user, company)) return null;
+      const lineItems = await ctx.db
+        .query("customerContractLineItems")
+        .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+        .collect();
+      const existingInvoice = await findContractInvoiceForMonth(
+        ctx,
+        contract,
+        args.sourceMonth,
+      );
+      let status:
+        | "ready"
+        | "already_invoiced"
+        | "no_services"
+        | "incomplete_usage"
+        | "missing_profile"
+        | "not_in_period"
+        | "not_due"
+        | "inactive" = "ready";
+      let reason = "Ready to create draft";
+      let amount: number | undefined;
+      let cycleMonths: string[] = [];
 
-        if (contract.status === "draft" || contract.status === "renewed") {
-          status = "inactive";
-          reason = "Contract must be activated before billing";
-        } else if (!contractCoversMonth(contract, args.sourceMonth)) {
-          status = "not_in_period";
-          reason = "Contract does not cover this month";
-        } else if (
-          !isDynamicPricingContract(contract) &&
-          lineItems.length === 0
-        ) {
-          status = "no_services";
-          reason = "No contract services";
-        } else {
-          try {
-            cycleMonths = contractCycleMonths(contract, args.sourceMonth);
-            if (
-              (contract.billingTiming ?? "postpaid") === "postpaid" &&
-              Date.now() <
-                monthEndTimestamp(cycleMonths[cycleMonths.length - 1])
-            ) {
-              status = "not_due";
-              reason = "Postpaid billing cycle has not ended";
-            } else if ((contract.billingTiming ?? "postpaid") === "postpaid") {
-              await assertLinkedUsageComplete(
-                ctx,
-                contract.companyId,
-                cycleMonths,
-                contract.startDate,
-                contract.endDate,
+      if (contract.status === "draft" || contract.status === "renewed") {
+        status = "inactive";
+        reason = "Contract must be activated before billing";
+      } else if (!contractCoversMonth(contract, args.sourceMonth)) {
+        status = "not_in_period";
+        reason = "Contract does not cover this month";
+      } else if (
+        !isDynamicPricingContract(contract) &&
+        lineItems.length === 0
+      ) {
+        status = "no_services";
+        reason = "No contract services";
+      } else {
+        try {
+          cycleMonths = contractCycleMonths(contract, args.sourceMonth);
+          if (
+            (contract.billingTiming ?? "postpaid") === "postpaid" &&
+            Date.now() < monthEndTimestamp(cycleMonths[cycleMonths.length - 1])
+          ) {
+            status = "not_due";
+            reason = "Postpaid billing cycle has not ended";
+          } else if ((contract.billingTiming ?? "postpaid") === "postpaid") {
+            await assertLinkedUsageComplete(
+              ctx,
+              contract.companyId,
+              cycleMonths,
+              contract.startDate,
+              contract.endDate,
+            );
+          }
+        } catch (error) {
+          if (
+            error instanceof ConvexError &&
+            error.data?.code === "USAGE_INCOMPLETE"
+          ) {
+            status = "incomplete_usage";
+            reason = String(error.data.message);
+          } else {
+            status = "not_due";
+            reason = "Not a billing-cycle boundary";
+          }
+        }
+      }
+      if (status === "ready" && existingInvoice) {
+        status = "already_invoiced";
+        reason = existingInvoice.invoiceNumber
+          ? `Already has ${existingInvoice.invoiceNumber}`
+          : "Already has a draft invoice";
+      }
+      if (
+        status === "ready" &&
+        !(await resolveInvoiceProfileForCompany(ctx, company))
+      ) {
+        status = "missing_profile";
+        reason = "No active invoice profile for this customer country";
+      }
+      if (status === "ready") {
+        try {
+          if (
+            contract.pricingModel === "monthly_minimum" ||
+            contract.pricingModel === "discounted_usage"
+          ) {
+            amount = (
+              await priceMonthlyContractUsage(ctx, contract, args.sourceMonth)
+            ).payable;
+          } else {
+            const allocations = contractValueAllocations(contract);
+            if (allocations) {
+              amount = sumMoney(
+                allocations
+                  .filter((allocation) =>
+                    cycleMonths.includes(allocation.month),
+                  )
+                  .map((allocation) => allocation.amount),
               );
             }
-          } catch (error) {
-            if (
-              error instanceof ConvexError &&
-              error.data?.code === "USAGE_INCOMPLETE"
-            ) {
-              status = "incomplete_usage";
-              reason = String(error.data.message);
-            } else {
-              status = "not_due";
-              reason = "Not a billing-cycle boundary";
-            }
           }
+        } catch (error) {
+          status = "no_services";
+          reason =
+            error instanceof ConvexError
+              ? String(error.data?.message ?? error.message)
+              : "Contract pricing needs review";
         }
-        if (status === "ready" && existingInvoice) {
-          status = "already_invoiced";
-          reason = existingInvoice.invoiceNumber
-            ? `Already has ${existingInvoice.invoiceNumber}`
-            : "Already has a draft invoice";
-        }
-        if (
-          status === "ready" &&
-          !(await resolveInvoiceProfileForCompany(ctx, company))
-        ) {
-          status = "missing_profile";
-          reason = "No active invoice profile for this customer country";
-        }
-        if (status === "ready") {
-          try {
-            if (
-              contract.pricingModel === "monthly_minimum" ||
-              contract.pricingModel === "discounted_usage"
-            ) {
-              amount = (
-                await priceMonthlyContractUsage(ctx, contract, args.sourceMonth)
-              ).payable;
-            } else {
-              const allocations = contractValueAllocations(contract);
-              if (allocations) {
-                amount = sumMoney(
-                  allocations
-                    .filter((allocation) =>
-                      cycleMonths.includes(allocation.month),
-                    )
-                    .map((allocation) => allocation.amount),
-                );
-              }
-            }
-          } catch (error) {
-            status = "no_services";
-            reason =
-              error instanceof ConvexError
-                ? String(error.data?.message ?? error.message)
-                : "Contract pricing needs review";
-          }
-        }
+      }
 
-        return {
-          contractId: contract._id,
-          contractNumber: contract.contractNumber,
-          title: contract.title,
-          companyName: company.name,
-          contractStatus: contract.status,
-          startDate: contract.startDate,
-          endDate: contract.endDate,
-          lineItemCount: lineItems.length,
-          existingInvoiceId: existingInvoice?._id,
-          existingInvoiceNumber: existingInvoice?.invoiceNumber,
-          status,
-          reason,
-          amount,
-        };
-      }),
-    );
+      return {
+        contractId: contract._id,
+        contractNumber: contract.contractNumber,
+        title: contract.title,
+        companyName: company.name,
+        contractStatus: contract.status,
+        startDate: contract.startDate,
+        endDate: contract.endDate,
+        lineItemCount: lineItems.length,
+        existingInvoiceId: existingInvoice?._id,
+        existingInvoiceNumber: existingInvoice?.invoiceNumber,
+        status,
+        reason,
+        amount,
+      };
+    });
     return rows
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .sort((a, b) => a.companyName.localeCompare(b.companyName));

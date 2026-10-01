@@ -38,15 +38,18 @@ vi.mock("@/convex/_generated/api.js", () => ({
       createDraftFromContract: "createContract",
     },
     dailyUsage: {
-      billingCandidates: "payg",
+      billingCandidatesPage: "payg",
       createDraftInvoiceFromRollup: "createPayg",
+      refreshDraftInvoiceFromRollup: "refreshPayg",
     },
   },
 }));
 
 vi.mock("convex/react", () => ({
   useQuery: (query: string) =>
-    query === "contracts" ? mocks.contracts : mocks.payg,
+    query === "contracts"
+      ? mocks.contracts
+      : { rows: mocks.payg, page: 0, pageSize: 20, total: 1, hasMore: false },
   useMutation: () => vi.fn(),
 }));
 
