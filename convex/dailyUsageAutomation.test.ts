@@ -126,6 +126,23 @@ describe("automated PAYG billing", () => {
     ).toMatchObject({
       status: "incomplete_usage",
     });
+    expect(
+      await ceo.query(api.dailyUsage.billingCandidate, {
+        companyId: seeded.companyId,
+        month: "2026-08",
+      }),
+    ).toMatchObject({ status: "incomplete_usage" });
+    expect(
+      await ceo.query(api.dailyUsage.health, {
+        companyId: seeded.companyId,
+        month: "2026-08",
+      }),
+    ).toMatchObject({
+      companyCount: 1,
+      linkedTenantCount: 1,
+      dailyBilling: { rowCount: 30, latestUsageDate: "2026-08-31" },
+      catalog: { missingPriceRowCount: 30 },
+    });
 
     const gaps = await ceo.query(api.dailyUsage.usageGaps, {
       companyId: seeded.companyId,

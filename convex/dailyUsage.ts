@@ -2434,6 +2434,22 @@ export const billingCandidates = query({
   },
 });
 
+export const billingCandidate = query({
+  args: { companyId: v.id("companies"), month: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    await assertCanManageUsage(ctx, user, args.companyId);
+    const candidates = await buildPaygBillingCandidates(
+      ctx,
+      user,
+      args.month,
+      Date.now(),
+      args.companyId,
+    );
+    return candidates[0] ?? null;
+  },
+});
+
 export const billingCandidatesPage = query({
   args: {
     month: v.string(),
@@ -3447,7 +3463,28 @@ export const health = query({
         );
     const visibleCompanyIds = new Set(companies.map((company) => company._id));
 
-    const tenantRows = await ctx.db.query("manageOneTenants").collect();
+    const [tenantRows, dailyRows, catalog] = await Promise.all([
+      args.companyId
+        ? ctx.db
+            .query("manageOneTenants")
+            .withIndex("by_linked_company", (q) =>
+              q.eq("linkedCompanyId", args.companyId!),
+            )
+            .collect()
+        : ctx.db.query("manageOneTenants").collect(),
+      args.companyId
+        ? ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_company_month", (q) =>
+              q.eq("companyId", args.companyId!).eq("month", args.month),
+            )
+            .collect()
+        : ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_month", (q) => q.eq("month", args.month))
+            .collect(),
+      ctx.db.query("serviceCatalog").collect(),
+    ]);
     const visibleTenantRows = tenantRows.filter(
       (tenant) =>
         tenant.linkedCompanyId && visibleCompanyIds.has(tenant.linkedCompanyId),
@@ -3484,6 +3521,20 @@ export const health = query({
     const staleHourly =
       latestHourlyCapturedAt === null ||
       now - latestHourlyCapturedAt > HOURLY_STALE_MS;
+    const visibleDailyRows = args.companyId
+      ? dailyRows
+      : dailyRows.filter((row) => visibleCompanyIds.has(row.companyId));
+    const dailyBilling = buildDailyUsageBillingHealth(
+      visibleDailyRows,
+      businessDate,
+    );
+    const catalogById = new Map(catalog.map((item) => [item._id, item]));
+    const missingCatalogRows = visibleDailyRows.filter((row) => {
+      const item = row.catalogItemId
+        ? catalogById.get(row.catalogItemId)
+        : undefined;
+      return !item || !item.productGroup || !item.serviceCode;
+    });
 
     return {
       month: args.month,
@@ -3497,6 +3548,13 @@ export const health = query({
         tenantCount: latestHourlyRows.length,
         stale: staleHourly,
         totals: sumHourly(latestHourlyRows),
+      },
+      dailyBilling,
+      catalog: {
+        missingPriceRowCount: missingCatalogRows.length,
+        missingServices: [
+          ...new Set(missingCatalogRows.map((row) => row.serviceType)),
+        ].sort((left, right) => left.localeCompare(right)),
       },
     };
   },

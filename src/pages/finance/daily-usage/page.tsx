@@ -1,4 +1,11 @@
-import { useMemo, useState } from "react";
+import {
+  Component,
+  useEffect,
+  useMemo,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -82,7 +89,7 @@ function formatMoney(value?: number) {
   }).format(value);
 }
 
-export default function DailyUsagePage() {
+function DailyUsagePageContent() {
   const navigate = useNavigate();
   const companies = useQuery(api.companies.list, {});
   const createDraftInvoice = useMutation(
@@ -102,16 +109,16 @@ export default function DailyUsagePage() {
   const [showRollup, setShowRollup] = useState(false);
   const [showUnpricedOnly, setShowUnpricedOnly] = useState(false);
   const shouldLoadCapturedRows = showCapturedRows || companyId !== "all";
-  const shouldLoadDetailedQueries = showRollup || companyId !== "all";
-  const shouldLoadHealth = companyId !== "all" && !showRollup;
+  const shouldLoadDetailedQueries = showRollup;
+  const shouldLoadHealth = companyId !== "all";
+
+  useEffect(() => setShowRollup(false), [companyId, month]);
   const status = useQuery(api.dailyUsage.status, { month });
-  const billingCandidates = useQuery(
-    api.dailyUsage.billingCandidates,
-    companyId === "all" ? "skip" : { month },
-  );
-  const billingCandidate = billingCandidates?.find(
-    (candidate) =>
-      "companyId" in candidate && candidate.companyId === companyId,
+  const billingCandidate = useQuery(
+    api.dailyUsage.billingCandidate,
+    showRollup && companyId !== "all"
+      ? { month, companyId: companyId as Id<"companies"> }
+      : "skip",
   );
 
   const review = useQuery(
@@ -149,7 +156,7 @@ export default function DailyUsagePage() {
             companyId === "all" ? undefined : (companyId as Id<"companies">),
         }
       : "skip",
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ) as any;
 
   const rows = useMemo(() => {
@@ -216,7 +223,7 @@ export default function DailyUsagePage() {
         rows: health.dailyBilling.rowCount,
         companyCount: health.companyCount,
         dayCount: health.dailyBilling.latestUsageDate ? 1 : 0,
-        serviceCount: Object.keys(health.dailyBilling.serviceRows).length,
+        serviceCount: health.dailyBilling.serviceRows.length,
         locked: 0,
         attached: health.dailyBilling.attachedRowCount,
       };
@@ -482,8 +489,8 @@ export default function DailyUsagePage() {
             <CardTitle>Monthly Rollup Preview</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
               Read-only month-end preview from captured daily rows. Estimated
-              quantities are prorated across{" "}
-              {review?.rollup.daysInMonth ?? "-"} days.
+              quantities are prorated across {review?.rollup.daysInMonth ?? "-"}{" "}
+              days.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -526,17 +533,17 @@ export default function DailyUsagePage() {
             <>
               {companyId === "all" ? (
                 <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-                  Select one customer to create a draft invoice from the daily usage
-                  rollup.
+                  Select one customer to create a draft invoice from the daily
+                  usage rollup.
                 </div>
               ) : null}
-              {companyId !== "all" && billingCandidates === undefined ? (
+              {companyId !== "all" && billingCandidate === undefined ? (
                 <div className="mb-4 rounded-md border px-3 py-2 text-sm text-muted-foreground">
                   Checking invoice readiness…
                 </div>
               ) : null}
               {companyId !== "all" &&
-              billingCandidates !== undefined &&
+              billingCandidate !== undefined &&
               billingCandidate?.status !== "ready" ? (
                 <div className="mb-4 flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -585,7 +592,9 @@ export default function DailyUsagePage() {
                         size="sm"
                         onClick={() => setShowUnpricedOnly((value) => !value)}
                       >
-                        {showUnpricedOnly ? "Show all services" : "Show unpriced only"}
+                        {showUnpricedOnly
+                          ? "Show all services"
+                          : "Show unpriced only"}
                       </Button>
                       <Button
                         variant="outline"
@@ -627,7 +636,10 @@ export default function DailyUsagePage() {
                   label="Estimated monthly total"
                   valueText={formatMoney(rollupTotals.estimatedAmount)}
                 />
-                <SummaryCard label="Priced rows" value={rollupTotals.pricedRows} />
+                <SummaryCard
+                  label="Priced rows"
+                  value={rollupTotals.pricedRows}
+                />
                 <SummaryCard
                   label="Unpriced rows"
                   value={rollupTotals.unpricedRows}
@@ -651,8 +663,8 @@ export default function DailyUsagePage() {
                     </EmptyMedia>
                     <EmptyTitle>No monthly rollup rows yet.</EmptyTitle>
                     <EmptyDescription>
-                  The preview appears once daily usage snapshots exist for the
-                  selected month and filters.
+                      The preview appears once daily usage snapshots exist for
+                      the selected month and filters.
                     </EmptyDescription>
                   </EmptyHeader>
                 </Empty>
@@ -670,7 +682,9 @@ export default function DailyUsagePage() {
                         <th className="px-3 py-2 text-right">Billable Qty</th>
                         <th className="px-3 py-2">Unit</th>
                         <th className="px-3 py-2 text-right">Pricing</th>
-                    <th className="px-3 py-2 text-right">Estimated Amount</th>
+                        <th className="px-3 py-2 text-right">
+                          Estimated Amount
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -720,8 +734,8 @@ export default function DailyUsagePage() {
                                   ? "Missing catalogue price"
                                   : "Missing catalogue mapping"
                                 : row.pricingSource === "contract"
-                                ? `Contract ${row.contractNumber ?? ""}`.trim()
-                                : "Catalog"}
+                                  ? `Contract ${row.contractNumber ?? ""}`.trim()
+                                  : "Catalog"}
                             </div>
                           </td>
                           <td className="px-3 py-3 text-right font-medium">
@@ -769,7 +783,9 @@ export default function DailyUsagePage() {
                 <EmptyMedia variant="icon">
                   <Database className="h-6 w-6" />
                 </EmptyMedia>
-                <EmptyTitle>Captured rows are hidden for faster loading.</EmptyTitle>
+                <EmptyTitle>
+                  Captured rows are hidden for faster loading.
+                </EmptyTitle>
                 <EmptyDescription>
                   Summary, health checks, and monthly rollup are loaded. Select
                   one customer or load captured rows to review the detailed
@@ -1086,7 +1102,7 @@ function DailyUsageHealthPanel({
             Pricing Gaps
           </div>
           <div className="mt-2 text-xs text-muted-foreground">
-            Rows without catalog price
+            Unclassified or missing catalogue rows
           </div>
           <div className="font-semibold">
             {health.catalog.missingPriceRowCount}
@@ -1122,5 +1138,50 @@ function SummaryCard({
         <div className="text-2xl font-bold">{valueText ?? value}</div>
       </CardContent>
     </Card>
+  );
+}
+
+class DailyUsageErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Daily usage review failed", error, info);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="p-6 md:p-8">
+        <Card className="max-w-2xl border-destructive/40">
+          <CardHeader>
+            <CardTitle>Daily usage could not load</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {this.state.error.message ||
+                "The selected customer usage could not be loaded."}
+            </p>
+            <Button onClick={() => this.setState({ error: null })}>
+              Try again
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+}
+
+export default function DailyUsagePage() {
+  return (
+    <DailyUsageErrorBoundary>
+      <DailyUsagePageContent />
+    </DailyUsageErrorBoundary>
   );
 }
