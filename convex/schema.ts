@@ -764,6 +764,10 @@ export default defineSchema({
     dataCenterName: v.optional(v.string()),
     invoiceId: v.optional(v.id("invoices")),
     lockedAt: v.optional(v.number()),
+    supersededByUsageId: v.optional(v.id("dailyUsageSnapshots")),
+    supersededAt: v.optional(v.number()),
+    supersededBy: v.optional(v.id("users")),
+    supersededReason: v.optional(v.string()),
   })
     .index("by_source_key", ["sourceKey"])
     .index("by_tenant_open_date", [

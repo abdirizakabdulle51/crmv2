@@ -280,7 +280,9 @@ function paygCoverage(
 ) {
   const expected = expectedDateKeys(month);
   const datesByTenant = new Map<Id<"manageOneTenants">, Set<string>>();
-  for (const row of rows) {
+  for (const row of rows.filter(
+    (candidate) => !candidate.supersededByUsageId,
+  )) {
     const dates = datesByTenant.get(row.tenantId) ?? new Set<string>();
     dates.add(row.usageDate);
     datesByTenant.set(row.tenantId, dates);
@@ -514,6 +516,7 @@ export function buildMonthlyRollupRows(args: {
   >();
 
   for (const row of args.rows) {
+    if (row.supersededByUsageId) continue;
     const groupKey = [
       row.companyId,
       row.catalogItemId ?? row.itemName,
@@ -736,8 +739,9 @@ export function buildDailyUsageReviewResult(args: {
   contractPricingByCompany?: ContractPricingContext;
   businessDate: string;
 }) {
-  const visibleRows = args.rows.filter((row) =>
-    args.visibleCompanyById.has(row.companyId),
+  const visibleRows = args.rows.filter(
+    (row) =>
+      !row.supersededByUsageId && args.visibleCompanyById.has(row.companyId),
   );
   const billingHealth = buildDailyUsageBillingHealth(
     visibleRows,
@@ -915,7 +919,9 @@ export function buildDailyUsageBillingInputDigest(args: {
   return deterministicDigest({
     month: args.month,
     businessDate: args.businessDate,
-    rows: sortDocumentsForDigest(args.rows),
+    rows: sortDocumentsForDigest(
+      args.rows.filter((row) => !row.supersededByUsageId),
+    ),
     companies: sortDocumentsForDigest(args.companies),
     catalogItems: sortDocumentsForDigest(args.catalogItems),
     contractPricing,
@@ -1391,9 +1397,12 @@ export const reconcileCatalogMappings = mutation({
     ]);
     const catalogById = new Map(catalog.map((item) => [item._id, item]));
     const unresolved = rows.filter(
-      (row) => !row.catalogItemId || !catalogById.has(row.catalogItemId),
+      (row) =>
+        !row.supersededByUsageId &&
+        (!row.catalogItemId || !catalogById.has(row.catalogItemId)),
     );
     let mappedRows = 0;
+    let consolidatedRows = 0;
     const mappedServices = new Set<string>();
     const ambiguous = new Map<string, string[]>();
     const unmatched = new Set<string>();
@@ -1434,9 +1443,30 @@ export const reconcileCatalogMappings = mutation({
         .withIndex("by_source_key", (q) => q.eq("sourceKey", sourceKey))
         .unique();
       if (duplicate && duplicate._id !== row._id) {
-        conflicts.add(
-          `${label} has a duplicate captured row on ${row.usageDate}`,
-        );
+        if (
+          duplicate.supersededByUsageId ||
+          duplicate.invoiceId ||
+          duplicate.lockedAt
+        ) {
+          conflicts.add(
+            `${label} has a duplicate on ${row.usageDate} that is already locked or superseded`,
+          );
+          continue;
+        }
+        if (roundQuantity(duplicate.quantity) !== roundQuantity(row.quantity)) {
+          conflicts.add(
+            `${label} has duplicate quantities on ${row.usageDate}: ${row.quantity} and ${duplicate.quantity}; manual review is required`,
+          );
+          continue;
+        }
+        await ctx.db.patch(row._id, {
+          supersededByUsageId: duplicate._id,
+          supersededAt: Date.now(),
+          supersededBy: user._id,
+          supersededReason:
+            "Identical historical capture consolidated during catalogue reconciliation",
+        });
+        consolidatedRows++;
         continue;
       }
       await ctx.db.patch(row._id, {
@@ -1453,6 +1483,7 @@ export const reconcileCatalogMappings = mutation({
 
     return {
       mappedRows,
+      consolidatedRows,
       mappedServices: [...mappedServices].sort(),
       ambiguous: [...ambiguous].map(([service, candidates]) => ({
         service,
@@ -1882,8 +1913,8 @@ export async function createDailyUsageDraftInvoice(
     });
   }
 
-  const [rows, captures, tenants, assignments, resolutions] = await Promise.all(
-    [
+  const [capturedRows, captures, tenants, assignments, resolutions] =
+    await Promise.all([
       ctx.db
         .query("dailyUsageSnapshots")
         .withIndex("by_company_month", (q) =>
@@ -1902,8 +1933,8 @@ export async function createDailyUsageDraftInvoice(
           q.eq("companyId", company._id).eq("month", month),
         )
         .collect(),
-    ],
-  );
+    ]);
+  const rows = capturedRows.filter((row) => !row.supersededByUsageId);
   if (rows.length === 0) {
     throw new ConvexError({
       code: "BAD_REQUEST",
@@ -2279,6 +2310,7 @@ export async function buildPaygBillingCandidates(
   );
   const rowsByCompany = new Map<Id<"companies">, typeof rows>();
   for (const row of rows) {
+    if (row.supersededByUsageId) continue;
     const companyRows = rowsByCompany.get(row.companyId) ?? [];
     companyRows.push(row);
     rowsByCompany.set(row.companyId, companyRows);
@@ -3094,21 +3126,24 @@ export function buildDailyUsageBillingHealth(
   rows: Doc<"dailyUsageSnapshots">[],
   businessDate: string,
 ) {
-  const latestUsageDate = rows.reduce<string | null>(
+  const activeRows = rows.filter((row) => !row.supersededByUsageId);
+  const latestUsageDate = activeRows.reduce<string | null>(
     (latest, row) =>
       latest === null || row.usageDate > latest ? row.usageDate : latest,
     null,
   );
   const latestDayRows = latestUsageDate
-    ? rows.filter((row) => row.usageDate === latestUsageDate)
+    ? activeRows.filter((row) => row.usageDate === latestUsageDate)
     : [];
-  const missingCatalogRows = rows.filter((row) => !row.catalogItemId);
-  const attachedRows = rows.filter((row) => row.invoiceId || row.lockedAt);
+  const missingCatalogRows = activeRows.filter((row) => !row.catalogItemId);
+  const attachedRows = activeRows.filter(
+    (row) => row.invoiceId || row.lockedAt,
+  );
 
   return {
     latestUsageDate,
     capturedThroughToday: latestUsageDate === businessDate,
-    rowCount: rows.length,
+    rowCount: activeRows.length,
     latestDayRowCount: latestDayRows.length,
     serviceRows: countRowsByService(latestDayRows),
     attachedRowCount: attachedRows.length,
@@ -3521,9 +3556,11 @@ export const health = query({
     const staleHourly =
       latestHourlyCapturedAt === null ||
       now - latestHourlyCapturedAt > HOURLY_STALE_MS;
-    const visibleDailyRows = args.companyId
-      ? dailyRows
-      : dailyRows.filter((row) => visibleCompanyIds.has(row.companyId));
+    const visibleDailyRows = dailyRows.filter(
+      (row) =>
+        !row.supersededByUsageId &&
+        (Boolean(args.companyId) || visibleCompanyIds.has(row.companyId)),
+    );
     const dailyBilling = buildDailyUsageBillingHealth(
       visibleDailyRows,
       businessDate,

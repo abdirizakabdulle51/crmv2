@@ -34,6 +34,7 @@ describe("historical daily usage catalogue reconciliation", () => {
       const ecsCatalogId = await ctx.db.insert("serviceCatalog", {
         serviceCategory: "ECS",
         serviceCode: "ECS",
+        productGroup: "Compute",
         itemName: "C6.large",
         billingUnit: "instance/month",
         monthlyPrice: 100,
@@ -86,7 +87,35 @@ describe("historical daily usage catalogue reconciliation", () => {
         itemName: "C6.large",
         lockedAt: 1,
       });
-      return { companyId, openRowId, ecsCatalogId };
+      const duplicateRowId = await insertUsage({
+        date: "2026-08-04",
+        serviceType: "ECS",
+        itemName: "c6.large",
+      });
+      const authoritativeRowId = await ctx.db.insert("dailyUsageSnapshots", {
+        companyId,
+        tenantId,
+        tenantName: "Historical Tenant",
+        tenantVdcId: "vdc-history",
+        usageDate: "2026-08-04",
+        month: "2026-08",
+        serviceType: "ECS",
+        itemName: "C6.large",
+        serviceCategory: "ECS",
+        quantity: 1,
+        unit: "instance/month",
+        catalogItemId: ecsCatalogId,
+        source: "manageone",
+        sourceKey: `manageone|2026-08-04|${companyId}|${tenantId}|ecs|${ecsCatalogId}|`,
+        capturedAt: 2,
+      });
+      return {
+        companyId,
+        openRowId,
+        duplicateRowId,
+        authoritativeRowId,
+        ecsCatalogId,
+      };
     });
 
     const result = await t
@@ -97,6 +126,7 @@ describe("historical daily usage catalogue reconciliation", () => {
       });
 
     expect(result.mappedRows).toBe(1);
+    expect(result.consolidatedRows).toBe(1);
     expect(result.ambiguous).toEqual([
       expect.objectContaining({ service: "NAT / Small NAT Gateway" }),
     ]);
@@ -109,5 +139,11 @@ describe("historical daily usage catalogue reconciliation", () => {
       unit: "instance/month",
     });
     expect(mapped?.sourceKey).toContain(String(seeded.ecsCatalogId));
+    const duplicate = await t.run((ctx) => ctx.db.get(seeded.duplicateRowId));
+    expect(duplicate).toMatchObject({
+      supersededByUsageId: seeded.authoritativeRowId,
+      supersededReason:
+        "Identical historical capture consolidated during catalogue reconciliation",
+    });
   });
 });

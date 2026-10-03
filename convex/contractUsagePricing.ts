@@ -195,6 +195,7 @@ async function pricedDailyUsage(
     { month: string; catalogItemId?: Id<"serviceCatalog">; quantity: number }
   >();
   for (const row of rows) {
+    if (row.supersededByUsageId) continue;
     const timestamp = Date.parse(`${row.usageDate}T00:00:00.000Z`);
     if (timestamp < start || timestamp > end) continue;
     const key = `${row.month}|${row.catalogItemId ?? row.serviceType}`;

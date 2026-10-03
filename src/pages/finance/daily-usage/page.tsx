@@ -315,13 +315,15 @@ function DailyUsagePageContent() {
         result.ambiguous.length +
         result.unmatched.length +
         result.conflicts.length;
-      if (result.mappedRows > 0) {
+      if (result.mappedRows > 0 || result.consolidatedRows > 0) {
         toast.success(
-          `${result.mappedRows} historical usage row${result.mappedRows === 1 ? "" : "s"} reconciled`,
+          `${result.mappedRows + result.consolidatedRows} historical usage row${result.mappedRows + result.consolidatedRows === 1 ? "" : "s"} reconciled`,
           {
             description: unresolved
               ? `${unresolved} service issue${unresolved === 1 ? "" : "s"} still require manual review.`
-              : "Invoice readiness will update automatically.",
+              : result.consolidatedRows
+                ? `${result.consolidatedRows} identical duplicate${result.consolidatedRows === 1 ? " was" : "s were"} safely consolidated. Invoice readiness will update automatically.`
+                : "Invoice readiness will update automatically.",
           },
         );
       } else {
