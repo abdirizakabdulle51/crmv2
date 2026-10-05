@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import {
   action,
   internalAction,
@@ -846,12 +847,14 @@ async function usageEntriesForBillingMonth(
   }
   const [year, monthNumber] = month.split("-").map(Number);
   const dayCount = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-  return dailyRows.map((row) => ({
-    catalogItemId: row.catalogItemId,
-    usageDate: row.usageDate,
-    quantity: row.quantity / dayCount,
-    amount: 0,
-  }));
+  return dailyRows
+    .filter((row) => !row.supersededByUsageId)
+    .map((row) => ({
+      catalogItemId: row.catalogItemId,
+      usageDate: row.usageDate,
+      quantity: row.quantity / dayCount,
+      amount: 0,
+    }));
 }
 
 function monthStartTimestamp(month: string) {
@@ -939,29 +942,17 @@ async function linkedUsageDiagnostics(
     }
     return dates;
   });
-  const [rows, captures] = await Promise.all([
-    Promise.all(
-      cycleMonths.map((month) =>
-        ctx.db
-          .query("dailyUsageSnapshots")
-          .withIndex("by_company_month", (q) =>
-            q.eq("companyId", companyId).eq("month", month),
-          )
-          .collect(),
-      ),
-    ).then((batches) => batches.flat()),
-    Promise.all(
+  const captures = (
+    await Promise.all(
       cycleMonths.map((month) =>
         ctx.db
           .query("dailyUsageCaptureRuns")
           .withIndex("by_month", (q) => q.eq("month", month))
           .collect(),
       ),
-    ).then((batches) => batches.flat()),
-  ]);
-  const present = new Set(
-    rows.map((row) => `${row.tenantId}|${row.usageDate}`),
-  );
+    )
+  ).flat();
+  const present = new Set<string>();
   for (const capture of captures.filter((run) => run.status === "completed")) {
     for (const tenantId of capture.tenantIds) {
       present.add(`${tenantId}|${capture.usageDate}`);
@@ -979,9 +970,36 @@ async function linkedUsageDiagnostics(
       .filter((date) => !disabledDate || date <= disabledDate)
       .map((date) => ({ tenant, date }));
   });
-  const missing = expected
+  let missing = expected
     .filter(({ tenant, date }) => !present.has(`${tenant._id}|${date}`))
     .map(({ tenant, date }) => ({ tenantName: tenant.name, date }));
+  if (missing.length) {
+    const missingKeys = new Set(
+      expected
+        .filter(({ tenant, date }) => !present.has(`${tenant._id}|${date}`))
+        .map(({ tenant, date }) => `${tenant._id}|${date}`),
+    );
+    const rows = (
+      await Promise.all(
+        cycleMonths.map((month) =>
+          ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_company_month", (q) =>
+              q.eq("companyId", companyId).eq("month", month),
+            )
+            .collect(),
+        ),
+      )
+    ).flat();
+    for (const row of rows) {
+      if (!row.supersededByUsageId) {
+        missingKeys.delete(`${row.tenantId}|${row.usageDate}`);
+      }
+    }
+    missing = expected
+      .filter(({ tenant, date }) => missingKeys.has(`${tenant._id}|${date}`))
+      .map(({ tenant, date }) => ({ tenantName: tenant.name, date }));
+  }
   return {
     linkedTenantCount: linkedTenants.length,
     expectedCaptureCount: expected.length,
@@ -1260,83 +1278,100 @@ async function createContractDraftInvoice(
         message: "Monthly usage contracts do not have overage settlements",
       });
     }
-    const usage = await priceMonthlyContractUsage(ctx, contract, sourceMonth);
-    if (contract.pricingModel === "discounted_usage" && usage.entries === 0) {
-      throw new ConvexError({
-        code: "BAD_REQUEST",
-        message: "No billable usage is available for this month",
+    const monthlyUsage: Array<{
+      month: string;
+      usage: Awaited<ReturnType<typeof priceMonthlyContractUsage>>;
+    }> = [];
+    for (const month of cycleMonths) {
+      monthlyUsage.push({
+        month,
+        usage: await priceMonthlyContractUsage(ctx, contract, month),
       });
     }
-    const minimum = usage.minimum;
-    const payable = usage.payable;
-    const minimumApplies = minimum > usage.discountedUsage;
+    const totalEntries = monthlyUsage.reduce(
+      (total, row) => total + row.usage.entries,
+      0,
+    );
+    if (contract.pricingModel === "discounted_usage" && totalEntries === 0) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "No billable usage is available for this billing cycle",
+      });
+    }
     monthlyUsageSummary = {
-      catalogueUsage: usage.catalogueUsage,
-      discountedUsage: usage.discountedUsage,
-      minimum,
-      shortfall: usage.shortfall,
-      payable,
-      entries: usage.entries,
+      catalogueUsage: sumMoney(
+        monthlyUsage.map((row) => row.usage.catalogueUsage),
+      ),
+      discountedUsage: sumMoney(
+        monthlyUsage.map((row) => row.usage.discountedUsage),
+      ),
+      minimum: sumMoney(monthlyUsage.map((row) => row.usage.minimum)),
+      shortfall: sumMoney(monthlyUsage.map((row) => row.usage.shortfall)),
+      payable: sumMoney(monthlyUsage.map((row) => row.usage.payable)),
+      entries: totalEntries,
     };
-    monthlyUsageBreakdown = usage.lines.length
-      ? `Usage detail: ${usage.lines
-          .map(
-            (line) =>
-              `${line.itemName}: ${line.catalogueUsage.toFixed(2)} less ${line.discountPercent}% = ${line.discountedUsage.toFixed(2)} ${contract.currency}`,
-          )
-          .join("; ")}.`
+    const breakdown = monthlyUsage.flatMap(({ month, usage }) =>
+      usage.lines.map(
+        (line) =>
+          `${month} ${line.itemName}: ${line.catalogueUsage.toFixed(2)} less ${line.discountPercent}% = ${line.discountedUsage.toFixed(2)} ${contract.currency}`,
+      ),
+    );
+    monthlyUsageBreakdown = breakdown.length
+      ? `Usage detail: ${breakdown.join("; ")}.`
       : "Usage detail: no usage recorded for this billing period.";
-    const usageLines: InvoiceLineItem[] = usage.lines.flatMap((line) => {
-      const discountAmount = sumMoney([
-        line.catalogueUsage,
-        -line.discountedUsage,
-      ]);
-      const common = {
-        catalogItemId: line.catalogItemId,
-        serviceCategory: line.serviceCategory,
-        billingUnit: line.billingUnit,
-      };
-      return [
-        {
-          ...common,
-          itemName: `${line.itemName} catalogue usage`,
-          quantity: 1,
-          monthlyUnitPrice: line.catalogueUsage,
-          monthlyTotal: line.catalogueUsage,
-          yearlyTotal: roundMoney(line.catalogueUsage * 12),
-        },
-        ...(discountAmount > 0
-          ? [
-              {
-                ...common,
-                itemName: `${line.itemName} contract discount (${line.discountPercent}%)`,
-                quantity: 1,
-                monthlyUnitPrice: -discountAmount,
-                monthlyTotal: -discountAmount,
-                yearlyTotal: -roundMoney(discountAmount * 12),
-              },
-            ]
-          : []),
-      ];
-    });
-    monthlyLineGroups = [
-      {
-        month: sourceMonth,
+    monthlyLineGroups = monthlyUsage.map(({ month, usage }) => {
+      const minimumApplies = usage.minimum > usage.discountedUsage;
+      const monthSuffix = cycleMonths.length > 1 ? ` — ${month}` : "";
+      const usageLines: InvoiceLineItem[] = usage.lines.flatMap((line) => {
+        const discountAmount = sumMoney([
+          line.catalogueUsage,
+          -line.discountedUsage,
+        ]);
+        const common = {
+          catalogItemId: line.catalogItemId,
+          serviceCategory: line.serviceCategory,
+          billingUnit: line.billingUnit,
+        };
+        return [
+          {
+            ...common,
+            itemName: `${line.itemName} catalogue usage${monthSuffix}`,
+            quantity: 1,
+            monthlyUnitPrice: line.catalogueUsage,
+            monthlyTotal: line.catalogueUsage,
+            yearlyTotal: roundMoney(line.catalogueUsage * 12),
+          },
+          ...(discountAmount > 0
+            ? [
+                {
+                  ...common,
+                  itemName: `${line.itemName} contract discount (${line.discountPercent}%)${monthSuffix}`,
+                  quantity: 1,
+                  monthlyUnitPrice: -discountAmount,
+                  monthlyTotal: -discountAmount,
+                  yearlyTotal: -roundMoney(discountAmount * 12),
+                },
+              ]
+            : []),
+        ];
+      });
+      return {
+        month,
         lineItems: minimumApplies
           ? [
               {
-                itemName: `Contracted monthly minimum — includes discounted usage ${usage.discountedUsage.toFixed(2)}`,
+                itemName: `Contracted monthly minimum${monthSuffix} — includes discounted usage ${usage.discountedUsage.toFixed(2)}`,
                 serviceCategory: "Contract Usage",
                 billingUnit: "month",
                 quantity: 1,
-                monthlyUnitPrice: payable,
-                monthlyTotal: payable,
-                yearlyTotal: roundMoney(payable * 12),
+                monthlyUnitPrice: usage.payable,
+                monthlyTotal: usage.payable,
+                yearlyTotal: roundMoney(usage.payable * 12),
               },
             ]
           : usageLines,
-      },
-    ];
+      };
+    });
   } else if (isFlexible) {
     const valueAllocations = contractValueAllocations(contract) ?? [];
     monthlyLineGroups = cycleMonths.map((month) => {
@@ -1588,6 +1623,15 @@ async function createContractDraftInvoice(
           usageEntries: monthlyUsageSummary.entries,
         }
       : undefined,
+    ...(usageBasedCycle
+      ? {
+          usageAttachmentStatus:
+            cycleMonths.length > 1
+              ? ("pending" as const)
+              : ("complete" as const),
+          usageAttachedCount: 0,
+        }
+      : {}),
     revenueAllocations,
     receivableAllocations,
     invoiceProfileId: invoiceProfile?._id,
@@ -1628,7 +1672,13 @@ async function createContractDraftInvoice(
     );
   }
 
-  if (usageBasedCycle) {
+  if (usageBasedCycle && cycleMonths.length > 1) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.invoices.attachContractUsageForInvoice,
+      { invoiceId },
+    );
+  } else if (usageBasedCycle) {
     const usageStart = Math.max(
       contract.startDate,
       monthStartTimestamp(cycleMonths[0]!),
@@ -1637,6 +1687,7 @@ async function createContractDraftInvoice(
       contractBillingEnd(contract),
       monthEndTimestamp(cycleMonths[cycleMonths.length - 1]!),
     );
+    let usageAttachedCount = 0;
     for (const month of cycleMonths) {
       const rows = await ctx.db
         .query("dailyUsageSnapshots")
@@ -1645,6 +1696,7 @@ async function createContractDraftInvoice(
         )
         .collect();
       for (const row of rows) {
+        if (row.supersededByUsageId) continue;
         const usageAt = Date.parse(`${row.usageDate}T00:00:00.000Z`);
         if (usageAt < usageStart || usageAt > usageEnd) continue;
         if (
@@ -1658,8 +1710,14 @@ async function createContractDraftInvoice(
           });
         }
         await ctx.db.patch(row._id, { invoiceId, lockedAt: now });
+        usageAttachedCount++;
       }
     }
+    await ctx.db.patch(invoiceId, {
+      usageAttachmentStatus: "complete",
+      usageAttachedCount,
+      updatedAt: Date.now(),
+    });
   }
 
   await insertEvent(ctx, {
@@ -1679,6 +1737,141 @@ async function createContractDraftInvoice(
 
   return { invoiceId, companyName: company.name, grandTotal };
 }
+
+export const attachContractUsageBatch = internalMutation({
+  args: {
+    invoiceId: v.id("invoices"),
+    month: v.string(),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
+    if (invoice.status !== "draft" || !invoice.contractId) {
+      throw new Error("Contract usage can only be attached to a draft invoice");
+    }
+    const contract = await ctx.db.get(invoice.contractId);
+    if (!contract) throw new Error("Invoice contract no longer exists");
+    const usageStart = Math.max(
+      contract.startDate,
+      monthStartTimestamp(invoice.cycleStartMonth ?? args.month),
+    );
+    const usageEnd = Math.min(
+      contractBillingEnd(contract),
+      monthEndTimestamp(invoice.cycleEndMonth ?? args.month),
+    );
+    const page = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_company_month", (q) =>
+        q.eq("companyId", contract.companyId).eq("month", args.month),
+      )
+      .paginate(args.paginationOpts);
+    let attached = 0;
+    for (const row of page.page) {
+      if (row.supersededByUsageId) continue;
+      const usageAt = Date.parse(`${row.usageDate}T00:00:00.000Z`);
+      if (usageAt < usageStart || usageAt > usageEnd) continue;
+      if (
+        row.invoiceId &&
+        row.invoiceId !== invoice._id &&
+        row.invoiceId !== invoice.replacesInvoiceId
+      ) {
+        throw new Error(
+          `Usage on ${row.usageDate} is already attached to another invoice`,
+        );
+      }
+      if (row.invoiceId !== invoice._id || !row.lockedAt) {
+        await ctx.db.patch(row._id, {
+          invoiceId: invoice._id,
+          lockedAt: Date.now(),
+        });
+        attached++;
+      }
+    }
+    if (attached) {
+      await ctx.db.patch(invoice._id, {
+        usageAttachedCount: (invoice.usageAttachedCount ?? 0) + attached,
+        updatedAt: Date.now(),
+      });
+    }
+    return {
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
+  },
+});
+
+export const finishContractUsageAttachment = internalMutation({
+  args: {
+    invoiceId: v.id("invoices"),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
+    const now = Date.now();
+    await ctx.db.patch(invoice._id, {
+      usageAttachmentStatus: args.error ? "failed" : "complete",
+      usageAttachmentError: args.error,
+      updatedAt: now,
+    });
+    await insertEvent(ctx, {
+      invoiceId: invoice._id,
+      type: "draft_updated",
+      actorId: invoice.createdBy,
+      message: args.error
+        ? `Usage attachment failed: ${args.error}`
+        : `${invoice.usageAttachedCount ?? 0} usage records attached in batches.`,
+      now,
+    });
+  },
+});
+
+export const getInternal = internalQuery({
+  args: { invoiceId: v.id("invoices") },
+  handler: async (ctx, args) => await ctx.db.get(args.invoiceId),
+});
+
+export const attachContractUsageForInvoice = internalAction({
+  args: { invoiceId: v.id("invoices") },
+  handler: async (ctx, args): Promise<void> => {
+    try {
+      const invoice = await ctx.runQuery(internal.invoices.getInternal, {
+        invoiceId: args.invoiceId,
+      });
+      if (!invoice?.cycleStartMonth || !invoice.cycleEndMonth) {
+        throw new Error("Invoice billing-cycle months are missing");
+      }
+      const months = monthsBetweenInclusive(
+        invoice.cycleStartMonth,
+        invoice.cycleEndMonth,
+      );
+      for (const month of months) {
+        let cursor: string | null = null;
+        let done = false;
+        while (!done) {
+          const result: { isDone: boolean; continueCursor: string } =
+            await ctx.runMutation(internal.invoices.attachContractUsageBatch, {
+              invoiceId: args.invoiceId,
+              month,
+              paginationOpts: { cursor, numItems: 100 },
+            });
+          cursor = result.continueCursor;
+          done = result.isDone;
+        }
+      }
+      await ctx.runMutation(internal.invoices.finishContractUsageAttachment, {
+        invoiceId: args.invoiceId,
+      });
+    } catch (error) {
+      await ctx.runMutation(internal.invoices.finishContractUsageAttachment, {
+        invoiceId: args.invoiceId,
+        error:
+          error instanceof Error
+            ? error.message.slice(0, 500)
+            : "Unknown usage attachment failure",
+      });
+    }
+  },
+});
 
 function relayUrl() {
   const value =
@@ -2000,7 +2193,24 @@ export const createDraftFromContract = mutation({
       contract,
       args.sourceMonth,
     );
-    if (existing) return existing._id;
+    if (existing) {
+      if (
+        existing.status === "draft" &&
+        existing.usageAttachmentStatus === "failed"
+      ) {
+        await ctx.db.patch(existing._id, {
+          usageAttachmentStatus: "pending",
+          usageAttachmentError: undefined,
+          updatedAt: Date.now(),
+        });
+        await ctx.scheduler.runAfter(
+          0,
+          internal.invoices.attachContractUsageForInvoice,
+          { invoiceId: existing._id },
+        );
+      }
+      return existing._id;
+    }
 
     const result = await createContractDraftInvoice(ctx, {
       user,
@@ -2010,6 +2220,35 @@ export const createDraftFromContract = mutation({
     });
 
     return result.invoiceId;
+  },
+});
+
+export const retryContractUsageAttachment = mutation({
+  args: { invoiceId: v.id("invoices") },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
+    await assertCanAccessInvoice(ctx, user, invoice);
+    if (
+      invoice.status !== "draft" ||
+      !invoice.contractId ||
+      invoice.usageAttachmentStatus === "complete"
+    ) {
+      throw new ConvexError({
+        code: "BAD_REQUEST",
+        message: "This invoice does not require usage attachment",
+      });
+    }
+    await ctx.db.patch(invoice._id, {
+      usageAttachmentStatus: "pending",
+      usageAttachmentError: undefined,
+      updatedAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.invoices.attachContractUsageForInvoice,
+      { invoiceId: invoice._id },
+    );
   },
 });
 
@@ -2130,6 +2369,7 @@ export const contractInvoiceReadiness = query({
         ).flat()
       : [];
     const conflictingUsage = cycleUsage.filter((row) => {
+      if (row.supersededByUsageId) return false;
       if (!row.invoiceId) return false;
       const usageAt = Date.parse(`${row.usageDate}T00:00:00.000Z`);
       return (
@@ -2155,14 +2395,20 @@ export const contractInvoiceReadiness = query({
       contract.pricingModel === "discounted_usage";
     if (isMonthlyUsageModel && cycleMonths.length) {
       try {
-        const pricing = await priceMonthlyContractUsage(
-          ctx,
-          contract,
-          args.sourceMonth,
+        const monthlyPricing = [];
+        for (const month of cycleMonths) {
+          monthlyPricing.push(
+            await priceMonthlyContractUsage(ctx, contract, month),
+          );
+        }
+        usageEntries = monthlyPricing.reduce(
+          (total, pricing) => total + pricing.entries,
+          0,
         );
-        usageEntries = pricing.entries;
-        calculatedAmount = pricing.payable;
-        if (contract.pricingModel === "discounted_usage" && !pricing.entries) {
+        calculatedAmount = sumMoney(
+          monthlyPricing.map((pricing) => pricing.payable),
+        );
+        if (contract.pricingModel === "discounted_usage" && !usageEntries) {
           issues.push({
             code: "NO_BILLABLE_USAGE",
             message:
@@ -2413,9 +2659,13 @@ export const previewContractInvoiceBatch = query({
             contract.pricingModel === "monthly_minimum" ||
             contract.pricingModel === "discounted_usage"
           ) {
-            amount = (
-              await priceMonthlyContractUsage(ctx, contract, args.sourceMonth)
-            ).payable;
+            const monthlyAmounts = [];
+            for (const month of cycleMonths) {
+              monthlyAmounts.push(
+                (await priceMonthlyContractUsage(ctx, contract, month)).payable,
+              );
+            }
+            amount = sumMoney(monthlyAmounts);
           } else {
             const allocations = contractValueAllocations(contract);
             if (allocations) {
@@ -2808,6 +3058,18 @@ export const issueInvoice = mutation({
     const invoice = await getInvoiceOrThrow(ctx, args.invoiceId);
     await assertCanAccessInvoice(ctx, user, invoice);
     assertTransitionFromDraft(invoice);
+    if (
+      invoice.usageAttachmentStatus === "pending" ||
+      invoice.usageAttachmentStatus === "failed"
+    ) {
+      throw new ConvexError({
+        code: "USAGE_ATTACHMENT_INCOMPLETE",
+        message:
+          invoice.usageAttachmentStatus === "failed"
+            ? `Contract usage attachment failed: ${invoice.usageAttachmentError ?? "retry the attachment"}`
+            : "Contract usage is still being attached. Retry shortly before issuing.",
+      });
+    }
     const company = await getCompanyOrThrow(ctx, invoice.companyId);
 
     const now = Date.now();

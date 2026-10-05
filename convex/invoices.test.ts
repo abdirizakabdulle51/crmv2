@@ -2594,6 +2594,70 @@ describe("invoices", () => {
     ).rejects.toThrow(/cycle boundary/i);
   });
 
+  it("finishes quarterly postpaid usage attachment before issuing", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await ensureContractInvoiceProfile(t, s);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "QUARTERLY-USAGE-1",
+        title: "Quarterly postpaid commitment",
+        status: "draft",
+        startDate: Date.UTC(2026, 6, 1),
+        endDate: Date.UTC(2027, 5, 30),
+        currency: "USD",
+        billingFrequency: "quarterly",
+        billingTiming: "postpaid",
+        pricingBasis: "total_contract",
+        pricingModel: "flexible_total_commitment",
+        commitmentModel: "flexible_value",
+        contractValue: 1200,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [],
+        services: [],
+      },
+    );
+    await asUser(t, s.ceo).mutation(api.customerContracts.activate, {
+      contractId,
+    });
+    await t.run(async (ctx) => {
+      for (const month of ["2026-07", "2026-08", "2026-09"]) {
+        await ctx.db.insert("consumption", {
+          companyId: s.companyA,
+          month,
+          usageDate: `${month}-15`,
+          serviceType: "ECS",
+          amount: 100,
+          catalogItemId: s.catalogItemId,
+        });
+      }
+    });
+
+    vi.useFakeTimers();
+    const invoiceId = await asUser(t, s.amA).mutation(
+      api.invoices.createDraftFromContract,
+      { contractId, sourceMonth: "2026-07" },
+    );
+    let invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.grandTotal).toBe(300);
+    expect(invoice.usageAttachmentStatus).toBe("pending");
+    await expect(
+      asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId }),
+    ).rejects.toThrow(/usage is still being attached/i);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+    invoice = await asUser(t, s.amA).query(api.invoices.getById, {
+      invoiceId,
+    });
+    expect(invoice.usageAttachmentStatus).toBe("complete");
+    await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
+  });
+
   it("applies a service discount override before the product-group discount", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

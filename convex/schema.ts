@@ -1156,6 +1156,11 @@ export default defineSchema({
         usageEntries: v.number(),
       }),
     ),
+    usageAttachmentStatus: v.optional(
+      v.union(v.literal("pending"), v.literal("complete"), v.literal("failed")),
+    ),
+    usageAttachmentError: v.optional(v.string()),
+    usageAttachedCount: v.optional(v.number()),
     revenueAllocations: v.optional(
       v.array(v.object({ month: v.string(), amount: v.number() })),
     ),

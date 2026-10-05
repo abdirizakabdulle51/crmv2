@@ -10,6 +10,7 @@ import {
   Printer,
   Send,
   ShieldAlert,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/convex/_generated/api.js";
@@ -348,6 +349,7 @@ function InvoiceDetailContent() {
   const [isSending, setIsSending] = useState(false);
   const [isRecordingPayment, setIsRecordingPayment] = useState(false);
   const [isCleaningUp, setIsCleaningUp] = useState(false);
+  const [isRetryingUsage, setIsRetryingUsage] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(() =>
     formatDateInput(Date.now()),
@@ -392,6 +394,9 @@ function InvoiceDetailContent() {
     invoice ? { id: invoice.companyId } : "skip",
   );
   const issueInvoice = useMutation(api.invoices.issueInvoice);
+  const retryUsageAttachment = useMutation(
+    api.invoices.retryContractUsageAttachment,
+  );
   const recordPayment = useMutation(api.invoices.recordPayment);
   const reconcileLegacyPayment = useMutation(
     api.invoices.reconcileLegacyPayment,
@@ -428,6 +433,9 @@ function InvoiceDetailContent() {
   }
 
   const title = invoice.invoiceNumber ?? "Draft";
+  const usageAttachmentBlocked =
+    invoice.usageAttachmentStatus === "pending" ||
+    invoice.usageAttachmentStatus === "failed";
   const sendRecipient =
     invoice.billingEmail?.trim() || invoice.contactEmail?.trim();
   const canRecordPayment = PAYABLE_STATUSES.has(invoice.status);
@@ -457,6 +465,22 @@ function InvoiceDetailContent() {
       toast.error(message);
     } finally {
       setIsIssuing(false);
+    }
+  };
+
+  const handleRetryUsageAttachment = async () => {
+    setIsRetryingUsage(true);
+    try {
+      await retryUsageAttachment({ invoiceId: invoice._id });
+      toast.success("Usage attachment restarted");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not restart usage attachment",
+      );
+    } finally {
+      setIsRetryingUsage(false);
     }
   };
 
@@ -612,7 +636,7 @@ function InvoiceDetailContent() {
               <Button
                 className="bg-cyan-600 text-white hover:bg-cyan-700"
                 onClick={() => setIssueDialogOpen(true)}
-                disabled={isIssuing}
+                disabled={isIssuing || usageAttachmentBlocked}
               >
                 {isIssuing ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -645,7 +669,7 @@ function InvoiceDetailContent() {
                     Cancel
                   </AlertDialogCancel>
                   <AlertDialogAction
-                    disabled={isIssuing}
+                    disabled={isIssuing || usageAttachmentBlocked}
                     onClick={(event) => {
                       event.preventDefault();
                       void handleIssueInvoice();
@@ -757,6 +781,43 @@ function InvoiceDetailContent() {
           ) : null}
         </div>
       </div>
+
+      {invoice.status === "draft" && invoice.usageAttachmentStatus ? (
+        <div
+          className={`flex flex-col gap-3 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${
+            invoice.usageAttachmentStatus === "failed"
+              ? "border-destructive/40 bg-destructive/5"
+              : invoice.usageAttachmentStatus === "pending"
+                ? "border-amber-300 bg-amber-50"
+                : "border-emerald-300 bg-emerald-50"
+          }`}
+        >
+          <div className="flex items-start gap-2">
+            <TriangleAlert className="mt-0.5 h-4 w-4" />
+            <div>
+              <div className="font-medium">
+                Usage attachment: {invoice.usageAttachmentStatus}
+              </div>
+              <div className="text-muted-foreground">
+                {invoice.usageAttachmentStatus === "complete"
+                  ? `${invoice.usageAttachedCount ?? 0} usage records attached.`
+                  : (invoice.usageAttachmentError ??
+                    "Usage is being attached in safe batches. Issuing remains disabled until completion.")}
+              </div>
+            </div>
+          </div>
+          {invoice.usageAttachmentStatus === "failed" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isRetryingUsage}
+              onClick={() => void handleRetryUsageAttachment()}
+            >
+              {isRetryingUsage ? "Retrying…" : "Retry Attachment"}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
