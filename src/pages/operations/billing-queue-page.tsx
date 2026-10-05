@@ -133,7 +133,11 @@ function BillingQueuePageContent() {
           contractId: row.contractId,
           companyName: row.companyName,
           model: "Contracted" as const,
-          period: month,
+          period:
+            row.sourceMonth && row.cycleEndMonth !== row.sourceMonth
+              ? `${row.sourceMonth} – ${row.cycleEndMonth}`
+              : (row.sourceMonth ?? month),
+          sourceMonth: row.sourceMonth,
           amount: row.amount,
           status: row.status,
           reason: row.reason,
@@ -203,7 +207,7 @@ function BillingQueuePageContent() {
                 .invoiceId
           : await createContractDraft({
               contractId: row.contractId,
-              sourceMonth: month,
+              sourceMonth: row.sourceMonth,
             });
       toast.success("Draft invoice created");
       navigate(`/invoices/${invoiceId}`);

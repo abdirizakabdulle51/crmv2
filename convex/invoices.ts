@@ -1056,6 +1056,51 @@ function contractCycleMonths(
   return allMonths.slice(startIndex, startIndex + frequency);
 }
 
+function contractCycleForBillingMonth(
+  contract: Doc<"customerContracts">,
+  billingMonth: string,
+) {
+  if ((contract.billingTiming ?? "postpaid") !== "postpaid") {
+    const months = contractCycleMonths(contract, billingMonth);
+    return { sourceMonth: billingMonth, months };
+  }
+  const startMonth = monthKeyFromTimestamp(contract.startDate);
+  const endMonth = monthKeyFromTimestamp(contractBillingEnd(contract));
+  const allMonths = monthsBetweenInclusive(startMonth, endMonth);
+  const billingIndex = allMonths.indexOf(billingMonth);
+  const frequency = contractFrequencyMonths(contract);
+  if (billingIndex < 0) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: "The selected billing month is outside the contract period",
+    });
+  }
+  const cycleStartIndex = billingIndex - (billingIndex % frequency);
+  const months = allMonths.slice(cycleStartIndex, cycleStartIndex + frequency);
+  if (months[months.length - 1] !== billingMonth) {
+    throw new ConvexError({
+      code: "BAD_REQUEST",
+      message: `The ${contract.billingFrequency} postpaid cycle has not ended in ${billingMonth}`,
+    });
+  }
+  return { sourceMonth: months[0]!, months };
+}
+
+function contractCycleFromSelection(
+  contract: Doc<"customerContracts">,
+  selectedMonth: string,
+) {
+  try {
+    return {
+      sourceMonth: selectedMonth,
+      months: contractCycleMonths(contract, selectedMonth),
+    };
+  } catch (error) {
+    if ((contract.billingTiming ?? "postpaid") !== "postpaid") throw error;
+    return contractCycleForBillingMonth(contract, selectedMonth);
+  }
+}
+
 async function previouslyBilledFlexibleOverage(
   ctx: Ctx,
   contract: Doc<"customerContracts">,
@@ -2188,10 +2233,14 @@ export const createDraftFromContract = mutation({
 
     const company = await getCompanyOrThrow(ctx, contract.companyId);
     assertCanManageCompany(user, company);
+    const { sourceMonth } = contractCycleFromSelection(
+      contract,
+      args.sourceMonth,
+    );
     const existing = await findContractInvoiceForMonth(
       ctx,
       contract,
-      args.sourceMonth,
+      sourceMonth,
     );
     if (existing) {
       if (
@@ -2215,7 +2264,7 @@ export const createDraftFromContract = mutation({
     const result = await createContractDraftInvoice(ctx, {
       user,
       contract,
-      sourceMonth: args.sourceMonth,
+      sourceMonth,
       notes: args.notes,
     });
 
@@ -2272,6 +2321,7 @@ export const contractInvoiceReadiness = query({
 
     const issues: Array<{ code: string; message: string }> = [];
     let cycleMonths: string[] = [];
+    let sourceMonth = args.sourceMonth;
     if (contract.status === "draft" || contract.status === "renewed") {
       issues.push({
         code: "CONTRACT_INACTIVE",
@@ -2285,7 +2335,9 @@ export const contractInvoiceReadiness = query({
       });
     } else {
       try {
-        cycleMonths = contractCycleMonths(contract, args.sourceMonth);
+        const cycle = contractCycleFromSelection(contract, args.sourceMonth);
+        cycleMonths = cycle.months;
+        sourceMonth = cycle.sourceMonth;
       } catch (error) {
         issues.push({
           code: "INVALID_CYCLE",
@@ -2300,7 +2352,7 @@ export const contractInvoiceReadiness = query({
     const existing = await findContractInvoiceForMonth(
       ctx,
       contract,
-      args.sourceMonth,
+      sourceMonth,
     );
     if (existing) {
       issues.push({
@@ -2579,11 +2631,7 @@ export const previewContractInvoiceBatch = query({
         .query("customerContractLineItems")
         .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
         .collect();
-      const existingInvoice = await findContractInvoiceForMonth(
-        ctx,
-        contract,
-        args.sourceMonth,
-      );
+      let existingInvoice: Doc<"invoices"> | null = null;
       let status:
         | "ready"
         | "already_invoiced"
@@ -2596,6 +2644,7 @@ export const previewContractInvoiceBatch = query({
       let reason = "Ready to create draft";
       let amount: number | undefined;
       let cycleMonths: string[] = [];
+      let sourceMonth = args.sourceMonth;
 
       if (contract.status === "draft" || contract.status === "renewed") {
         status = "inactive";
@@ -2611,7 +2660,12 @@ export const previewContractInvoiceBatch = query({
         reason = "No contract services";
       } else {
         try {
-          cycleMonths = contractCycleMonths(contract, args.sourceMonth);
+          const cycle = contractCycleForBillingMonth(
+            contract,
+            args.sourceMonth,
+          );
+          cycleMonths = cycle.months;
+          sourceMonth = cycle.sourceMonth;
           if (
             (contract.billingTiming ?? "postpaid") === "postpaid" &&
             Date.now() < monthEndTimestamp(cycleMonths[cycleMonths.length - 1])
@@ -2639,6 +2693,13 @@ export const previewContractInvoiceBatch = query({
             reason = "Not a billing-cycle boundary";
           }
         }
+      }
+      if (cycleMonths.length) {
+        existingInvoice = await findContractInvoiceForMonth(
+          ctx,
+          contract,
+          sourceMonth,
+        );
       }
       if (status === "ready" && existingInvoice) {
         status = "already_invoiced";
@@ -2698,6 +2759,8 @@ export const previewContractInvoiceBatch = query({
         lineItemCount: lineItems.length,
         existingInvoiceId: existingInvoice?._id,
         existingInvoiceNumber: existingInvoice?.invoiceNumber,
+        sourceMonth,
+        cycleEndMonth: cycleMonths[cycleMonths.length - 1],
         status,
         reason,
         amount,

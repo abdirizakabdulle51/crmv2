@@ -2635,15 +2635,29 @@ describe("invoices", () => {
       }
     });
 
+    const queue = await asUser(t, s.amA).query(
+      api.invoices.previewContractInvoiceBatch,
+      { sourceMonth: "2026-09" },
+    );
+    expect(queue).toContainEqual(
+      expect.objectContaining({
+        contractId,
+        status: "ready",
+        sourceMonth: "2026-07",
+        cycleEndMonth: "2026-09",
+      }),
+    );
+
     vi.useFakeTimers();
     const invoiceId = await asUser(t, s.amA).mutation(
       api.invoices.createDraftFromContract,
-      { contractId, sourceMonth: "2026-07" },
+      { contractId, sourceMonth: "2026-09" },
     );
     let invoice = await asUser(t, s.amA).query(api.invoices.getById, {
       invoiceId,
     });
     expect(invoice.grandTotal).toBe(300);
+    expect(invoice.sourceMonth).toBe("2026-07");
     expect(invoice.usageAttachmentStatus).toBe("pending");
     await expect(
       asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId }),
