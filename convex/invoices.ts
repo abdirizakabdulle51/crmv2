@@ -11,7 +11,7 @@ import {
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
 import { assertUniqueAccountTransactionId } from "./accountTransactionIdentity";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import {
   assertCanManageCompany,
   assertNotMonitoring,
@@ -2282,6 +2282,107 @@ export const createDraftFromContract = mutation({
     });
 
     return result.invoiceId;
+  },
+});
+
+export const contractDraftFailureContext = internalQuery({
+  args: {
+    contractId: v.id("customerContracts"),
+    selectedMonth: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await getCurrentUserOrThrow(ctx);
+    const contract = await ctx.db.get(args.contractId);
+    if (!contract) return null;
+    const company = await getCompanyOrThrow(ctx, contract.companyId);
+    assertCanManageCompany(user, company);
+    let sourceMonth = args.selectedMonth;
+    let cycleMonths: string[] = [];
+    let cycleError: string | undefined;
+    try {
+      const cycle = contractCycleFromSelection(contract, args.selectedMonth);
+      sourceMonth = cycle.sourceMonth;
+      cycleMonths = cycle.months;
+    } catch (error) {
+      cycleError =
+        error instanceof ConvexError
+          ? String(error.data?.message ?? error.message)
+          : error instanceof Error
+            ? error.message
+            : "The billing cycle could not be resolved";
+    }
+    const usage = await Promise.all(
+      cycleMonths.map(async (month) => {
+        const snapshot = await ctx.db
+          .query("dailyUsageBillingSnapshots")
+          .withIndex("by_company_month", (q) =>
+            q.eq("companyId", contract.companyId).eq("month", month),
+          )
+          .order("desc")
+          .first();
+        return snapshot
+          ? {
+              month,
+              rows: snapshot.rowCount,
+              services: snapshot.serviceCount,
+              unpriced: snapshot.unpricedCount,
+              missingPrices: snapshot.missingPriceRowCount,
+              computedAt: snapshot.computedAt,
+            }
+          : { month, snapshotMissing: true as const };
+      }),
+    );
+    return {
+      companyName: company.name,
+      contractNumber: contract.contractNumber,
+      status: contract.status,
+      frequency: contract.billingFrequency,
+      timing: contract.billingTiming ?? "postpaid",
+      pricingModel:
+        contract.pricingModel ?? contract.commitmentModel ?? "service_lines",
+      selectedMonth: args.selectedMonth,
+      sourceMonth,
+      cycleMonths,
+      cycleError,
+      usage,
+    };
+  },
+});
+
+export const createDraftFromContractDiagnosed = action({
+  args: {
+    contractId: v.id("customerContracts"),
+    sourceMonth: v.string(),
+    notes: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<Id<"invoices">> => {
+    try {
+      return await ctx.runMutation(api.invoices.createDraftFromContract, args);
+    } catch (error) {
+      const context = await ctx.runQuery(
+        internal.invoices.contractDraftFailureContext,
+        { contractId: args.contractId, selectedMonth: args.sourceMonth },
+      );
+      const technicalCause =
+        error instanceof Error ? error.message : "Unknown backend failure";
+      const period = context?.cycleMonths.length
+        ? `${context.cycleMonths[0]} to ${context.cycleMonths.at(-1)}`
+        : args.sourceMonth;
+      const usage =
+        context?.usage
+          .map((month) =>
+            "snapshotMissing" in month
+              ? `${month.month}: billing snapshot missing`
+              : `${month.month}: ${month.rows} rows, ${month.services} services, ${month.unpriced} unpriced, ${month.missingPrices} missing prices`,
+          )
+          .join("; ") ?? "Usage diagnostics unavailable";
+      throw new ConvexError({
+        code: "CONTRACT_INVOICE_CREATION_FAILED",
+        message: context
+          ? `Could not create ${context.frequency} ${context.timing} invoice for ${context.companyName} (${context.contractNumber}), period ${period}, pricing ${context.pricingModel}. ${context.cycleError ? `Cycle error: ${context.cycleError}. ` : ""}Usage: ${usage}. Backend failure: ${technicalCause}`
+          : `Could not create the contract invoice. Backend failure: ${technicalCause}`,
+      });
+    }
   },
 });
 

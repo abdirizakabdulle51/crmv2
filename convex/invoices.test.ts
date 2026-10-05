@@ -2672,6 +2672,41 @@ describe("invoices", () => {
     await asUser(t, s.amA).mutation(api.invoices.issueInvoice, { invoiceId });
   });
 
+  it("returns contract and usage context when draft creation fails", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contractId = await asUser(t, s.ceo).mutation(
+      api.customerContracts.createConfigured,
+      {
+        companyId: s.companyA,
+        contractNumber: "DIAGNOSTIC-1",
+        title: "Invoice diagnostic contract",
+        status: "draft",
+        startDate: Date.UTC(2026, 6, 1),
+        endDate: Date.UTC(2027, 5, 30),
+        currency: "USD",
+        billingFrequency: "monthly",
+        billingTiming: "postpaid",
+        pricingBasis: "total_contract",
+        pricingModel: "flexible_total_commitment",
+        commitmentModel: "flexible_value",
+        contractValue: 12000,
+        overagePricingPolicy: "current_catalog",
+        groupDiscounts: [],
+        services: [],
+      },
+    );
+
+    await expect(
+      asUser(t, s.amA).action(api.invoices.createDraftFromContractDiagnosed, {
+        contractId,
+        sourceMonth: "2026-07",
+      }),
+    ).rejects.toThrow(
+      /Company A.*CTR-2026-\d+.*period 2026-07.*flexible_total_commitment.*billing snapshot missing/i,
+    );
+  });
+
   it("applies a service discount override before the product-group discount", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

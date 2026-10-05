@@ -36,6 +36,7 @@ vi.mock("@/convex/_generated/api.js", () => ({
     invoices: {
       previewContractInvoiceBatch: "contracts",
       createDraftFromContract: "createContract",
+      createDraftFromContractDiagnosed: "createContractDiagnosed",
     },
     dailyUsage: {
       billingCandidatesPage: "payg",
@@ -61,6 +62,7 @@ vi.mock("convex/react", () => ({
     };
   },
   useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
 }));
 
 describe("BillingQueuePage", () => {

@@ -5,7 +5,7 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/convex/_generated/api.js";
 import { Badge } from "@/components/ui/badge.tsx";
@@ -104,7 +104,9 @@ function BillingQueuePageContent() {
     api.dailyUsage.usageGaps,
     gapReview ? { companyId: gapReview.companyId as never, month } : "skip",
   );
-  const createContractDraft = useMutation(api.invoices.createDraftFromContract);
+  const createContractDraft = useAction(
+    api.invoices.createDraftFromContractDiagnosed,
+  );
   const createPaygDraft = useMutation(
     api.dailyUsage.createDraftInvoiceFromRollup,
   );

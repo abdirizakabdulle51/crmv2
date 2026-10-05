@@ -7,7 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { useConvex, useMutation, useQuery } from "convex/react";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   AlertCircle,
@@ -485,7 +485,9 @@ function CustomerContractDetailContent() {
   const saveSignedDocument = useMutation(
     api.customerContracts.saveSignedDocument,
   );
-  const createDraftInvoice = useMutation(api.invoices.createDraftFromContract);
+  const createDraftInvoice = useAction(
+    api.invoices.createDraftFromContractDiagnosed,
+  );
   const createOverageInvoice = useMutation(
     api.invoices.createOverageDraftFromContract,
   );
@@ -1833,7 +1835,8 @@ function CustomerContractDetailContent() {
                           </Badge>
                           {amendment.resultingContractValue !== undefined ? (
                             <div className="mt-1 text-xs text-muted-foreground">
-                              New value: {formatMoney(
+                              New value:{" "}
+                              {formatMoney(
                                 amendment.resultingContractValue,
                                 contract.currency,
                               )}
@@ -1944,7 +1947,8 @@ function CustomerContractDetailContent() {
             amendmentForm.monthlyDelta &&
             Number.isFinite(Number(amendmentForm.monthlyDelta)) ? (
               <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
-                Current value: {formatMoney(contract.contractValue, contract.currency)}
+                Current value:{" "}
+                {formatMoney(contract.contractValue, contract.currency)}
                 {" → "}
                 <strong>
                   {formatMoney(
