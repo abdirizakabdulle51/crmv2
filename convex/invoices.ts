@@ -1142,10 +1142,23 @@ async function findContractInvoiceForMonth(
   sourceMonth: string,
   kind: "cycle" | "overage_settlement" = "cycle",
 ) {
-  const invoices = await ctx.db
-    .query("invoices")
-    .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
-    .collect();
+  const [current, legacy] = await Promise.all([
+    ctx.db
+      .query("invoices")
+      .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
+      .collect(),
+    ctx.db
+      .query("invoices")
+      .withIndex("by_source_contract", (q) =>
+        q.eq("sourceContractId", contract._id),
+      )
+      .collect(),
+  ]);
+  const invoices = [
+    ...new Map(
+      [...current, ...legacy].map((invoice) => [invoice._id, invoice]),
+    ).values(),
+  ];
   return (
     invoices.find(
       (invoice) =>

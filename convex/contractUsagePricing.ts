@@ -178,17 +178,45 @@ function monthEnd(month: string) {
   return Date.UTC(year, monthNumber, 0, 23, 59, 59, 999);
 }
 
+function monthsThrough(start: number, end: number) {
+  const months: string[] = [];
+  const cursor = new Date(
+    Date.UTC(
+      new Date(start).getUTCFullYear(),
+      new Date(start).getUTCMonth(),
+      1,
+    ),
+  );
+  const last = monthKey(end);
+  while (monthKey(cursor.getTime()) <= last) {
+    months.push(monthKey(cursor.getTime()));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return months;
+}
+
 async function pricedDailyUsage(
   ctx: Ctx,
   rows: Doc<"dailyUsageSnapshots">[],
   start: number,
   end: number,
 ): Promise<BillingUsage[]> {
+  const catalogIds = [
+    ...new Set(
+      rows
+        .filter((row) => !row.supersededByUsageId && row.catalogItemId)
+        .map((row) => row.catalogItemId!),
+    ),
+  ];
   const catalog = new Map(
-    (await ctx.db.query("serviceCatalog").collect()).map((item) => [
-      item._id,
-      item,
-    ]),
+    await Promise.all(
+      catalogIds.map(async (id) => [id, await ctx.db.get(id)] as const),
+    ).then((items) =>
+      items.filter(
+        (entry): entry is [Id<"serviceCatalog">, Doc<"serviceCatalog">] =>
+          entry[1] !== null,
+      ),
+    ),
   );
   const grouped = new Map<
     string,
@@ -225,16 +253,30 @@ export async function priceFlexibleContractUsage(
   contract: Doc<"customerContracts">,
   through: number,
 ) {
+  const usageEnd = Math.min(contract.endDate, through);
+  const activeMonths = monthsThrough(contract.startDate, usageEnd);
   const [legacyUsage, dailyRows, rules, overrides, tenants] = await Promise.all(
     [
-      ctx.db
-        .query("consumption")
-        .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
-        .collect(),
-      ctx.db
-        .query("dailyUsageSnapshots")
-        .withIndex("by_company", (q) => q.eq("companyId", contract.companyId))
-        .collect(),
+      Promise.all(
+        activeMonths.map((month) =>
+          ctx.db
+            .query("consumption")
+            .withIndex("by_company_month", (q) =>
+              q.eq("companyId", contract.companyId).eq("month", month),
+            )
+            .collect(),
+        ),
+      ).then((rows) => rows.flat()),
+      Promise.all(
+        activeMonths.map((month) =>
+          ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_company_month", (q) =>
+              q.eq("companyId", contract.companyId).eq("month", month),
+            )
+            .collect(),
+        ),
+      ).then((rows) => rows.flat()),
       ctx.db
         .query("customerContractGroupDiscounts")
         .withIndex("by_contract", (q) => q.eq("contractId", contract._id))
@@ -253,12 +295,7 @@ export async function priceFlexibleContractUsage(
   );
   const fromDaily = tenants.some((tenant) => tenant.enabled !== false);
   const usage: BillingUsage[] = fromDaily
-    ? await pricedDailyUsage(
-        ctx,
-        dailyRows,
-        contract.startDate,
-        Math.min(contract.endDate, through),
-      )
+    ? await pricedDailyUsage(ctx, dailyRows, contract.startDate, usageEnd)
     : legacyUsage;
   const boundaryMonths = new Set([
     monthKey(contract.startDate),
