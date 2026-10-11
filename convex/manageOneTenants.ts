@@ -1,7 +1,15 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel.d.ts";
+import { internal } from "./_generated/api";
 import { assertCanManageUsage, assertNotMonitoring } from "./authorization";
 import { multiplyMoney } from "./money";
 
@@ -1573,70 +1581,6 @@ function dailyUsageSourceKeyFor(input: {
   ].join("|");
 }
 
-async function migrateOpenDailyUsageRows(
-  ctx: MutationCtx,
-  tenantId: Id<"manageOneTenants">,
-  companyId: Id<"companies">,
-  effectiveFrom?: string,
-) {
-  const rows = (await ctx.db.query("dailyUsageSnapshots").collect()).filter(
-    (row) =>
-      row.tenantId === tenantId &&
-      row.companyId !== companyId &&
-      (!effectiveFrom || row.usageDate >= effectiveFrom) &&
-      !row.invoiceId &&
-      !row.lockedAt,
-  );
-
-  let moved = 0;
-  let merged = 0;
-  let skipped = 0;
-
-  for (const row of rows) {
-    const sourceKey = dailyUsageSourceKeyFor({
-      companyId,
-      tenantId,
-      usageDate: row.usageDate,
-      serviceType: row.serviceType,
-      itemName: row.itemName,
-      catalogItemId: row.catalogItemId,
-      regionId: row.regionId,
-      regionName: row.regionName,
-      dataCenterName: row.dataCenterName,
-    });
-
-    const existing = await ctx.db
-      .query("dailyUsageSnapshots")
-      .withIndex("by_source_key", (q) => q.eq("sourceKey", sourceKey))
-      .unique();
-
-    if (existing && existing._id !== row._id) {
-      if (existing.invoiceId || existing.lockedAt) {
-        skipped++;
-        continue;
-      }
-
-      const { _id: _rowId, _creationTime: _rowCreationTime, ...patch } = row;
-      await ctx.db.patch(existing._id, {
-        ...patch,
-        companyId,
-        sourceKey,
-      });
-      await ctx.db.delete(row._id);
-      merged++;
-      continue;
-    }
-
-    await ctx.db.patch(row._id, {
-      companyId,
-      sourceKey,
-    });
-    moved++;
-  }
-
-  return { moved, merged, skipped };
-}
-
 function dateKey(timestamp = Date.now()) {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
@@ -1652,21 +1596,6 @@ function assertDateKey(date: string) {
       message: "Billing effective date must be a valid YYYY-MM-DD date",
     });
   }
-}
-
-async function defaultEffectiveFrom(
-  ctx: MutationCtx,
-  tenantId: Id<"manageOneTenants">,
-) {
-  const rows = (await ctx.db.query("dailyUsageSnapshots").collect()).filter(
-    (row) => row.tenantId === tenantId,
-  );
-
-  return rows.reduce<string | undefined>(
-    (earliest, row) =>
-      !earliest || row.usageDate < earliest ? row.usageDate : earliest,
-    undefined,
-  ) ?? dateKey();
 }
 
 async function assignTenant(
@@ -1685,31 +1614,23 @@ async function assignTenant(
       message: "Billing effective date cannot be in the future",
     });
   }
-  const lockedConflict = (
-    await ctx.db.query("dailyUsageSnapshots").collect()
-  ).find(
-    (row) =>
-      row.tenantId === args.tenantId &&
-      row.usageDate >= args.effectiveFrom &&
-      row.companyId !== args.companyId &&
-      Boolean(row.invoiceId || row.lockedAt),
-  );
-  if (lockedConflict) {
-    throw new ConvexError({
-      code: "BAD_REQUEST",
-      message: `Usage from ${lockedConflict.usageDate} is already invoiced to another customer. Void or correct that invoice before reassigning this tenant from ${args.effectiveFrom}.`,
-    });
-  }
   const history = await ctx.db
     .query("manageOneTenantAssignments")
     .withIndex("by_tenant", (q) => q.eq("tenantId", args.tenantId))
     .collect();
-  const current = await ctx.db
+  const activeAssignments = await ctx.db
     .query("manageOneTenantAssignments")
     .withIndex("by_tenant_status", (q) =>
       q.eq("tenantId", args.tenantId).eq("status", "active"),
     )
-    .unique();
+    .collect();
+  if (activeAssignments.length > 1) {
+    throw new ConvexError({
+      code: "ASSIGNMENT_HISTORY_CONFLICT",
+      message: `Tenant has ${activeAssignments.length} active assignment records. Correct the assignment history before linking it.`,
+    });
+  }
+  const current = activeAssignments[0];
   if (current?.companyId === args.companyId) {
     const overlap = history.find(
       (assignment) =>
@@ -1772,32 +1693,13 @@ export const listWithSuggestions = query({
     const recommendedDates = new Map(
       await Promise.all(
         tenants.map(async (tenant) => {
-          const earliestOpenUsageFor = (lockedAt: number | undefined) =>
-            ctx.db
-              .query("dailyUsageSnapshots")
-              .withIndex("by_tenant_open_date", (q) =>
-                q
-                  .eq("tenantId", tenant._id)
-                  .eq("invoiceId", undefined)
-                  .eq("lockedAt", lockedAt),
-              )
-              .order("asc")
-              .first();
-          const [unlockedUsage, zeroLockedUsage] = await Promise.all([
-            earliestOpenUsageFor(undefined),
-            earliestOpenUsageFor(0),
-          ]);
-          const earliestEligibleDate = [
-            unlockedUsage?.usageDate,
-            zeroLockedUsage?.usageDate,
-          ]
-            .filter((usageDate): usageDate is string => usageDate !== undefined)
-            .sort()[0];
+          const earliestUsage = await ctx.db
+            .query("dailyUsageSnapshots")
+            .withIndex("by_tenant_date", (q) => q.eq("tenantId", tenant._id))
+            .order("asc")
+            .first();
 
-          return [
-            tenant._id,
-            earliestEligibleDate ?? dateKey(),
-          ] as const;
+          return [tenant._id, earliestUsage?.usageDate ?? dateKey()] as const;
         }),
       ),
     );
@@ -1841,11 +1743,11 @@ export const listWithSuggestions = query({
   },
 });
 
-export const linkToCompany = mutation({
+export const inspectAssignmentUsageBatch = internalQuery({
   args: {
     tenantId: v.id("manageOneTenants"),
     companyId: v.id("companies"),
-    billingEffectiveFrom: v.optional(v.string()),
+    paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
@@ -1855,68 +1757,246 @@ export const linkToCompany = mutation({
         message: "Only CEO or Head of Business can link tenants",
       });
     }
-
-    const effectiveFrom =
-      args.billingEffectiveFrom ??
-      (await defaultEffectiveFrom(ctx, args.tenantId));
-    await assignTenant(ctx, {
-      tenantId: args.tenantId,
-      companyId: args.companyId,
-      effectiveFrom,
-      actorId: user._id,
-    });
-    return await migrateOpenDailyUsageRows(
-      ctx,
-      args.tenantId,
-      args.companyId,
-      effectiveFrom,
+    const page = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_tenant_date", (q) => q.eq("tenantId", args.tenantId))
+      .order("asc")
+      .paginate(args.paginationOpts);
+    const conflict = page.page.find(
+      (row) =>
+        row.companyId !== args.companyId &&
+        Boolean(row.invoiceId || row.lockedAt),
     );
+    return {
+      earliestDate: page.page[0]?.usageDate,
+      conflict: conflict
+        ? {
+            usageDate: conflict.usageDate,
+            invoiceId: conflict.invoiceId,
+          }
+        : undefined,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
   },
 });
 
-export const reassignCompany = mutation({
+export const beginSafeAssignment = internalMutation({
   args: {
     tenantId: v.id("manageOneTenants"),
     companyId: v.id("companies"),
-    billingEffectiveFrom: v.optional(v.string()),
+    effectiveFrom: v.string(),
   },
   handler: async (ctx, args) => {
     const user = await getCurrentUserOrThrow(ctx);
     if (user.role !== "ceo" && user.role !== "head_of_business") {
       throw new ConvexError({
         code: "FORBIDDEN",
-        message: "Only CEO or Head of Business can reassign tenants",
+        message: "Only CEO or Head of Business can link tenants",
       });
     }
-
-    const tenant = await ctx.db.get(args.tenantId);
-    if (!tenant) {
+    const [tenant, company] = await Promise.all([
+      ctx.db.get(args.tenantId),
+      ctx.db.get(args.companyId),
+    ]);
+    if (!tenant)
       throw new ConvexError({ code: "NOT_FOUND", message: "Tenant not found" });
-    }
-
-    const company = await ctx.db.get(args.companyId);
-    if (!company) {
+    if (!company)
       throw new ConvexError({
         code: "NOT_FOUND",
         message: "Company not found",
       });
-    }
-
-    const effectiveFrom = args.billingEffectiveFrom ?? dateKey();
     await assignTenant(ctx, {
-      tenantId: args.tenantId,
-      companyId: args.companyId,
-      effectiveFrom,
+      ...args,
       actorId: user._id,
     });
-    const usageRows = await migrateOpenDailyUsageRows(
-      ctx,
-      args.tenantId,
-      args.companyId,
-      effectiveFrom,
-    );
+    await ctx.db.patch(args.tenantId, {
+      assignmentMigrationStatus: "pending",
+      assignmentMigrationError: undefined,
+    });
+    return { companyName: company.name };
+  },
+});
 
-    return { linkedCompanyName: company.name, usageRows };
+export const migrateAssignmentUsageBatch = internalMutation({
+  args: {
+    tenantId: v.id("manageOneTenants"),
+    companyId: v.id("companies"),
+    effectiveFrom: v.string(),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const actor = await getCurrentUserOrThrow(ctx);
+    const page = await ctx.db
+      .query("dailyUsageSnapshots")
+      .withIndex("by_tenant_date", (q) => q.eq("tenantId", args.tenantId))
+      .order("asc")
+      .paginate(args.paginationOpts);
+    let moved = 0;
+    let merged = 0;
+    for (const row of page.page) {
+      if (
+        row.usageDate < args.effectiveFrom ||
+        row.companyId === args.companyId
+      )
+        continue;
+      if (row.invoiceId || row.lockedAt) {
+        throw new ConvexError({
+          code: "LOCKED_USAGE_CONFLICT",
+          message: `Usage from ${row.usageDate} is already locked or invoiced to another customer.`,
+        });
+      }
+      const sourceKey = dailyUsageSourceKeyFor({
+        companyId: args.companyId,
+        tenantId: args.tenantId,
+        usageDate: row.usageDate,
+        serviceType: row.serviceType,
+        itemName: row.itemName,
+        catalogItemId: row.catalogItemId,
+        regionId: row.regionId,
+        regionName: row.regionName,
+        dataCenterName: row.dataCenterName,
+      });
+      const matches = await ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_source_key", (q) => q.eq("sourceKey", sourceKey))
+        .collect();
+      const existing = matches.find((candidate) => candidate._id !== row._id);
+      if (matches.filter((candidate) => candidate._id !== row._id).length > 1) {
+        throw new ConvexError({
+          code: "DUPLICATE_USAGE_CONFLICT",
+          message: `Multiple target usage rows exist for ${row.usageDate} and ${row.itemName}. Reconcile them before assignment.`,
+        });
+      }
+      if (existing) {
+        if (existing.invoiceId || existing.lockedAt) {
+          throw new ConvexError({
+            code: "LOCKED_USAGE_CONFLICT",
+            message: `Target usage for ${row.usageDate} and ${row.itemName} is already locked or invoiced.`,
+          });
+        }
+        await ctx.db.patch(row._id, {
+          supersededByUsageId: existing._id,
+          supersededAt: Date.now(),
+          supersededBy: actor._id,
+          supersededReason: "Reconciled during tenant assignment",
+        });
+        merged++;
+      } else {
+        await ctx.db.patch(row._id, {
+          companyId: args.companyId,
+          sourceKey,
+        });
+        moved++;
+      }
+    }
+    return {
+      moved,
+      merged,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
+  },
+});
+
+export const finishSafeAssignment = internalMutation({
+  args: {
+    tenantId: v.id("manageOneTenants"),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.tenantId, {
+      assignmentMigrationStatus: args.error ? "failed" : "complete",
+      assignmentMigrationError: args.error,
+    });
+  },
+});
+
+export const assignToCompanySafely = action({
+  args: {
+    tenantId: v.id("manageOneTenants"),
+    companyId: v.id("companies"),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    linkedCompanyName: string;
+    effectiveFrom: string;
+    usageRows: { moved: number; merged: number; skipped: number };
+  }> => {
+    let cursor: string | null = null;
+    let earliestDate: string | undefined;
+    do {
+      const page: {
+        earliestDate?: string;
+        conflict?: { usageDate: string; invoiceId?: Id<"invoices"> };
+        isDone: boolean;
+        continueCursor: string;
+      } = await ctx.runQuery(
+        internal.manageOneTenants.inspectAssignmentUsageBatch,
+        {
+          ...args,
+          paginationOpts: { cursor, numItems: 200 },
+        },
+      );
+      earliestDate ??= page.earliestDate;
+      if (page.conflict) {
+        throw new ConvexError({
+          code: "LOCKED_USAGE_CONFLICT",
+          message: `Cannot link this tenant: usage from ${page.conflict.usageDate} is already ${page.conflict.invoiceId ? "invoiced" : "locked"} to another customer. Correct that record first.`,
+        });
+      }
+      cursor = page.isDone ? null : page.continueCursor;
+    } while (cursor);
+
+    const effectiveFrom = earliestDate ?? dateKey();
+    const assignment = await ctx.runMutation(
+      internal.manageOneTenants.beginSafeAssignment,
+      { ...args, effectiveFrom },
+    );
+    let moved = 0;
+    let merged = 0;
+    cursor = null;
+    try {
+      do {
+        const page: {
+          moved: number;
+          merged: number;
+          isDone: boolean;
+          continueCursor: string;
+        } = await ctx.runMutation(
+          internal.manageOneTenants.migrateAssignmentUsageBatch,
+          {
+            ...args,
+            effectiveFrom,
+            paginationOpts: { cursor, numItems: 100 },
+          },
+        );
+        moved += page.moved;
+        merged += page.merged;
+        cursor = page.isDone ? null : page.continueCursor;
+      } while (cursor);
+      await ctx.runMutation(internal.manageOneTenants.finishSafeAssignment, {
+        tenantId: args.tenantId,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Usage migration failed";
+      await ctx.runMutation(internal.manageOneTenants.finishSafeAssignment, {
+        tenantId: args.tenantId,
+        error: message.slice(0, 500),
+      });
+      throw new ConvexError({
+        code: "ASSIGNMENT_MIGRATION_FAILED",
+        message: `Tenant was linked from ${effectiveFrom}, but usage migration needs retry: ${message}`,
+      });
+    }
+    return {
+      linkedCompanyName: assignment.companyName,
+      effectiveFrom,
+      usageRows: { moved, merged, skipped: 0 },
+    };
   },
 });
 
@@ -1935,13 +2015,30 @@ export const unlinkFromCompany = mutation({
     if (!tenant) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Tenant not found" });
     }
+    if (
+      tenant.assignmentMigrationStatus === "pending" ||
+      tenant.assignmentMigrationStatus === "failed"
+    ) {
+      throw new ConvexError({
+        code: "ASSIGNMENT_MIGRATION_INCOMPLETE",
+        message:
+          "Complete or retry the tenant usage migration before unlinking it.",
+      });
+    }
 
-    const current = await ctx.db
+    const activeAssignments = await ctx.db
       .query("manageOneTenantAssignments")
       .withIndex("by_tenant_status", (q) =>
         q.eq("tenantId", args.tenantId).eq("status", "active"),
       )
-      .unique();
+      .collect();
+    if (activeAssignments.length > 1) {
+      throw new ConvexError({
+        code: "ASSIGNMENT_HISTORY_CONFLICT",
+        message: `Tenant has ${activeAssignments.length} active assignment records. Correct its assignment history before unlinking it.`,
+      });
+    }
+    const current = activeAssignments[0];
     if (current) {
       await ctx.db.patch(current._id, {
         effectiveTo: dateKey(),
@@ -1989,14 +2086,6 @@ export const createCompanyFromTenant = mutation({
       contactEmail: tenant.managerEmail,
     });
 
-    const effectiveFrom = await defaultEffectiveFrom(ctx, args.tenantId);
-    await assignTenant(ctx, {
-      tenantId: args.tenantId,
-      companyId,
-      effectiveFrom,
-      actorId: user._id,
-    });
-    await migrateOpenDailyUsageRows(ctx, args.tenantId, companyId, effectiveFrom);
     return companyId;
   },
 });

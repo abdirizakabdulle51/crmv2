@@ -441,6 +441,10 @@ export default defineSchema({
     linkedCompanyId: v.optional(v.id("companies")),
     billingLinkedAt: v.optional(v.number()),
     billingDisabledAt: v.optional(v.number()),
+    assignmentMigrationStatus: v.optional(
+      v.union(v.literal("pending"), v.literal("complete"), v.literal("failed")),
+    ),
+    assignmentMigrationError: v.optional(v.string()),
   })
     .index("by_vdc_id", ["vdcId"])
     .index("by_domain_id", ["domainId"])
@@ -780,6 +784,7 @@ export default defineSchema({
     .index("by_company_date", ["companyId", "usageDate"])
     .index("by_company_month", ["companyId", "month"])
     .index("by_company_month_date", ["companyId", "month", "usageDate"])
+    .index("by_tenant_date", ["tenantId", "usageDate"])
     .index("by_month_date", ["month", "usageDate"])
     .index("by_month", ["month"])
     .index("by_invoice", ["invoiceId"]),

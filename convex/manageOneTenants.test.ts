@@ -1309,7 +1309,7 @@ describe("ManageOne tenant billing links", () => {
     });
   }
 
-  it("uses the earliest open usage date for tenant suggestions", async () => {
+  it("uses the tenant's earliest recorded usage date for suggestions", async () => {
     const t = convexTest(schema, modules);
     const s = await seedTenantLinkData(t);
 
@@ -1356,7 +1356,7 @@ describe("ManageOne tenant billing links", () => {
 
     expect(tenants.find((tenant) => tenant._id === s.tenantId)).toMatchObject({
       linkedCompanyName: "Hormuud",
-      recommendedBillingEffectiveFrom: "2026-08-16",
+      recommendedBillingEffectiveFrom: "2026-08-14",
     });
   });
 
@@ -1394,42 +1394,73 @@ describe("ManageOne tenant billing links", () => {
     });
   });
 
-  it("reassigns a tenant and moves only open daily usage rows", async () => {
+  it("safely assigns from the first usage date and migrates every open row", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedTenantLinkData(t);
+    await t.run(async (ctx) => {
+      await ctx.db.delete(s.invoicedRowId);
+      for (let index = 0; index < 205; index++) {
+        await ctx.db.insert("dailyUsageSnapshots", {
+          companyId: s.oldCompanyId,
+          tenantId: s.tenantId,
+          tenantName: "Hormuud-ISP",
+          tenantVdcId: "vdc-hormuud-isp",
+          usageDate: "2026-08-10",
+          month: "2026-08",
+          serviceType: "ECS",
+          itemName: `ECS-${index}`,
+          serviceCategory: "ECS",
+          quantity: 1,
+          unit: "instance/month",
+          source: "manageone",
+          sourceKey: `old-assignment-${index}`,
+          capturedAt: 1,
+        });
+      }
+    });
+
+    const result = await asUser(t, s.ceo).action(
+      api.manageOneTenants.assignToCompanySafely,
+      { tenantId: s.tenantId, companyId: s.newCompanyId },
+    );
+
+    expect(result).toMatchObject({
+      linkedCompanyName: "Hormuud ISP",
+      effectiveFrom: "2026-08-10",
+      usageRows: { moved: 206, merged: 0, skipped: 0 },
+    });
+    const state = await t.run(async (ctx) => ({
+      tenant: await ctx.db.get(s.tenantId),
+      row: await ctx.db.get(s.openRowId),
+      rows: await ctx.db
+        .query("dailyUsageSnapshots")
+        .withIndex("by_tenant_date", (q) => q.eq("tenantId", s.tenantId))
+        .collect(),
+    }));
+    expect(state.tenant).toMatchObject({
+      linkedCompanyId: s.newCompanyId,
+      assignmentMigrationStatus: "complete",
+    });
+    expect(state.row?.companyId).toBe(s.newCompanyId);
+    expect(state.rows).toHaveLength(206);
+    expect(state.rows.every((row) => row.companyId === s.newCompanyId)).toBe(
+      true,
+    );
+  });
+
+  it("blocks safe assignment before changing ownership when old usage is invoiced", async () => {
     const t = convexTest(schema, modules);
     const s = await seedTenantLinkData(t);
 
-    const result = await asUser(t, s.ceo).mutation(
-      api.manageOneTenants.reassignCompany,
-      {
+    await expect(
+      asUser(t, s.ceo).action(api.manageOneTenants.assignToCompanySafely, {
         tenantId: s.tenantId,
         companyId: s.newCompanyId,
-        billingEffectiveFrom: "2026-08-16",
-      },
-    );
-
-    expect(result.usageRows).toEqual({ moved: 1, merged: 0, skipped: 0 });
-
-    const rows = await t.run(async (ctx) => ({
-      tenant: await ctx.db.get(s.tenantId),
-      open: await ctx.db.get(s.openRowId),
-      invoiced: await ctx.db.get(s.invoicedRowId),
-      assignments: await ctx.db
-        .query("manageOneTenantAssignments")
-        .collect(),
-    }));
-
-    expect(rows.tenant?.linkedCompanyId).toBe(s.newCompanyId);
-    expect(rows.open?.companyId).toBe(s.newCompanyId);
-    expect(rows.open?.sourceKey).toContain(String(s.newCompanyId));
-    expect(rows.invoiced?.companyId).toBe(s.oldCompanyId);
-    expect(rows.assignments).toEqual([
-      expect.objectContaining({
-        tenantId: s.tenantId,
-        companyId: s.newCompanyId,
-        effectiveFrom: "2026-08-16",
-        status: "active",
       }),
-    ]);
+    ).rejects.toThrow(/2026-08-15.*invoiced.*another customer/i);
+
+    const tenant = await t.run((ctx) => ctx.db.get(s.tenantId));
+    expect(tenant?.linkedCompanyId).toBe(s.oldCompanyId);
   });
 
   it("unlinks a tenant without deleting historical usage", async () => {

@@ -23,9 +23,8 @@ vi.mock("@/convex/_generated/api.js", () => ({
     countries: { list: "countries.list" },
     manageOneTenants: {
       createCompanyFromTenant: "manageOneTenants.createCompanyFromTenant",
-      linkToCompany: "manageOneTenants.linkToCompany",
+      assignToCompanySafely: "manageOneTenants.assignToCompanySafely",
       listWithSuggestions: "manageOneTenants.listWithSuggestions",
-      reassignCompany: "manageOneTenants.reassignCompany",
       unlinkFromCompany: "manageOneTenants.unlinkFromCompany",
     },
     sectors: { list: "sectors.list" },
@@ -48,6 +47,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
+  useAction: () => vi.fn(),
   useMutation: () => vi.fn(),
   useQuery: (query: string) => {
     if (query === "manageOneTenants.listWithSuggestions") return mocks.tenants;

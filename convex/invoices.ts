@@ -893,6 +893,12 @@ async function assertLinkedUsageComplete(
     contractStart,
     contractEnd,
   );
+  if (diagnostics.migrationIssue) {
+    throw new ConvexError({
+      code: "TENANT_ASSIGNMENT_INCOMPLETE",
+      message: diagnostics.migrationIssue,
+    });
+  }
   const firstMissing = diagnostics.missing[0];
   if (firstMissing) {
     throw new ConvexError({
@@ -925,12 +931,21 @@ async function linkedUsageDiagnostics(
         tenant.billingLinkedAt <=
           monthEndTimestamp(cycleMonths[cycleMonths.length - 1]!)),
   );
+  const incompleteMigration = linkedTenants.find(
+    (tenant) =>
+      tenant.assignmentMigrationStatus === "pending" ||
+      tenant.assignmentMigrationStatus === "failed",
+  );
+  const migrationIssue = incompleteMigration
+    ? `Tenant assignment for ${incompleteMigration.name} is ${incompleteMigration.assignmentMigrationStatus}. Complete or retry its usage migration before invoicing.${incompleteMigration.assignmentMigrationError ? ` ${incompleteMigration.assignmentMigrationError}` : ""}`
+    : undefined;
   if (!linkedTenants.length) {
     return {
       linkedTenantCount: 0,
       expectedCaptureCount: 0,
       recordedCaptureCount: 0,
       missing: [] as Array<{ tenantName: string; date: string }>,
+      migrationIssue,
     };
   }
   const expectedDates = cycleMonths.flatMap((month) => {
@@ -1005,6 +1020,7 @@ async function linkedUsageDiagnostics(
     expectedCaptureCount: expected.length,
     recordedCaptureCount: expected.length - missing.length,
     missing,
+    migrationIssue,
   };
 }
 

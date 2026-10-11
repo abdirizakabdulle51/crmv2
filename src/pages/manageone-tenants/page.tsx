@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import { api } from "@/convex/_generated/api.js";
@@ -52,8 +52,7 @@ export default function ManageOneTenantsPage() {
   const companies = useQuery(api.companies.list, isAdmin ? {} : "skip");
   const sectors = useQuery(api.sectors.list, isAdmin ? {} : "skip");
   const users = useQuery(api.users.listAll, isAdmin ? {} : "skip");
-  const linkToCompany = useMutation(api.manageOneTenants.linkToCompany);
-  const reassignCompany = useMutation(api.manageOneTenants.reassignCompany);
+  const assignToCompany = useAction(api.manageOneTenants.assignToCompanySafely);
   const unlinkFromCompany = useMutation(api.manageOneTenants.unlinkFromCompany);
   const createCompanyFromTenant = useMutation(
     api.manageOneTenants.createCompanyFromTenant,
@@ -140,26 +139,17 @@ export default function ManageOneTenantsPage() {
   };
 
   const handleConfirmAssignment = async () => {
-    if (!pendingAssignment || !billingEffectiveFrom) return;
+    if (!pendingAssignment) return;
     const { tenant, companyId } = pendingAssignment;
     setSubmittingTenantId(tenant._id);
     try {
-      const result = tenant.linkedCompanyId
-        ? await reassignCompany({
-            tenantId: tenant._id,
-            companyId,
-            billingEffectiveFrom,
-          })
-        : await linkToCompany({
-            tenantId: tenant._id,
-            companyId,
-            billingEffectiveFrom,
-          });
-      const movedCount = "usageRows" in result
-        ? result.usageRows.moved + result.usageRows.merged
-        : result.moved + result.merged;
+      const result = await assignToCompany({
+        tenantId: tenant._id,
+        companyId,
+      });
+      const movedCount = result.usageRows.moved + result.usageRows.merged;
       toast.success("Tenant assignment saved", {
-        description: `${movedCount} open usage row(s) assigned from ${billingEffectiveFrom}`,
+        description: `${movedCount} usage row(s) reconciled from the detected first usage date ${result.effectiveFrom}`,
       });
       setPendingAssignment(null);
     } catch (error) {
@@ -199,12 +189,13 @@ export default function ManageOneTenantsPage() {
 
     setSubmittingTenantId(creatingTenant._id);
     try {
-      await createCompanyFromTenant({
+      const companyId = await createCompanyFromTenant({
         tenantId: creatingTenant._id,
         sectorId: sectorId as Doc<"sectors">["_id"],
         countryId: countryId as Doc<"countries">["_id"],
         accountManagerId: accountManagerId as Doc<"users">["_id"],
       });
+      await assignToCompany({ tenantId: creatingTenant._id, companyId });
       toast.success("Company created and linked");
       resetCreateDialog();
     } catch (error) {
@@ -314,14 +305,26 @@ export default function ManageOneTenantsPage() {
                       <td className="p-3 min-w-[220px]">
                         <div className="space-y-2">
                           {tenant.linkedCompanyId ? (
-                            <Link
-                              className="font-medium text-primary hover:underline"
-                              to={`/companies?search=${encodeURIComponent(
-                                tenant.linkedCompanyName || "",
-                              )}`}
-                            >
-                              {tenant.linkedCompanyName || "Linked company"}
-                            </Link>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Link
+                                className="font-medium text-primary hover:underline"
+                                to={`/companies?search=${encodeURIComponent(
+                                  tenant.linkedCompanyName || "",
+                                )}`}
+                              >
+                                {tenant.linkedCompanyName || "Linked company"}
+                              </Link>
+                              {tenant.assignmentMigrationStatus ===
+                                "pending" && (
+                                <Badge variant="secondary">Migrating</Badge>
+                              )}
+                              {tenant.assignmentMigrationStatus ===
+                                "failed" && (
+                                <Badge variant="destructive">
+                                  Migration failed
+                                </Badge>
+                              )}
+                            </div>
                           ) : tenant.suggestedCompanyId ? (
                             <div className="text-sm">
                               Suggested:{" "}
@@ -387,14 +390,40 @@ export default function ManageOneTenantsPage() {
                               </Button>
                             )}
                             {tenant.linkedCompanyId && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleUnlink(tenant._id)}
-                                disabled={submittingTenantId === tenant._id}
-                              >
-                                Unlink
-                              </Button>
+                              <>
+                                {(tenant.assignmentMigrationStatus ===
+                                  "failed" ||
+                                  tenant.assignmentMigrationStatus ===
+                                    "pending") && (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() =>
+                                      openAssignment(
+                                        tenant,
+                                        tenant.linkedCompanyId!,
+                                      )
+                                    }
+                                    disabled={submittingTenantId === tenant._id}
+                                  >
+                                    Retry Migration
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleUnlink(tenant._id)}
+                                  disabled={
+                                    submittingTenantId === tenant._id ||
+                                    tenant.assignmentMigrationStatus ===
+                                      "pending" ||
+                                    tenant.assignmentMigrationStatus ===
+                                      "failed"
+                                  }
+                                >
+                                  Unlink
+                                </Button>
+                              </>
                             )}
                           </div>
                         </div>
@@ -476,18 +505,18 @@ export default function ManageOneTenantsPage() {
                 id="billing-effective-from"
                 type="date"
                 value={billingEffectiveFrom}
-                onChange={(event) =>
-                  setBillingEffectiveFrom(event.target.value)
-                }
+                readOnly
+                disabled
               />
+              <p className="text-xs text-muted-foreground">
+                Automatically detected from the tenant&apos;s earliest recorded
+                usage. It cannot be moved forward during assignment.
+              </p>
             </div>
             <Button
               className="w-full"
               onClick={handleConfirmAssignment}
-              disabled={
-                !billingEffectiveFrom ||
-                submittingTenantId === pendingAssignment?.tenant._id
-              }
+              disabled={submittingTenantId === pendingAssignment?.tenant._id}
             >
               Confirm assignment
             </Button>
