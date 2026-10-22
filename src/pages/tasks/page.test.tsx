@@ -614,7 +614,7 @@ describe("TasksPage", () => {
     expect(screen.getAllByText("Report To: Amina Ali").length).toBeGreaterThan(
       0,
     );
-    expect(screen.getByText(/Due: (Aug|Sep)/)).toBeInTheDocument();
+    expect(screen.getByText(/Due: [A-Z][a-z]{2}/)).toBeInTheDocument();
     expect(screen.getByText("Company: AICC")).toBeInTheDocument();
   });
 

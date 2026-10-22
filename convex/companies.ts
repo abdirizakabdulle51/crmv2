@@ -140,7 +140,7 @@ export const dashboard = query({
         ctx.db.query("customerContracts").collect(),
         ctx.db.query("invoices").collect(),
         ctx.db.query("invoicePayments").collect(),
-        ctx.db.query("consumption").collect(),
+        ctx.db.query("dailyUsageBillingSnapshots").collect(),
         ctx.db.query("users").collect(),
         ctx.db.query("leads").collect(),
       ]);
@@ -199,24 +199,15 @@ export const dashboard = query({
     }
     const usageByCompany = new Map<Doc<"companies">["_id"], number>();
     const previousUsageByCompany = new Map<Doc<"companies">["_id"], number>();
-    for (const entry of usage) {
-      if (!visibleIds.has(entry.companyId)) continue;
-      if (entry.month === currentMonth) {
-        usageByCompany.set(
-          entry.companyId,
-          Math.round(
-            ((usageByCompany.get(entry.companyId) ?? 0) + entry.amount) * 100,
-          ) / 100,
-        );
+    for (const snapshot of usage) {
+      if (!visibleIds.has(snapshot.companyId)) continue;
+      if (snapshot.month === currentMonth) {
+        usageByCompany.set(snapshot.companyId, snapshot.estimatedAmount);
       }
-      if (entry.month === previousMonth && entry.amount > 0) {
+      if (snapshot.month === previousMonth && snapshot.estimatedAmount > 0) {
         previousUsageByCompany.set(
-          entry.companyId,
-          Math.round(
-            ((previousUsageByCompany.get(entry.companyId) ?? 0) +
-              entry.amount) *
-              100,
-          ) / 100,
+          snapshot.companyId,
+          snapshot.estimatedAmount,
         );
       }
     }

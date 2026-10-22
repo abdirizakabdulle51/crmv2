@@ -43,6 +43,33 @@ describe("InactivityLogout", () => {
     expect(signout).toHaveBeenCalledTimes(1);
   });
 
+  it("signs out immediately when a suspended session is restored after expiry", () => {
+    window.localStorage.setItem(
+      LAST_ACTIVITY_STORAGE_KEY,
+      String(1_000_000 - INACTIVITY_TIMEOUT_MS - 1),
+    );
+
+    render(<InactivityLogout />);
+
+    expect(signout).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem(LAST_ACTIVITY_STORAGE_KEY)).toBe(
+      String(1_000_000 - INACTIVITY_TIMEOUT_MS - 1),
+    );
+  });
+
+  it("checks expiry before treating restored visibility as activity", () => {
+    render(<InactivityLogout />);
+    setSystemTime(1_000_000 + INACTIVITY_TIMEOUT_MS + 1);
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(signout).toHaveBeenCalledTimes(1);
+  });
+
   it("resets the timer when activity is recorded", () => {
     render(<InactivityLogout />);
 

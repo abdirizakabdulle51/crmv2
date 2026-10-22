@@ -28,6 +28,9 @@ const TargetsPage = lazy(() => import("./pages/targets/page.tsx"));
 const ActivitiesPage = lazy(() => import("./pages/activities/page.tsx"));
 const PerformancePage = lazy(() => import("./pages/performance/page.tsx"));
 const UsagePage = lazy(() => import("./pages/usage/page.tsx"));
+const RevenueAssurancePage = lazy(
+  () => import("./pages/revenue-assurance/page.tsx"),
+);
 const UsageAutoFillPage = lazy(
   () => import("./pages/usage/auto-fill-page.tsx"),
 );
@@ -176,6 +179,10 @@ export default function App() {
               element={lazyPage(<PerformancePage />)}
             />
             <Route path="/usage" element={lazyPage(<UsagePage />)} />
+            <Route
+              path="/revenue-assurance"
+              element={lazyPage(<RevenueAssurancePage />)}
+            />
             <Route
               path="/usage/auto-fill"
               element={lazyPage(<UsageAutoFillPage />)}

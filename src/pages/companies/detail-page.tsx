@@ -672,6 +672,18 @@ function BillingUsageSection({
         } | null;
         dailyUsageReady: boolean;
         latestUsageDate: string | null;
+        billingAssurance: {
+          status: "match" | "missing" | "stale" | "mismatch";
+          reason:
+            | "identical"
+            | "snapshot_missing"
+            | "calculation_version_changed"
+            | "inputs_changed"
+            | "billing_result_changed";
+          liveAmount: number;
+          snapshotAmount: number | null;
+          calculatedAt: number | null;
+        };
         dailySeries: Array<{
           usageDate: string;
           dailyCharge: number;
@@ -857,6 +869,21 @@ function BillingUsageSection({
               Daily usage has not been calculated for this month. Upcoming
               charges and projection will appear after the midnight billing sync
               or Auto-fill from ManageOne runs.
+            </div>
+          ) : null}
+
+          {snapshot.dailyUsageReady &&
+          snapshot.billingAssurance.status !== "match" ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              Billing assurance requires review: the saved billing result is
+              {snapshot.billingAssurance.status === "missing"
+                ? " missing"
+                : " no longer aligned with the current usage or pricing"}
+              . Live calculation:{" "}
+              {formatCurrency(snapshot.billingAssurance.liveAmount)}
+              {snapshot.billingAssurance.snapshotAmount === null
+                ? "."
+                : `; saved calculation: ${formatCurrency(snapshot.billingAssurance.snapshotAmount)}.`}
             </div>
           ) : null}
 

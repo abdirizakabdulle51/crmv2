@@ -42,6 +42,20 @@ function generateTemporaryPassword() {
 }
 
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
+  session: {
+    totalDurationMs: 24 * 60 * 60 * 1000,
+    inactiveDurationMs: 8 * 60 * 60 * 1000,
+  },
+  jwt: {
+    durationMs: 15 * 60 * 1000,
+    customClaims: async (ctx, { userId }) => {
+      const user = await ctx.db.get(userId);
+      return {
+        email: user?.email,
+        name: user?.name,
+      };
+    },
+  },
   providers: [
     Password({
       profile(params) {
@@ -63,15 +77,6 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       },
     }),
   ],
-  jwt: {
-    customClaims: async (ctx, { userId }) => {
-      const user = await ctx.db.get(userId);
-      return {
-        email: user?.email,
-        name: user?.name,
-      };
-    },
-  },
 });
 
 export const requireAdmin = internalQuery({

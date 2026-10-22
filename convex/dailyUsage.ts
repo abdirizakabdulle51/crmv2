@@ -433,7 +433,8 @@ async function loadActiveContractPricingForMonth(
     const contract = contracts
       .filter(
         (candidate) =>
-          candidate.status === "active" &&
+          candidate.status !== "draft" &&
+          candidate.status !== "terminated" &&
           contractCoversMonth(candidate, month),
       )
       .sort((a, b) => b.updatedAt - a.updatedAt)[0];
@@ -1212,6 +1213,222 @@ export const compareCompanyMonthBillingSnapshot = internalQuery({
   },
 });
 
+export const revenueAssurance = query({
+  args: { month: v.string() },
+  handler: async (ctx, args) => {
+    monthStartTimestamp(args.month);
+    const user = await getCurrentUserOrThrow(ctx);
+    const [companies, monthRows, catalogItems, invoices, persistedSnapshots] =
+      await Promise.all([
+        ctx.db.query("companies").collect(),
+        ctx.db
+          .query("dailyUsageSnapshots")
+          .withIndex("by_month", (q) => q.eq("month", args.month))
+          .collect(),
+        ctx.db.query("serviceCatalog").collect(),
+        ctx.db.query("invoices").collect(),
+        ctx.db
+          .query("dailyUsageBillingSnapshots")
+          .withIndex("by_month", (q) => q.eq("month", args.month))
+          .collect(),
+      ]);
+    const visibleCompanies = companies.filter((company) =>
+      canViewCompany(user, company),
+    );
+    const companyIds = visibleCompanies.map((company) => company._id);
+    const visibleIdSet = new Set(companyIds);
+    const rows = monthRows.filter((row) => visibleIdSet.has(row.companyId));
+    const rowsByCompany = new Map<Id<"companies">, typeof rows>();
+    for (const row of rows) {
+      const companyRows = rowsByCompany.get(row.companyId) ?? [];
+      companyRows.push(row);
+      rowsByCompany.set(row.companyId, companyRows);
+    }
+    const persistedByCompany = new Map(
+      persistedSnapshots.map((snapshot) => [snapshot.companyId, snapshot]),
+    );
+    const catalogById = new Map(
+      catalogItems.map((item) => [item._id, item] as const),
+    );
+    const contractPricingByCompany = await loadActiveContractPricingForMonth(
+      ctx,
+      companyIds,
+      args.month,
+    );
+    const businessDate = dateKeyForTimestamp(Date.now());
+    const completed = Date.now() > monthEndTimestamp(args.month);
+    const activeInvoices = invoices.filter(
+      (invoice) =>
+        visibleIdSet.has(invoice.companyId) &&
+        !invoice.isTest &&
+        !invoice.hiddenAt &&
+        invoice.status !== "void" &&
+        invoice.status !== "cancelled",
+    );
+
+    const assuranceRows = visibleCompanies
+      .flatMap((company) => {
+        const companyRows = rowsByCompany.get(company._id) ?? [];
+        const persisted = persistedByCompany.get(company._id) ?? null;
+        if (companyRows.length === 0 && !persisted) return [];
+        const companyPricing = contractPricingByCompany.get(company._id);
+        const companyPricingMap = companyPricing
+          ? new Map([[company._id, companyPricing]])
+          : undefined;
+        const review = buildDailyUsageReviewResult({
+          month: args.month,
+          rows: companyRows,
+          visibleCompanyById: new Map([[company._id, company]]),
+          catalogById,
+          contractPricingByCompany: companyPricingMap,
+          businessDate,
+        });
+        const live = buildDailyUsageBillingSnapshotCandidate({
+          companyId: company._id,
+          month: args.month,
+          rows: companyRows,
+          reviewResult: review,
+          inputDigest: buildDailyUsageBillingInputDigest({
+            month: args.month,
+            businessDate,
+            rows: companyRows,
+            companies: [company],
+            catalogItems,
+            contractPricingByCompany: companyPricingMap,
+          }),
+          computedAt: Date.now(),
+        });
+        const snapshotCheck =
+          completed && persisted
+            ? persisted.calculationVersion !== live.calculationVersion
+              ? ({
+                  status: "stale" as const,
+                  reason: "calculation_version_changed" as const,
+                } as const)
+              : persisted.billingResultDigest !== live.billingResultDigest
+                ? ({
+                    status: "mismatch" as const,
+                    reason: "billing_result_changed" as const,
+                  } as const)
+                : ({
+                    status: "match" as const,
+                    reason: "identical" as const,
+                  } as const)
+            : compareDailyUsageBillingSnapshot(persisted, live);
+        const matchingInvoices = activeInvoices.filter(
+          (invoice) =>
+            invoice.companyId === company._id &&
+            (invoice.sourceMonth === args.month ||
+              (invoice.contractPeriodStartMonth !== undefined &&
+                invoice.contractPeriodEndMonth !== undefined &&
+                invoice.contractPeriodStartMonth <= args.month &&
+                invoice.contractPeriodEndMonth >= args.month)),
+        );
+        const invoice = matchingInvoices[0];
+        const payg = !companyPricing;
+        const variance =
+          payg && invoice
+            ? roundMoney(invoice.grandTotal - live.estimatedAmount)
+            : null;
+        let status:
+          | "reconciled"
+          | "in_progress"
+          | "missing_snapshot"
+          | "stale_snapshot"
+          | "pricing_issue"
+          | "missing_invoice"
+          | "duplicate_invoice"
+          | "invoice_variance"
+          | "attachment_issue" = "reconciled";
+        let reason = "Usage, saved billing result, and invoice source agree";
+        if (live.unpricedCount > 0 || live.missingPriceRowCount > 0) {
+          status = "pricing_issue";
+          reason = `${Math.max(live.unpricedCount, live.missingPriceRowCount)} usage rollups require catalogue pricing`;
+        } else if (snapshotCheck.status === "missing") {
+          status = "missing_snapshot";
+          reason = "No saved billing calculation exists for this usage";
+        } else if (snapshotCheck.status !== "match") {
+          status = "stale_snapshot";
+          reason =
+            "Usage, catalogue, or contract terms changed after calculation";
+        } else if (matchingInvoices.length > 1) {
+          status = "duplicate_invoice";
+          reason = `${matchingInvoices.length} active invoices cover this billing month`;
+        } else if (!invoice && completed) {
+          status = "missing_invoice";
+          reason = "The completed billable month has no invoice";
+        } else if (!invoice) {
+          status = "in_progress";
+          reason = "Billing month is still in progress";
+        } else if (
+          invoice.usageAttachmentStatus === "failed" ||
+          invoice.usageAttachmentStatus === "pending"
+        ) {
+          status = "attachment_issue";
+          reason = `Invoice usage attachment is ${invoice.usageAttachmentStatus}`;
+        } else if (variance !== null && Math.abs(variance) > 0.01) {
+          status = "invoice_variance";
+          reason =
+            "PAYG invoice total differs from the authoritative usage calculation";
+        } else if (!payg) {
+          reason =
+            "Usage source is verified; the contract determines the final invoice amount";
+        }
+
+        return [
+          {
+            companyId: company._id,
+            companyName: company.name,
+            month: args.month,
+            model: payg ? ("payg" as const) : ("contracted" as const),
+            expectedUsageAmount: live.estimatedAmount,
+            invoiceId: invoice?._id,
+            invoiceNumber: invoice?.invoiceNumber,
+            invoiceAmount: invoice?.grandTotal ?? null,
+            variance,
+            rowCount: live.rowCount,
+            serviceCount: live.serviceCount,
+            latestUsageDate: live.latestUsageDate ?? null,
+            unpricedCount: Math.max(
+              live.unpricedCount,
+              live.missingPriceRowCount,
+            ),
+            snapshotStatus: snapshotCheck.status,
+            status,
+            reason,
+          },
+        ];
+      })
+      .sort((left, right) => {
+        const priority = left.status === "reconciled" ? 1 : 0;
+        const rightPriority = right.status === "reconciled" ? 1 : 0;
+        return (
+          priority - rightPriority ||
+          left.companyName.localeCompare(right.companyName)
+        );
+      });
+
+    return {
+      month: args.month,
+      rows: assuranceRows,
+      summary: {
+        customers: assuranceRows.length,
+        reconciled: assuranceRows.filter((row) => row.status === "reconciled")
+          .length,
+        exceptions: assuranceRows.filter(
+          (row) => row.status !== "reconciled" && row.status !== "in_progress",
+        ).length,
+        expectedUsageAmount: sumMoney(
+          assuranceRows.map((row) => row.expectedUsageAmount),
+        ),
+        invoicedAmount: sumMoney(
+          assuranceRows.map((row) => row.invoiceAmount ?? 0),
+        ),
+      },
+    };
+  },
+});
+
 export const findCompanyForMonthBillingSnapshotTest = internalQuery({
   args: {
     month: v.string(),
@@ -1329,6 +1546,50 @@ export const findCompaniesForMonthBillingSnapshotTestPage = internalQuery({
       isDone: page.isDone,
       rowsRead: page.page.length,
     };
+  },
+});
+
+export const refreshBillingSnapshots = internalAction({
+  args: { months: v.optional(v.array(v.string())) },
+  handler: async (ctx, args) => {
+    const currentMonth = dateKeyForTimestamp(Date.now()).slice(0, 7);
+    const [year, month] = currentMonth.split("-").map(Number);
+    const previousMonth = new Date(Date.UTC(year!, month! - 2, 1))
+      .toISOString()
+      .slice(0, 7);
+    const months = [...new Set(args.months ?? [currentMonth, previousMonth])];
+    let rebuilt = 0;
+
+    for (const targetMonth of months) {
+      monthStartTimestamp(targetMonth);
+      let cursor: string | undefined;
+      const companyIds = new Set<Id<"companies">>();
+      do {
+        const page: {
+          companies: Array<{ companyId: Id<"companies"> }>;
+          cursor: string;
+          isDone: boolean;
+        } = await ctx.runQuery(
+          internal.dailyUsage.findCompaniesForMonthBillingSnapshotTestPage,
+          { month: targetMonth, cursor, batchSize: 250 },
+        );
+        for (const company of page.companies) {
+          companyIds.add(company.companyId);
+        }
+        cursor = page.isDone ? undefined : page.cursor;
+        if (page.isDone) break;
+      } while (cursor);
+
+      for (const companyId of companyIds) {
+        await ctx.runMutation(
+          internal.dailyUsage.rebuildCompanyMonthBillingSnapshot,
+          { companyId, month: targetMonth },
+        );
+        rebuilt++;
+      }
+    }
+
+    return { rebuilt, months };
   },
 });
 
@@ -1735,10 +1996,14 @@ export const runScheduledDailyUsageCapture = internalAction({
       },
     );
     try {
-      return await ctx.runMutation(
+      const result = await ctx.runMutation(
         internal.dailyUsage.captureFromManageOneSnapshots,
         { usageDate, runId, requireFreshTenantData: true },
       );
+      await ctx.runAction(internal.dailyUsage.refreshBillingSnapshots, {
+        months: [usageDate.slice(0, 7)],
+      });
+      return result;
     } catch (error) {
       await ctx.runMutation(internal.dailyUsage.failDailyUsageCapture, {
         runId,
@@ -3316,6 +3581,40 @@ export const companyBillingSnapshot = query({
       [company._id],
       args.month,
     );
+    const businessDate = dateKeyForTimestamp(Date.now());
+    const liveReview = buildDailyUsageReviewResult({
+      month: args.month,
+      rows: dailyRows,
+      visibleCompanyById: new Map([[company._id, company]]),
+      catalogById,
+      contractPricingByCompany,
+      businessDate,
+    });
+    const liveBillingSnapshot = buildDailyUsageBillingSnapshotCandidate({
+      companyId: company._id,
+      month: args.month,
+      rows: dailyRows,
+      reviewResult: liveReview,
+      inputDigest: buildDailyUsageBillingInputDigest({
+        month: args.month,
+        businessDate,
+        rows: dailyRows,
+        companies: [company],
+        catalogItems: catalog,
+        contractPricingByCompany,
+      }),
+      computedAt: Date.now(),
+    });
+    const persistedBillingSnapshot = await ctx.db
+      .query("dailyUsageBillingSnapshots")
+      .withIndex("by_company_month", (q) =>
+        q.eq("companyId", company._id).eq("month", args.month),
+      )
+      .unique();
+    const billingAssurance = compareDailyUsageBillingSnapshot(
+      persistedBillingSnapshot,
+      liveBillingSnapshot,
+    );
     const upcomingRollupRows = buildMonthlyRollupRows({
       rows: uninvoicedRows,
       catalogById,
@@ -3449,6 +3748,12 @@ export const companyBillingSnapshot = query({
       contractCoverage: null,
       dailyUsageReady: dailyRows.length > 0,
       latestUsageDate: usageDates[usageDates.length - 1] ?? null,
+      billingAssurance: {
+        ...billingAssurance,
+        liveAmount: liveBillingSnapshot.estimatedAmount,
+        snapshotAmount: persistedBillingSnapshot?.estimatedAmount ?? null,
+        calculatedAt: persistedBillingSnapshot?.computedAt ?? null,
+      },
       billingHealth,
       dailySeries,
       hourlySeries,

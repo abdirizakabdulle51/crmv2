@@ -17,9 +17,9 @@ function readLastActivity() {
   try {
     const stored = window.localStorage.getItem(LAST_ACTIVITY_STORAGE_KEY);
     const parsed = stored ? Number(stored) : Number.NaN;
-    return Number.isFinite(parsed) ? parsed : Date.now();
+    return Number.isFinite(parsed) ? parsed : null;
   } catch {
-    return Date.now();
+    return null;
   }
 }
 
@@ -48,7 +48,11 @@ export function InactivityLogout() {
 
     function scheduleLogoutCheck() {
       clearLogoutTimer();
-      const elapsed = Date.now() - readLastActivity();
+      const lastActivity = readLastActivity();
+      if (lastActivity === null) {
+        writeLastActivity(Date.now());
+      }
+      const elapsed = Date.now() - (lastActivity ?? Date.now());
       const remaining = idleTimeoutRef.current - elapsed;
 
       if (remaining <= 0) {
@@ -66,6 +70,14 @@ export function InactivityLogout() {
       if (signedOutRef.current) {
         return;
       }
+      const lastActivity = readLastActivity();
+      if (
+        lastActivity !== null &&
+        Date.now() - lastActivity >= idleTimeoutRef.current
+      ) {
+        scheduleLogoutCheck();
+        return;
+      }
       writeLastActivity(Date.now());
       scheduleLogoutCheck();
     }
@@ -81,6 +93,14 @@ export function InactivityLogout() {
 
     function recordVisibleActivity() {
       if (document.visibilityState === "visible") {
+        const lastActivity = readLastActivity();
+        if (
+          lastActivity !== null &&
+          Date.now() - lastActivity >= idleTimeoutRef.current
+        ) {
+          scheduleLogoutCheck();
+          return;
+        }
         recordActivity();
       }
     }
@@ -100,14 +120,14 @@ export function InactivityLogout() {
       scheduleLogoutCheck();
     }
 
-    recordActivity();
+    scheduleLogoutCheck();
 
     window.addEventListener("mousedown", recordActivity);
     window.addEventListener("pointerdown", recordActivity);
     window.addEventListener("keydown", recordActivity);
     window.addEventListener("scroll", recordActivity, { passive: true });
     window.addEventListener("touchstart", recordActivity, { passive: true });
-    window.addEventListener("focus", recordActivity);
+    window.addEventListener("focus", recordVisibleActivity);
     window.addEventListener("mousemove", recordMousemoveActivity);
     window.addEventListener("storage", handleStorage);
     window.addEventListener(MONITORING_MODE_EVENT, handleMonitoringMode);
@@ -120,7 +140,7 @@ export function InactivityLogout() {
       window.removeEventListener("keydown", recordActivity);
       window.removeEventListener("scroll", recordActivity);
       window.removeEventListener("touchstart", recordActivity);
-      window.removeEventListener("focus", recordActivity);
+      window.removeEventListener("focus", recordVisibleActivity);
       window.removeEventListener("mousemove", recordMousemoveActivity);
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener(MONITORING_MODE_EVENT, handleMonitoringMode);

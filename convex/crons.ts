@@ -47,6 +47,13 @@ crons.daily(
   {},
 );
 
+crons.interval(
+  "refresh authoritative billing snapshots",
+  { minutes: 60 },
+  internal.dailyUsage.refreshBillingSnapshots,
+  {},
+);
+
 crons.daily(
   "backfill contract revenue allocations",
   { hourUTC: 2, minuteUTC: 45 },
