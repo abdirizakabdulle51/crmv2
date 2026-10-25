@@ -31,6 +31,10 @@ function writeLastActivity(timestamp: number) {
   }
 }
 
+export function startActivitySession(timestamp = Date.now()) {
+  writeLastActivity(timestamp);
+}
+
 export function InactivityLogout() {
   const { signout } = useAuth();
   const timeoutRef = useRef<number | null>(null);

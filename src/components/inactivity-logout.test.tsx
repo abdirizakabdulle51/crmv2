@@ -6,6 +6,7 @@ import {
   LAST_ACTIVITY_STORAGE_KEY,
   MONITORING_MODE_EVENT,
   MONITORING_MODE_TIMEOUT_MS,
+  startActivitySession,
 } from "./inactivity-logout.tsx";
 
 const signout = vi.fn();
@@ -55,6 +56,24 @@ describe("InactivityLogout", () => {
     expect(window.localStorage.getItem(LAST_ACTIVITY_STORAGE_KEY)).toBe(
       String(1_000_000 - INACTIVITY_TIMEOUT_MS - 1),
     );
+  });
+
+  it("starts a fresh login session even when an expired timestamp remains", () => {
+    window.localStorage.setItem(
+      LAST_ACTIVITY_STORAGE_KEY,
+      String(1_000_000 - INACTIVITY_TIMEOUT_MS - 1),
+    );
+
+    startActivitySession();
+    render(<InactivityLogout />);
+
+    expect(window.localStorage.getItem(LAST_ACTIVITY_STORAGE_KEY)).toBe(
+      "1000000",
+    );
+    expect(signout).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(INACTIVITY_TIMEOUT_MS);
+    expect(signout).toHaveBeenCalledTimes(1);
   });
 
   it("checks expiry before treating restored visibility as activity", () => {

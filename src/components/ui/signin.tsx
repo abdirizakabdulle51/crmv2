@@ -7,6 +7,7 @@ import { api } from "@/convex/_generated/api.js";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
+import { startActivitySession } from "@/components/inactivity-logout.tsx";
 
 export function SignInForm() {
   const { signIn } = useAuthActions();
@@ -30,6 +31,7 @@ export function SignInForm() {
       }
       formData.set("flow", "signIn");
       await signIn("password", formData);
+      startActivitySession();
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Authentication failed";
